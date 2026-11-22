@@ -1,0 +1,23 @@
+[
+  {
+    "slug": "angulos-de-venta",
+    "title": "Ángulos de venta",
+    "description": "Cómo investigar nuevos motivos de compra para el mismo producto, qué evidencia exigir y cómo convertir el ángulo en un test.",
+    "file": "angulos-de-venta.md",
+    "source": "docs/reglas-origen/skills-codex/angulos-de-venta/SKILL.md"
+  },
+  {
+    "slug": "angulos-ejemplos",
+    "title": "Ejemplos para aprender el criterio de Emmanuel",
+    "description": "Casos de acierto y de fallo que fijan el criterio: qué es un ángulo nuevo y qué es solo una variante.",
+    "file": "angulos-ejemplos.md",
+    "source": "docs/reglas-origen/skills-codex/angulos-de-venta/references/ejemplos.md"
+  },
+  {
+    "slug": "angulos-metodo-juanma",
+    "title": "Mismo producto, distintos motivos de compra",
+    "description": "Método y ejemplos del vídeo de Juan Ma Ecom, usados como entrenamiento del razonamiento.",
+    "file": "angulos-metodo-juanma.md",
+    "source": "docs/reglas-origen/skills-codex/angulos-de-venta/references/metodo-juanma-L_jJ3ivApwo.md"
+  }
+]

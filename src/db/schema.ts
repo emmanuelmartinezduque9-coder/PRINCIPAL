@@ -167,3 +167,30 @@ export const spendEntries = pgTable(
   },
   (t) => [index("spend_entries_created").on(t.createdAt), index("spend_entries_step").on(t.stepKey)],
 );
+
+/** Documentos de reglas que el dueño puede editar (p. ej. el criterio de ángulos de venta). Solo `src/server/rules.ts` los toca. */
+export const ruleDocs = pgTable("rule_docs", {
+  slug: text("slug").primaryKey(),
+  title: text("title").notNull(),
+  description: text("description").notNull(),
+  position: integer("position").notNull().default(0),
+});
+
+/**
+ * Cada guardado de una regla es una versión nueva; la vigente es la de número más alto y las
+ * anteriores no se tocan. `created_by` es nulo cuando guarda el dueño local (id 0, sin fila en `users`)
+ * o cuando es la versión 1 sembrada desde `reglas/`. Sin claves ajenas, igual que el libro de gasto.
+ */
+export const ruleVersions = pgTable(
+  "rule_versions",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    slug: text("slug").notNull(),
+    version: integer("version").notNull(),
+    body: text("body").notNull(),
+    note: text("note").notNull().default(""),
+    createdBy: bigint("created_by", { mode: "number" }),
+    createdAt: instant("created_at").notNull().defaultNow(),
+  },
+  (t) => [unique("rule_versions_slug_version").on(t.slug, t.version)],
+);

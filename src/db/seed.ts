@@ -1,6 +1,7 @@
 import { and, count, eq, isNull, sql } from "drizzle-orm";
 import { getDb, schema } from "./client";
 import { buildInvite } from "../server/auth";
+import { seedRules } from "../server/rules";
 
 const OWNER_LOCK = 7_002_001;
 
@@ -33,9 +34,10 @@ export async function ensureOwnerInvite(
   return `${base}/activar?token=${token}`;
 }
 
-/** Datos iniciales. Por ahora: el enlace para crear la cuenta del dueño. */
+/** Datos iniciales: las reglas de `reglas/` (sin pisar lo que el dueño haya editado) y el enlace para crear la cuenta del dueño. */
 export async function seed(url: string): Promise<void> {
   process.env.DATABASE_URL ??= url;
+  await seedRules();
   const link = await ensureOwnerInvite(process.env);
   if (link) console.log(`[inicio] Enlace para crear la cuenta del dueño (un solo uso, 7 días): ${link}`);
 }
