@@ -10,7 +10,7 @@ import type { Analysis } from "@/server/videos/analysis";
 import { bodiesOfVideo } from "@/server/videos/bodies";
 import { downloadableClipUrl, servableClipUrl } from "@/server/videos/clip";
 import { fileSlug } from "@/server/videos/filename";
-import { canChooseSong, getVideoFor, hookTiming, type Video } from "@/server/videos/videos";
+import { canChooseSong, effectiveEditReferenceUrl, getVideoFor, hookTiming, type Video } from "@/server/videos/videos";
 
 /**
  * Montaje automático (el paso que sigue a los clips): cada vídeo se monta en el Mac del dueño, que
@@ -67,6 +67,14 @@ export interface EditSpec {
    * `null`: audio original.
    */
   song: { url: string; id: number; title: string; dropMs: number | null; startMs: number; durationMs: number } | null;
+  /**
+   * «Audio original» (sin canción): el audio del vídeo de REFERENCIA, desde 0 y recortado a lo que
+   * dure el montaje (los clips de Seedance salen mudos). `web`: la pista guardada al preparar la
+   * referencia, por la ruta de esta tarea (`referenceAudioRouteOf`), que el Mac pide con su ficha.
+   * `enlace`: si no se guardó, el enlace de la referencia, que el Mac trae con yt-dlp. `null`: con
+   * canción, o sin ninguna de las dos.
+   */
+  referenceAudio: { url: string; source: "web" | "enlace" } | null;
   texts: { main: string; cta: string };
   editReferenceUrl: string | null;
 }
@@ -122,12 +130,38 @@ async function latestAnalysisResult(videoId: number): Promise<Analysis | null> {
 
 /** La ruta de la canción de una tarea de montaje, que el Mac pide con su ficha. */
 export const songRouteOf = (taskId: number) => `/api/agente/tareas/${taskId}/cancion`;
+/** La ruta del audio de la referencia de una tarea de montaje, que el Mac pide con su ficha. */
+export const referenceAudioRouteOf = (taskId: number) => `/api/agente/tareas/${taskId}/audio-referencia`;
+
+/** El audio de la referencia guardado para `videoId`, o `null`. */
+export async function readReferenceAudio(videoId: number): Promise<{ mime: string; data: Buffer } | null> {
+  const [row] = await getDb()
+    .select({ mime: schema.videoReferenceAudio.mime, data: schema.videoReferenceAudio.data })
+    .from(schema.videoReferenceAudio)
+    .where(eq(schema.videoReferenceAudio.videoId, videoId));
+  return row ?? null;
+}
+
+/** De dónde sale «Audio original» en la ficha (ver `EditSpec.referenceAudio`); `null` con canción. */
+async function referenceAudioSource(video: Video): Promise<"web" | { link: string } | null> {
+  if (video.songId !== null) return null;
+  const [stored] = await getDb()
+    .select({ videoId: schema.videoReferenceAudio.videoId })
+    .from(schema.videoReferenceAudio)
+    .where(eq(schema.videoReferenceAudio.videoId, video.id));
+  if (stored) return "web";
+  if (video.referenceSource === "link" && video.referenceUrl) return { link: video.referenceUrl };
+  return null;
+}
 
 /**
  * Lo que necesita la ficha y no depende de la tarea: los clips (409 si falta alguno o no se puede
  * descargar), la canción, los rótulos y el resto. Se calcula antes de abrir la transacción.
  */
-async function specParts(video: Video, product: Product): Promise<Omit<EditSpec, "song"> & { songOf: (taskId: number) => EditSpec["song"] }> {
+async function specParts(
+  video: Video,
+  product: Product,
+): Promise<Omit<EditSpec, "song" | "referenceAudio"> & { songOf: (taskId: number) => EditSpec["song"]; referenceAudioOf: (taskId: number) => EditSpec["referenceAudio"] }> {
   const clipUrl = await downloadableClipUrl(video);
   if (!clipUrl) throw new HttpError(409, NO_CLIP);
   const clips: EditSpec["clips"] = [];
@@ -141,6 +175,7 @@ async function specParts(video: Video, product: Product): Promise<Omit<EditSpec,
     clips.push({ role: "clip", url: clipUrl });
   }
   const song = video.songId === null ? null : ((await songSummaries([video.songId])).get(video.songId) ?? null);
+  const original = await referenceAudioSource(video);
   return {
     version: 1,
     videoId: video.id,
@@ -151,8 +186,11 @@ async function specParts(video: Video, product: Product): Promise<Omit<EditSpec,
     hookMs: hookTiming(video)?.hookMs ?? null,
     songOf: (taskId) =>
       song ? { url: songRouteOf(taskId), id: song.id, title: song.title, dropMs: song.dropMs, startMs: song.startMs, durationMs: song.durationMs } : null,
+    referenceAudioOf: (taskId) =>
+      original === "web" ? { url: referenceAudioRouteOf(taskId), source: "web" } : original ? { url: original.link, source: "enlace" } : null,
     texts: editTextsFor(video, product, await latestAnalysisResult(video.id)),
-    editReferenceUrl: video.editReferenceUrl,
+    // La del vídeo o, si no tiene, la de su producto en el lote.
+    editReferenceUrl: await effectiveEditReferenceUrl(video),
   };
 }
 
@@ -168,13 +206,13 @@ async function lockVideo(tx: Tx, videoId: number): Promise<Video | null> {
  * si ya hay uno en marcha o si falta algún clip.
  */
 async function queueEdit(video: Video, product: Product, ownerId: number, now: Date): Promise<{ taskId: number }> {
-  const { songOf, ...parts } = await specParts(video, product);
+  const { songOf, referenceAudioOf, ...parts } = await specParts(video, product);
   return getDb().transaction(async (tx) => {
     const locked = await lockVideo(tx, video.id);
     if (!locked) throw new HttpError(404, "Vídeo no encontrado.");
     const taskId = await queueMontajeTask(
       tx,
-      { videoId: video.id, ownerId, url: parts.clips[0].url, payload: (id): EditSpec => ({ ...parts, song: songOf(id) }) },
+      { videoId: video.id, ownerId, url: parts.clips[0].url, payload: (id): EditSpec => ({ ...parts, song: songOf(id), referenceAudio: referenceAudioOf(id) }) },
       now,
     );
     if (taskId === null) throw new HttpError(409, ALREADY_RUNNING);

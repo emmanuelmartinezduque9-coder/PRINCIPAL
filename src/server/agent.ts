@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
-import { and, asc, eq, gte, inArray, isNull, lt, max, ne, notExists, sql, type SQL } from "drizzle-orm";
+import { and, asc, eq, gte, inArray, isNull, lt, lte, max, ne, notExists, or, sql, type SQL } from "drizzle-orm";
 import { getDb, schema } from "@/db/client";
-import { cancelLinkTasks, LINK_FAILED, linkFailureMessage, MONTAJE_TASK, TASK_TOO_OLD } from "@/server/agent-tasks";
+import { cancelLinkTasks, LINK_FAILED, MONTAJE_TASK, TASK_TOO_OLD } from "@/server/agent-tasks";
 import { getActiveUser, type AuthUser } from "@/server/auth";
 import { HttpError } from "@/server/http";
 import { getProductFor } from "@/server/products";
@@ -75,6 +75,13 @@ export type OptionalTask = (typeof OPTIONAL_TASKS)[number];
  * el Mac atienda de uno en uno un lote de muchos enlaces.
  */
 export const MAX_QUEUE_AGE_MS = 6 * 60 * 60_000;
+/**
+ * Cuando el Mac dice que no pudo traer el enlace de una referencia, el servidor lo vuelve a poner
+ * en cola solo, el mismo enlace, hasta 3 veces, cada una unos 2 minutos después del fallo. Solo
+ * después el vídeo enseña «Enlace no disponible».
+ */
+export const MAX_LINK_RETRIES = 3;
+export const LINK_RETRY_DELAY_MS = 2 * 60_000;
 // Qué enlaces se admiten está en `@/lib/links` (lo comparten las pantallas); se reexporta aquí.
 export { LINK_HOSTS, linkOf };
 
@@ -94,7 +101,7 @@ const NO_UPLOAD = "Falta la sesión de la reserva (`subida`).";
 const BAD_TOKEN = "Ficha del Mac no válida.";
 const BAD_LINK = "Solo se admiten enlaces de Instagram, TikTok, YouTube o Facebook.";
 const BAD_SONG_LINK = "Solo se admiten enlaces de YouTube, TikTok, Instagram, Facebook o SoundCloud.";
-const MAC_OFFLINE = "El Mac no está conectado ahora mismo. Sube el archivo del vídeo.";
+const MAC_OFFLINE = "El Mac no está conectado ahora mismo.";
 const SONG_MAC_OFFLINE = "El Mac no está conectado ahora mismo. Importa el archivo de la canción.";
 const TASK_LOST = "Esta tarea ya no es tuya.";
 // Motivos que se apuntan en la tarea (solo los ve el dueño).
@@ -355,7 +362,13 @@ export async function claimTask(agentId: number, now: Date = new Date(), options
   if (!agent) return null;
   // Un Mac que no dice que sabe montar (un programa anterior a 1.3.0) no se lleva montajes.
   const kinds = options.can?.includes("montaje") ? undefined : ne(agentTasks.kind, MONTAJE_TASK);
-  const queued = and(eq(agentTasks.status, "queued"), eq(agentTasks.createdBy, agent.createdBy), kinds);
+  // Un reintento automático espera a su hora.
+  const queued = and(
+    eq(agentTasks.status, "queued"),
+    eq(agentTasks.createdBy, agent.createdBy),
+    kinds,
+    or(isNull(agentTasks.availableAt), lte(agentTasks.availableAt, now)),
+  );
   for (let round = 0; round < CLAIM_ROUNDS; round++) {
     const [candidate] = await db
       .select({ id: agentTasks.id, videoId: agentTasks.videoId, kind: agentTasks.kind })
@@ -510,7 +523,7 @@ export async function finishTask(agentId: number, taskId: number, result: TaskRe
   if (task.status !== "leased") throw taskLost();
 
   if (!result.ok) {
-    await db.transaction(async (tx) => {
+    const discarded = await db.transaction(async (tx) => {
       await lockVideoReference(tx, task.videoId);
       if ((await agentUploadId(task.id, tx)) !== result.uploadId) throw taskLost();
       const closed = await tx
@@ -519,8 +532,9 @@ export async function finishTask(agentId: number, taskId: number, result: TaskRe
         .where(leasedBy(agentId, task.id))
         .returning({ id: agentTasks.id });
       if (closed.length === 0) throw taskLost();
-      await failLinkReference(tx, task.videoId, task.id, LINK_FAILED);
+      return retryOrFailLink(tx, task.id, task.videoId, now);
     });
+    await removeUploadFiles(discarded);
     return;
   }
 
@@ -531,6 +545,40 @@ export async function finishTask(agentId: number, taskId: number, result: TaskRe
     throw error;
   }
   await db.update(agentTasks).set({ status: "done", leaseExpiresAt: null, updatedAt: now }).where(leasedBy(agentId, task.id));
+}
+
+/**
+ * La tarea de enlace `taskId` acaba de fallar porque el Mac no pudo traerlo. Si el vídeo sigue
+ * esperándola y le quedan reintentos automáticos, se pone en cola otra tarea con el mismo enlace,
+ * reservable dentro de `LINK_RETRY_DELAY_MS`, y el vídeo pasa a esperarla (sigue «en cola»). Si
+ * no, el vídeo dice «Enlace no disponible» (`failLinkReference`). Devuelve las sesiones de subida
+ * descartadas, cuyo archivo se borra fuera de la transacción.
+ */
+async function retryOrFailLink(tx: Tx, taskId: number, videoId: number, now: Date): Promise<string[]> {
+  const [task] = await tx
+    .select({ url: agentTasks.url, createdBy: agentTasks.createdBy, autoRetry: agentTasks.autoRetry })
+    .from(agentTasks)
+    .where(eq(agentTasks.id, taskId));
+  const video = await lockVideoReference(tx, videoId);
+  const waiting = video !== null && video.linkTaskId === taskId && video.referenceStatus !== "processing";
+  if (!task || !waiting || task.autoRetry >= MAX_LINK_RETRIES) {
+    await failLinkReference(tx, videoId, taskId, LINK_FAILED);
+    return [];
+  }
+  const [retry] = await tx
+    .insert(agentTasks)
+    .values({
+      kind: "link_download",
+      videoId,
+      url: task.url,
+      createdBy: task.createdBy,
+      autoRetry: task.autoRetry + 1,
+      availableAt: new Date(now.getTime() + LINK_RETRY_DELAY_MS),
+      createdAt: now,
+      updatedAt: now,
+    })
+    .returning({ id: agentTasks.id });
+  return expectLinkReference(tx, videoId, retry.id);
 }
 
 /**
@@ -561,7 +609,7 @@ async function failTask(task: { id: number; videoId: number | null; kind: string
       .where(and(eq(agentTasks.id, task.id), condition))
       .returning({ id: agentTasks.id });
     // Si entretanto cambió (llegó un latido, alguien la reservó), se queda como está.
-    if (closed.length > 0) await failLinkReference(tx, videoId, task.id, linkFailureMessage(reason));
+    if (closed.length > 0) await failLinkReference(tx, videoId, task.id, LINK_FAILED);
   });
 }
 

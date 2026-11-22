@@ -440,8 +440,10 @@ export const batches = pgTable(
 );
 
 /**
- * «Indicaciones para los vídeos de {producto}» de un lote: llegan al desglose de cada vídeo de ese
- * producto en ese lote. Solo `src/server/videos/` toca esta tabla.
+ * Lo que un lote dice de uno de sus productos: las «Indicaciones para los vídeos de {producto}»
+ * (llegan al desglose de cada vídeo de ese producto en ese lote) y la «Edición de referencia» del
+ * grupo (la que usan los vídeos del grupo que no tienen la suya). La fila existe mientras tenga
+ * alguna de las dos. Solo `src/server/videos/` toca esta tabla.
  */
 export const batchProducts = pgTable(
   "batch_products",
@@ -452,12 +454,19 @@ export const batchProducts = pgTable(
     productId: bigint("product_id", { mode: "number" })
       .notNull()
       .references(() => products.id, { onDelete: "cascade" }),
-    notes: text("notes").notNull(),
+    notes: text("notes"),
+    /** «Edición de referencia» del grupo: un enlace admitido (como `videos.edit_reference_url`) o `null`. */
+    editReferenceUrl: text("edit_reference_url"),
     updatedAt: instant("updated_at").notNull().defaultNow(),
   },
   (t) => [
     primaryKey({ columns: [t.batchId, t.productId] }),
-    check("batch_products_notes_length", sql`char_length(${t.notes}) between 1 and 4000`),
+    check("batch_products_notes_length", sql`${t.notes} is null or char_length(${t.notes}) between 1 and 4000`),
+    check(
+      "batch_products_edit_reference_url_valid",
+      sql`${t.editReferenceUrl} is null or (char_length(${t.editReferenceUrl}) <= 2000 and ${t.editReferenceUrl} like 'https://%')`,
+    ),
+    check("batch_products_not_empty", sql`${t.notes} is not null or ${t.editReferenceUrl} is not null`),
   ],
 );
 
@@ -687,6 +696,30 @@ export const videoFrames = pgTable(
     data: bytea("data").notNull(),
   },
   (t) => [unique("video_frames_video_index").on(t.videoId, t.index)],
+);
+
+/** Tope de la pista de audio guardada de una referencia (AAC; 60 s a 128 kb/s son ~1 MB). */
+export const MAX_REFERENCE_AUDIO_BYTES = 5 * 1024 * 1024;
+
+/**
+ * La pista de audio del vídeo de referencia (M4A/AAC, desde 0 y 60 s como mucho), sacada al
+ * preparar la referencia: el vídeo no se guarda, y «Audio original» en el montaje es el audio de
+ * la referencia (los clips de Seedance salen mudos). Una por vídeo; sin fila si la referencia no
+ * trae audio o no se pudo sacar. Solo `src/server/videos/` toca esta tabla.
+ */
+export const videoReferenceAudio = pgTable(
+  "video_reference_audio",
+  {
+    videoId: bigint("video_id", { mode: "number" })
+      .primaryKey()
+      .references(() => videos.id, { onDelete: "cascade" }),
+    mime: text("mime").notNull(),
+    size: integer("size").notNull(),
+    durationMs: integer("duration_ms").notNull(),
+    data: bytea("data").notNull(),
+    createdAt: instant("created_at").notNull().defaultNow(),
+  },
+  (t) => [check("video_reference_audio_size", sql`${t.size} between 1 and ${sql.raw(String(MAX_REFERENCE_AUDIO_BYTES))}`)],
 );
 
 /**
@@ -1008,6 +1041,13 @@ export const agentTasks = pgTable(
     leasedAt: instant("leased_at"),
     /** Veces que se ha reservado. */
     attempts: integer("attempts").notNull().default(0),
+    /**
+     * Reintento automático de un enlace que falló (`link_download`): 0 la tarea original, 1..3 cada
+     * reintento que el servidor puso en cola solo (`MAX_LINK_RETRIES`).
+     */
+    autoRetry: integer("auto_retry").notNull().default(0),
+    /** Un reintento automático no se reserva antes de esta hora (`null`: en cuanto haya un Mac). */
+    availableAt: instant("available_at"),
     error: text("error"),
     createdAt: instant("created_at").notNull().defaultNow(),
     updatedAt: instant("updated_at").notNull().defaultNow(),

@@ -16,10 +16,11 @@ import {
   duplicateBatchVideo,
   removeBatchVideo,
   setBatchAutoAnalyze,
+  setBatchProductEditReference,
   setBatchProductNotes,
 } from "@/server/videos/batches";
 import { briefOf } from "@/server/videos/brief";
-import { createVideo, getVideoFor, updateVideoChoices, videoView, type Video } from "@/server/videos/videos";
+import { createVideo, effectiveEditReferenceUrl, getVideoFor, updateVideoChoices, videoView, type Video } from "@/server/videos/videos";
 import { PATCH as patchBatchRoute } from "@/app/api/lotes/[id]/route";
 import { PUT as notesRoute } from "@/app/api/lotes/[id]/productos/[productId]/route";
 import { DELETE as removeRoute } from "@/app/api/lotes/[id]/videos/[videoId]/route";
@@ -132,7 +133,7 @@ describe("indicaciones por producto del lote", () => {
     expect((await batchView(ana, lote.id)).rows[0].analysis).toMatchObject({ stale: true, staleReason: "brief" });
     // Quitarlas también cuenta.
     expect(await setBatchProductNotes(ana, lote.id, lampara.id, "   ")).toBeNull();
-    expect((await batchView(ana, lote.id)).groups).toEqual([{ productId: lampara.id, name: "Lámpara Luna", coverPhotoId: expect.any(Number), notes: null, videos: 1 }]);
+    expect((await batchView(ana, lote.id)).groups).toEqual([{ productId: lampara.id, name: "Lámpara Luna", coverPhotoId: expect.any(Number), notes: null, editReferenceUrl: null, videos: 1 }]);
     expect((await videoView(ana, v.id)).analysis).toMatchObject({ stale: true });
   });
 
@@ -168,6 +169,62 @@ describe("indicaciones por producto del lote", () => {
       status: 400,
       message: "«Cambios específicos» no puede tener más de 6.000 caracteres.",
     });
+  });
+});
+
+describe("«Edición de referencia» del grupo", () => {
+  const GRUPO = "https://www.instagram.com/reel/GRUPO1/";
+  const OTRA = "https://www.instagram.com/reel/GRUPO2/";
+  const PROPIA = "https://www.tiktok.com/@marca/video/7301234567890";
+
+  it("se guarda por lote y producto, pasa a los vídeos sin una propia y el tablero la enseña", async () => {
+    const lote = await createBatch(ana, "A");
+    const sinNada = await batchVideo(lote.id);
+    const propia = await batchVideo(lote.id, { editReferenceUrl: PROPIA });
+    const otroProducto = await addVideoToBatch(ana, lote.id, { productId: botella.id, avatarPhotoId: null, avatarMode: "nadie" });
+    // Sin la del grupo, cada vídeo tiene la suya (o ninguna).
+    expect(await effectiveEditReferenceUrl(await getVideoFor(ana, sinNada.id))).toBeNull();
+
+    expect(await setBatchProductEditReference(ana, lote.id, lampara.id, GRUPO)).toBe(GRUPO);
+    let view = await batchView(ana, lote.id);
+    expect(view.groups.find((g) => g.productId === lampara.id)).toMatchObject({ editReferenceUrl: GRUPO, notes: null });
+    expect(view.groups.find((g) => g.productId === botella.id)).toMatchObject({ editReferenceUrl: null });
+    const urlOf = (id: number) => view.rows.find((row) => row.id === id)!.editReferenceUrl;
+    expect([urlOf(sinNada.id), urlOf(propia.id), urlOf(otroProducto.id)]).toEqual([GRUPO, PROPIA, null]);
+
+    // Cambiarla mueve los que la heredaban; la propia sigue.
+    await setBatchProductEditReference(ana, lote.id, lampara.id, OTRA);
+    view = await batchView(ana, lote.id);
+    expect([urlOf(sinNada.id), urlOf(propia.id)]).toEqual([OTRA, PROPIA]);
+
+    // Un vídeo sin enlace propio usa la del grupo («propia ?? grupo»).
+    await getPool().query("update videos set edit_reference_url = null where id = $1", [sinNada.id]);
+    expect(await effectiveEditReferenceUrl(await getVideoFor(ana, sinNada.id))).toBe(OTRA);
+    expect(await effectiveEditReferenceUrl(await getVideoFor(ana, propia.id))).toBe(PROPIA);
+
+    // Con indicaciones, quitar una no borra la otra.
+    await setBatchProductNotes(ana, lote.id, lampara.id, "Luz cálida");
+    expect(await setBatchProductEditReference(ana, lote.id, lampara.id, "")).toBeNull();
+    view = await batchView(ana, lote.id);
+    expect(view.groups.find((g) => g.productId === lampara.id)).toMatchObject({ editReferenceUrl: null, notes: "Luz cálida" });
+    expect([urlOf(sinNada.id), urlOf(propia.id)]).toEqual([null, PROPIA]);
+    await setBatchProductEditReference(ana, lote.id, lampara.id, GRUPO);
+    expect(await setBatchProductNotes(ana, lote.id, lampara.id, null)).toBeNull();
+    expect((await batchView(ana, lote.id)).groups.find((g) => g.productId === lampara.id)).toMatchObject({ editReferenceUrl: GRUPO, notes: null });
+  });
+
+  it("por la ruta, junto a las indicaciones; enlace no admitido 400 y solo quien creó el lote", async () => {
+    const lote = await createBatch(ana, "A");
+    await batchVideo(lote.id);
+    const ctx = { params: Promise.resolve({ id: String(lote.id), productId: String(lampara.id) }) };
+    await as(ana);
+    const ok = await notesRoute(json({ notes: "Más luz", editReferenceUrl: GRUPO }), ctx);
+    expect(ok.status).toBe(200);
+    expect(await ok.json()).toEqual({ notes: "Más luz", editReferenceUrl: GRUPO });
+    expect((await notesRoute(json({ editReferenceUrl: "https://example.com/x" }), ctx)).status).toBe(400);
+    expect((await notesRoute(json({}), ctx)).status).toBe(400);
+    await expect(setBatchProductEditReference(dueno, lote.id, lampara.id, GRUPO)).rejects.toMatchObject({ status: 403 });
+    await expect(setBatchProductEditReference(luis, lote.id, lampara.id, GRUPO)).rejects.toMatchObject({ status: 404 });
   });
 });
 
@@ -216,6 +273,7 @@ describe("duplicar y quitar filas", () => {
     const v = await batchVideo(lote.id, { kind: "adaptacion_concepto", adaptation: "Idea", note: "Más luz" });
     await updateVideoChoices(ana, v.id, { clipResolution: "720p" });
     await readyReference(v.id);
+    await getPool().query("insert into video_reference_audio (video_id, mime, size, duration_ms, data) values ($1, 'audio/mp4', 3, 6000, $2)", [v.id, Buffer.from("m4a")]);
     // Un desglose de otras indicaciones (replicar, sin nota): no vale y no se copia.
     await getPool().query("insert into video_analyses (video_id, version, status, reference_media_id, created_by) values ($1, 1, 'done', 'media-1', $2)", [
       v.id,
@@ -223,6 +281,8 @@ describe("duplicar y quitar filas", () => {
     ]);
 
     const copy = await duplicateBatchVideo(ana, lote.id, v.id);
+    // También el audio de la referencia («Audio original» del montaje).
+    expect((await getPool().query("select data from video_reference_audio where video_id = $1", [copy.id])).rows[0].data.toString()).toBe("m4a");
     expect(copy).toMatchObject({
       batchId: lote.id,
       productId: lampara.id,

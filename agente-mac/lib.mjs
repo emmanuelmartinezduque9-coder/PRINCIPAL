@@ -18,7 +18,7 @@ export function cookieArgs(file = COOKIES_FILE, exists = existsSync) {
   return exists(file) ? ["--cookies", file] : ["--cookies-from-browser", "brave"];
 }
 
-export const VERSION = "1.3.0";
+export const VERSION = "1.3.1";
 
 /** Sitios de los que se descarga, con sus subdominios. La misma lista que el servidor. */
 export const LINK_HOSTS = ["instagram.com", "tiktok.com", "youtube.com", "youtu.be", "facebook.com", "fb.watch"];
@@ -652,6 +652,13 @@ export function checkSpec(task) {
   if (!spec.clips.every((clip) => clip && ["hook", "body", "clip"].includes(clip.role) && allowedClipUrl(clip.url))) return "La ficha trae un clip que no es de Higgsfield";
   if (spec.song != null && spec.song.url !== `/api/agente/tareas/${task.taskId}/cancion`) return "La ficha trae una canción que no es de esta tarea";
   if (spec.editReferenceUrl != null && typeof spec.editReferenceUrl !== "string") return "La ficha de montaje no se entiende";
+  const audio = spec.referenceAudio;
+  if (audio != null) {
+    // «Audio original»: el audio de la referencia, por la ruta de esta tarea o por su enlace (de un sitio admitido).
+    const web = audio.source === "web" && audio.url === `/api/agente/tareas/${task.taskId}/audio-referencia`;
+    const link = audio.source === "enlace" && typeof audio.url === "string" && allowedUrl(audio.url);
+    if (!web && !link) return "La ficha trae un audio de referencia que no es de esta tarea";
+  }
   return null;
 }
 
@@ -671,7 +678,8 @@ export function selfCheckOf(result, withReference) {
 
 /**
  * Una tarea `montaje`: en una carpeta temporal propia descarga los clips (de Higgsfield, sin la
- * ficha) y la canción (de la web, con la ficha); si hay referencia de edición, la trae con yt-dlp
+ * ficha) y la canción (de la web, con la ficha) o, sin canción, el audio de la referencia (de la
+ * web, o por su enlace con yt-dlp); si hay referencia de edición, la trae con yt-dlp
  * (mismos argumentos y lista de sitios) y la desglosa con rea-video; lanza `montar_auto.py` con la
  * ficha local; sube el MP4 por trozos con la sesión de la reserva y manda la autocomprobación.
  */
@@ -708,6 +716,28 @@ async function runMontaje(config, deps, task, { log, finish, giveUp, lost }) {
     }
 
     const avisos = [];
+    // «Audio original»: el audio del vídeo de referencia, desde 0 (sin canción; los clips salen mudos).
+    let referenceAudio = null;
+    if (!spec.song && spec.referenceAudio) {
+      if (spec.referenceAudio.source === "web") {
+        const response = await call(config, deps, "GET", spec.referenceAudio.url, { timeout: 2 * 60_000 }).catch(() => null);
+        if (response?.status === 409) return lost();
+        if (!response?.ok) return await giveUp(`No se pudo traer el audio de la referencia (${response?.status ?? "sin respuesta"})`);
+        const bytes = Buffer.from(await response.arrayBuffer());
+        if (bytes.length === 0 || bytes.length > MAX_SONG_DOWNLOAD_BYTES) return await giveUp("El audio de la referencia no es válido");
+        const file = path.join(dir, "referencia-audio.m4a");
+        await deps.fs.writeFile(file, bytes, { mode: 0o600 });
+        referenceAudio = { path: file };
+      } else {
+        const file = path.join(dir, "referencia-audio.mp4");
+        log(`Trayendo el audio de la referencia ${spec.referenceAudio.url}`);
+        const got = await download(config, deps, task, ytDlpArgs(new URL(spec.referenceAudio.url).href, file));
+        if (got.lost) return lost();
+        if (got.ok && (await sizeOf(deps.fs, file))) referenceAudio = { path: file };
+        else avisos.push("No se pudo traer el audio de la referencia: el vídeo queda sin él");
+      }
+    }
+
     let breakdown = null;
     if (spec.editReferenceUrl) {
       if (!allowedUrl(spec.editReferenceUrl)) {
@@ -738,7 +768,7 @@ async function runMontaje(config, deps, task, { log, finish, giveUp, lost }) {
     const work = path.join(dir, "trabajo");
     await deps.fs.mkdir(work, { mode: 0o700 });
     const specPath = path.join(dir, SPEC_FILE);
-    await deps.fs.writeFile(specPath, JSON.stringify({ ...spec, clips, song, referencia: breakdown ? { breakdown } : null, avisos }), { mode: 0o600 });
+    await deps.fs.writeFile(specPath, JSON.stringify({ ...spec, clips, song, referenceAudio, referencia: breakdown ? { breakdown } : null, avisos }), { mode: 0o600 });
     log("Lanzando el montador.");
     const ran = await runTool(config, deps, task, config.uv ?? "uv", montadorArgs(paths.script, specPath, work), {
       timeoutMs: MONTADOR_TIMEOUT_MS,

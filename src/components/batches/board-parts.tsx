@@ -1,7 +1,7 @@
 "use client";
 
 import { useQueryClient } from "@tanstack/react-query";
-import { Copy, Loader2, Package, Trash2, TriangleAlert } from "lucide-react";
+import { Clapperboard, Copy, Loader2, Package, Trash2, TriangleAlert } from "lucide-react";
 import { useId, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -12,6 +12,8 @@ import { useReferenceUploads } from "@/components/videos/upload-provider";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import type { VariantJson } from "./batch-fields";
+import { linkLabel } from "@/lib/links";
+import { EditReferenceButton, EditReferenceField } from "./edit-reference";
 import { Indications } from "./indications";
 import { RISK_LABELS, type BatchRowJson, type BatchViewJson } from "./labels";
 import { Switch } from "@/components/ui/switch";
@@ -38,8 +40,9 @@ export function RiskChip({ risks }: { risks: BatchRowJson["risks"] }) {
 
 /**
  * Cabecera de un producto del lote: portada grande, nombre, cuántos vídeos, las variantes que
- * usan sus vídeos y sus «Indicaciones» plegadas (las cambia quien creó el lote; al guardarlas, los
- * desgloses de esos vídeos quedan por repetir).
+ * usan sus vídeos, sus «Indicaciones» plegadas (las cambia quien creó el lote; al guardarlas, los
+ * desgloses de esos vídeos quedan por repetir) y su «Edición de referencia» (al cambiarla pasa a
+ * las filas del grupo que no tienen una propia).
  */
 export function GroupHeader({ batchId, group, editable, variants }: { batchId: number; group: GroupJson; editable: boolean; variants?: VariantJson[] }) {
   const client = useQueryClient();
@@ -47,6 +50,16 @@ export function GroupHeader({ batchId, group, editable, variants }: { batchId: n
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState(group.notes ?? "");
   const [saving, setSaving] = useState(false);
+  const [refOpen, setRefOpen] = useState(false);
+
+  async function saveEditReference(url: string | null) {
+    try {
+      await api(`/api/lotes/${batchId}/productos/${group.productId}`, { method: "PUT", body: JSON.stringify({ editReferenceUrl: url }) });
+      await client.invalidateQueries({ queryKey: ["batch", batchId] });
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "No se pudo guardar la edición de referencia.");
+    }
+  }
 
   async function save() {
     setSaving(true);
@@ -88,44 +101,63 @@ export function GroupHeader({ batchId, group, editable, variants }: { batchId: n
             </span>
           ) : null}
         </div>
-        <Indications
-          value={group.notes ?? ""}
-          open={open}
-          editable={editable}
-          onOpenChange={(next) => {
-            if (next) setDraft(group.notes ?? "");
-            setOpen(next);
-          }}
-        >
-          {editable ? (
-            <div className="flex flex-col gap-2">
-              <Textarea
-                id={id}
-                autoFocus
-                aria-label={`Indicaciones para los vídeos de ${group.name}`}
-                placeholder={`Para todos los vídeos de ${group.name}`}
-                value={draft}
-                maxLength={MAX_PRODUCT_NOTES}
-                rows={3}
-                onChange={(event) => setDraft(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Escape") setOpen(false);
-                }}
-              />
-              <div className="flex justify-end gap-2">
-                <Button variant="ghost" className="h-8 px-3" disabled={saving} onClick={() => setOpen(false)}>
-                  Cancelar
-                </Button>
-                <Button className="h-8 gap-1.5 px-3" disabled={saving || draft.trim() === (group.notes ?? "").trim()} onClick={() => void save()}>
-                  {saving ? <Loader2 className="animate-spin" aria-hidden /> : null}
-                  Guardar
-                </Button>
+        <div className="flex min-w-0 items-start gap-3">
+          <Indications
+            className="min-w-0 flex-1"
+            value={group.notes ?? ""}
+            open={open}
+            editable={editable}
+            onOpenChange={(next) => {
+              if (next) setDraft(group.notes ?? "");
+              setOpen(next);
+            }}
+          >
+            {editable ? (
+              <div className="flex flex-col gap-2">
+                <Textarea
+                  id={id}
+                  autoFocus
+                  aria-label={`Indicaciones para los vídeos de ${group.name}`}
+                  placeholder={`Para todos los vídeos de ${group.name}`}
+                  value={draft}
+                  maxLength={MAX_PRODUCT_NOTES}
+                  rows={3}
+                  onChange={(event) => setDraft(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Escape") setOpen(false);
+                  }}
+                />
+                <div className="flex justify-end gap-2">
+                  <Button variant="ghost" className="h-8 px-3" disabled={saving} onClick={() => setOpen(false)}>
+                    Cancelar
+                  </Button>
+                  <Button className="h-8 gap-1.5 px-3" disabled={saving || draft.trim() === (group.notes ?? "").trim()} onClick={() => void save()}>
+                    {saving ? <Loader2 className="animate-spin" aria-hidden /> : null}
+                    Guardar
+                  </Button>
+                </div>
               </div>
-            </div>
-          ) : (
-            <p className="text-sm whitespace-pre-line text-muted-foreground">{group.notes}</p>
-          )}
-        </Indications>
+            ) : (
+              <p className="text-sm whitespace-pre-line text-muted-foreground">{group.notes}</p>
+            )}
+          </Indications>
+          {editable ? (
+            <EditReferenceButton value={group.editReferenceUrl ?? ""} open={refOpen} onOpenChange={setRefOpen} />
+          ) : group.editReferenceUrl ? (
+            <a
+              href={group.editReferenceUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg border border-brand/30 bg-brand/10 px-2.5 text-sm text-brand-ink"
+            >
+              <Clapperboard className="size-4" aria-hidden />
+              {linkLabel(group.editReferenceUrl).host}
+            </a>
+          ) : null}
+        </div>
+        {editable && refOpen ? (
+          <EditReferenceField value={group.editReferenceUrl ?? ""} onSave={saveEditReference} onClose={() => setRefOpen(false)} />
+        ) : null}
       </div>
     </div>
   );

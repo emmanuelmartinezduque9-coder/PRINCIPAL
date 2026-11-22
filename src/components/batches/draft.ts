@@ -58,6 +58,8 @@ export interface Group {
   hookSeconds: number;
   /** La variante que reciben las tarjetas nuevas (`null`: las fotos de siempre). */
   variant: number | null;
+  /** «Edición de referencia» del grupo: la de cada tarjeta que no tenga la suya (vacío: ninguna). */
+  editReference: string;
   rows: Row[];
 }
 
@@ -82,6 +84,7 @@ export const newGroup = (productId: number | null = null): Group => ({
   kind: "replicar",
   hookSeconds: DEFAULT_HOOK,
   variant: null,
+  editReference: "",
   rows: [],
 });
 
@@ -92,7 +95,7 @@ export function hasContent(draft: Draft): boolean {
   return (
     draft.name.trim() !== "" ||
     draft.batchId !== null ||
-    draft.groups.some((group) => group.productId !== null || group.notes.trim() !== "" || group.rows.length > 0)
+    draft.groups.some((group) => group.productId !== null || group.notes.trim() !== "" || group.editReference !== "" || group.rows.length > 0)
   );
 }
 
@@ -172,8 +175,14 @@ function parseGroup(value: unknown): Group | null {
     kind: kindOf(value.kind),
     hookSeconds: hookOf(value.hookSeconds),
     variant: isId(value.variant) ? value.variant : null,
+    editReference: text(value.editReference).slice(0, 2000),
     rows: Array.isArray(value.rows) ? value.rows.map(parseRow).filter((row): row is Row => row !== null) : [],
   };
+}
+
+/** La «Edición de referencia» que vale para una tarjeta: la suya o, si no tiene, la de su grupo. */
+export function effectiveEditReference(group: Pick<Group, "editReference">, row: Pick<Row, "editReference">): string {
+  return row.editReference.trim() || group.editReference.trim();
 }
 
 /** Lee lo guardado por `serializeDraft`. Lo que no vale se descarta; sin nada útil, `null`. */

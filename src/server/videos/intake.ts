@@ -7,21 +7,25 @@ import { linkUrlOfTask } from "@/server/agent-tasks";
 import { getActiveUser } from "@/server/auth";
 import {
   detectCuts,
+  extractAudio,
   extractFrames,
   frameTimesMs,
   MediaError,
+  MAX_REFERENCE_AUDIO_MS,
   MIN_REFERENCE_MS,
   normalizeClip,
   probeVideo,
 } from "@/server/media/ffmpeg";
 import { autoRequestAnalysis } from "@/server/videos/analysis";
-import { clipPath, discardUpload, PREPARE_FAILED, REFERENCE_JOB, UPLOAD_GONE, uploadPath } from "@/server/videos/upload";
+import { MAX_REFERENCE_AUDIO_BYTES } from "@/db/schema";
+import { audioPath, clipPath, discardUpload, PREPARE_FAILED, REFERENCE_JOB, UPLOAD_GONE, uploadPath } from "@/server/videos/upload";
 import { getVideoFor, segmentMsFor } from "@/server/videos/videos";
 
 /**
  * Preparación de la referencia (trabajo `video.referencia`): del archivo subido salen la
  * duración y el tamaño, los fotogramas (a la base de datos), los cortes de plano y un recorte
- * normalizado de 30 s como mucho (con «Solo gancho», solo los segundos del gancho), que se sube al Higgsfield de quien creó el vídeo. El vídeo no
+ * normalizado de 30 s como mucho (con «Solo gancho», solo los segundos del gancho), que se sube al Higgsfield de quien creó el vídeo,
+ * y su pista de audio (`video_reference_audio`: «Audio original» en el montaje). El vídeo no
  * se guarda: los archivos temporales se borran siempre al acabar, bien o mal. Un fallo deja la
  * referencia en error con el motivo en español y no se reintenta (el archivo ya no está).
  */
@@ -52,6 +56,22 @@ async function markFailed(videoId: number, message: string): Promise<void> {
     .update(schema.videos)
     .set({ referenceStatus: "failed", referenceError: message, updatedAt: new Date() })
     .where(and(eq(schema.videos.id, videoId), eq(schema.videos.referenceStatus, "processing")));
+}
+
+/**
+ * La pista de audio de la referencia para el montaje, o `null` si no trae audio, pesa demasiado o
+ * no se pudo sacar: eso no estropea la referencia (el montaje cae al enlace, si lo hay).
+ */
+async function referenceAudio(file: string, out: string, durationMs: number): Promise<{ data: Buffer; durationMs: number } | null> {
+  try {
+    if (!(await extractAudio(file, out))) return null;
+    const data = await fs.readFile(out);
+    if (data.length === 0 || data.length > MAX_REFERENCE_AUDIO_BYTES) return null;
+    return { data, durationMs: Math.min(durationMs, MAX_REFERENCE_AUDIO_MS) };
+  } catch (error) {
+    console.warn("[videos] No se pudo guardar el audio de la referencia:", error instanceof Error ? error.message : error);
+    return null;
+  }
 }
 
 /** Sube el recorte; solo si Higgsfield no responde lo vuelve a intentar (3 veces en total, cada 5 s). */
@@ -91,6 +111,7 @@ async function prepare(ctx: JobContext, videoId: number, uploadId: string, deps:
   const cutsMs = (await detectCuts(file, segmentDurationMs)).filter((ms) => ms > 0 && ms < segmentDurationMs);
   const clip = clipPath(uploadId);
   await normalizeClip(file, clip, segmentDurationMs);
+  const audio = await referenceAudio(file, audioPath(uploadId), probe.durationMs);
   // El archivo que trajo el Mac queda con origen «enlace» y la dirección que se pegó.
   const origin =
     session.agentTaskId === null
@@ -127,6 +148,13 @@ async function prepare(ctx: JobContext, videoId: number, uploadId: string, deps:
     if (updated.length === 0) {
       console.warn(`[videos] La referencia del vídeo ${video.id} ya no se esperaba: su resultado no se guarda.`);
       return;
+    }
+    // El audio es el de esta referencia: el de una anterior deja de valer.
+    await tx.delete(schema.videoReferenceAudio).where(eq(schema.videoReferenceAudio.videoId, video.id));
+    if (audio) {
+      await tx
+        .insert(schema.videoReferenceAudio)
+        .values({ videoId: video.id, mime: "audio/mp4", size: audio.data.length, durationMs: audio.durationMs, data: audio.data });
     }
     await tx.delete(schema.videoFrames).where(eq(schema.videoFrames.videoId, video.id));
     await tx.insert(schema.videoFrames).values(

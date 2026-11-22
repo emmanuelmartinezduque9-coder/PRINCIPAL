@@ -247,7 +247,7 @@ describe("lote v2: «Por revisar» y nombre automático", () => {
     const REEL = "https://www.instagram.com/reel/abc/";
     const queued = { url: REEL, status: "queued", error: null } as const;
     const downloading = { url: REEL, status: "downloading", error: null } as const;
-    const failed = { url: REEL, status: "failed", error: "No se pudo descargar el enlace. Sube el archivo del vídeo." } as const;
+    const failed = { url: REEL, status: "failed", error: "Enlace no disponible" } as const;
 
     // Un vídeo nuevo esperando su enlace no es una subida interrumpida.
     expect(referenceState(row({ referenceStatus: "uploading", link: queued }), idle)).toEqual({ label: "En cola", tone: "busy" });
@@ -260,15 +260,17 @@ describe("lote v2: «Por revisar» y nombre automático", () => {
     // La subida de un archivo en este navegador manda sobre el enlace.
     expect(referenceState(row({ link: queued }), { kind: "uploading", fraction: 0.5 }).label).toBe("Subiendo 50 %");
 
-    // Sin referencia, el enlace fallido es el problema de la fila, con «Reintentar enlace».
+    // Sin referencia, el enlace fallido es el problema de la fila: un estado neutro («No disponible», sin
+    // rojo), con «Reintentar» y «Cambiar enlace»; la fila sigue en «Por revisar».
     const states = (r: BatchRowJson) => [referenceState(r, idle), analysisState(r), generationState(r.frame, "frame"), generationState(r.clip, "clip")];
     const noReference = row({ referenceStatus: "failed", referenceError: failed.error, link: failed, analysis: null });
-    expect(rowProblem(noReference, states(noReference))).toEqual({ message: failed.error, link: REEL });
+    expect(referenceState(noReference, idle)).toEqual({ label: "No disponible", tone: "off" });
+    expect(rowProblem(noReference, states(noReference))).toEqual({ message: "Enlace no disponible", link: REEL, neutral: true });
     expect(linkNotice(noReference)).toBeNull();
     expect(needsReview(noReference)).toBe(true);
     // En un vídeo ajeno se ve el fallo, pero no se ofrece reintentar.
     const foreign = row({ referenceStatus: "failed", referenceError: failed.error, link: failed, analysis: null, mine: false });
-    expect(rowProblem(foreign, states(foreign))).toEqual({ message: failed.error, link: null });
+    expect(rowProblem(foreign, states(foreign))).toEqual({ message: failed.error, link: null, neutral: true });
 
     // Sobre una referencia que sigue lista no es un fallo de la fila: un aviso aparte, y el problema
     // de la fila (si lo hay) sigue siendo el de sus pasos.

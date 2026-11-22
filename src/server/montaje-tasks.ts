@@ -9,7 +9,7 @@ import { detectVideoType } from "@/server/media/detect";
 import { MediaError, probeVideo } from "@/server/media/ffmpeg";
 import { appendTaskFileChunk, completeTaskFile, openSongUpload, removeSongFile, type TaskFileRules } from "@/server/song-downloads";
 import { CHUNK_BYTES } from "@/server/videos/upload";
-import { batchOfVideo, cleanSelfCheck, failEdit, MAX_EDIT_BYTES, saveEdit, settleBatch, type EditSpec } from "@/server/videos/edits";
+import { batchOfVideo, cleanSelfCheck, failEdit, MAX_EDIT_BYTES, readReferenceAudio, referenceAudioRouteOf, saveEdit, settleBatch, type EditSpec } from "@/server/videos/edits";
 
 /**
  * El montaje en el Mac, del lado del protocolo del agente (`src/server/agent.ts` llama aquí según
@@ -26,6 +26,7 @@ const TASK_LOST = "Esta tarea ya no es tuya.";
 const INCOMPLETE = "El vídeo montado no ha llegado entero.";
 const NOT_A_VIDEO = "El Mac entregó un archivo que no es un vídeo.";
 const NO_SONG = "Esta tarea no lleva canción.";
+const NO_REFERENCE_AUDIO = "Esta tarea no lleva el audio de la referencia.";
 const NO_DETAIL = "El Mac no dio detalles.";
 const MAX_ERROR = 500;
 
@@ -192,5 +193,27 @@ export async function montajeSongResponse(agentId: number, taskId: number): Prom
   const body = new Uint8Array(song.data);
   return new Response(body, {
     headers: { "Content-Type": song.mime, "Content-Length": String(body.length), "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" },
+  });
+}
+
+/**
+ * El audio de la referencia de un montaje («Audio original»), para el Mac que tiene reservada la
+ * tarea (409 si no la tiene, con la misma reserva que la canción). 404 si la ficha no lo lleva por
+ * la web o ya no está.
+ */
+export async function montajeReferenceAudioResponse(agentId: number, taskId: number): Promise<Response> {
+  if (!Number.isSafeInteger(taskId) || taskId <= 0) throw taskLost();
+  const [task] = await getDb()
+    .select({ payload: agentTasks.payload, videoId: agentTasks.videoId })
+    .from(agentTasks)
+    .where(and(eq(agentTasks.id, taskId), eq(agentTasks.kind, MONTAJE_TASK), eq(agentTasks.agentId, agentId), eq(agentTasks.status, "leased")));
+  if (!task) throw taskLost();
+  const wanted = (task.payload as EditSpec | null)?.referenceAudio;
+  if (wanted?.source !== "web" || wanted.url !== referenceAudioRouteOf(taskId) || task.videoId === null) throw new HttpError(404, NO_REFERENCE_AUDIO);
+  const audio = await readReferenceAudio(task.videoId);
+  if (!audio) throw new HttpError(404, NO_REFERENCE_AUDIO);
+  const body = new Uint8Array(audio.data);
+  return new Response(body, {
+    headers: { "Content-Type": audio.mime, "Content-Length": String(body.length), "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" },
   });
 }

@@ -111,6 +111,17 @@ class Plan(unittest.TestCase):
         plan, _ = ma.construir_plan(dict(SPEC), [('hook', '/w/0.mp4')], '/w', '/f.ttf')
         self.assertEqual(plan['clips'][0]['role'], 'replica')
 
+    def test_audio_original_es_el_de_la_referencia_desde_0(self):
+        # Sin canción y con el audio de la referencia: suena desde 0, en réplica y en gancho + cuerpos.
+        spec = dict(SPEC, kind='replicar', song=None, referenceAudio=dict(path='/w/ref.m4a'))
+        for clips in ([('clip', '/w/0.mp4')], [('hook', '/w/0.mp4'), ('body', '/w/1.mp4')]):
+            plan, avisos = ma.construir_plan(spec, clips, '/w', '/f.ttf', gancho=(0, 48), con_audio=True)
+            self.assertEqual(plan['audio'], dict(mode='externo', path='/w/ref.m4a', offset=0, nota=ma.NOTA_REFERENCIA))
+            self.assertEqual(avisos, [])
+        # Con canción, manda la canción.
+        plan, _ = ma.construir_plan(dict(SPEC, referenceAudio=dict(path='/w/ref.m4a')), [('clip', '/w/0.mp4')], '/w', '/f.ttf')
+        self.assertEqual(plan['audio']['mode'], 'cancion')
+
     def test_las_pistas_de_la_referencia_entran_en_el_ritmo(self):
         pistas = ma.pistas_referencia(breakdown([3.0, 1.0, 1.0, 1.0, 1.3, 1.2], texts_from=4))
         plan, _ = ma.construir_plan(SPEC, [('hook', '/0'), ('body', '/1')], '/w', '/f.ttf', gancho=(0, 96), pistas=pistas)
@@ -201,6 +212,24 @@ class MontajeDeVerdad(unittest.TestCase):
         self.assertEqual(code, 0, result)
         self.assertIn(ma.SIN_AUDIO, result['avisos'])
         self.assertTrue(any(s['codec_type'] == 'audio' for s in self.probe(work / 'salida.mp4')['streams']))
+
+    def test_replica_con_el_audio_de_la_referencia(self):
+        ref_audio = self.tmp / 'referencia.m4a'
+        ffmpeg('-f', 'lavfi', '-i', 'sine=frequency=330:duration=10', '-c:a', 'aac', str(ref_audio))
+        spec = dict(SPEC, kind='replicar', hookMs=None, song=None, clips=[dict(role='clip', path=str(self.body))],
+                    referenceAudio=dict(path=str(ref_audio)))
+        code, result, work = self.montar('replica-audio-referencia', spec)
+        self.assertEqual(code, 0, result)
+        self.assertNotIn(ma.SIN_AUDIO, result['avisos'])
+        info = self.probe(work / 'salida.mp4')
+        audio = next(s for s in info['streams'] if s['codec_type'] == 'audio')
+        # Recortado a lo que dura el montaje (la referencia dura más).
+        self.assertLessEqual(float(audio['duration']), result['duracion_s'] + 0.1)
+        applied = json.loads((work / 'revision' / 'salida - plan-aplicado.json').read_text())
+        self.assertEqual((applied['audio']['mode'], applied['audio']['offset_s']), ('externo', 0.0))
+        # Sin el archivo: el motivo.
+        code, result, _ = self.montar('sin-audio', dict(spec, referenceAudio=dict(path=str(self.tmp / 'no.m4a'))))
+        self.assertEqual((code, result), (1, dict(ok=False, error='Falta el audio de la referencia descargado')))
 
     def test_replica_con_cancion_y_referencia_el_drop_al_empezar_el_segundo_plano(self):
         ref = self.tmp / 'breakdown.json'

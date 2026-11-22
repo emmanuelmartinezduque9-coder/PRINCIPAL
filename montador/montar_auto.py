@@ -5,7 +5,8 @@ Uso (lo lanza el agente del Mac, agente-mac/lib.mjs, con `uv run … python mont
   python montar_auto.py <ficha.json> <carpeta_de_trabajo>
 
 La ficha es la «ficha de montaje» que hace la web (src/server/videos/edits.ts) con las rutas locales que
-añade el agente: clips[].path (gancho + cuerpos en orden, o el clip), song.path (+ dropMs/startMs), texts
+añade el agente: clips[].path (gancho + cuerpos en orden, o el clip), song.path (+ dropMs/startMs) o, sin
+canción, referenceAudio.path (el audio del vídeo de referencia, «Audio original»), texts
 (main, cta), product, hookMs y, si hubo referencia de edición, referencia.breakdown (el breakdown.json de
 rea-video). Deja en la carpeta de trabajo:
   salida.mp4        el vídeo montado
@@ -20,7 +21,9 @@ Qué decide solo (el resto lo decide montador.py, como en el pedido 54; ver docs
     gancho; el clip generado puede ser más largo), sin pasar de una cola IA; los cuerpos van con in/out
     automáticos y el drop cae al empezar el cuerpo. Sin cuerpos, el gancho se monta como una réplica.
   - Réplica/adaptación: un clip con in/out automáticos; con canción, el drop al empezar el 2º plano.
-  - Sin canción: el audio del clip si lo tiene; si no (Seedance sale mudo), silencio y un aviso.
+  - Sin canción, «Audio original» = el audio del vídeo de REFERENCIA (`referenceAudio`): modo «referencia»,
+    un archivo externo que suena desde 0 (el clip calca la referencia: sin alinear ningún drop) y se recorta a lo
+    que dure el montaje. Sin él: el audio del clip si lo tiene; si no (Seedance sale mudo), silencio y un aviso.
   - Canción sin drop marcado: suena desde su marca de inicio.
   - Referencia de edición: de sus planos salen las duraciones del patrón (cuerpo y final) y dónde entra el
     CTA (último o penúltimo corte); ver `pistas_referencia`.
@@ -46,6 +49,7 @@ RESULTADO = 'resultado.json'
 HOOK_MAX_S = m.PATRON['hook_max_s']
 SIN_LIBROSA = 'Sin librosa: los cortes no se ajustan al beat'
 SIN_AUDIO = 'Sin canción y los clips no traen audio: el vídeo queda en silencio. Elige una canción.'
+NOTA_REFERENCIA = 'audio del vídeo de referencia («Audio original»), desde 0 y recortado al montaje'
 
 
 class Fallo(Exception):
@@ -226,6 +230,9 @@ def construir_plan(spec, clips, work, font, gancho=None, pistas=None, con_audio=
             shown = {} if tipo == 'gancho+cuerpo' else {'plano': 1}
             audio = dict(mode='cancion', song=song['path'], drop=float(drop_ms) / 1000, product_shown=shown)
         audio.update(music_gain_db=0, peak_limit=0.94)
+    elif (spec.get('referenceAudio') or {}).get('path'):
+        # Modo «referencia»: el montador lo hace con su audio externo, desde 0 y recortado a la duración.
+        audio = dict(mode='externo', path=spec['referenceAudio']['path'], offset=0, nota=NOTA_REFERENCIA)
     elif tipo == 'replica' and len(plan_clips) == 1 and con_audio:
         audio = dict(mode='original')
     else:
@@ -287,6 +294,8 @@ def montar(spec, work, fuente=None):
         norm.append((c.get('role'), normalizar(c['path'], str(norm_dir / f'{i:02d}-{c.get("role")}.mp4'))))
     if spec.get('song') and not Path(spec['song'].get('path', '')).is_file():
         raise Fallo('Falta la canción descargada')
+    if not spec.get('song') and spec.get('referenceAudio') and not Path(spec['referenceAudio'].get('path', '')).is_file():
+        raise Fallo('Falta el audio de la referencia descargado')
 
     pistas = None
     ref = (spec.get('referencia') or {}).get('breakdown')

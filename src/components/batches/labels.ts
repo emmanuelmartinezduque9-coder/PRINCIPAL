@@ -102,6 +102,8 @@ export function referenceState(row: BatchRowJson, upload: LocalUpload): StepStat
   if (link && row.referenceStatus !== "processing") {
     return link.status === "queued" ? { label: "En cola", tone: "busy" } : { label: "Descargando en el Mac…", tone: "busy" };
   }
+  // El enlace no llegó (ni con los reintentos automáticos): estado neutro, no un error.
+  if (failedLink(row) && row.referenceStatus === "failed") return { label: "No disponible", tone: "off" };
   switch (row.referenceStatus) {
     case "ready":
       if (row.referenceOutdated) return { label: "Resubir", tone: "error", detail: "El gancho ha cambiado: vuelve a subir el vídeo de referencia en su página." };
@@ -119,12 +121,13 @@ export function referenceState(row: BatchRowJson, upload: LocalUpload): StepStat
 
 /**
  * Lo que falla en una fila y se enseña bajo ella: el primer paso con error. Si lo que falló es la
- * referencia porque el Mac no pudo traer su enlace, `link` es esa dirección: se puede reintentar.
+ * referencia porque el Mac no pudo traer su enlace, `link` es esa dirección (se puede reintentar o
+ * cambiar) y `neutral` dice que se enseña como estado, no como error.
  */
-export function rowProblem(row: BatchRowJson, states: StepState[]): { message: string; link: string | null } | null {
+export function rowProblem(row: BatchRowJson, states: StepState[]): { message: string; link: string | null; neutral?: true } | null {
   const link = failedLink(row);
   if (link && row.referenceStatus !== "ready") {
-    return { message: link.error ?? "No se pudo descargar el enlace.", link: row.mine ? link.url : null };
+    return { message: link.error ?? "Enlace no disponible", link: row.mine ? link.url : null, neutral: true };
   }
   const detail = states.find((state) => state.tone === "error" && state.detail && !state.quiet)?.detail;
   return detail ? { message: detail, link: null } : null;
@@ -240,6 +243,7 @@ export const videoHref = (row: Pick<BatchRowJson, "productId" | "id">) => `/prod
  */
 export function needsReview(row: BatchRowJson, upload: LocalUpload = { kind: "idle" }): boolean {
   if (ready.review(row)) return true;
+  if (failedLink(row) && row.referenceStatus !== "ready" && upload.kind !== "uploading") return true;
   if ([row.frame.current?.status, row.clip.current?.status].includes("unknown")) return true;
   const states = [referenceState(row, upload), analysisState(row), generationState(row.frame, "frame"), generationState(row.clip, "clip")];
   return states.some((state) => state.tone === "error" && !state.quiet);

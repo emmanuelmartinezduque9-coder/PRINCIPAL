@@ -519,8 +519,8 @@ describe("canciones", () => {
     };
   }
 
-  it("el Mac es de la versión 1.3.0 (canciones y montaje)", () => {
-    expect(VERSION).toBe("1.3.0");
+  it("el Mac es de la versión 1.3.1 (canciones, montaje y el audio de la referencia)", () => {
+    expect(VERSION).toBe("1.3.1");
   });
 
   it("saca el audio como MP3 con una lista de argumentos fija y el enlace detrás de `--`", () => {
@@ -671,6 +671,7 @@ describe("montaje", () => {
     const site = fakeFetch({
       "/api/agente/tareas/reclamar": () => json(200, task),
       "/api/agente/tareas/9/cancion": () => new Response(Buffer.from("ID3 canción"), { status: 200 }),
+      "/api/agente/tareas/9/audio-referencia": () => new Response(Buffer.from("m4a referencia"), { status: 200 }),
       ...over,
     });
     return async (url: string, init: RequestInit) => {
@@ -862,6 +863,41 @@ describe("montaje", () => {
     expect(await runOnce(montajeConfig(), montajeDeps(web(bad), q))).toBe("done");
     expect(spawned.map((call) => call.command)).toEqual(["uv"]);
     expect((q.spec()!.avisos as string[])[0]).toMatch(/no es de un sitio admitido/);
+  });
+
+  describe("«Audio original»: el audio de la referencia", () => {
+    const original = (referenceAudio: unknown) => ({ ...MONTAJE, spec: { ...MONTAJE.spec, kind: "replicar", song: null, referenceAudio } });
+
+    it("el guardado en la web: lo pide con su ficha y va en la ficha local; sin canción", async () => {
+      const p = programs({ montador: { result: RESULT } });
+      const task = original({ url: "/api/agente/tareas/9/audio-referencia", source: "web" });
+      expect(await runOnce(montajeConfig(), montajeDeps(web(task), p))).toBe("done");
+      expect(paths()).toContain("GET /api/agente/tareas/9/audio-referencia");
+      expect(paths()).not.toContain("GET /api/agente/tareas/9/cancion");
+      const spec = p.spec()!;
+      expect(spec.song).toBeNull();
+      expect(spec.referenceAudio).toEqual({ path: expect.stringMatching(/referencia-audio\.m4a$/) });
+      expect(spawned.map((call) => call.command)).toEqual(["uv"]);
+    });
+
+    it("por enlace: lo trae yt-dlp; si no puede, monta sin él y lo avisa", async () => {
+      const p = programs({ montador: { result: RESULT } });
+      expect(await runOnce(montajeConfig(), montajeDeps(web(original({ url: REF, source: "enlace" })), p))).toBe("done");
+      const yt = spawned.find((call) => call.command === "yt-dlp")!;
+      expect(yt.args).toEqual(ytDlpArgs(REF, yt.args[yt.args.indexOf("-o") + 1]));
+      expect(p.spec()!.referenceAudio).toEqual({ path: expect.stringMatching(/referencia-audio\.mp4$/) });
+    });
+
+    it("si la web retira la tarea (409) la suelta; un audio que no es de esta tarea o de un sitio admitido no se pide", async () => {
+      const p = programs({ montador: { result: RESULT } });
+      const task = original({ url: "/api/agente/tareas/9/audio-referencia", source: "web" });
+      expect(await runOnce(montajeConfig(), montajeDeps(web(task, { "/api/agente/tareas/9/audio-referencia": () => json(409) }), p))).toBe("failed");
+      expect(spawned).toEqual([]);
+      expect(calls.some((call) => call.path.endsWith("/terminar"))).toBe(false);
+      expect(checkSpec(original({ url: "/api/agente/tareas/8/audio-referencia", source: "web" }))).toMatch(/audio de referencia/);
+      expect(checkSpec(original({ url: "https://evil.com/a.m4a", source: "enlace" }))).toMatch(/audio de referencia/);
+      expect(checkSpec(original({ url: REF, source: "enlace" }))).toBeNull();
+    });
   });
 
   it("una ficha con un clip de fuera no descarga nada ni lanza nada: lo comunica", async () => {

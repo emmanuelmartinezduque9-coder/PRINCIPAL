@@ -8,7 +8,7 @@ no se queda en el Mac.
 En **Canciones → Pegar enlace** pasa lo mismo con una canción (también de SoundCloud): el Mac saca
 el audio como MP3 y la canción entra en la biblioteca, lista para marcarle el drop.
 
-Desde la versión 1.3.0 también **monta los vídeos de los lotes**: cuando un lote tiene todos sus
+Desde la versión 1.3.0 también **monta los vídeos de los lotes** (desde la 1.3.1, con «Audio original» = el audio de la referencia): cuando un lote tiene todos sus
 clips, cada vídeo se monta en este Mac con el montador (`~/.principal-tools/montador/montar_auto.py`:
 clips, canción con su drop, rótulos y, si hay, la referencia de edición analizada con rea-video) y
 el vídeo editado vuelve a la web («Descargar editados»). Solo pide montajes si encuentra

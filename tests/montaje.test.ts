@@ -26,6 +26,7 @@ import {
 import { MONTAJE_TOO_SLOW } from "@/server/montaje-tasks";
 import { POST as claimRoute } from "@/app/api/agente/tareas/reclamar/route";
 import { GET as songRoute } from "@/app/api/agente/tareas/[taskId]/cancion/route";
+import { GET as referenceAudioRoute } from "@/app/api/agente/tareas/[taskId]/audio-referencia/route";
 import { POST as finishRoute } from "@/app/api/agente/tareas/[taskId]/terminar/route";
 import { POST as startRoute } from "@/app/api/videos/[videoId]/montaje/route";
 import { PUT as textsRoute } from "@/app/api/videos/[videoId]/montaje/textos/route";
@@ -155,6 +156,8 @@ describe("ficha de montaje", () => {
         { role: "body", url: "https://d1abc.cloudfront.net/b1.mp4" },
       ],
       song: { url: `/api/agente/tareas/${taskId}/cancion`, id: song.id, dropMs: 9320, startMs: 1000 },
+      // Con canción, nunca el audio de la referencia.
+      referenceAudio: null,
       texts: { main: "EISWERK 😍", cta: "Kommentiere „EisWerk“, wenn du auch eine willst! 🤩" },
       editReferenceUrl: "https://www.instagram.com/reel/abc/",
     });
@@ -167,6 +170,57 @@ describe("ficha de montaje", () => {
     const video = await videoWithClip(dueno);
     const { taskId } = await startEdit(dueno, video.id, T0);
     expect((await taskRow(taskId)).payload).toMatchObject({ kind: "replicar", clips: [{ role: "clip", url: CLIP }], song: null, hookMs: null, editReferenceUrl: null });
+  });
+
+  it("«Audio original» es el audio de la referencia: el guardado por la web; si no, el enlace; si no hay ninguno, nada", async () => {
+    await mac();
+    const audioOf = async (video: Video) => ((await taskRow((await startEdit(dueno, video.id, T0)).taskId)).payload as EditSpec).referenceAudio;
+    // Guardado al preparar la referencia (subida o enlace): por la ruta de la tarea.
+    const guardado = await videoWithClip(dueno, { referenceSource: "link", referenceUrl: "https://www.instagram.com/reel/ref/" });
+    await getDb().insert(schema.videoReferenceAudio).values({ videoId: guardado.id, mime: "audio/mp4", size: 3, durationMs: 1000, data: Buffer.from("m4a") });
+    const { taskId } = await startEdit(dueno, guardado.id, T0);
+    expect(((await taskRow(taskId)).payload as EditSpec).referenceAudio).toEqual({ url: `/api/agente/tareas/${taskId}/audio-referencia`, source: "web" });
+    // Sin audio guardado, de un enlace: el Mac lo trae.
+    const enlace = await videoWithClip(dueno, { referenceSource: "link", referenceUrl: "https://www.instagram.com/reel/ref/" });
+    expect(await audioOf(enlace)).toEqual({ url: "https://www.instagram.com/reel/ref/", source: "enlace" });
+    // Un archivo sin audio guardado: nada.
+    expect(await audioOf(await videoWithClip(dueno, { referenceSource: "file" }))).toBeNull();
+  });
+
+  it("el audio de la referencia solo para el Mac que tiene la tarea, y solo si la ficha lo lleva", async () => {
+    const { agentId, token } = await mac();
+    const other = await createAgentToken(dueno, "Otro Mac");
+    const video = await videoWithClip(dueno);
+    await getDb().insert(schema.videoReferenceAudio).values({ videoId: video.id, mime: "audio/mp4", size: 4, durationMs: 1000, data: Buffer.from("aac!") });
+    const { taskId } = await startEdit(dueno, video.id, T0);
+    const get = (t: string, id = taskId) => referenceAudioRoute(new Request("http://localhost/x", { headers: { Authorization: `Bearer ${t}` } }), taskParams(id));
+    expect((await get(token)).status).toBe(409);
+    await claimTask(agentId, T0, CAN);
+    const response = await get(token);
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe("audio/mp4");
+    expect(Buffer.from(await response.arrayBuffer()).toString()).toBe("aac!");
+    expect((await get(other.token)).status).toBe(409);
+    expect((await referenceAudioRoute(new Request("http://localhost/x"), taskParams(taskId))).status).toBe(401);
+    // Una ficha que no lo lleva por la web (con canción, o por enlace): 404.
+    await getDb()
+      .update(schema.agentTasks)
+      .set({ payload: { ...((await taskRow(taskId)).payload as EditSpec), referenceAudio: { url: "https://www.instagram.com/reel/x/", source: "enlace" } } })
+      .where(eq(schema.agentTasks.id, taskId));
+    expect((await get(token)).status).toBe(404);
+  });
+
+  it("la edición de referencia: la del vídeo o, si no tiene, la de su producto en el lote", async () => {
+    await mac();
+    const batch = await createBatch(dueno, "Lote");
+    const product = await makeProduct(dueno, { name: "EisWerk" });
+    const GRUPO = "https://www.instagram.com/reel/grupo/";
+    const PROPIA = "https://www.instagram.com/reel/propia/";
+    await getDb().insert(schema.batchProducts).values({ batchId: batch.id, productId: product.id, editReferenceUrl: GRUPO });
+    const heredada = await videoWithClip(dueno, { batchId: batch.id }, product);
+    const propia = await videoWithClip(dueno, { batchId: batch.id, editReferenceUrl: PROPIA }, product);
+    expect((await taskRow((await startEdit(dueno, heredada.id, T0)).taskId)).payload).toMatchObject({ editReferenceUrl: GRUPO });
+    expect((await taskRow((await startEdit(dueno, propia.id, T0)).taskId)).payload).toMatchObject({ editReferenceUrl: PROPIA });
   });
 
   it("rótulos: los guardados mandan; si no, los del desglose; si no, las indicaciones y el CTA de siempre", () => {

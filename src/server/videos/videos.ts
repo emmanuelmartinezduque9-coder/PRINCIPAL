@@ -574,6 +574,19 @@ export async function productNotesOf(video: Pick<Video, "batchId" | "productId">
 }
 
 /**
+ * La «Edición de referencia» que vale para el vídeo: la suya o, si no tiene, la del producto en su
+ * lote (`batch_products.edit_reference_url`). `null` si no hay ninguna. La usa el paso de edición.
+ */
+export async function effectiveEditReferenceUrl(video: Pick<Video, "batchId" | "productId" | "editReferenceUrl">): Promise<string | null> {
+  if (video.editReferenceUrl !== null || video.batchId === null) return video.editReferenceUrl;
+  const [row] = await getDb()
+    .select({ url: schema.batchProducts.editReferenceUrl })
+    .from(schema.batchProducts)
+    .where(and(eq(schema.batchProducts.batchId, video.batchId), eq(schema.batchProducts.productId, video.productId)));
+  return row?.url ?? null;
+}
+
+/**
  * El vídeo con las indicaciones de su lote y las respuestas del dueño a las preguntas del lote: lo
  * que cuenta para el desglose (`briefOf`).
  */

@@ -9,10 +9,12 @@ import { getActiveUser } from "@/server/auth";
  * vídeos: así no hay ciclo de importaciones. No sabe nada de vídeos: solo filas de tareas.
  */
 
-/** Lo que ve la persona cuando el Mac no consigue traer un enlace. Nunca el detalle técnico. */
-export const LINK_FAILED = "No se pudo descargar el enlace. Sube el archivo del vídeo.";
-/** Lo que ve la persona cuando la tarea se pasó del tiempo máximo (reservada o esperando en la cola). */
-export const LINK_TOO_SLOW = "El Mac no trajo el enlace a tiempo. Pégalo otra vez o sube el archivo del vídeo.";
+/**
+ * Lo que ve la persona cuando el enlace no llega (el Mac no pudo, tras los reintentos automáticos,
+ * o se pasó del tiempo): un estado neutro, con «Reintentar» y «Cambiar enlace» al lado. Nunca el
+ * detalle técnico, y nunca pedirle que suba el archivo.
+ */
+export const LINK_FAILED = "Enlace no disponible";
 /** Motivo (interno, en la tarea) de una tarea que se pasó del tiempo máximo. */
 export const TASK_TOO_OLD = "La tarea superó el tiempo máximo.";
 
@@ -24,11 +26,6 @@ export const LINK_TASK = "link_download";
 export const MONTAJE_TASK = "montaje";
 
 type Db = ReturnType<typeof getDb>;
-
-/** Lo que se le dice a la persona de una tarea fallida, según el motivo apuntado en ella. */
-export function linkFailureMessage(error: string | null): string {
-  return error === TASK_TOO_OLD ? LINK_TOO_SLOW : LINK_FAILED;
-}
 
 /**
  * Cierra los enlaces vivos (en cola o reservados) de un vídeo porque otra cosa los sustituye: otro
@@ -54,7 +51,7 @@ export interface LinkState {
 function stateOf(task: { url: string; status: string; error: string | null }): LinkState | null {
   if (task.status === "queued") return { url: task.url, status: "queued", error: null };
   if (task.status === "leased") return { url: task.url, status: "downloading", error: null };
-  if (task.status === "failed") return { url: task.url, status: "failed", error: linkFailureMessage(task.error) };
+  if (task.status === "failed") return { url: task.url, status: "failed", error: LINK_FAILED };
   return null;
 }
 
