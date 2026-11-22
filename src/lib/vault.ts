@@ -19,7 +19,6 @@ import { parseVaultKey, VAULT_KEY_BYTES } from "./vault-key";
  */
 
 const VERSION = "v1";
-const KEY_BYTES = VAULT_KEY_BYTES;
 const IV_BYTES = 12;
 const TAG_BYTES = 16;
 const ALGORITHM = "aes-256-gcm";
@@ -38,7 +37,7 @@ function loadKey(): Buffer {
   const readFile = () => parseVaultKey(fs.readFileSync(file, "utf8").trim(), `La clave de ${file} no es válida`);
   if (fs.existsSync(file)) return readFile();
   fs.mkdirSync(dataDir(), { recursive: true });
-  const key = crypto.randomBytes(KEY_BYTES);
+  const key = crypto.randomBytes(VAULT_KEY_BYTES);
   try {
     fs.writeFileSync(file, key.toString("base64"), { flag: "wx", mode: 0o600 });
     return key;
@@ -66,7 +65,7 @@ function open(key: Buffer, iv: Buffer, tag: Buffer, body: Buffer, aad: Buffer): 
 
 export function encryptSecret(plain: object, context: string): string {
   const aad = Buffer.from(context, "utf8");
-  const dataKey = crypto.randomBytes(KEY_BYTES);
+  const dataKey = crypto.randomBytes(VAULT_KEY_BYTES);
   try {
     const wrapped = seal(loadKey(), dataKey, aad);
     const sealed = seal(dataKey, Buffer.from(JSON.stringify(plain), "utf8"), aad);
@@ -91,7 +90,7 @@ export function decryptSecret<T = unknown>(encrypted: string, context: string): 
   const [, wrappedB64, ivB64, tagB64, bodyB64] = parts;
   const aad = Buffer.from(context, "utf8");
   const wrappedKey = Buffer.from(wrappedB64, "base64");
-  if (wrappedKey.length !== IV_BYTES + TAG_BYTES + KEY_BYTES) throw new Error("Formato de secreto no reconocido");
+  if (wrappedKey.length !== IV_BYTES + TAG_BYTES + VAULT_KEY_BYTES) throw new Error("Formato de secreto no reconocido");
   const dataKey = open(
     loadKey(),
     wrappedKey.subarray(0, IV_BYTES),

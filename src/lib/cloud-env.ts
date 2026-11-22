@@ -22,7 +22,7 @@ export function checkCloudEnv(env: Env): { problems: string[]; warnings: string[
     problems.push("Falta VAULT_KEY (la clave que protege las conexiones guardadas).");
   } else {
     try {
-      parseVaultKey(vaultKey.trim(), "");
+      parseVaultKey(vaultKey.trim());
     } catch {
       problems.push("VAULT_KEY debe ser una clave de 32 bytes en base64.");
     }

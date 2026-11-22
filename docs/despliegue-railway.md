@@ -10,8 +10,12 @@ Antes de empezar ten a mano tu gestor de contraseñas y una terminal (en Mac: la
 
 1. Entra en <https://railway.com> y abre tu proyecto.
 2. Pulsa **New** (arriba a la derecha) → **Database** → **Add PostgreSQL**.
-3. Cuando aparezca el cuadro nuevo, ábrelo → **Settings** → en **Service Name** escribe
-   `Postgres-principal` y pulsa Enter.
+3. En tu proyecto ya hay un cuadro de la base de datos de Finanzas (probablemente se llama
+   `Postgres`). **No es ese.** El cuadro **nuevo** es el que acaba de aparecer. Ábrelo →
+   **Settings** → en **Service Name** escribe `Postgres-principal` y pulsa Enter. Hazlo ahora
+   mismo, para no confundirlas.
+4. Con `Postgres-principal` abierto, entra en la pestaña **Data**: tiene que estar **vacía** (sin
+   tablas). Si ves tablas, es la de Finanzas: te has equivocado de cuadro.
 
 > Tiene que ser una base de datos **nueva**. No uses nunca la de Finanzas: mezclar las dos
 > estropearía los datos de ambas.
@@ -47,7 +51,8 @@ openssl rand -base64 32
 ```
 
 Te imprime una línea de unos 44 caracteres que **termina en `=`**. Cópiala **exactamente** como
-sale, sin espacios ni comillas, y pégala como valor. **Guárdala también en tu gestor de
+sale, **incluido el `=` del final**, sin espacios ni comillas, y pégala como valor. Tiene que
+quedar pegada tal cual la imprime el comando. **Guárdala también en tu gestor de
 contraseñas**: si se pierde, las conexiones guardadas dejarían de poder leerse y habría que
 volver a hacerlas. Y tiene que ser **distinta** de la clave de Finanzas: no copies la de la otra
 app.
@@ -63,6 +68,12 @@ app.
 4. Copia la clave (empieza por `sk-ant-`) y pégala como valor de la variable. Solo se muestra una
    vez.
 
+Después de guardar `DATABASE_URL`, mira el valor que muestra Railway: tiene que nombrar
+`Postgres-principal` (o, al abrirla, apuntar a esa base) y **no** la base de datos de Finanzas.
+
+Si aparece el botón **Deploy** (o **Apply changes**) arriba, púlsalo para que Railway aplique las
+variables.
+
 Al guardar las variables Railway empieza a publicar. Es normal que de momento falle o no responda:
 falta el paso siguiente.
 
@@ -76,6 +87,9 @@ falta el paso siguiente.
 | Variable | Valor | Para qué sirve |
 | --- | --- | --- |
 | `PUBLIC_URL` | la dirección de tu web, con `https://` | Para que los enlaces de invitación apunten a la dirección correcta. |
+
+Si aparece el botón **Deploy** (o **Apply changes**) arriba, púlsalo para que Railway aplique las
+variables.
 
 ## 5. Esperar y crear tu cuenta
 
@@ -113,6 +127,9 @@ Abre **Deployments** → **View logs**. Las líneas que empiezan por `[nube]` di
 | `VAULT_KEY debe ser una clave de 32 bytes en base64.` | Se copió mal (cortada, con espacios o comillas). Genera otra con el mismo comando y pégala entera, tal cual sale. Si ya había conexiones guardadas con la anterior, hay que repetirlas. |
 | `En la nube no se puede desactivar el inicio de sesión (PRINCIPAL_AUTH=off).` | Borra la variable `PRINCIPAL_AUTH`. |
 | `PUBLIC_URL debe empezar por https://.` | Corrige `PUBLIC_URL`: tiene que empezar por `https://`. |
+| `Esta base de datos es la de Finanzas: PRINCIPAL necesita la suya propia.` (sale como `[nube] No se pudo preparar la base de datos: ...`) | `DATABASE_URL` apunta a la base de Finanzas. Cámbiala a `${{Postgres-principal.DATABASE_URL}}`, la del cuadro nuevo. |
+| `No se pudo preparar la base de datos: ...` (otro texto) | La base no responde o la dirección está mal. Revisa `DATABASE_URL` y que `Postgres-principal` esté activo. |
+| `No se pudo lanzar la web` / `el proceso en segundo plano` | Pulsa **Redeploy**; si se repite, avisa a quien mantiene el código. |
 | `Aviso: Falta ANTHROPIC_API_KEY: la IA no funcionará hasta añadirla.` | No es un error: la web funciona, pero sin IA. Añade `ANTHROPIC_API_KEY` cuando tengas la clave. |
 
 Otros casos:

@@ -19,9 +19,14 @@ export async function startCloud(): Promise<void> {
     process.exit(1);
   }
 
-  const url = process.env.DATABASE_URL as string;
-  await runMigrations(url);
-  await seed(url);
+  const url = (process.env.DATABASE_URL as string).trim();
+  try {
+    await runMigrations(url);
+    await seed(url);
+  } catch (error) {
+    console.error(`[nube] No se pudo preparar la base de datos: ${error instanceof Error ? error.message : String(error)}`);
+    process.exit(1);
+  }
   console.log("[nube] base de datos lista");
 
   const port = process.env.PORT ?? "3000";
@@ -41,5 +46,12 @@ export async function startCloud(): Promise<void> {
   process.on("SIGTERM", () => stop(0));
   process.on("SIGINT", () => stop(0));
   // Cualquier salida de una pieza, aunque sea limpia, cuenta como fallo: sin ella el servicio no sirve.
+  const names = ["la web", "el proceso en segundo plano"];
+  children.forEach((child, i) =>
+    child.on("error", (error) => {
+      console.error(`[nube] No se pudo lanzar ${names[i]}: ${error.message}`);
+      stop(1);
+    }),
+  );
   for (const child of children) child.on("exit", (code) => stop(code === 0 ? 1 : (code ?? 1)));
 }
