@@ -109,6 +109,25 @@ variables.
 - Entra con tu correo y contraseña.
 - Abre la pantalla **Productos** desde el móvil: se tiene que ver bien y poder crear un producto.
 
+## Vídeos (ffmpeg) — por verificar
+
+Los vídeos de referencia se procesan en el servidor con `ffmpeg` y `ffprobe`. Para que estén en
+la imagen de Railway, el repositorio trae `railpack.json` (solo paquetes del sistema:
+`deploy.aptPackages: ["ffmpeg"]`); los ajustes de publicación y de salud siguen en `railway.json`.
+
+**Estado: por verificar.** Desde el código no se puede comprobar qué lee Railway, así que tras el
+primer despliegue con este cambio quien coordina mira el registro:
+
+- Si **no** sale el aviso `[nube] Aviso: falta ffmpeg…`, funciona y se quita la marca «por verificar».
+- Si sale, se pone con la CLI de Railway una de estas variables en el servicio `principal` y se
+  vuelve a desplegar:
+  - `RAILPACK_DEPLOY_APT_PACKAGES=ffmpeg` (constructor actual, Railpack);
+  - `NIXPACKS_APT_PKGS=ffmpeg` (si el servicio usa el constructor antiguo, Nixpacks).
+- Cuál hizo falta: _(anotarlo aquí tras comprobarlo)_.
+
+Tú no tienes que hacer nada. Mientras falte ffmpeg la web arranca con normalidad y solo fallan
+los vídeos de referencia.
+
 ## Publicar un cambio más adelante
 
 Quien trabaja en el código (Claude) sube los cambios con `git push origin main`. Entonces:
@@ -132,6 +151,7 @@ Abre **Deployments** → **View logs**. Las líneas que empiezan por `[nube]` di
 | `Esta base de datos es la de Finanzas: PRINCIPAL necesita la suya propia.` (sale como `[nube] No se pudo preparar la base de datos: ...`) | `DATABASE_URL` apunta a la base de Finanzas. Cámbiala a `${{Postgres-principal.DATABASE_URL}}`, la del cuadro nuevo. |
 | `No se pudo preparar la base de datos: ...` (otro texto) | La base no responde o la dirección está mal. Revisa `DATABASE_URL` y que `Postgres-principal` esté activo. |
 | `No se pudo lanzar la web` / `el proceso en segundo plano` | Pulsa **Redeploy**; si se repite, avisa a quien mantiene el código. |
+| `Aviso: falta ffmpeg: no se podrán procesar vídeos de referencia.` | No es un error: la web funciona, pero sin vídeos. Avisa a quien mantiene el código: pone `RAILPACK_DEPLOY_APT_PACKAGES=ffmpeg` (o `NIXPACKS_APT_PKGS=ffmpeg`) en el servicio y vuelve a desplegar. Ver «Vídeos (ffmpeg)». |
 | `Aviso: Falta ANTHROPIC_API_KEY: la IA no funcionará hasta añadirla.` | No es un error: la web funciona, pero sin IA. Añade `ANTHROPIC_API_KEY` cuando tengas la clave. |
 
 Otros casos:

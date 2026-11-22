@@ -85,6 +85,17 @@ describe("límites del código", () => {
     expect(offenders).toEqual([]);
   });
 
+  it("dentro de src, solo src/server/media lanza procesos", () => {
+    const CHILD_PROCESS = /["'](node:)?child_process["']/;
+    expect(CHILD_PROCESS.test('import { spawn } from "node:child_process";')).toBe(true);
+    expect(files.some((f) => f.rel === "src/server/media/ffmpeg.ts" && CHILD_PROCESS.test(f.text))).toBe(true);
+    const offenders = files
+      .filter((f) => !f.rel.startsWith("src/server/media/"))
+      .filter((f) => CHILD_PROCESS.test(f.text))
+      .map((f) => f.rel);
+    expect(offenders).toEqual([]);
+  });
+
   it("solo src/llm importa el SDK de Anthropic", () => {
     const offenders = files
       .filter((f) => !f.rel.startsWith(LLM_LAYER))

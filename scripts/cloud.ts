@@ -4,6 +4,7 @@ import { runMigrations } from "../src/db/migrate";
 import { seed } from "../src/db/seed";
 import { checkCloudEnv } from "../src/lib/cloud-env";
 import { shutdownBudget, stopChildren } from "../src/lib/shutdown";
+import { ffmpegAvailable } from "../src/server/media/ffmpeg";
 
 /**
  * Arranque en la nube: comprueba la configuración, aplica migraciones, prepara los datos
@@ -18,6 +19,11 @@ export async function startCloud(): Promise<void> {
     for (const problem of problems) console.error(`[nube] ${problem}`);
     console.error("[nube] No se arranca. Corrige las variables del servicio en Railway (Variables) y vuelve a desplegar.");
     process.exit(1);
+  }
+
+  // Sin ffmpeg la web arranca igual; solo fallan los vídeos de referencia.
+  if (!(await ffmpegAvailable())) {
+    console.warn("[nube] Aviso: falta ffmpeg: no se podrán procesar vídeos de referencia.");
   }
 
   const url = (process.env.DATABASE_URL as string).trim();

@@ -149,3 +149,12 @@ Reformulado (antes → después):
 - «Para cada requisito guardar: cita…» → «Cada requisito se expresa con: cita…».
 - Restaurada la regla «ver demostraciones reales cuando haga falta entender el mecanismo» → «apoyarse en el archivo y las fotos del producto que entrega la aplicación».
 - Sección «De la idea a las tomas»: pasa del imperativo de tú («Empieza», «Escríbela», «Define», «Construye», «Prepara»…) al infinitivo, como el resto de la regla.
+
+## Herramientas de vídeo con ffmpeg (tarea 4)
+
+- **Tipo por contenido.** `detectVideoType` mira los primeros bytes: cabecera EBML (webm) o caja `ftyp`. Las marcas de imagen (`heic`, `heix`, `heim`, `heis`, `hevc`, `hevx`, `mif1`, `msf1`, `avif`, `avis`) se rechazan; `qt  ` es QuickTime y cualquier otra marca `ftyp` se trata como MP4.
+- **Procesos.** Solo `src/server/media/` lanza procesos, siempre con `spawn` y lista de argumentos (nunca shell), con tope de 120 s. `stderr` se recorta a 2 000 caracteres y va solo al registro del servidor; a la persona le llega un texto en español.
+- **Miniaturas y recortes no amplían**: el lado largo es «como mucho» el pedido, con medidas pares.
+- **Sin ffmpeg el arranque no falla.** `scripts/cloud.ts` escribe `[nube] Aviso: falta ffmpeg: no se podrán procesar vídeos de referencia.` y sigue.
+- **ffmpeg en Railway: por verificar.** `railpack.json` solo lleva paquetes del sistema; `railway.json` conserva los ajustes de publicación. Si tras el despliegue sale el aviso, se usa `RAILPACK_DEPLOY_APT_PACKAGES=ffmpeg` o, con Nixpacks, `NIXPACKS_APT_PKGS=ffmpeg` (ver `docs/despliegue-railway.md`).
+- **CI.** El flujo `pruebas.yml` instala ffmpeg antes de las pruebas, que usan ffmpeg real.
