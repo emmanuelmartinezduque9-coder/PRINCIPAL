@@ -283,3 +283,14 @@ decide cuando llegue ese paso (la clave iria en las variables de Railway, nunca 
 - No se ha instalado ningun programa, servicio, hook, servidor MCP ni clave. No hay costes nuevos.
 - Pendiente de tu decision: HyperFrames (subtitulos por codigo) y Apify (traer reseñas), por lo
   explicado arriba.
+
+## rea-video (22/11/2026)
+- Repo: github.com/JuneYaooo/rea-video (commit a124acd). Instalado en el Mac del dueño en
+  `~/.principal-tools/rea-video` con su propio entorno (`.venv`, Python 3.12). Pedido por el dueño (reel de alex2learn).
+- Uso: `~/.principal-tools/rea-video/.venv/bin/python -m rea_video decompose <video> -o <carpeta>`.
+  Saca planos con tiempos de corte, BPM de la música, capas superpuestas (textos, pegatinas), pistas separadas
+  (voz / música / efectos), storyboard, `breakdown.json`, `VIDEO.md` e informe HTML.
+- Prueba: wearheelit Df2tD5fhMff → 12 planos de ~1 s, BPM 114,8, en 90 s (sin modelo de visión; con VLM
+  configurado distingue mejor grabado / IA / 3D).
+- Plan: el montador lo usará para leer los cortes, el ritmo y los textos de la «edición de referencia» de cada
+  vídeo y copiarlos; y el desglose del lote puede usar sus planos.
