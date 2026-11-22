@@ -35,6 +35,9 @@ const IMAGE_CHARS = 5_000 * 3;
 /** Margen por lo que la API añade a la entrada (marcas de mensaje y de sistema). */
 const FRAMING_CHARS = 600;
 
+/** Tiempo máximo de una llamada. Si se agota no se sabe si el proveedor la cobró. */
+const REQUEST_TIMEOUT_MS = 120_000;
+
 type MessagesClient = Pick<Anthropic["beta"]["messages"], "create">;
 type CreateParams = Anthropic.Beta.Messages.MessageCreateParamsNonStreaming;
 type ApiMessage = Anthropic.Beta.Messages.BetaMessage;
@@ -96,10 +99,21 @@ export class LlmCapReachedError extends Error {
   }
 }
 
+/** Estados que no se arreglan reintentando: la petición está mal hecha o no está permitida. */
+const INVALID_REQUEST_STATUSES = new Set([400, 403, 404, 413, 422]);
+
+function callErrorMessage(status: number | null): string {
+  if (status === 401) return "Claude no acepta la clave configurada (ANTHROPIC_API_KEY); avisa al dueño.";
+  if (status === 402) return "La cuenta de Claude no tiene saldo; avisa al dueño.";
+  if (status !== null && INVALID_REQUEST_STATUSES.has(status)) return "La petición a Claude no es válida; avisa al dueño.";
+  return "Claude no ha respondido. Inténtalo de nuevo dentro de unos minutos.";
+}
+
 /**
- * La llamada no dio respuesta. `charged` dice si el proveedor pudo cobrarla: `"no"` (la rechazó
- * sin procesarla o no llegó a salir: la reserva se liberó) o `"desconocido"` (se cortó a medias
- * o falló en el servidor: lo reservado queda apuntado como gastado).
+ * La llamada no dio una respuesta que sirva. `charged` dice si el proveedor pudo cobrarla: `"no"`
+ * (la rechazó sin procesarla o no llegó a salir: la reserva se liberó) o `"desconocido"` (se
+ * cortó a medias, falló en el servidor o la respuesta no se entiende: lo reservado queda
+ * apuntado como gastado). El mensaje solo invita a reintentar cuando reintentar puede servir.
  */
 export class LlmCallError extends Error {
   constructor(
@@ -107,12 +121,7 @@ export class LlmCallError extends Error {
     public status: number | null,
     cause: unknown,
   ) {
-    super(
-      status === 401
-        ? "Claude no acepta la clave configurada (ANTHROPIC_API_KEY)."
-        : "Claude no ha respondido. Inténtalo de nuevo dentro de unos minutos.",
-      { cause },
-    );
+    super(callErrorMessage(status), { cause });
     this.name = "LlmCallError";
   }
 }
@@ -298,8 +307,11 @@ function ledgerTokens(value: number): number | undefined {
   return Number.isSafeInteger(value) && value >= 0 && value <= 2_147_483_647 ? value : undefined;
 }
 
-/** Estados con los que la API rechaza la petición sin procesarla: no se cobra. */
-const NOT_PROCESSED_STATUSES = new Set([400, 401, 402, 403, 404, 413, 422, 429]);
+/**
+ * Estados con los que la API rechaza la petición sin procesarla: no se cobra. Incluye los de
+ * saturación (409, 429, 503 y 529), que se devuelven antes de que el modelo empiece.
+ */
+const NOT_PROCESSED_STATUSES = new Set([400, 401, 402, 403, 404, 409, 413, 422, 429, 503, 529]);
 
 /** Fallos de red en los que la petición no llegó a salir. */
 const NOT_SENT_CODES = new Set(["ECONNREFUSED", "ENOTFOUND", "EAI_AGAIN", "ENETUNREACH", "EHOSTUNREACH"]);
@@ -317,8 +329,8 @@ function neverSent(error: unknown): boolean {
 /**
  * ¿Pudo cobrar el proveedor una llamada que falló? Solo se responde que no cuando es seguro:
  * la rechazó sin procesarla, la conexión no llegó a abrirse o el propio SDK la paró antes de
- * enviarla. Tiempo agotado, corte a medias, error del servidor o cualquier fallo no reconocido
- * cuentan como «no se sabe».
+ * enviarla. Tiempo agotado, corte a medias, error del servidor (500, 502, 504) o cualquier fallo
+ * no reconocido cuentan como «no se sabe».
  */
 function couldHaveCharged(error: unknown): boolean {
   if (error instanceof Anthropic.APIConnectionTimeoutError || error instanceof Anthropic.APIUserAbortError) return true;
@@ -338,6 +350,57 @@ function textOf(response: ApiMessage): string {
   return text;
 }
 
+interface Reading {
+  model: string;
+  text: string;
+  stopReason: string | null;
+  refusalCategory: string | null;
+  attempts: Attempt[];
+  usage: Usage;
+  /** `null` si algún intento no tiene precio conocido. */
+  costMicros: number | null;
+  /** Región fija en la que se ejecutó, si lleva recargo. */
+  surchargedRegion: string | null;
+}
+
+/**
+ * Saca de la respuesta lo que hace falta para cobrarla y devolverla. Lanza si no tiene la forma
+ * de un mensaje (sin `usage`, sin `content`…): entonces no se puede saber cuánto costó.
+ */
+function readResponse(requestedModel: string, response: ApiMessage): Reading {
+  const shaped =
+    typeof response === "object" &&
+    response !== null &&
+    typeof response.model === "string" &&
+    Array.isArray(response.content) &&
+    typeof response.usage === "object" &&
+    response.usage !== null &&
+    (response.stop_reason === null || typeof response.stop_reason === "string");
+  if (!shaped) throw new TypeError("La respuesta no tiene la forma de un mensaje.");
+
+  const attempts = attemptsOf(requestedModel, response);
+  const priced = attempts.every((attempt) => attempt.costMicros !== null);
+  const region = response.usage.inference_geo;
+  const surchargedRegion = typeof region === "string" && region !== "global" ? region : null;
+  const attemptsMicros = sum(attempts.map((attempt) => attempt.costMicros ?? 0));
+  const stopReason = response.stop_reason;
+  return {
+    model: response.model,
+    text: textOf(response),
+    stopReason,
+    refusalCategory: stopReason === "refusal" ? (response.stop_details?.category ?? null) : null,
+    attempts,
+    usage: {
+      inputTokens: sum(attempts.map((attempt) => attempt.inputTokens)),
+      outputTokens: sum(attempts.map((attempt) => attempt.outputTokens)),
+      cacheReadTokens: sum(attempts.map((attempt) => attempt.cacheReadTokens)),
+      cacheWriteTokens: sum(attempts.map((attempt) => attempt.cacheWriteTokens)),
+    },
+    costMicros: !priced ? null : surchargedRegion ? withRegionSurcharge(attemptsMicros) : attemptsMicros,
+    surchargedRegion,
+  };
+}
+
 function parseData<T>(schema: z.ZodType<T>, text: string): T {
   let raw: unknown;
   try {
@@ -351,22 +414,42 @@ function parseData<T>(schema: z.ZodType<T>, text: string): T {
 }
 
 /**
- * Crea una pasarela. Sin `client` usa el cliente real, con la clave de `ANTHROPIC_API_KEY` (que
- * solo se lee del entorno, no se guarda en ningún otro sitio y nunca se escribe en registros ni
- * respuestas). `client` y `now` existen para las pruebas: `now` fija la fecha del apunte y el
- * código de la aplicación no debe pasarlo.
+ * Crea una pasarela. Sin `client` usa el cliente real, con la clave de `ANTHROPIC_API_KEY`, que
+ * se lee del entorno en cada llamada (si cambia, el cliente se crea de nuevo), solo vive en la
+ * memoria del proceso y nunca se escribe en registros ni respuestas. `client` y `now` existen
+ * para las pruebas: `now` fija la fecha del apunte y el código de la aplicación no debe pasarlo.
  */
 export function createGateway(deps: { client?: MessagesClient; now?: () => Date } = {}): LlmGateway {
-  let realClient: MessagesClient | null = null;
+  let real: { apiKey: string; client: MessagesClient } | null = null;
 
   function resolveClient(): MessagesClient {
     if (deps.client) return deps.client;
     const apiKey = process.env.ANTHROPIC_API_KEY?.trim();
     if (!apiKey) throw new LlmNotConfiguredError();
-    // Sin reintentos automáticos: cada intento podría cobrarse y solo hay una reserva. Reintenta
-    // quien llama, con una reserva nueva.
-    realClient ??= new Anthropic({ apiKey, maxRetries: 0 }).beta.messages;
-    return realClient;
+    if (real?.apiKey !== apiKey) {
+      const sdk = new Anthropic({
+        apiKey,
+        // Sin reintentos automáticos: cada intento podría cobrarse y solo hay una reserva.
+        // Reintenta quien llama, con una reserva nueva.
+        maxRetries: 0,
+        timeout: REQUEST_TIMEOUT_MS,
+        // Fijo: con `ANTHROPIC_LOG=debug` en el entorno el SDK escribiría las peticiones enteras
+        // (reglas, fichas, fotos) en el registro.
+        logLevel: "warn",
+      });
+      real = { apiKey, client: sdk.beta.messages };
+    }
+    return real.client;
+  }
+
+  /** No se sabe si el proveedor cobró: lo reservado queda apuntado como gastado y marcado. */
+  async function bookUnknown(entryId: number, reservedMicros: number, detail: Record<string, unknown>): Promise<void> {
+    try {
+      await settleSpend(entryId, { costMicros: reservedMicros, detail: { ...detail, outcome: "unknown" } });
+    } catch {
+      // Si el libro no se puede actualizar, la reserva sigue contando entera: es lo prudente.
+      // El error que importa a quien llama es el de la llamada.
+    }
   }
 
   return {
@@ -402,38 +485,30 @@ export function createGateway(deps: { client?: MessagesClient; now?: () => Date 
       } catch (error) {
         const unknownOutcome = couldHaveCharged(error);
         const status = httpStatus(error);
-        try {
-          if (unknownOutcome) {
-            const name = error instanceof Error ? error.constructor.name : typeof error;
-            await settleSpend(entryId, {
-              costMicros: reservedMicros,
-              detail: { ...baseDetail, outcome: "unknown", error: { name, status } },
-            });
-          } else {
-            await releaseSpend(entryId);
-          }
-        } catch {
-          // Si el libro no se puede actualizar, la reserva sigue contando entera: es lo prudente.
-          // El error que importa a quien llama es el de la llamada.
+        if (unknownOutcome) {
+          const name = error instanceof Error ? error.constructor.name : typeof error;
+          await bookUnknown(entryId, reservedMicros, { ...baseDetail, error: { name, status } });
+        } else {
+          // Si no se puede liberar, la reserva sigue contando: es lo prudente.
+          await releaseSpend(entryId).catch(() => undefined);
         }
         throw new LlmCallError(unknownOutcome ? "desconocido" : "no", status, error);
       }
 
-      const attempts = attemptsOf(model, response);
-      const priced = attempts.every((attempt) => attempt.costMicros !== null);
-      const region = response.usage.inference_geo;
-      const surcharged = typeof region === "string" && region !== "global";
-      const attemptsMicros = sum(attempts.map((attempt) => attempt.costMicros ?? 0));
+      // El proveedor respondió, así que pudo cobrar. Si la respuesta no se entiende, no se deja
+      // la fila a medias: se apunta lo reservado.
+      let reading: Reading;
+      try {
+        reading = readResponse(model, response);
+      } catch (error) {
+        await bookUnknown(entryId, reservedMicros, { ...baseDetail, error: { name: "MalformedResponse", status: null } });
+        throw new LlmCallError("desconocido", null, error);
+      }
+
+      const { attempts, usage, stopReason, refusalCategory } = reading;
+      const priced = reading.costMicros !== null;
       // Sin precio conocido no se puede calcular: se apunta lo reservado, que es el peor caso previsto.
-      const costMicros = !priced ? reservedMicros : surcharged ? withRegionSurcharge(attemptsMicros) : attemptsMicros;
-      const usage: Usage = {
-        inputTokens: sum(attempts.map((attempt) => attempt.inputTokens)),
-        outputTokens: sum(attempts.map((attempt) => attempt.outputTokens)),
-        cacheReadTokens: sum(attempts.map((attempt) => attempt.cacheReadTokens)),
-        cacheWriteTokens: sum(attempts.map((attempt) => attempt.cacheWriteTokens)),
-      };
-      const stopReason = response.stop_reason;
-      const refusalCategory = stopReason === "refusal" ? (response.stop_details?.category ?? null) : null;
+      const costMicros = reading.costMicros ?? reservedMicros;
 
       await settleSpend(entryId, {
         costMicros,
@@ -441,7 +516,7 @@ export function createGateway(deps: { client?: MessagesClient; now?: () => Date 
         outputTokens: ledgerTokens(usage.outputTokens),
         cacheReadTokens: ledgerTokens(usage.cacheReadTokens),
         cacheWriteTokens: ledgerTokens(usage.cacheWriteTokens),
-        model: response.model,
+        model: reading.model,
         detail: {
           ...baseDetail,
           stopReason,
@@ -449,16 +524,15 @@ export function createGateway(deps: { client?: MessagesClient; now?: () => Date 
           ...(priced ? {} : { outcome: "unpriced" }),
           ...(costMicros > reservedMicros ? { overrun: true } : {}),
           ...(attempts.length > 1 || attempts[0].type !== "message" || !priced ? { attempts } : {}),
-          ...(surcharged ? { inferenceGeo: region } : {}),
+          ...(reading.surchargedRegion ? { inferenceGeo: reading.surchargedRegion } : {}),
         },
       });
 
       if (stopReason === "refusal") throw new LlmRefusalError(refusalCategory);
       if (stopReason === "max_tokens" || stopReason === "model_context_window_exceeded") throw new LlmTruncatedError();
 
-      const text = textOf(response);
-      const data = request.schema ? parseData(request.schema, text) : null;
-      return { text, data, model: response.model, usage, costMicros, spendEntryId: entryId, ruleVersions };
+      const data = request.schema ? parseData(request.schema, reading.text) : null;
+      return { text: reading.text, data, model: reading.model, usage, costMicros, spendEntryId: entryId, ruleVersions };
     },
   };
 }

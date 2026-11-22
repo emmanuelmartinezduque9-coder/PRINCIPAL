@@ -21,6 +21,8 @@ export interface FakeReply {
   attempts?: Array<{ type?: "message" | "fallback_message"; model: string; usage?: Partial<Usage> }>;
   /** Región donde dice haberse ejecutado (`usage.inference_geo`). */
   inferenceGeo?: string;
+  /** Devuelve esto tal cual, sin darle forma de mensaje: para respuestas que no se entienden. */
+  raw?: unknown;
 }
 
 export type FakeCall = Anthropic.Beta.Messages.MessageCreateParamsNonStreaming;
@@ -44,6 +46,7 @@ export function fakeMessages(script: FakeReply[]): { client: MessagesClient; cal
     const reply = pending.shift();
     if (!reply) throw new Error("fakeMessages: el guion no tiene más respuestas.");
     if (reply.error) throw reply.error;
+    if ("raw" in reply) return reply.raw;
     const refused = reply.stopReason === "refusal";
     return {
       id: `msg_simulado_${calls.length}`,

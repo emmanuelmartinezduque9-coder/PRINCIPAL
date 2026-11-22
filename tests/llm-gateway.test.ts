@@ -336,7 +336,7 @@ describe("pasarela a Claude: reserva antes de llamar", () => {
 
 describe("pasarela a Claude: cuando la llamada falla", () => {
   it("si la API rechaza la petición sin procesarla, la reserva se libera y no se cobra", async () => {
-    for (const status of [400, 401, 403, 404, 413, 429]) {
+    for (const status of [400, 401, 402, 403, 404, 413, 422]) {
       await truncateAll();
       ana = await makeUser("colaborador", { name: "Ana" });
       const { client, calls } = fakeMessages([{ error: fakeApiError(status) }]);
@@ -345,6 +345,21 @@ describe("pasarela a Claude: cuando la llamada falla", () => {
       await expect(attempt).rejects.toMatchObject({ charged: "no", status });
       expect(calls).toHaveLength(1);
       expect(await onlyEntry()).toMatchObject({ status: "released", costMicros: null });
+      expect((await spendSummary(ana)).spentMicros).toBe(0);
+    }
+  });
+
+  it("si la API está saturada y rechaza la petición antes de empezar, la reserva también se libera", async () => {
+    for (const status of [409, 429, 503, 529]) {
+      await truncateAll();
+      ana = await makeUser("colaborador", { name: "Ana" });
+      const { client } = fakeMessages([{ error: fakeApiError(status) }]);
+      await expect(createGateway({ client }).call(req(ana, null)), String(status)).rejects.toMatchObject({
+        charged: "no",
+        status,
+        message: "Claude no ha respondido. Inténtalo de nuevo dentro de unos minutos.",
+      });
+      expect(await onlyEntry(), String(status)).toMatchObject({ status: "released", costMicros: null });
       expect((await spendSummary(ana)).spentMicros).toBe(0);
     }
   });
@@ -362,7 +377,8 @@ describe("pasarela a Claude: cuando la llamada falla", () => {
   it("si no se sabe si el proveedor llegó a cobrar, NO se libera: se apunta lo reservado y se marca", async () => {
     const unknowns: Array<[string, Error, number | null]> = [
       ["error 500", fakeApiError(500), 500],
-      ["saturación 529", fakeApiError(529), 529],
+      ["pasarela 502", fakeApiError(502), 502],
+      ["pasarela agotada 504", fakeApiError(504), 504],
       ["tiempo agotado en el servidor 408", fakeApiError(408), 408],
       ["tiempo agotado", fakeTimeoutError(), null],
       ["conexión cortada a medias", fakeConnectionError("ECONNRESET"), null],
@@ -394,11 +410,78 @@ describe("pasarela a Claude: cuando la llamada falla", () => {
     expect(JSON.stringify(row.detail)).not.toContain("Error simulado");
   });
 
-  it("si la API no acepta la clave, el mensaje lo dice", async () => {
-    const { client } = fakeMessages([{ error: fakeApiError(401) }]);
-    await expect(createGateway({ client }).call(req(ana, null))).rejects.toThrow(
-      "Claude no acepta la clave configurada (ANTHROPIC_API_KEY).",
-    );
+  it("lo que no se arregla reintentando no invita a reintentar: dice que se avise al dueño", async () => {
+    const messages: Array<[number, string]> = [
+      [400, "La petición a Claude no es válida; avisa al dueño."],
+      [403, "La petición a Claude no es válida; avisa al dueño."],
+      [404, "La petición a Claude no es válida; avisa al dueño."],
+      [413, "La petición a Claude no es válida; avisa al dueño."],
+      [422, "La petición a Claude no es válida; avisa al dueño."],
+      [401, "Claude no acepta la clave configurada (ANTHROPIC_API_KEY); avisa al dueño."],
+      [402, "La cuenta de Claude no tiene saldo; avisa al dueño."],
+    ];
+    for (const [status, message] of messages) {
+      const { client } = fakeMessages([{ error: fakeApiError(status) }]);
+      const error = (await createGateway({ client })
+        .call(req(ana, null))
+        .catch((caught: unknown) => caught)) as LlmCallError;
+      expect(error.message, String(status)).toBe(message);
+      expect(error.message, String(status)).not.toMatch(/int[eé]ntalo|de nuevo/i);
+    }
+  });
+
+  it("una respuesta que no se entiende no deja la fila a medias: se apunta lo reservado y se marca", async () => {
+    const valid = {
+      id: "msg_1",
+      type: "message",
+      role: "assistant",
+      model: "claude-haiku-5-5",
+      content: [{ type: "text", text: "hola" }],
+      stop_reason: "end_turn",
+      stop_details: null,
+      usage: { input_tokens: 10, output_tokens: 10, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 },
+    };
+    const malformed: Array<[string, unknown]> = [
+      ["sin usage", { ...valid, usage: undefined }],
+      ["usage nulo", { ...valid, usage: null }],
+      ["sin contenido", { ...valid, content: undefined }],
+      ["un bloque nulo en el contenido", { ...valid, content: [null] }],
+      ["sin modelo", { ...valid, model: undefined }],
+      ["intentos que no son una lista", { ...valid, usage: { ...valid.usage, iterations: "tres" } }],
+      ["un objeto vacío", {}],
+      ["nada", null],
+      ["un texto", "200 OK"],
+    ];
+    for (const [label, raw] of malformed) {
+      await truncateAll();
+      ana = await makeUser("colaborador", { name: "Ana" });
+      const { client } = fakeMessages([{ raw }]);
+      const attempt = createGateway({ client }).call(req(ana, null));
+      await expect(attempt, label).rejects.toBeInstanceOf(LlmCallError);
+      await expect(attempt, label).rejects.toMatchObject({ charged: "desconocido", status: null });
+      const row = await onlyEntry();
+      expect(row, label).toMatchObject({ status: "settled", costMicros: row.reservedMicros });
+      expect(row.detail, label).toMatchObject({ outcome: "unknown", error: { name: "MalformedResponse", status: null } });
+      expect((await spendSummary(ana)).spentMicros, label).toBe(row.reservedMicros);
+    }
+  });
+
+  it("si los tokens de la respuesta no son números, no se inventa un coste: se apunta lo reservado", async () => {
+    const { client } = fakeMessages([
+      {
+        raw: {
+          model: "claude-haiku-5-5",
+          content: [{ type: "text", text: "hola" }],
+          stop_reason: "end_turn",
+          usage: { input_tokens: "muchos", output_tokens: -5 },
+        },
+      },
+    ]);
+    const r = await createGateway({ client }).call(req(ana, null));
+    const row = await entry(r.spendEntryId);
+    expect(r.costMicros).toBe(row.reservedMicros);
+    expect(row).toMatchObject({ status: "settled", costMicros: row.reservedMicros, inputTokens: null, outputTokens: null });
+    expect(row.detail).toMatchObject({ outcome: "unpriced" });
   });
 });
 

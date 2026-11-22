@@ -1,7 +1,7 @@
 import http from "node:http";
 import type { AddressInfo } from "node:net";
 import { inspect } from "node:util";
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from "vitest";
 import { getPool } from "@/db/client";
 import { getGateway, LlmCallError, type LlmCall } from "@/llm/gateway";
 import type { AuthUser } from "@/server/auth";
@@ -11,10 +11,13 @@ import { truncateAll } from "./helpers/global-setup";
 /**
  * La pasarela con el cliente real del SDK, hablando con un servidor de mentira en este mismo
  * ordenador (nunca con la API de verdad): comprueba lo que sale por el cable y cómo se
- * clasifican los fallos reales de red.
+ * clasifican los fallos reales de red. Cada prueba arranca y para su propio servidor, siempre
+ * en el mismo puerto, así que no importa el orden en que se ejecuten.
  */
 
 const FAKE_KEY = "clave-de-prueba-que-no-es-de-nadie";
+const OTHER_KEY = "otra-clave-de-prueba-distinta";
+const PROMPT = "Producto: cepillo de bambú.";
 
 interface Seen {
   method?: string;
@@ -23,16 +26,20 @@ interface Seen {
   body: Record<string, unknown>;
 }
 
-let server: http.Server;
+let server: http.Server | null = null;
+let port = 0;
 let seen: Seen[] = [];
 let respond: (res: http.ServerResponse) => void;
 let ana: AuthUser;
+let consoleSpies: MockInstance[] = [];
 
-const saved = { key: process.env.ANTHROPIC_API_KEY, url: process.env.ANTHROPIC_BASE_URL };
+const ENV_NAMES = ["ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL", "ANTHROPIC_LOG"] as const;
+const savedEnv = ENV_NAMES.map((name) => [name, process.env[name]] as const);
 
-function reply(res: http.ServerResponse, status: number, body: unknown): void {
-  res.writeHead(status, { "content-type": "application/json" });
-  res.end(JSON.stringify(body));
+function reply(res: http.ServerResponse, status: number, body: unknown, contentType = "application/json"): void {
+  // Sin conexiones reutilizadas: cada petición abre la suya y el servidor se puede parar sin esperas.
+  res.writeHead(status, { "content-type": contentType, connection: "close" });
+  res.end(typeof body === "string" ? body : JSON.stringify(body));
 }
 
 const okMessage = {
@@ -56,7 +63,7 @@ const req = (tier: "small" | "medium"): LlmCall<unknown> => ({
   productId: null,
   rules: [{ slug: "angulos-de-venta", version: 1, body: "Cuerpo de la regla." }],
   instructions: "instrucciones del paso",
-  content: "Producto: cepillo de bambú.",
+  content: PROMPT,
   maxTokens: 1_000,
 });
 
@@ -68,8 +75,8 @@ async function onlyEntry() {
   return rows[0];
 }
 
-beforeAll(async () => {
-  server = http.createServer((request, res) => {
+async function startServer(): Promise<void> {
+  const created = http.createServer((request, res) => {
     const chunks: Buffer[] = [];
     request.on("data", (chunk: Buffer) => chunks.push(chunk));
     request.on("end", () => {
@@ -82,32 +89,59 @@ beforeAll(async () => {
       respond(res);
     });
   });
-  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-  // El cliente real se crea en la primera llamada y lee de aquí la dirección: siempre la local.
-  process.env.ANTHROPIC_BASE_URL = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
-  process.env.ANTHROPIC_API_KEY = FAKE_KEY;
-});
+  // La primera vez, un puerto libre cualquiera; después, siempre ese.
+  await new Promise<void>((resolve) => created.listen(port, "127.0.0.1", resolve));
+  port = (created.address() as AddressInfo).port;
+  server = created;
+}
 
-afterAll(async () => {
-  await new Promise((resolve) => server.close(resolve));
-  for (const [name, value] of [
-    ["ANTHROPIC_API_KEY", saved.key],
-    ["ANTHROPIC_BASE_URL", saved.url],
-  ] as const) {
-    if (value === undefined) delete process.env[name];
-    else process.env[name] = value;
-  }
-});
+async function stopServer(): Promise<void> {
+  const running = server;
+  server = null;
+  if (!running) return;
+  await new Promise<void>((resolve) => {
+    running.close(() => resolve());
+    running.closeAllConnections();
+  });
+}
+
+/** Todo lo que se haya escrito por consola durante la prueba, en un solo texto. */
+function consoleOutput(): string {
+  return consoleSpies.flatMap((spy) => spy.mock.calls.map((args) => inspect(args, { depth: 8 }))).join("\n");
+}
 
 beforeEach(async () => {
   await truncateAll();
   ana = await makeUser("colaborador", { name: "Ana" });
   seen = [];
   respond = (res) => reply(res, 200, okMessage);
+  await startServer();
+  // El cliente real lee de aquí la dirección al crearse: siempre la local, nunca la API de verdad.
+  process.env.ANTHROPIC_BASE_URL = `http://127.0.0.1:${port}`;
+  process.env.ANTHROPIC_API_KEY = FAKE_KEY;
+  // Como si alguien hubiera dejado puesto el registro detallado del SDK en el entorno.
+  process.env.ANTHROPIC_LOG = "debug";
+  consoleSpies = (["debug", "info", "log", "warn", "error"] as const).map((method) =>
+    vi.spyOn(console, method).mockImplementation(() => undefined),
+  );
 });
 
-afterEach(() => {
-  server.closeIdleConnections();
+afterEach(async () => {
+  const written = consoleOutput();
+  for (const spy of consoleSpies) spy.mockRestore();
+  await stopServer();
+  // Pase lo que pase en la prueba, ni la clave ni lo que se le manda al modelo salen por consola.
+  expect(written).not.toContain(FAKE_KEY);
+  expect(written).not.toContain(OTHER_KEY);
+  expect(written).not.toContain("cepillo");
+  expect(written).not.toContain("Cuerpo de la regla");
+});
+
+afterAll(() => {
+  for (const [name, value] of savedEnv) {
+    if (value === undefined) delete process.env[name];
+    else process.env[name] = value;
+  }
 });
 
 describe("pasarela a Claude con el cliente real contra un servidor local", () => {
@@ -131,7 +165,7 @@ describe("pasarela a Claude con el cliente real contra un servidor local", () =>
         },
         { type: "text", text: "instrucciones del paso" },
       ],
-      messages: [{ role: "user", content: "Producto: cepillo de bambú." }],
+      messages: [{ role: "user", content: PROMPT }],
       output_config: { effort: "low" },
     });
     expect(JSON.stringify(seen[0].body)).not.toContain(FAKE_KEY);
@@ -147,6 +181,38 @@ describe("pasarela a Claude con el cliente real contra un servidor local", () =>
     expect(seen[0].body).not.toHaveProperty("betas");
   });
 
+  it("cada llamada tiene 120 segundos como mucho y ningún reintento automático", async () => {
+    await getGateway().call(req("small"));
+    expect(seen[0].headers["x-stainless-timeout"]).toBe("120");
+    expect(seen[0].headers["x-stainless-retry-count"]).toBe("0");
+  });
+
+  it("aunque el entorno pida el registro detallado del SDK, no se escribe nada de la petición", async () => {
+    expect(process.env.ANTHROPIC_LOG).toBe("debug");
+    // Con otra clave el cliente del SDK se crea aquí mismo, mientras esta prueba vigila la consola
+    // (el SDK se queda con la consola que hay al crearse).
+    process.env.ANTHROPIC_API_KEY = OTHER_KEY;
+    await getGateway().call(req("small"));
+    respond = (res) => reply(res, 500, apiError("api_error"));
+    await expect(getGateway().call({ ...req("small"), stepKey: "prueba:cable:2" })).rejects.toBeInstanceOf(LlmCallError);
+    expect(seen).toHaveLength(2);
+    // Con el nivel fijado en «warn» el SDK no escribe ni el detalle ni los avisos de cada petición.
+    expect(consoleOutput()).toBe("");
+  });
+
+  it("si la clave del entorno cambia, la siguiente llamada ya usa la nueva", async () => {
+    await getGateway().call(req("small"));
+    process.env.ANTHROPIC_API_KEY = OTHER_KEY;
+    await getGateway().call({ ...req("small"), stepKey: "prueba:cable:2" });
+    process.env.ANTHROPIC_API_KEY = FAKE_KEY;
+    await getGateway().call({ ...req("small"), stepKey: "prueba:cable:3" });
+    expect(seen.map((request) => request.headers.authorization)).toEqual([
+      `Bearer ${FAKE_KEY}`,
+      `Bearer ${OTHER_KEY}`,
+      `Bearer ${FAKE_KEY}`,
+    ]);
+  });
+
   it("un error del servidor no se reintenta solo: una petición, y lo reservado queda apuntado", async () => {
     respond = (res) => reply(res, 500, apiError("api_error"));
     await expect(getGateway().call(req("small"))).rejects.toMatchObject({ charged: "desconocido", status: 500 });
@@ -155,11 +221,19 @@ describe("pasarela a Claude con el cliente real contra un servidor local", () =>
     expect(row).toMatchObject({ status: "settled", cost: row.reserved, detail: { outcome: "unknown" } });
   });
 
-  it("un rechazo por exceso de peticiones tampoco se reintenta, y la reserva se libera", async () => {
-    respond = (res) => reply(res, 429, apiError("rate_limit_error"));
-    await expect(getGateway().call(req("small"))).rejects.toMatchObject({ charged: "no", status: 429 });
-    expect(seen).toHaveLength(1);
-    expect(await onlyEntry()).toMatchObject({ status: "released", cost: null });
+  it("un rechazo por saturación tampoco se reintenta, y la reserva se libera", async () => {
+    for (const [status, type] of [
+      [429, "rate_limit_error"],
+      [529, "overloaded_error"],
+    ] as const) {
+      await truncateAll();
+      ana = await makeUser("colaborador", { name: "Ana" });
+      seen = [];
+      respond = (res) => reply(res, status, apiError(type));
+      await expect(getGateway().call(req("small"))).rejects.toMatchObject({ charged: "no", status });
+      expect(seen).toHaveLength(1);
+      expect(await onlyEntry()).toMatchObject({ status: "released", cost: null });
+    }
   });
 
   it("si el servidor corta la conexión a medias, no se sabe si cobró: lo reservado queda apuntado", async () => {
@@ -168,6 +242,27 @@ describe("pasarela a Claude con el cliente real contra un servidor local", () =>
     expect(seen).toHaveLength(1);
     const row = await onlyEntry();
     expect(row).toMatchObject({ status: "settled", cost: row.reserved, detail: { outcome: "unknown" } });
+  });
+
+  it("un 200 que no es un mensaje no deja la fila a medias: lo reservado queda apuntado", async () => {
+    const bodies: Array<[unknown, string]> = [
+      [{}, "application/json"],
+      [{ id: "msg_sin_usage", type: "message", content: [] }, "application/json"],
+      ["<html>Puerta de enlace</html>", "text/html"],
+      ["esto no es JSON", "application/json"],
+    ];
+    for (const [body, contentType] of bodies) {
+      await truncateAll();
+      ana = await makeUser("colaborador", { name: "Ana" });
+      seen = [];
+      respond = (res) => reply(res, 200, body, contentType);
+      const attempt = getGateway().call(req("small"));
+      await expect(attempt, contentType).rejects.toBeInstanceOf(LlmCallError);
+      await expect(attempt, contentType).rejects.toMatchObject({ charged: "desconocido" });
+      expect(seen).toHaveLength(1);
+      const row = await onlyEntry();
+      expect(row, contentType).toMatchObject({ status: "settled", cost: row.reserved, detail: { outcome: "unknown" } });
+    }
   });
 
   it("la clave no aparece en el error ni en el libro", async () => {
@@ -180,12 +275,8 @@ describe("pasarela a Claude con el cliente real contra un servidor local", () =>
     expect(JSON.stringify(await onlyEntry())).not.toContain(FAKE_KEY);
   });
 
-  // La última: cierra el servidor para que la conexión se rechace de verdad.
   it("si la conexión se rechaza antes de enviar nada, la reserva se libera", async () => {
-    await new Promise((resolve) => {
-      server.close(resolve);
-      server.closeAllConnections();
-    });
+    await stopServer(); // nadie escucha en el puerto: la conexión se rechaza de verdad
     await expect(getGateway().call(req("small"))).rejects.toMatchObject({ charged: "no", status: null });
     expect(seen).toHaveLength(0);
     expect(await onlyEntry()).toMatchObject({ status: "released", cost: null });
