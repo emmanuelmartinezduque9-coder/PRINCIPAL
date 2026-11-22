@@ -16,6 +16,7 @@ import { clipManifest } from "@/server/videos/manifest";
 import { checkVideoPrompt } from "@/server/videos/prompt-check";
 import {
   BRIEF_CHANGED,
+  clipDurationSeconds,
   getVideoFor,
   latestDoneAnalysis,
   REFERENCE_OUTDATED,
@@ -25,7 +26,7 @@ import {
   type Video,
 } from "@/server/videos/videos";
 
-export { CLIP_RESOLUTIONS, DEFAULT_CLIP_RESOLUTION, type ClipResolution } from "@/server/videos/videos";
+export { CLIP_RESOLUTIONS, clipDurationSeconds, DEFAULT_CLIP_RESOLUTION, type ClipResolution } from "@/server/videos/videos";
 
 /**
  * El clip: Seedance 2.5 en modo `omni_reference`. `@Video1` es la referencia (solo estructura:
@@ -34,26 +35,20 @@ export { CLIP_RESOLUTIONS, DEFAULT_CLIP_RESOLUTION, type ClipResolution } from "
  * en el orden del manifiesto. Vertical, sin audio (`generate_audio: false` siempre explícito),
  * `bitrate_mode: "high"`, a la resolución del vídeo (480p por defecto) y con la duración del tramo
  * (con «Solo gancho», el tramo es el gancho; Seedance no baja de 4 s, así que un gancho de 2 o 3 s
- * sale de 4 y se recorta al montar).
+ * sale de 4: el desglose le dice a Claude que la acción cabe en el gancho y que el resto solo
+ * mantiene el final, y el paso «Clip» enseña «Gancho N s» para saber dónde recortar).
  *
  * Al importar este módulo se registra el constructor `"clip"` en las generaciones: lo importan las
  * rutas que piden precio o generan.
  */
 
 export const CLIP_MODEL = "seedance_2_5";
-const MIN_SECONDS = 4;
-const MAX_SECONDS = 30;
 
 const NO_FRAME = "Aprueba primero la imagen inicial.";
 const NO_REFERENCE = "Sube primero el vídeo de referencia.";
 const NO_ANALYSIS = "Haz primero el desglose.";
 const REFERENCE_CHANGED = "La referencia cambió; vuelve a pedir el desglose.";
 const NO_CLIP = "Todavía no hay clip.";
-
-/** Segundos del clip: los del tramo redondeados, entre 4 y 30 (lo que admite Seedance). */
-export function clipDurationSeconds(segmentDurationMs: number): number {
-  return Math.min(MAX_SECONDS, Math.max(MIN_SECONDS, Math.round(segmentDurationMs / 1000)));
-}
 
 const EXTENSIONS: Record<string, string> = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp" };
 

@@ -2,10 +2,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { HiggsfieldAuthError, HiggsfieldUnavailableError, type HfHistoryItem } from "@/connectors/higgsfield/port";
 import { createFakeHiggsfield, type FakeHiggsfield } from "@/connectors/higgsfield/fake";
 import { getDb, schema } from "@/db/client";
+import { setAssignments } from "@/server/access";
 import { login, resetLoginAttempts, type AuthUser } from "@/server/auth";
 import { saveCredential } from "@/server/credentials";
 import { markBody } from "@/server/videos/bodies";
-import { LIBRARY_MAX_PAGES, LIBRARY_PAGE_SIZE, listLibrary, refreshLibrary } from "@/server/videos/library";
+import { LIBRARY_MAX_PAGES, LIBRARY_PAGE_SIZE, LIBRARY_REFRESH_GUARD_MS, listLibrary, refreshLibrary } from "@/server/videos/library";
 import { createVideo } from "@/server/videos/videos";
 import { GET as listRoute } from "@/app/api/biblioteca/route";
 import { POST as refreshRoute } from "@/app/api/biblioteca/actualizar/route";
@@ -77,7 +78,7 @@ describe("actualizar la biblioteca", () => {
   it("pide el historial de vídeos terminados de la persona, página a página con el cursor, hasta el final", async () => {
     fake.state.history = newestFirst(range(1, 120).map((n) => clip(n)));
     const result = await refreshLibrary(ana, at(BASE + DAY));
-    expect(result).toEqual({ added: 120, pages: 3 });
+    expect(result).toEqual({ added: 120, pages: 3, skipped: false });
     expect(historyCalls().map((call) => call.userId)).toEqual([ana.id, ana.id, ana.id]);
     expect(historyCalls().map((call) => call.args)).toEqual([
       { type: "video", limit: LIBRARY_PAGE_SIZE, cursor: null, onlyCompleted: true },
@@ -100,7 +101,7 @@ describe("actualizar la biblioteca", () => {
 
   it("la primera carga se queda en 10 páginas de 50", async () => {
     fake.state.history = newestFirst(range(1, 520).map((n) => clip(n)));
-    expect(await refreshLibrary(ana, at(BASE + DAY))).toEqual({ added: 500, pages: LIBRARY_MAX_PAGES });
+    expect(await refreshLibrary(ana, at(BASE + DAY))).toEqual({ added: 500, pages: LIBRARY_MAX_PAGES, skipped: false });
     expect(historyCalls()).toHaveLength(10);
     const rows = await stored(ana);
     expect(rows).toHaveLength(500);
@@ -115,12 +116,12 @@ describe("actualizar la biblioteca", () => {
     fake.calls.length = 0;
     // Tres clips nuevos, un día después.
     fake.state.history = newestFirst([...range(1, 120).map((n) => clip(n)), ...[1, 2, 3].map((n) => clip(DAY / MINUTE + n))]);
-    expect(await refreshLibrary(ana, at(BASE + 2 * DAY))).toEqual({ added: 3, pages: 1 });
+    expect(await refreshLibrary(ana, at(BASE + 2 * DAY))).toEqual({ added: 3, pages: 1, skipped: false });
     expect(historyCalls()).toHaveLength(1);
     expect(await stored(ana)).toHaveLength(123);
     // Y sin nada nuevo, una sola página y nada añadido.
     fake.calls.length = 0;
-    expect(await refreshLibrary(ana, at(BASE + 3 * DAY))).toEqual({ added: 0, pages: 1 });
+    expect(await refreshLibrary(ana, at(BASE + 3 * DAY))).toEqual({ added: 0, pages: 1, skipped: false });
     expect(await stored(ana)).toHaveLength(123);
   });
 
@@ -136,7 +137,7 @@ describe("actualizar la biblioteca", () => {
 
     fake.state.history = newestFirst([{ ...late, completed: true, resultUrl: `${CDN}/tarde.mp4` }, ...done]);
     // La primera página son 50 clips conocidos, pero recientes: no basta para parar.
-    expect(await refreshLibrary(ana, at(first + 5 * MINUTE))).toEqual({ added: 1, pages: 2 });
+    expect(await refreshLibrary(ana, at(first + 5 * MINUTE))).toEqual({ added: 1, pages: 2, skipped: false });
     expect((await stored(ana)).find((row) => row.jobId === "tarde")).toMatchObject({ videoUrl: `${CDN}/tarde.mp4` });
   });
 
@@ -215,6 +216,70 @@ describe("actualizar la biblioteca", () => {
   });
 });
 
+describe("cuándo se actualizó: por persona, aparte de los clips", () => {
+  const SECOND = 1000;
+
+  it("una biblioteca vacía también queda actualizada: no se vuelve a pedir en cada visita", async () => {
+    expect(await listLibrary(ana, {}, { now: () => new Date(BASE) })).toMatchObject({ total: 0, refreshedAt: null, stale: true });
+    // Higgsfield no tiene ningún vídeo de Ana.
+    expect(await refreshLibrary(ana, at(BASE))).toEqual({ added: 0, pages: 1, skipped: false });
+    expect(await stored(ana)).toEqual([]);
+    expect(await listLibrary(ana, {}, { now: () => new Date(BASE + MINUTE) })).toMatchObject({ total: 0, refreshedAt: new Date(BASE), stale: false });
+    expect(await listLibrary(ana, {}, { now: () => new Date(BASE + 9 * MINUTE) })).toMatchObject({ stale: false });
+    // A los 10 minutos largos, sí toca.
+    expect(await listLibrary(ana, {}, { now: () => new Date(BASE + 11 * MINUTE) })).toMatchObject({ total: 0, stale: true });
+    // Y es de cada persona: Luis no ha actualizado nunca.
+    expect(await listLibrary(luis, {}, { now: () => new Date(BASE + MINUTE) })).toMatchObject({ refreshedAt: null, stale: true });
+  });
+
+  it("si ya empezó otra hace menos de 30 s, no se llama a Higgsfield y se responde con lo que hay", async () => {
+    fake.state.history = newestFirst([clip(1), clip(2)]);
+    expect(await refreshLibrary(ana, at(BASE + DAY))).toEqual({ added: 2, pages: 1, skipped: false });
+    fake.calls.length = 0;
+    // Llega un clip nuevo, pero otra pestaña pide lo mismo a los 29 s: no se pregunta.
+    fake.state.history = newestFirst([clip(1), clip(2), clip(DAY / MINUTE)]);
+    expect(await refreshLibrary(ana, at(BASE + DAY + LIBRARY_REFRESH_GUARD_MS - SECOND))).toEqual({ added: 0, pages: 0, skipped: true });
+    expect(fake.calls).toEqual([]);
+    expect(await stored(ana)).toHaveLength(2);
+    // La que no se hizo no cuenta como actualización.
+    expect((await listLibrary(ana, {}, { now: () => new Date(BASE + DAY + MINUTE) })).refreshedAt).toEqual(new Date(BASE + DAY));
+    // Pasados los 30 s desde la que sí se hizo, vuelve a preguntar.
+    expect(await refreshLibrary(ana, at(BASE + DAY + LIBRARY_REFRESH_GUARD_MS + SECOND))).toEqual({ added: 1, pages: 1, skipped: false });
+    expect(historyCalls()).toHaveLength(1);
+    expect(await stored(ana)).toHaveLength(3);
+  });
+
+  it("dos pestañas a la vez: solo una pregunta a Higgsfield", async () => {
+    fake.state.history = newestFirst(range(1, 60).map((n) => clip(n)));
+    const results = await Promise.all([1, 2, 3, 4].map(() => refreshLibrary(ana, at(BASE + DAY))));
+    expect(results.filter((result) => !result.skipped)).toEqual([{ added: 60, pages: 2, skipped: false }]);
+    expect(results.filter((result) => result.skipped)).toHaveLength(3);
+    // Las dos páginas de una sola actualización, no de cuatro.
+    expect(historyCalls()).toHaveLength(2);
+    expect(await stored(ana)).toHaveLength(60);
+  });
+
+  it("la guarda es de cada persona, y un fallo la suelta para poder reintentar enseguida", async () => {
+    await connect(luis);
+    fake.state.history = newestFirst([clip(1)]);
+    expect(await refreshLibrary(ana, at(BASE + DAY))).toMatchObject({ skipped: false });
+    // Luis, en el mismo instante, hace la suya.
+    expect(await refreshLibrary(luis, at(BASE + DAY))).toMatchObject({ added: 1, skipped: false });
+    // Higgsfield falla: no queda apuntada como hecha y el reintento inmediato sí pregunta.
+    fake.failNext("history", new HiggsfieldUnavailableError());
+    await expect(refreshLibrary(ana, at(BASE + 2 * DAY))).rejects.toMatchObject({ status: 503 });
+    expect((await listLibrary(ana, {}, { now: () => new Date(BASE + 2 * DAY) })).refreshedAt).toEqual(new Date(BASE + DAY));
+    fake.calls.length = 0;
+    expect(await refreshLibrary(ana, at(BASE + 2 * DAY + SECOND))).toMatchObject({ skipped: false });
+    expect(historyCalls()).toHaveLength(1);
+    // Sin conexión no se reserva nada: al conectar, la primera actualización se hace.
+    const marta = await makeUser("colaborador");
+    await expect(refreshLibrary(marta, at(BASE + DAY))).rejects.toMatchObject({ status: 409, code: "higgsfield_connect" });
+    await connect(marta);
+    expect(await refreshLibrary(marta, at(BASE + DAY + SECOND))).toMatchObject({ added: 1, skipped: false });
+  });
+});
+
 describe("ver la biblioteca", () => {
   it("cada persona actualiza con su propia conexión y solo ve sus clips", async () => {
     await connect(luis);
@@ -244,7 +309,12 @@ describe("ver la biblioteca", () => {
     const third = await listLibrary(ana, { limit: 10, cursor: second.nextCursor });
     expect(third.clips).toHaveLength(5);
     expect(third.nextCursor).toBeNull();
-    await expect(listLibrary(ana, { cursor: "abc" })).rejects.toMatchObject({ status: 400 });
+    for (const bad of ["abc", "1_0", "-1_2", "1_", "_1", "1_2_3", "9999999999999999_1", "8640000000000000_1", "253402300800000_1", "32503680000001_1", "1_9999999999999999", "1_99999999999999999", "1e3_1"]) {
+      await expect(listLibrary(ana, { cursor: bad })).rejects.toMatchObject({ status: 400, message: "Página no válida." });
+    }
+    // Hasta el año 3000, vale (todos los clips son más antiguos que eso).
+    expect((await listLibrary(ana, { cursor: "32503680000000_1" })).clips).toHaveLength(25);
+    expect((await listLibrary(ana, { cursor: "0_1" })).clips).toEqual([]);
   });
 
   it("dice si hay que actualizarla sola: vacía o con más de 10 minutos", async () => {
@@ -264,11 +334,24 @@ describe("ver la biblioteca", () => {
 
     const forAna = await listLibrary(ana, { productId: product.id });
     expect(forAna.clips).toHaveLength(1);
-    expect(forAna.clips[0]).toMatchObject({ id: one.id, mine: true, bodies: [{ productId: product.id, productName: product.name, label: "Demostración", canRemove: true }] });
-    // El dueño ve el cuerpo aunque el clip no sea suyo.
+    expect(forAna.clips[0]).toMatchObject({
+      id: one.id,
+      mine: true,
+      prompt: "Prompt del clip 1",
+      model: "seedance_2_5",
+      bodies: [{ productId: product.id, productName: product.name, label: "Demostración", canRemove: true }],
+    });
+    // El dueño ve el cuerpo aunque el clip no sea suyo, pero no su prompt ni con qué modelo se hizo.
     const forOwner = await listLibrary(dueno, { productId: product.id });
     expect(forOwner.clips.map((c) => ({ id: c.id, mine: c.mine }))).toEqual([{ id: one.id, mine: false }]);
+    expect(forOwner.clips[0]).toMatchObject({ prompt: null, model: null, videoUrl: `${CDN}/hf-1.mp4`, thumbUrl: `${CDN}/hf-1_min.webp` });
     expect(forOwner.clips[0].bodies[0].canRemove).toBe(true);
+    // Lo mismo para otro colaborador que ve el producto.
+    await setAssignments(dueno, luis.id, [product.id]);
+    const forLuis = await listLibrary(luis, { productId: product.id });
+    expect(forLuis.clips[0]).toMatchObject({ id: one.id, mine: false, prompt: null, model: null });
+    expect(JSON.stringify(forLuis)).not.toContain("Prompt del clip");
+    await setAssignments(dueno, luis.id, []);
     await expect(listLibrary(luis, { productId: product.id })).rejects.toMatchObject({ status: 404 });
     // En su propia biblioteca, el clip lleva su marca.
     expect((await listLibrary(ana)).clips.find((c) => c.id === one.id)!.bodies).toHaveLength(1);
@@ -294,6 +377,14 @@ describe("rutas de la biblioteca", () => {
     expect(body.total).toBe(3);
     expect(typeof body.nextCursor).toBe("string");
     expect((await listRoute(new Request("http://localhost/api/biblioteca?producto=abc"))).status).toBe(400);
+    // Un cursor imposible o un producto con un id enorme no rompen nada: 400 y 404, nunca 500.
+    for (const cursor of ["abc", "9999999999999999_1", "1_9999999999999999"]) {
+      const bad = await listRoute(new Request(`http://localhost/api/biblioteca?cursor=${cursor}`));
+      expect(bad.status).toBe(400);
+      expect(await bad.json()).toEqual({ error: "Página no válida." });
+    }
+    expect((await listRoute(new Request("http://localhost/api/biblioteca?producto=9999999999999999"))).status).toBe(404);
+    expect((await listRoute(new Request("http://localhost/api/biblioteca?limite=0"))).status).toBe(200);
     expect((await listRoute(new Request("http://localhost/api/biblioteca?producto=999999"))).status).toBe(404);
   });
 

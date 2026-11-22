@@ -4,7 +4,7 @@ import type { AuthUser } from "@/server/auth";
 import { analysisInstructions } from "@/server/videos/analysis";
 import { analysisStaleness, briefOf, checkKindInput, isVideoKind, type BriefSource } from "@/server/videos/brief";
 import { clipDurationSeconds } from "@/server/videos/clip";
-import { createVideo, getVideoFor, referenceOutdated, segmentMsFor, updateVideoChoices } from "@/server/videos/videos";
+import { createVideo, getVideoFor, hookTiming, referenceOutdated, segmentMsFor, updateVideoChoices } from "@/server/videos/videos";
 import { PUT as putVideo } from "@/app/api/videos/[videoId]/route";
 import { makeProduct, makeUser } from "./helpers/fixtures";
 import { truncateAll } from "./helpers/global-setup";
@@ -139,6 +139,54 @@ describe("tipo «Solo gancho»: desglose", () => {
     for (const kind of ["replicar", "adaptacion_concepto"]) {
       expect(analysisInstructions(briefOf(source({ kind, adaptation: "Idea" })))).not.toContain("solo gancho");
     }
+  });
+
+  it("los tiempos reales del gancho: lo que dura el tramo y lo que dura el clip (4 s como poco)", () => {
+    const video = (over: Record<string, unknown> = {}) => ({ kind: "solo_gancho", hookSeconds: 4, segmentDurationMs: 4000 as number | null, ...over });
+    expect(hookTiming(video())).toEqual({ hookMs: 4000, clipSeconds: 4 });
+    expect(hookTiming(video({ hookSeconds: 2, segmentDurationMs: 2000 }))).toEqual({ hookMs: 2000, clipSeconds: 4 });
+    expect(hookTiming(video({ hookSeconds: 3, segmentDurationMs: 3000 }))).toEqual({ hookMs: 3000, clipSeconds: 4 });
+    expect(hookTiming(video({ hookSeconds: 7, segmentDurationMs: 7000 }))).toEqual({ hookMs: 7000, clipSeconds: 7 });
+    // Una referencia más corta que el gancho: manda lo que dura de verdad.
+    expect(hookTiming(video({ hookSeconds: 8, segmentDurationMs: 5600 }))).toEqual({ hookMs: 5600, clipSeconds: 6 });
+    expect(hookTiming(video({ hookSeconds: 5, segmentDurationMs: 3200 }))).toEqual({ hookMs: 3200, clipSeconds: 4 });
+    // Sin referencia todavía, o preparada entera para otro tipo: lo pedido.
+    expect(hookTiming(video({ hookSeconds: 6, segmentDurationMs: null }))).toEqual({ hookMs: 6000, clipSeconds: 6 });
+    expect(hookTiming(video({ hookSeconds: 4, segmentDurationMs: 12_000 }))).toEqual({ hookMs: 4000, clipSeconds: 4 });
+    expect(hookTiming(video({ kind: "replicar" }))).toBeNull();
+  });
+
+  it("con un gancho de 2 o 3 s, Claude sabe que el clip dura 4 y que la acción cabe en el gancho", () => {
+    const brief = briefOf(source({ kind: "solo_gancho", hookSeconds: 2 }));
+    for (const text of [analysisInstructions(brief), analysisInstructions(brief, { hookMs: 2000, clipSeconds: 4 })]) {
+      expect(text).toContain("SOLO el gancho del anuncio: sus primeros 2 segundos");
+      expect(text).toContain("El clip que se genera dura 4 segundos");
+      expect(text).toContain("toda la acción del gancho tiene que completarse dentro de esos 2 segundos");
+      expect(text).toContain("solo mantiene el momento final, sin ninguna acción nueva, porque el montador lo recorta");
+    }
+    const three = analysisInstructions(briefOf(source({ kind: "solo_gancho", hookSeconds: 3 })));
+    expect(three).toContain("primeros 3 segundos");
+    expect(three).toContain("El clip que se genera dura 4 segundos");
+    // De 4 s en adelante el clip dura lo que el gancho: no hay nada que mantener ni que recortar.
+    const five = analysisInstructions(briefOf(source({ kind: "solo_gancho", hookSeconds: 5 })));
+    expect(five).toContain("El clip que se genera dura 5 segundos.");
+    expect(five).not.toContain("momento final");
+    expect(five).not.toContain("el montador lo recorta");
+  });
+
+  it("si la referencia es más corta que el gancho, se dice lo que dura de verdad, no lo pedido", () => {
+    const brief = briefOf(source({ kind: "solo_gancho", hookSeconds: 8 }));
+    const text = analysisInstructions(brief, { hookMs: 5600, clipSeconds: 6 });
+    expect(text).toContain("sus primeros 5,6 segundos");
+    expect(text).toContain("únicamente esos 5,6 segundos");
+    expect(text).toContain("El clip que se genera dura 6 segundos");
+    expect(text).toContain("completarse dentro de esos 5,6 segundos");
+    expect(text).not.toContain("8 segundos");
+    // Y si además no llega a 4 s, el clip sale de 4.
+    const short = analysisInstructions(briefOf(source({ kind: "solo_gancho", hookSeconds: 5 })), { hookMs: 3200, clipSeconds: 4 });
+    expect(short).toContain("sus primeros 3,2 segundos");
+    expect(short).toContain("El clip que se genera dura 4 segundos");
+    expect(short).not.toContain("5 segundos");
   });
 
   it("la duración del gancho solo cuenta con «Solo gancho»", () => {

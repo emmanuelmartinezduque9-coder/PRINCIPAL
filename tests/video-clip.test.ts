@@ -247,6 +247,24 @@ describe("petición del clip", () => {
     expect(uploads().every((c) => c.userId === ana.id)).toBe(true);
   });
 
+  it("con «Solo gancho» el clip dura lo que el gancho; uno de 2 o 3 s se pide de 4 (el mínimo de Seedance)", async () => {
+    await readyForClip();
+    // Como lo dejan la preparación y el desglose de un «Solo gancho»: tramo y desglose del gancho.
+    const asHook = async (seconds: number) => {
+      await getPool().query("update videos set kind = 'solo_gancho', hook_seconds = $2, segment_duration_ms = $2 * 1000 where id = $1", [v.id, seconds]);
+      await getPool().query("update video_analyses set kind = 'solo_gancho', hook_seconds = $2 where video_id = $1", [v.id, seconds]);
+      return (await buildClipRequest(ana, await fresh(), deps)).request as { duration: number };
+    };
+    expect((await asHook(5)).duration).toBe(5);
+    expect((await asHook(2)).duration).toBe(4);
+    expect((await asHook(3)).duration).toBe(4);
+    // Y el presupuesto es el de esos segundos (el simulado cobra 3 créditos por segundo a 480p).
+    expect(await quoteGeneration(ana, v.id, "clip", deps)).toMatchObject({ credits: 12 });
+    // Con la referencia preparada para otro gancho no se pide nada.
+    await getPool().query("update videos set hook_seconds = 5 where id = $1", [v.id]);
+    await expect(buildClipRequest(ana, await fresh(), deps)).rejects.toMatchObject({ status: 409, message: "El gancho ha cambiado: vuelve a subir el vídeo de referencia." });
+  });
+
   it("como referencia de la escena, la imagen aprobada va la primera de image_references y no hay start_image", async () => {
     await readyReference();
     await analysed(PROMPT.replace("is the first frame", "is the scene"), "contextual_reference");

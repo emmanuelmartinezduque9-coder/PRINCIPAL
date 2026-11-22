@@ -30,6 +30,15 @@ export type ClipResolution = (typeof CLIP_RESOLUTIONS)[number];
 export const DEFAULT_CLIP_RESOLUTION: ClipResolution = "480p";
 const BAD_RESOLUTION = "Resolución no disponible.";
 
+/** Lo que admite Seedance 2.5: clips de 4 a 30 segundos enteros. */
+const MIN_CLIP_SECONDS = 4;
+const MAX_CLIP_SECONDS = 30;
+
+/** Segundos del clip: los del tramo redondeados, entre 4 y 30 (lo que admite Seedance). */
+export function clipDurationSeconds(segmentDurationMs: number): number {
+  return Math.min(MAX_CLIP_SECONDS, Math.max(MIN_CLIP_SECONDS, Math.round(segmentDurationMs / 1000)));
+}
+
 export const isClipResolution = (value: unknown): value is ClipResolution =>
   typeof value === "string" && (CLIP_RESOLUTIONS as readonly string[]).includes(value);
 
@@ -45,6 +54,24 @@ export const REFERENCE_OUTDATED = "El gancho ha cambiado: vuelve a subir el víd
  */
 export function segmentMsFor(video: Pick<Video, "kind" | "hookSeconds">, durationMs: number): number {
   return Math.min(durationMs, video.kind === "solo_gancho" ? video.hookSeconds * 1000 : MAX_SEGMENT_MS);
+}
+
+export interface HookTiming {
+  /** Lo que dura el gancho, en milisegundos. */
+  hookMs: number;
+  /** Lo que dura el clip generado, en segundos. */
+  clipSeconds: number;
+}
+
+/**
+ * Los tiempos reales de un «Solo gancho» (`null` con otro tipo): el gancho dura lo que el tramo
+ * de la referencia (o, si aún no hay referencia, `hookSeconds`) y el clip, ese tramo redondeado
+ * con el mínimo de 4 s de Seedance.
+ */
+export function hookTiming(video: Pick<Video, "kind" | "hookSeconds" | "segmentDurationMs">): HookTiming | null {
+  if (video.kind !== "solo_gancho") return null;
+  const hookMs = Math.min(video.segmentDurationMs ?? Number.POSITIVE_INFINITY, video.hookSeconds * 1000);
+  return { hookMs, clipSeconds: clipDurationSeconds(hookMs) };
 }
 
 /**
@@ -285,6 +312,12 @@ export interface VideoView {
   referenceOutdated: boolean;
   /** Los cuerpos que van detrás del gancho, en orden (solo cuentan con «Solo gancho»). */
   bodies: VideoBody[];
+  /**
+   * Con «Solo gancho»: lo que dura de verdad el gancho (el tramo: como mucho `hookSeconds`, menos
+   * si la referencia es más corta) y lo que dura el clip que se genera (4 s como poco). Si el clip
+   * es más largo, lo que sobra se recorta al montar. `null` con los otros tipos.
+   */
+  hook: HookTiming | null;
   /** El último desglose (el de versión más alta), o `null` si aún no se ha pedido ninguno. */
   analysis: {
     id: number;
@@ -387,6 +420,7 @@ export async function videoView(user: AuthUser, videoId: number): Promise<VideoV
     frames,
     referenceOutdated: referenceOutdated(video),
     bodies: await bodiesOfVideo(video),
+    hook: hookTiming(video),
     analysis: latest
       ? {
           id: latest.id,

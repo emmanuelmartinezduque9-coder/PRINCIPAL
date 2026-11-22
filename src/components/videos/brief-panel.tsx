@@ -2,12 +2,13 @@
 
 import { useQueryClient } from "@tanstack/react-query";
 import { Layers } from "lucide-react";
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { toast } from "sonner";
 import { BodyPicker, HookStepper } from "@/components/library/body-picker";
 import { Panel } from "@/components/shell/panel";
 import { Textarea } from "@/components/ui/textarea";
 import { api } from "@/lib/api";
+import { createLatestSaver, type LatestSaver } from "@/lib/latest-saver";
 import { cn } from "@/lib/utils";
 import type { VideoKind } from "@/server/videos/brief";
 import { KIND_LABELS, KINDS, kindOf, MAX_ADAPTATION, MAX_NOTE } from "./brief-labels";
@@ -97,21 +98,34 @@ function SavedText({
 
 /**
  * «Duración del gancho»: cada clic se ve al momento y se guarda cuando se deja de pulsar (así
- * pasar de 4 a 7 es un solo guardado y no tres que se crucen).
+ * pasar de 4 a 7 es un solo guardado y no tres). Lo que se pulsa mientras un guardado está en
+ * marcha no se pierde: queda en cola y se guarda lo último en cuanto ese termina
+ * (`createLatestSaver`). Mientras hay algo por guardar se enseña lo pulsado; después, lo del vídeo.
  */
 function SavedHookSeconds({ value, onSave, disabled }: { value: number; onSave: (seconds: number) => Promise<boolean>; disabled: boolean }) {
   const [draft, setDraft] = useState<number | null>(null);
+  // `onSave` cambia en cada pintado: la cola llama siempre a la última.
+  const save = useRef(onSave);
   useEffect(() => {
-    if (draft === null) return;
-    const timer = setTimeout(() => {
-      if (draft === value) setDraft(null);
-      else void onSave(draft).finally(() => setDraft(null));
-    }, 450);
-    return () => clearTimeout(timer);
-    // `onSave` cambia en cada pintado: el temporizador solo depende de lo que se ha pulsado.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [draft, value]);
-  return <HookStepper value={draft ?? value} onChange={setDraft} disabled={disabled} />;
+    save.current = onSave;
+  });
+  const saver = useRef<LatestSaver<number> | null>(null);
+  useEffect(() => {
+    const created = createLatestSaver<number>((seconds) => save.current(seconds), { delayMs: 450, onIdle: () => setDraft(null) });
+    saver.current = created;
+    // Al salir de la pantalla, lo que estuviera esperando se guarda ya.
+    return () => created.flush();
+  }, []);
+  return (
+    <HookStepper
+      value={draft ?? value}
+      onChange={(seconds) => {
+        setDraft(seconds);
+        saver.current?.push(seconds);
+      }}
+      disabled={disabled}
+    />
+  );
 }
 
 /**

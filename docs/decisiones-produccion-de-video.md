@@ -554,7 +554,7 @@ Diseño: `docs/superpowers/specs/2026-11-22-lotes-design.md`, apartado «v2-E».
 - **Todo o nada**: las páginas se juntan en memoria y se guardan en una sola transacción al final. Si Higgsfield falla a mitad no queda una carga a medias (que haría parar antes de tiempo la siguiente).
 - **Clips de PRINCIPAL**: en la misma transacción, `video_id` se rellena cuando el `job_id` coincide con un `generation_results` de un clip de esa misma persona. La pantalla ofrece «Abrir su vídeo» solo si quien mira ve el producto.
 - **Sin conectar**: `refreshLibrary` comprueba primero la credencial (`credentialStatus`) y responde 409 con `code: "higgsfield_connect"` sin llamar a Higgsfield. Si es Higgsfield quien rechaza el permiso, el mismo 409; si no responde, 503.
-- **Caché y actualización sola**: `listLibrary` no llama nunca a Higgsfield. Devuelve `stale` (caché vacía o `max(fetched_at)` de hace más de 10 minutos) y la pantalla, al abrirse, lanza una actualización una sola vez si viene a `true`. La primera página se vuelve a guardar en cada actualización, así que `max(fetched_at)` es la hora de la última. Una cuenta de Higgsfield sin ningún vídeo se actualiza cada vez que se abre (una llamada).
+- **Caché y actualización sola**: `listLibrary` no llama nunca a Higgsfield. Devuelve `stale` (nunca se actualizó, o la última vez fue hace más de 10 minutos) y la pantalla, al abrirse, lanza una actualización una sola vez si viene a `true`. Cuándo se actualizó se guarda aparte por persona (ver «Revisión 1»), no se deduce de los clips.
 - **Paginación**: por cursor `(created_at_hf, id)` descendente; 96 clips por página en la pantalla («Cargar más»).
 - **Con filtro de producto**: se enseñan los clips marcados como cuerpo de ese producto, **sean de quien sean** (así el dueño ve todos y un colaborador los de sus productos). Sin filtro, cada persona ve solo sus clips; el dueño tampoco ve los de otros.
 - **No se borra nada**: un clip borrado en Higgsfield se queda en la caché. Borrar exigiría releer el historial entero.
@@ -575,7 +575,7 @@ Diseño: `docs/superpowers/specs/2026-11-22-lotes-design.md`, apartado «v2-E».
   - No pide subir cuando no hace falta: una referencia de 3 s con el gancho en 4 ya se usa entera, y pasar a 5 o a «Replicar» no cambia el tramo.
   - Mientras está así: no se puede desglosar (400 «El gancho ha cambiado: vuelve a subir el vídeo de referencia.»), ni presupuestar o enviar la imagen o el clip; el desglose automático la salta (también en la consulta SQL); la pantalla del vídeo lo dice en la referencia con «Subir de nuevo», y el tablero pone «Resubir» (con el motivo debajo) y la cuenta en «Por revisar».
 - **Desglose**: el tipo y `hook_seconds` forman parte de las indicaciones (`Brief`), así que cambiarlos deja el desglose por repetir (`brief`), igual que el tipo y los cambios específicos. Con `solo_gancho`, las instrucciones añaden que el encargo es SOLO el gancho, de N segundos, que el cuerpo ya existe y se une después, y que no se diseña, describe ni continúa. Usa las mismas reglas que «Replicar».
-- **Clip**: la duración sale como siempre del tramo (`clipDurationSeconds`), así que sigue al gancho. Seedance no baja de 4 s: un gancho de 2 o 3 s sale de 4 s y se recorta al montar.
+- **Clip**: la duración sale como siempre del tramo (`clipDurationSeconds`), así que sigue al gancho. Seedance no baja de 4 s: un gancho de 2 o 3 s sale de 4 s y se recorta al montar (ver «Revisión 1»: Claude lo sabe y la pantalla lo dice).
 - **Lo que entrega la web**: el gancho y, al lado, los cuerpos en orden, cada uno con su descarga. Unirlos con la canción sigue siendo cosa del montador.
 
 ### D. Pantallas
@@ -593,4 +593,21 @@ Diseño: `docs/superpowers/specs/2026-11-22-lotes-design.md`, apartado «v2-E».
 - «Variaciones de gancho» y el cuerpo automático (`reference_match`) del panel antiguo.
 - Unir gancho y cuerpos en la web (lo hace el montador).
 - Cargar más de 500 clips antiguos, y quitar de la caché los borrados en Higgsfield.
+
+### Revisión 1 de v2-E (22/11)
+- **Gancho de 2 o 3 s y el mínimo de 4 s de Seedance.** El gancho sigue yendo de 2 a 8 s. Lo que cambia es que todos dicen los números de verdad, que salen de un solo sitio, `hookTiming(video)`:
+  - `hookMs`: lo que dura el gancho. Es el tramo de la referencia, así que si la referencia es más corta que el gancho pedido, manda lo que dura (no `hook_seconds`);
+  - `clipSeconds`: lo que dura el clip que se genera (`clipDurationSeconds`, 4 s como poco).
+  - **A Claude**: «SOLO el gancho: sus primeros N» y «el clip que se genera dura M». Si M > N: toda la acción del gancho se completa dentro de N, y lo que sobra solo mantiene el momento final, sin ninguna acción nueva, porque el montador lo recorta. Si M = N no se habla de recortar.
+  - **A la persona**: el paso «Clip» enseña «Gancho N s» y, si el clip es más largo, «de un clip de M s»: es por donde hay que recortar.
+  - `clipDurationSeconds` pasa de `clip.ts` a `videos.ts` (el desglose también lo necesita y no debe importar el clip); `clip.ts` lo sigue exportando.
+- **Cuándo se actualizó la biblioteca, por persona.** Va en `settings`, clave `biblioteca.actualizacion:<persona>`, valor `{ startedAt, refreshedAt }`.
+  - En `settings` y no en una tabla nueva para no añadir otra migración mientras `0017` está pendiente de unirse.
+  - `refreshedAt` se apunta al terminar bien, **también si no trajo nada**: una biblioteca vacía ya no se actualiza en cada visita, sino cada 10 minutos como las demás. Es también la referencia del margen de 2 horas al paginar.
+  - **Guarda de 30 s**: `refreshLibrary` reserva antes de llamar (`startedAt = ahora`, solo si no hay otra reserva de los últimos 30 s). Es una sola sentencia `insert … on conflict do update … where`, así que de dos pestañas a la vez solo una la consigue. La otra recibe `skipped: true` sin que se llame a Higgsfield, y la pantalla enseña lo que hay en la caché («Ya está al día» si fue con el botón).
+  - Si la actualización falla, la reserva se suelta (solo si sigue siendo la suya) para poder reintentar enseguida. Sin Higgsfield conectado no se reserva nada.
+- **Privacidad en el filtro por producto.** De un clip que no es de quien mira (el cuerpo de otra persona en un producto que ve) solo salen el vídeo, la miniatura, la fecha y sus marcas: `prompt` y `model` van a `null`.
+- **Duración del gancho en la pantalla del vídeo.** Lo que se pulsa mientras un guardado está en marcha ya no se pierde. `createLatestSaver` (`src/lib/latest-saver.ts`) espera a que se deje de pulsar, guarda solo lo último, nunca tiene dos guardados a la vez y, al terminar uno, guarda lo que hubiera llegado entretanto. Al salir de la pantalla guarda lo que quedara esperando.
+- **Vista previa al pasar el ratón.** El `<video>` no existe hasta que pasa la pausa de 140 ms (también con el foco del teclado), lleva `preload="metadata"` y solo hay uno a la vez en toda la pantalla (`claimPreview`): al empezar una vista previa se apaga la anterior.
+- **Cursor de la lista.** Un cursor que no tiene la forma `<ms>_<id>`, con una fecha posterior al año 3000 o con un id que no es un entero seguro es un 400 «Página no válida.». Antes una fecha enorme llegaba a la base de datos y daba un 500. El tope es el año 3000 y no el máximo de `Date` porque fechas mucho mayores tampoco se pueden mandar a la base de datos.
 

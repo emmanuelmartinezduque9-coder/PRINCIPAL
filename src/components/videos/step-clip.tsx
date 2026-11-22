@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Check, Clapperboard, Download, ImageIcon, Loader2, ThumbsUp, VideoOff } from "lucide-react";
+import { Check, Clapperboard, Download, FishingHook, ImageIcon, Loader2, ThumbsUp, VideoOff } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { ClipPreview, useHoverPreview } from "@/components/library/clip-preview";
@@ -12,7 +12,7 @@ import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import type { ClipResolution } from "@/server/videos/videos";
 import { GenerationNotice, Generating } from "./generation-status";
-import { canRequestRound, RUNNING_STATUSES, textHash, thumbUrl, type VideoJson, type VideoViewJson } from "./labels";
+import { canRequestRound, RUNNING_STATUSES, secondsLabel, textHash, thumbUrl, type VideoJson, type VideoViewJson } from "./labels";
 import { QuoteCard } from "./quote-card";
 import { onRadioKeyDown, radioTabIndex } from "./radio-keys";
 import { RejectDialog } from "./reject-dialog";
@@ -191,6 +191,21 @@ function Bodies({ bodies }: { bodies: BodyJson[] }) {
   );
 }
 
+/**
+ * «Gancho N s»: lo que dura de verdad el gancho. Si el clip sale más largo (Seedance no baja de
+ * 4 s), lo dice: lo que sobra es lo que hay que recortar al montar.
+ */
+function HookLength({ hook }: { hook: NonNullable<VideoViewJson["hook"]> }) {
+  const longer = hook.clipSeconds * 1000 > hook.hookMs;
+  return (
+    <p className="flex flex-wrap items-center gap-x-2 gap-y-1 px-1 text-sm tabular-nums">
+      <FishingHook className="size-4 shrink-0 text-muted-foreground" aria-hidden />
+      <span className="font-medium">Gancho {secondsLabel(hook.hookMs / 1000)}</span>
+      {longer ? <span className="text-muted-foreground">de un clip de {hook.clipSeconds} s</span> : null}
+    </p>
+  );
+}
+
 /** Paso «Clip»: reproductor vertical y, al lado, resolución y precio, aprobar, rechazar y descargar. */
 export function StepClip({
   view,
@@ -272,6 +287,7 @@ export function StepClip({
           </a>
         ) : null}
 
+        {view.hook ? <HookLength hook={view.hook} /> : null}
         {hookOnly ? <Bodies bodies={view.bodies} /> : null}
 
         {mine && closed && !canRequest ? <NoRegenerationsLeft what="clip" /> : null}

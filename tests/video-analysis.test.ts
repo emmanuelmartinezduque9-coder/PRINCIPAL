@@ -582,6 +582,41 @@ describe("indicaciones del vídeo: tipo, adaptación, cambios específicos y qui
     expect((await videoView(ana, v.id)).analysis).toMatchObject({ status: "done", stale: false });
   });
 
+  it("un gancho de 2 s: a Claude le llegan los números de verdad (clip de 4 s, acción en 2) y la vista dice «gancho 2 s»", async () => {
+    await readyVideo();
+    await updateVideoChoices(ana, v.id, { kind: "solo_gancho", hookSeconds: 2 });
+    await getPool().query("update videos set segment_duration_ms = 2000 where id = $1", [v.id]);
+    const { analysisId } = await requestAnalysis(ana, v.id);
+    const { client, calls } = fakeMessages([reply()]);
+    await runAnalysis(analysisId, { gateway: createGateway({ client }) });
+    const system = systemText(calls[0]);
+    expect(system).toContain("SOLO el gancho del anuncio: sus primeros 2 segundos");
+    expect(system).toContain("El clip que se genera dura 4 segundos");
+    expect(system).toContain("toda la acción del gancho tiene que completarse dentro de esos 2 segundos");
+    expect(system).toContain("solo mantiene el momento final, sin ninguna acción nueva, porque el montador lo recorta");
+    expect(texts(calls[0]).join("\n")).toContain("Duración del tramo de la referencia (solo el gancho): 2,0 s.");
+    expect((await videoView(ana, v.id)).hook).toEqual({ hookMs: 2000, clipSeconds: 4 });
+  });
+
+  it("una referencia más corta que el gancho: a Claude se le dice lo que dura el tramo, no los segundos pedidos", async () => {
+    // La referencia dura 6 s (`readyVideo`) y se pide un gancho de 8: el tramo es la referencia entera.
+    await readyVideo();
+    await updateVideoChoices(ana, v.id, { kind: "solo_gancho", hookSeconds: 8 });
+    expect((await videoView(ana, v.id)).referenceOutdated).toBe(false);
+    const { analysisId } = await requestAnalysis(ana, v.id);
+    const { client, calls } = fakeMessages([reply()]);
+    await runAnalysis(analysisId, { gateway: createGateway({ client }) });
+    const system = systemText(calls[0]);
+    expect(system).toContain("SOLO el gancho del anuncio: sus primeros 6 segundos");
+    expect(system).toContain("El clip que se genera dura 6 segundos.");
+    expect(system).not.toContain("8 segundos");
+    expect(system).not.toContain("momento final");
+    expect((await videoView(ana, v.id)).hook).toEqual({ hookMs: 6000, clipSeconds: 6 });
+    // Un vídeo que no es «Solo gancho» no tiene tiempos de gancho.
+    await updateVideoChoices(ana, v.id, { kind: "replicar" });
+    expect((await videoView(ana, v.id)).hook).toBeNull();
+  });
+
   it("al replicar no se habla de gancho ni se guarda su duración", async () => {
     await readyVideo();
     await updateVideoChoices(ana, v.id, { hookSeconds: 6 });

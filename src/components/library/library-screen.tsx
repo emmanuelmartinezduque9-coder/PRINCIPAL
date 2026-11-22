@@ -75,7 +75,7 @@ const SettingsLink = ({ className }: { className?: string }) => (
 
 /**
  * `/biblioteca`: los clips del Higgsfield de la persona, servidos de la caché (cargan al momento).
- * «Actualizar» trae lo nuevo, y la pantalla lo hace sola al abrirse si la caché está vacía o tiene
+ * «Actualizar» trae lo nuevo, y la pantalla lo hace sola al abrirse si nunca se actualizó o hace
  * más de 10 minutos. El filtro por producto enseña los clips marcados como cuerpo de ese producto.
  */
 export function LibraryScreen({ initialProductId }: { initialProductId: number | null }) {
@@ -104,12 +104,15 @@ export function LibraryScreen({ initialProductId }: { initialProductId: number |
   const clips = library.data?.pages.flatMap((page) => page.clips) ?? [];
 
   // La variable dice quién la pidió: «manual» (el botón) avisa del resultado; «auto» (al abrir), no.
-  const refresh = useMutation<{ added: number }, Error, "auto" | "manual">({
-    mutationFn: () => api<{ added: number }>("/api/biblioteca/actualizar", { method: "POST" }),
-    onSuccess: async ({ added }, how) => {
+  const refresh = useMutation<{ added: number; skipped: boolean }, Error, "auto" | "manual">({
+    mutationFn: () => api<{ added: number; skipped: boolean }>("/api/biblioteca/actualizar", { method: "POST" }),
+    onSuccess: async ({ added, skipped }, how) => {
       setNeedsConnection(false);
       await client.invalidateQueries({ queryKey: ["library"] });
-      if (how === "manual") toast.success(added === 0 ? "Sin clips nuevos" : added === 1 ? "1 clip nuevo" : `${added} clips nuevos`);
+      if (how !== "manual") return;
+      // `skipped`: ya se actualizó hace menos de 30 s (otra pestaña, otro clic); el servidor no ha vuelto a preguntar.
+      if (skipped) toast.success("Ya está al día");
+      else toast.success(added === 0 ? "Sin clips nuevos" : added === 1 ? "1 clip nuevo" : `${added} clips nuevos`);
     },
     onError: (error) => {
       if (error instanceof ApiError && error.code === HIGGSFIELD_CONNECT) setNeedsConnection(true);

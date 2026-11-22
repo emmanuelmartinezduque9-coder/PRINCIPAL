@@ -1,4 +1,4 @@
-import { and, count, desc, eq, inArray, lt, max, or, sql } from "drizzle-orm";
+import { and, count, desc, eq, inArray, lt, or, sql } from "drizzle-orm";
 import {
   getHiggsfield,
   HIGGSFIELD_KIND,
@@ -9,7 +9,7 @@ import {
   type HfHistoryItem,
   type HiggsfieldPort,
 } from "@/connectors/higgsfield";
-import { getDb, schema } from "@/db/client";
+import { getDb, getSetting, schema } from "@/db/client";
 import { HIGGSFIELD_CONNECT } from "@/lib/error-codes";
 import type { AuthUser } from "@/server/auth";
 import { credentialStatus } from "@/server/credentials";
@@ -19,7 +19,8 @@ import { servableClipUrl } from "@/server/videos/clip";
 
 /**
  * Biblioteca de clips: los vídeos terminados del historial de Higgsfield de cada persona, copiados
- * a `library_clips` para que la pantalla cargue al instante. Se lee siempre con la conexión de la
+ * a `library_clips` para que la pantalla cargue al instante. Cuándo se actualizó por última vez
+ * la de cada persona va aparte, en `settings`. Se lee siempre con la conexión de la
  * persona de la sesión (ninguna función acepta otra persona) y cada una ve solo sus clips; los que
  * están marcados como cuerpo de un producto los ve además quien ve ese producto.
  */
@@ -28,8 +29,13 @@ import { servableClipUrl } from "@/server/videos/clip";
 export const LIBRARY_PAGE_SIZE = 50;
 /** Como mucho estas páginas por actualización (la primera carga trae hasta 500 clips). */
 export const LIBRARY_MAX_PAGES = 10;
-/** Con la caché más vieja que esto (o vacía), la pantalla la actualiza sola al abrirse. */
+/** Si la última actualización es más vieja que esto (o no hubo ninguna), la pantalla actualiza sola al abrirse. */
 export const LIBRARY_STALE_MS = 10 * 60 * 1000;
+/**
+ * Una actualización empezada hace menos que esto no se repite (dos pestañas, doble clic, la
+ * pantalla abierta dos veces): se responde con lo que hay en la caché, sin llamar a Higgsfield.
+ */
+export const LIBRARY_REFRESH_GUARD_MS = 30 * 1000;
 /**
  * Un clip puede terminar bastante después de crearse (las generaciones se dan por perdidas a la
  * hora), y entonces aparece en el historial por debajo de clips que ya se conocen. Por eso no se
@@ -42,6 +48,12 @@ const DEFAULT_LIMIT = 60;
 const MAX_LIMIT = 120;
 
 const BAD_CURSOR = "Página no válida.";
+/**
+ * La fecha más lejana que se admite en un cursor: el año 3000 (un cursor es la fecha de un clip).
+ * Con fechas mucho mayores la consulta falla: o no son una `Date`, o no se pueden mandar a la base
+ * de datos (pasó con el año 275760, y cerca del 10000 depende de la zona horaria del servidor).
+ */
+const MAX_CURSOR_MS = Date.UTC(3000, 0, 1);
 
 const clips = schema.libraryClips;
 const bodies = schema.productBodies;
@@ -50,6 +62,60 @@ export interface LibraryDeps {
   higgsfield?: HiggsfieldPort;
   now?: () => Date;
 }
+
+// ───────────────────────── Estado de la actualización, por persona ─────────────────────────
+
+/**
+ * Cuándo empezó y cuándo terminó bien la última actualización de cada persona. Va en `settings`
+ * (una clave por persona), no se deduce de las filas de `library_clips`: así una biblioteca vacía
+ * también cuenta como actualizada y no se vuelve a pedir en cada visita.
+ */
+const refreshKey = (userId: number) => `biblioteca.actualizacion:${userId}`;
+
+const dateOrNull = (value: unknown): Date | null => {
+  if (typeof value !== "string") return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+};
+
+async function refreshState(userId: number): Promise<{ startedAt: Date | null; refreshedAt: Date | null }> {
+  const state = await getSetting<{ startedAt?: unknown; refreshedAt?: unknown }>(refreshKey(userId));
+  return { startedAt: dateOrNull(state?.startedAt), refreshedAt: dateOrNull(state?.refreshedAt) };
+}
+
+/**
+ * Reserva la actualización de esa persona: apunta `startedAt = now` solo si no hay otra empezada
+ * en los últimos 30 s. Es una sola sentencia (insertar o actualizar con condición), así que de dos
+ * peticiones a la vez solo una la consigue. Devuelve si la ha conseguido.
+ */
+async function claimRefresh(userId: number, now: Date): Promise<boolean> {
+  const started = now.toISOString();
+  // Las dos fechas son ISO en UTC con el mismo formato: comparadas como texto, se ordenan igual.
+  const limit = new Date(now.getTime() - LIBRARY_REFRESH_GUARD_MS).toISOString();
+  const claimed = await getDb().execute(sql`
+    insert into settings (key, value) values (${refreshKey(userId)}, jsonb_build_object('startedAt', ${started}::text))
+    on conflict (key) do update
+      set value = settings.value || jsonb_build_object('startedAt', ${started}::text), updated_at = now()
+      where settings.value->>'startedAt' is null or settings.value->>'startedAt' <= ${limit}
+    returning key`);
+  return claimed.rows.length > 0;
+}
+
+/** La actualización terminó bien: queda apuntada (también si no trajo nada). */
+async function finishRefresh(userId: number, now: Date): Promise<void> {
+  await getDb().execute(sql`
+    update settings set value = value || jsonb_build_object('refreshedAt', ${now.toISOString()}::text), updated_at = now()
+    where key = ${refreshKey(userId)}`);
+}
+
+/** La actualización falló: se suelta la reserva (si sigue siendo la nuestra) para poder reintentar ya. */
+async function releaseRefresh(userId: number, now: Date): Promise<void> {
+  await getDb().execute(sql`
+    update settings set value = value || '{"startedAt": null}'::jsonb, updated_at = now()
+    where key = ${refreshKey(userId)} and value->>'startedAt' = ${now.toISOString()}`);
+}
+
+// ───────────────────────── Actualizar ─────────────────────────
 
 /** Sin conexión o caducada: 409 con el código que hace que la pantalla ofrezca ir a Ajustes. */
 function connectError(error: HiggsfieldNotConnectedError | HiggsfieldAuthError): HttpError {
@@ -99,17 +165,33 @@ function storable(item: HfHistoryItem, now: Date) {
  * todo junto al final: si Higgsfield falla a mitad no queda una carga a medias. Los clips que
  * salieron de un vídeo de PRINCIPAL quedan marcados con ese vídeo. Sin Higgsfield conectado: 409
  * con el código `higgsfield_connect`.
+ *
+ * Si esa persona ya empezó otra actualización hace menos de 30 s (otra pestaña, un doble clic), no
+ * se llama a Higgsfield: `skipped: true` y la pantalla enseña lo que hay en la caché. Si la
+ * actualización falla, la reserva se suelta y se puede reintentar enseguida.
  */
-export async function refreshLibrary(user: AuthUser, deps: LibraryDeps = {}): Promise<{ added: number; pages: number }> {
+export async function refreshLibrary(user: AuthUser, deps: LibraryDeps = {}): Promise<{ added: number; pages: number; skipped: boolean }> {
   const { connected, meta } = await credentialStatus(user.id, HIGGSFIELD_KIND);
   if (!connected) throw connectError(new HiggsfieldNotConnectedError());
   if (meta.needsReconnect === true) throw connectError(new HiggsfieldAuthError());
 
-  const db = getDb();
-  const port = deps.higgsfield ?? getHiggsfield();
   const now = deps.now?.() ?? new Date();
-  const [{ last }] = await db.select({ last: max(clips.fetchedAt) }).from(clips).where(eq(clips.userId, user.id));
-  const settledBefore = last ? last.getTime() - LIBRARY_LATE_MARGIN_MS : null;
+  if (!(await claimRefresh(user.id, now))) return { added: 0, pages: 0, skipped: true };
+  try {
+    const result = await loadHistory(user, deps.higgsfield ?? getHiggsfield(), now);
+    await finishRefresh(user.id, now);
+    return { ...result, skipped: false };
+  } catch (error) {
+    await releaseRefresh(user.id, now);
+    throw error;
+  }
+}
+
+/** Lee el historial hasta donde toca y lo guarda todo junto. Devuelve cuántos clips eran nuevos y cuántas páginas pidió. */
+async function loadHistory(user: AuthUser, port: HiggsfieldPort, now: Date): Promise<{ added: number; pages: number }> {
+  const db = getDb();
+  const { refreshedAt } = await refreshState(user.id);
+  const settledBefore = refreshedAt ? refreshedAt.getTime() - LIBRARY_LATE_MARGIN_MS : null;
 
   const found = new Map<string, NonNullable<ReturnType<typeof storable>>>();
   const knownIds = new Set<string>();
@@ -177,7 +259,8 @@ export interface LibraryClip {
   id: number;
   thumbUrl: string | null;
   videoUrl: string;
-  model: string;
+  /** El modelo y el principio del prompt, solo de los clips propios: de los ajenos (cuerpos de un producto) no se enseñan. */
+  model: string | null;
   createdAt: Date;
   prompt: string | null;
   /** Es de la biblioteca de quien mira (solo entonces puede marcarlo como cuerpo). */
@@ -194,18 +277,24 @@ export interface LibraryPage {
   nextCursor: string | null;
   /** Cuántos clips tiene la biblioteca de quien mira. */
   total: number;
-  /** Última actualización de su biblioteca; `null` si nunca se ha cargado nada. */
+  /** Última actualización terminada de su biblioteca (aunque no trajera nada); `null` si no hubo ninguna. */
   refreshedAt: Date | null;
-  /** Vacía o con más de 10 minutos: la pantalla la actualiza sola al abrirse. */
+  /** Sin actualizar nunca o hace más de 10 minutos: la pantalla la actualiza sola al abrirse. */
   stale: boolean;
 }
 
-/** `<milisegundos>_<id>` del último clip de una página. */
+/**
+ * `<milisegundos>_<id>` del último clip de una página. Uno que no tiene esa forma, o con una fecha
+ * o un id que no caben (una fecha posterior al año 3000, un id que no es un entero seguro), es un 400.
+ */
 function parseCursor(cursor: string | null | undefined): { at: Date; id: number } | null {
   if (cursor === null || cursor === undefined || cursor === "") return null;
   const match = /^(\d{1,16})_([1-9]\d{0,15})$/.exec(cursor);
   if (!match) throw new HttpError(400, BAD_CURSOR);
-  return { at: new Date(Number(match[1])), id: Number(match[2]) };
+  const ms = Number(match[1]);
+  const id = Number(match[2]);
+  if (ms > MAX_CURSOR_MS || !Number.isSafeInteger(id)) throw new HttpError(400, BAD_CURSOR);
+  return { at: new Date(ms), id };
 }
 
 /**
@@ -254,16 +343,18 @@ export async function listLibrary(
       : await db.select({ id: schema.videos.id, productId: schema.videos.productId }).from(schema.videos).where(inArray(schema.videos.id, videoIds));
   const videoOf = new Map(videos.filter((video) => products.has(video.productId)).map((video) => [video.id, video]));
 
-  const [state] = await db.select({ total: count(), last: max(clips.fetchedAt) }).from(clips).where(eq(clips.userId, user.id));
+  const [{ total }] = await db.select({ total: count() }).from(clips).where(eq(clips.userId, user.id));
+  const { refreshedAt } = await refreshState(user.id);
   const now = deps.now?.() ?? new Date();
   return {
     clips: page.map((row) => ({
       id: row.id,
       thumbUrl: row.thumbUrl,
       videoUrl: row.videoUrl,
-      model: row.model,
+      // De un clip ajeno (cuerpo de un producto que se ve) solo se enseña el vídeo: ni modelo ni prompt.
+      model: row.userId === user.id ? row.model : null,
       createdAt: row.createdAtHf,
-      prompt: row.prompt,
+      prompt: row.userId === user.id ? row.prompt : null,
       mine: row.userId === user.id,
       video: row.videoId === null ? null : (videoOf.get(row.videoId) ?? null),
       bodies: marks
@@ -277,8 +368,8 @@ export async function listLibrary(
         })),
     })),
     nextCursor: rows.length > limit && lastRow ? `${lastRow.createdAtHf.getTime()}_${lastRow.id}` : null,
-    total: state.total,
-    refreshedAt: state.last,
-    stale: state.total === 0 || state.last === null || now.getTime() - state.last.getTime() > LIBRARY_STALE_MS,
+    total,
+    refreshedAt,
+    stale: refreshedAt === null || now.getTime() - refreshedAt.getTime() > LIBRARY_STALE_MS,
   };
 }
