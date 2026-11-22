@@ -80,6 +80,24 @@ describe("reglas sembradas: la copia limpia está limpia y conserva el criterio"
     expect(video).toContain("Sin texto en pantalla");
   });
 
+  it("los textos enviados al modelo no contradicen los requisitos del dueño", () => {
+    const imagen = text("reglas/imagen-nano-banana.md");
+    const video = text("reglas/video-seedance.md");
+    // @Video1 solo aporta estructura: nada de pose, bloqueo de escena ni luz.
+    expect(video).not.toMatch(/bloqueo de escena/);
+    expect(video).toContain("`primer fotograma`");
+    expect(video).toContain("`referencia de contexto`");
+    expect(video).toContain("{modo}");
+    expect(video).not.toMatch(/@Image1 define a la mujer/);
+    // La orden del 30/10 sobre texto en pantalla no admite excepciones.
+    expect(imagen).not.toContain("salvo texto que el usuario solicite");
+    // Las pautas del 02/09 sustituidas por el criterio del 03/10 ya no son instrucciones vivas.
+    expect(imagen).not.toContain("Es el rasgo número uno");
+    expect(imagen).not.toContain("tilted about two degrees");
+    expect(imagen).toContain("Precedencia:");
+    expect(text("reglas/adaptacion-de-conceptos.md")).toContain("inferido útil");
+  });
+
   it("las referencias cruzadas entre reglas usan el título real de la otra regla", () => {
     const titles = new Map(indice.map((e) => [e.slug, e.title]));
     const adaptacion = text("reglas/adaptacion-de-conceptos.md");

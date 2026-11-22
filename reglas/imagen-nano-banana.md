@@ -21,11 +21,9 @@ Regla oficial: en vez de «no cars», escribir «an empty, deserted street with 
 `cinematic` · `studio lighting` · `softbox` · `golden hour` (el default más pegajoso del modelo) · `color grading` · `moody` · `dramatic lighting` · `professional photograph` · `editorial` · `hyperrealistic` · `8K` · `masterpiece` · `octane render` · `subsurface scattering` · `bokeh` · `shallow depth of field` · `flawless skin` · `dewy` · `airbrushed` · `glowing skin`
 
 ### 4. Lo que sí hay que describir
-- **Todo enfocado.** A 1x el iPhone equivale a ƒ/6.3 en full frame. Cualquier desenfoque bonito delata la IA al instante. Es el rasgo número uno.
-- **Sombras levantadas, luces quemadas.** Lo oscuro se queda en gris; los tubos del techo sí van a blanco puro con halo.
+- **Nota fechada (03/10/2026):** el criterio de realismo del 03/10 sustituye a tres pautas del 02/09 («todo enfocado», «sombras levantadas y luces quemadas» y «encuadre descuidado de unos dos grados»). Ya no se aplican: manda la variación de exposición y de detalle justificada por la luz y la captura, sin imponer desenfoque, ruido ni encuadre torcido.
 - **Afilado por zonas.** Cartón, letras, tela y pelo crujientes; paredes y sombras **lavadas** por la reducción de ruido. Las dos cosas a la vez.
 - **Piel real** con la formulación que tiene evidencia visual en este modelo: poros y textura acordes a la edad, tono desigual, rojez en nariz y mejillas, pequeñas imperfecciones, asimetría natural, brillo en frente y nariz. *«Keep it subtle and true to life, without smoothing.»*
-- **Encuadre descuidado y cuantificado**: descentrado, aire de sobra arriba, borde que corta, «tilted about two degrees».
 - **Perspectiva de 24 mm**: primer plano agrandado, líneas algo arqueadas en los bordes.
 
 ### 5. La imagen NO se retoca (corregido el 02/09/2026)
@@ -97,6 +95,8 @@ Una referencia pertinente por toma; composición/acción, avatar y producto sigu
 - La composición define acción y encuadre; el avatar define identidad; el asset define producto. La imagen de estilo no redefine ninguno de ellos. Especificar prendas que conservar para evitar copiar involuntariamente el conjunto de estilo.
 
 ## Ejemplos de prompts validados por Emmanuel
+
+**Precedencia:** estos ejemplos enseñan solo la precisión en los papeles de las referencias y en los invariantes (qué se conserva y qué cambia). Para el ESTILO de redacción mandan la regla de prosa y la lista negra de arriba: los ejemplos contienen bloques en MAYÚSCULAS, listas de NEGATIVE y palabras de la lista negra que no se deben imitar.
 
 Emmanuel declara validados estos cuatro ejemplos; no tienen una certificación visual independiente. Antes de redactar, leer el ejemplo pertinente completo como patrón de precisión, no como plantilla universal. Los cuatro textos están íntegros, sin adaptación:
 
@@ -244,10 +244,10 @@ Actualización del 03/10: las cinco referencias utilizables prevalecen sobre rec
 - Misma perspectiva, nitidez, ruido, iluminación y oclusiones que su entorno. En escaparates: sombra de contacto sobre repisa, cristal por delante con reflejos discretos coherentes y objetos de escala en el mismo plano. Nunca ampliar el artículo solo para volverlo protagonista; acercar el encuadre si hace falta sin alterar tamaño físico ni acción autorizada.
 - El color viene de objetos identificables y pertinentes. No imponer una paleta repetida a todos los ambientes. Conservar la geometría y el color del asset propio.
 
-La revisión visual de cada salida debe observar estos puntos; escribirlos en el prompt no certifica que se cumplan. No prometer ausencia absoluta de defectos ni reintentar automáticamente una salida válida sin autorización del usuario.
+La revisión visual de cada salida debe observar estos puntos; escribirlos en el prompt no certifica que se cumplan. No prometer ausencia absoluta de defectos.
 
 ### Prioridad de calidad (orden de Emmanuel, 01/10/2026, posterior)
-La imagen inicial es el principal determinante del resultado. Antes de gastar, comprobar en una sola revisión composición inicial, manos y objetos, producto exacto, identidad y referencia de realismo pertinente. Pensar a la vez el movimiento del clip: la postura debe permitir la acción sin inventar manos, anticipar sorpresa o reveal, ni exigir cambiar el embalaje durante el clip. Después de generar, comparar esos mismos puntos visualmente contra las fuentes. No presentar «perfecto» sin haberlo comparado. Mostrar desviaciones concretas y respetar la decisión humana; no regenerar sin permiso. Mantener color contextual y textura real por encima de adornos vistosos.
+La imagen inicial es el principal determinante del resultado. Antes de dar la imagen por buena, comprobar en una sola revisión composición inicial, manos y objetos, producto exacto, identidad y referencia de realismo pertinente. Pensar a la vez el movimiento del clip: la postura debe permitir la acción sin inventar manos, anticipar sorpresa o reveal, ni exigir cambiar el embalaje durante el clip. Después de generar, comparar esos mismos puntos visualmente contra las fuentes. No presentar «perfecto» sin haberlo comparado. Nombrar desviaciones concretas. Mantener color contextual y textura real por encima de adornos vistosos.
 
 1. Referencia de composición y comienzo exacto: qué ocurre ahora, qué aún no ocurre, distancia, escala y posición de manos y objetos. No anticipar un reveal.
 2. Avatar: identificar su número real de imagen y fuente exclusiva de identidad. Conservar la elección explícita; de lo contrario usar el avatar que la aplicación entrega para ese papel.
@@ -256,7 +256,7 @@ La imagen inicial es el principal determinante del resultado. Antes de gastar, c
 5. Iluminación cotidiana y reflejos propios de ese lugar.
 6. Realismo de móvil y papel de la referencia de estilo: `realism reference only`. Excluir copia de rostro, vestuario, producto, banderas y overlays de esa foto.
 7. Evitar defectos pertinentes: piel plástica, anatomía imposible, colores arbitrarios, objetos flotantes y geometría alterada. No acumular negativos vacíos.
-8. Formato del encargo; sin captions, emojis, interfaz o watermark superpuestos, salvo texto que el usuario solicite expresamente. Rótulos físicos no son overlays.
+8. Formato del encargo; sin captions, emojis, interfaz o watermark superpuestos (orden del 30/10/2026, sin excepción). Rótulos físicos no son overlays.
 
 Redactar en prosa natural, adaptando los índices al orden real de las referencias que entrega la aplicación. Mantener el prompt separado de notas y evidencia.
 
@@ -265,7 +265,8 @@ Al construir plantillas, indicar por toma el entorno, la fuente y dirección de 
 ## Ejecución de la imagen
 - Usar referencias canónicas existentes y la composición original válida. No convertir ejemplos sintéticos o resultados rechazados en estilo ni base de otra imagen; no declarar aprobación visual que no exista.
 - Adjuntar una referencia real de estilo pertinente, con papel explícito. No adjuntar todas indiscriminadamente.
-- Mostrar resultados crudos del modelo. No aplicar filtros para simular realismo. Si hay desviaciones, señalarlas sin regenerar por iniciativa propia. Las correcciones solo van dentro del alcance autorizado, conservando las demás imágenes.
+- No aplicar filtros ni retoques para simular realismo: se juzga el resultado crudo del modelo y, si se desvía, se cambia el prompt.
+- Una referencia de realismo o de entorno no debe llevar una cara visible: la identidad sale solo del avatar (orden del 19/11/2026 sobre la referencia de supermercado, con el rostro cubierto).
 
 ### Assets limpios y otros formatos
 Esta sigue siendo la regla de imágenes si se pide un artículo aislado, embalaje, logo o imagen web: adaptar los párrafos al fondo, texto y formato solicitados. No introducir personas, tiendas, Navidad, ruido o imperfecciones de móvil en un asset limpio. No modificar producto o marca para añadir color.
@@ -280,7 +281,7 @@ Aplicar solo al crear lotes nuevos; no reaplicar estos valores a lotes pendiente
 - El avatar que la ficha indica no se sustituye por conveniencia. Un retrato explícito se respeta.
 - Si el papel es ambiguo o falta la foto, no inventar el género mirando el producto: resolver esa evidencia.
 - Un producto de uñas o belleza conecta con cosmética y asigna mujer a la reacción o al desmayo. Si se indica un público especial, conservarlo al describir el encargo sin cambiar identidades.
-- No repetir «hombre 1» por defecto si hay otra opción adecuada.
+- No asignar siempre el mismo `{avatar}` por defecto si hay otra opción adecuada para el papel.
 
 ## Escala de producto con mano
 Aplicar también la regla «Vídeo con Seedance 2.5», que se entrega junto a esta: las imágenes de referencia de producto muestran el producto comparado con una mano humana, basada en evidencia real del producto original. No inventar centímetros.
