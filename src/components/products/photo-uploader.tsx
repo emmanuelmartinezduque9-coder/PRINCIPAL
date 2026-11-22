@@ -343,8 +343,13 @@ function PhotoDropzone({
 /** «3 / 12» junto al título del panel de fotos. */
 export function PhotoCount({ count }: { count: number }) {
   return (
-    <span className="text-sm text-muted-foreground tabular-nums" aria-label={`${count} de ${MAX_PHOTOS} fotos`}>
-      {count} / {MAX_PHOTOS}
+    <span className="text-sm text-muted-foreground tabular-nums">
+      <span aria-hidden>
+        {count} / {MAX_PHOTOS}
+      </span>
+      <span className="sr-only">
+        {count} de {MAX_PHOTOS} fotos
+      </span>
     </span>
   );
 }

@@ -19,7 +19,7 @@ import { runMigrations } from "../src/db/migrate";
 import { seed } from "../src/db/seed";
 import { isCloud } from "../src/lib/cloud-env";
 import { setAssignments } from "../src/server/access";
-import { acceptInvite, createInvite, LOCAL_USER, type AuthUser } from "../src/server/auth";
+import { LOCAL_USER, type AuthUser } from "../src/server/auth";
 import { addProductPhoto } from "../src/server/photos";
 import { createProduct } from "../src/server/products";
 import type { Analysis } from "../src/server/videos/analysis";
@@ -154,11 +154,28 @@ const RESULT: Analysis = {
   videoPrompt: VIDEO_PROMPT,
 };
 
+/**
+ * Colaboradora de ejemplo, sin contraseña que sirva: su `password_hash` no tiene el formato de
+ * una contraseña guardada, así que nadie puede entrar con esa cuenta.
+ */
 async function makePerson(email: string, name: string): Promise<AuthUser> {
-  const [existing] = await getDb().select().from(schema.users).where(eq(schema.users.email, email));
-  if (existing) return { id: existing.id, email: existing.email, name: existing.name, role: existing.role as AuthUser["role"] };
-  const { token } = await createInvite(email, name, { role: "colaborador" });
-  return acceptInvite(token, "una-clave-larga-de-ejemplo");
+  const db = getDb();
+  const [existing] = await db.select().from(schema.users).where(eq(schema.users.email, email));
+  const row = existing ?? (await db.insert(schema.users).values({ email, name, passwordHash: "!sin-clave", role: "colaborador" }).returning())[0];
+  return { id: row.id, email: row.email, name: row.name, role: row.role as AuthUser["role"] };
+}
+
+/** Solo una base de datos de este ordenador: nunca la de la nube aunque `DATABASE_URL` apunte a ella. */
+function assertLocalDatabase(url: string) {
+  let host = "";
+  try {
+    host = new URL(url).hostname;
+  } catch {
+    // Una dirección que no se entiende tampoco se toca.
+  }
+  if (host !== "localhost" && host !== "127.0.0.1") {
+    throw new Error("Este script solo escribe en la base de datos local (localhost o 127.0.0.1).");
+  }
 }
 
 /** Deja un vídeo con la referencia preparada, sus fotogramas y un desglose terminado. */
@@ -227,6 +244,7 @@ async function main() {
     url = pg.url;
     stop = pg.stop;
   }
+  assertLocalDatabase(url);
   process.env.DATABASE_URL = url;
   await runMigrations(url);
   await seed(url);

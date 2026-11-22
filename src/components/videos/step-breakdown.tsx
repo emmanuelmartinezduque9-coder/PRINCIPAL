@@ -22,6 +22,7 @@ import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { Panel } from "@/components/shell/panel";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { api } from "@/lib/api";
 import { formatUsd } from "@/lib/money";
 import { cn } from "@/lib/utils";
@@ -29,6 +30,7 @@ import type { FrameUse } from "@/server/videos/manifest";
 import { checkImagePrompt, checkVideoPrompt, type PromptIssue } from "@/server/videos/prompt-check";
 import { frameUrl, secondsLabel, type AnalysisJson, type RiskKind, type VideoJson, type VideoViewJson } from "./labels";
 import { PromptEditor } from "./prompt-editor";
+import { onRadioKeyDown, radioTabIndex } from "./radio-keys";
 
 const RISK_LABELS: Record<RiskKind, string> = {
   funcion_inexistente: "Función que no tiene",
@@ -88,14 +90,14 @@ function RequestError({ error }: { error: Error | null }) {
 function Requirement({ ok, icon: Icon, label }: { ok: boolean; icon: LucideIcon; label: string }) {
   return (
     <li className="flex items-center gap-3 text-sm">
-      <span
-        className={cn("grid size-6 shrink-0 place-items-center rounded-full", ok ? "bg-emerald-500 text-white" : "bg-muted text-muted-foreground")}
-        aria-label={ok ? "Hecho" : "Falta"}
-      >
+      <span className={cn("grid size-6 shrink-0 place-items-center rounded-full", ok ? "bg-emerald-500 text-white" : "bg-muted text-muted-foreground")}>
         {ok ? <Check className="size-3.5" aria-hidden /> : <X className="size-3.5" aria-hidden />}
       </span>
       <Icon className="size-4 text-muted-foreground" aria-hidden />
-      <span className={cn(!ok && "text-muted-foreground")}>{label}</span>
+      <span className={cn(!ok && "text-muted-foreground")}>
+        {label}
+        <span className="sr-only">{ok ? " (hecho)" : " (falta)"}</span>
+      </span>
     </li>
   );
 }
@@ -148,35 +150,36 @@ function nearestFrame(frames: VideoViewJson["frames"], seconds: number) {
   return best;
 }
 
-function Shots({ view, analysis }: { view: VideoViewJson; analysis: NonNullable<AnalysisJson["result"]> }) {
+/** Con `showFrames`, cada plano lleva el fotograma más cercano (no si el desglose es de otra referencia). */
+function Shots({ view, analysis, showFrames }: { view: VideoViewJson; analysis: NonNullable<AnalysisJson["result"]>; showFrames: boolean }) {
   const { video, frames } = view;
   return (
     <ol className="flex flex-col gap-2" aria-label="Planos">
       {analysis.shots.map((shot, index) => {
-        const frame = frames.length > 0 ? nearestFrame(frames, shot.startS) : null;
+        const frame = showFrames && frames.length > 0 ? nearestFrame(frames, shot.startS) : null;
         return (
           <li key={index} className="flex gap-3 rounded-lg border bg-background p-2.5">
-            <div className="relative aspect-[9/16] w-14 shrink-0 overflow-hidden rounded-md bg-muted">
-              {frame ? (
-                // eslint-disable-next-line @next/next/no-img-element
+            {frame ? (
+              <div className="relative aspect-[9/16] w-14 shrink-0 overflow-hidden rounded-md bg-muted">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img src={frameUrl(video.id, frame.index, video.updatedAt)} alt="" loading="lazy" className="absolute inset-0 size-full object-cover" />
-              ) : null}
-            </div>
+              </div>
+            ) : null}
             <div className="flex min-w-0 flex-1 flex-col gap-1 text-sm">
               <span className="text-xs font-medium text-muted-foreground tabular-nums">
                 {secondsLabel(shot.startS)} – {secondsLabel(shot.endS)}
               </span>
               <p className="flex gap-1.5">
-                <Eye className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" aria-label="Qué se ve" />
+                <Eye className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" role="img" aria-label="Qué se ve" />
                 <span>{shot.seen}</span>
               </p>
               <p className="flex gap-1.5 text-muted-foreground">
-                <ArrowRight className="mt-0.5 size-3.5 shrink-0" aria-label="Qué pasa" />
+                <ArrowRight className="mt-0.5 size-3.5 shrink-0" role="img" aria-label="Qué pasa" />
                 <span>{shot.action}</span>
               </p>
               {shot.onScreenText ? (
                 <p className="flex gap-1.5">
-                  <Type className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" aria-label="Texto en pantalla" />
+                  <Type className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" role="img" aria-label="Texto en pantalla" />
                   <span className="italic">«{shot.onScreenText}»</span>
                 </p>
               ) : null}
@@ -203,7 +206,7 @@ function Adaptation({ analysis }: { analysis: NonNullable<AnalysisJson["result"]
         <li key={index} className="flex flex-col gap-2 rounded-lg border bg-background p-3 text-sm">
           <p className="flex flex-wrap items-center gap-x-2 gap-y-1 font-medium">
             <span className="text-muted-foreground line-through decoration-foreground/30">{item.original}</span>
-            <ArrowRight className="size-3.5 text-muted-foreground" aria-label="pasa a" />
+            <ArrowRight className="size-3.5 text-muted-foreground" role="img" aria-label="pasa a" />
             <span>{item.equivalent}</span>
           </p>
           <dl className="grid grid-cols-[6.5rem_minmax(0,1fr)] gap-x-3 gap-y-1">
@@ -250,47 +253,61 @@ function FrameUsePicker({ video, readOnly }: { video: VideoJson; readOnly: boole
     onError: (error) => toast.error(error instanceof Error ? error.message : "No se pudo guardar."),
     onSettled: () => client.invalidateQueries({ queryKey: ["video", video.id] }),
   });
+  const uses = Object.keys(FRAME_USE_LABELS) as FrameUse[];
+  const selectedIndex = uses.indexOf(video.frameUse as FrameUse);
+  const choose = (use: FrameUse) => {
+    if (use !== video.frameUse) save.mutate(use);
+  };
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
       <span id={`uso-${video.id}`} className="text-sm font-semibold">
         La imagen se usa como
       </span>
-      <div role="radiogroup" aria-labelledby={`uso-${video.id}`} className="inline-flex rounded-lg bg-muted p-0.5">
-        {(Object.keys(FRAME_USE_LABELS) as FrameUse[]).map((use) => {
-          const on = video.frameUse === use;
-          return (
-            <button
-              key={use}
-              type="button"
-              role="radio"
-              aria-checked={on}
-              disabled={readOnly && !on}
-              onClick={() => !readOnly && !on && save.mutate(use)}
-              className={cn(
-                "h-8 rounded-md px-3 text-sm transition-colors outline-none focus-visible:ring-3 focus-visible:ring-ring/50",
-                on ? "bg-background font-medium shadow-sm" : "text-muted-foreground hover:text-foreground disabled:opacity-50",
-                readOnly && "cursor-default",
-              )}
-            >
-              {FRAME_USE_LABELS[use]}
-            </button>
-          );
-        })}
-      </div>
+      {readOnly ? (
+        <span className="text-sm">{FRAME_USE_LABELS[video.frameUse as FrameUse] ?? video.frameUse}</span>
+      ) : (
+        <div role="radiogroup" aria-labelledby={`uso-${video.id}`} className="inline-flex rounded-lg bg-muted p-0.5">
+          {uses.map((use, index) => {
+            const on = index === selectedIndex;
+            return (
+              <button
+                key={use}
+                type="button"
+                role="radio"
+                aria-checked={on}
+                tabIndex={radioTabIndex(index, selectedIndex)}
+                onClick={() => choose(use)}
+                onKeyDown={(event) => onRadioKeyDown(event, (next) => choose(uses[next]))}
+                className={cn(
+                  "h-8 rounded-md px-3 text-sm transition-colors outline-none focus-visible:ring-3 focus-visible:ring-ring/50",
+                  on ? "bg-background font-medium shadow-sm" : "text-muted-foreground hover:text-foreground",
+                )}
+              >
+                {FRAME_USE_LABELS[use]}
+              </button>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
 
+/** Cambios de los prompts aún sin guardar (lo que no se ha tocado no está). */
+export type PromptDraft = { imagePrompt?: string; videoPrompt?: string };
+type SetDraft = React.Dispatch<React.SetStateAction<PromptDraft>>;
+
+const isDirty = (draft: PromptDraft, video: VideoJson) =>
+  (draft.imagePrompt !== undefined && draft.imagePrompt !== video.imagePrompt) ||
+  (draft.videoPrompt !== undefined && draft.videoPrompt !== video.videoPrompt);
+
 /** Los dos prompts, con su comprobación en vivo, y «Guardar cambios». */
-function Prompts({ view }: { view: VideoViewJson }) {
+function Prompts({ view, draft, setDraft }: { view: VideoViewJson; draft: PromptDraft; setDraft: SetDraft }) {
   const client = useQueryClient();
   const { video, mine } = view;
-  const [draft, setDraft] = useState<{ imagePrompt?: string; videoPrompt?: string }>({});
   const imagePrompt = draft.imagePrompt ?? video.imagePrompt ?? "";
   const videoPrompt = draft.videoPrompt ?? video.videoPrompt ?? "";
-  const dirty =
-    (draft.imagePrompt !== undefined && draft.imagePrompt !== video.imagePrompt) ||
-    (draft.videoPrompt !== undefined && draft.videoPrompt !== video.videoPrompt);
+  const dirty = isDirty(draft, video);
 
   // La misma comprobación que el servidor, mientras se escribe.
   // Un prompt que aún no existe no da avisos (como en el servidor).
@@ -364,17 +381,70 @@ function Prompts({ view }: { view: VideoViewJson }) {
 
 // ───────────────────────── Paso ─────────────────────────
 
-export function StepBreakdown({ view, onGoToReference }: { view: VideoViewJson; onGoToReference: () => void }) {
+/**
+ * «Repetir desglose». Si hay cambios sin guardar en los prompts, primero pregunta: el desglose
+ * nuevo trae sus propios prompts y esos cambios se perderían.
+ */
+function RepeatButton({ dirty, pending, onRepeat }: { dirty: boolean; pending: boolean; onRepeat: () => void }) {
+  const [asking, setAsking] = useState(false);
+  return (
+    <>
+      <Button variant="outline" className="h-8 gap-1.5" disabled={pending} onClick={() => (dirty ? setAsking(true) : onRepeat())}>
+        {pending ? <Loader2 className="animate-spin" aria-hidden /> : <RefreshCw aria-hidden />}
+        Repetir desglose
+      </Button>
+      <Dialog open={asking} onOpenChange={setAsking}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>¿Repetir sin guardar los prompts?</DialogTitle>
+            <DialogDescription>El desglose nuevo trae sus propios prompts.</DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" className="h-10 px-4" onClick={() => setAsking(false)}>
+              Cancelar
+            </Button>
+            <Button
+              className="h-10 px-4"
+              onClick={() => {
+                setAsking(false);
+                onRepeat();
+              }}
+            >
+              Repetir sin guardar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}
+
+export function StepBreakdown({
+  view,
+  draft,
+  setDraft,
+  onGoToReference,
+}: {
+  view: VideoViewJson;
+  /** Vive en el flujo: cambiar de paso no pierde lo escrito. */
+  draft: PromptDraft;
+  setDraft: SetDraft;
+  onGoToReference: () => void;
+}) {
   const { video, analysis, mine } = view;
   const request = useRequestAnalysis(video.id);
 
   if (!analysis) return <StartPanel view={view} onGoToReference={onGoToReference} />;
 
   const repeat = mine ? (
-    <Button variant="outline" className="h-8 gap-1.5" disabled={request.isPending} onClick={() => request.mutate()}>
-      {request.isPending ? <Loader2 className="animate-spin" aria-hidden /> : <RefreshCw aria-hidden />}
-      Repetir desglose
-    </Button>
+    <RepeatButton
+      dirty={isDirty(draft, video)}
+      pending={request.isPending}
+      onRepeat={() => {
+        setDraft({});
+        request.mutate();
+      }}
+    />
   ) : null;
 
   if (analysis.status === "queued" || analysis.status === "running") {
@@ -442,7 +512,7 @@ export function StepBreakdown({ view, onGoToReference }: { view: VideoViewJson; 
               <Risks analysis={result} />
             </Panel>
             <Panel title="Planos" actions={<span className="text-sm text-muted-foreground tabular-nums">{result.shots.length}</span>}>
-              <Shots view={view} analysis={result} />
+              <Shots view={view} analysis={result} showFrames={!stale} />
             </Panel>
             {result.adaptation.length > 0 ? (
               <Panel title="Adaptación">
@@ -451,12 +521,12 @@ export function StepBreakdown({ view, onGoToReference }: { view: VideoViewJson; 
             ) : null}
           </div>
           <Panel title="Prompts" className="xl:sticky xl:top-6">
-            <Prompts view={view} />
+            <Prompts view={view} draft={draft} setDraft={setDraft} />
           </Panel>
         </div>
       ) : video.imagePrompt !== null || video.videoPrompt !== null ? (
         <Panel title="Prompts">
-          <Prompts view={view} />
+          <Prompts view={view} draft={draft} setDraft={setDraft} />
         </Panel>
       ) : null}
     </div>

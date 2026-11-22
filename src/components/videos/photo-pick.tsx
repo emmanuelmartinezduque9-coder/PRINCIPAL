@@ -7,6 +7,7 @@ import { ROLE_ICONS, ROLE_TINT } from "@/components/products/photo-uploader";
 import type { PhotoRole } from "@/lib/photo-roles";
 import { cn } from "@/lib/utils";
 import type { ProductPhoto } from "./labels";
+import { onRadioKeyDown, radioTabIndex } from "./radio-keys";
 
 /**
  * Elegir una foto del producto con un papel (avatar o entorno): las fotos con ese papel en
@@ -32,6 +33,7 @@ export function PhotoPick({
   dimmed?: boolean;
 }) {
   const options = photos.filter((photo) => photo.role === role);
+  const selectedIndex = options.findIndex((photo) => photo.id === selectedId);
   const Icon = ROLE_ICONS[role];
   const label = PHOTO_ROLE_LABELS[role];
 
@@ -70,8 +72,9 @@ export function PhotoPick({
         return (
           <li key={photo.id}>
             {readOnly ? (
-              <div className={cn("relative aspect-square rounded-lg bg-muted", ring, !selected && "opacity-40")} aria-label={selected ? `${label} elegido` : undefined}>
+              <div className={cn("relative aspect-square rounded-lg bg-muted", ring, !selected && "opacity-40")}>
                 {image}
+                {selected ? <span className="sr-only">{label} elegido</span> : null}
               </div>
             ) : (
               <button
@@ -79,7 +82,9 @@ export function PhotoPick({
                 role="radio"
                 aria-checked={selected}
                 aria-label={`${label} ${index + 1}`}
+                tabIndex={radioTabIndex(index, selectedIndex)}
                 onClick={() => onSelect(selected ? null : photo.id)}
+                onKeyDown={(event) => onRadioKeyDown(event, (next) => onSelect(options[next].id))}
                 className={cn(
                   "relative block aspect-square w-full rounded-lg bg-muted transition-shadow outline-none hover:ring-foreground/40 focus-visible:ring-3 focus-visible:ring-ring",
                   ring,

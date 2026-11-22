@@ -3,80 +3,19 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { CircleAlert, Clock, Film, Loader2, Plug, RefreshCw, Upload, UserRoundX } from "lucide-react";
 import Link from "next/link";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { toast } from "sonner";
 import { Panel } from "@/components/shell/panel";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
-import { api, ApiError } from "@/lib/api";
-import { uploadInChunks } from "@/lib/chunked-upload";
+import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import type { HiggsfieldStatus } from "@/server/higgsfield";
 import { clockTime, frameUrl, MAX_SEGMENT_MS, secondsLabel, type ProductPhoto, type VideoJson, type VideoViewJson } from "./labels";
 import { PhotoPick } from "./photo-pick";
+import type { ReferenceUpload } from "./upload-provider";
 
 const ACCEPT = "video/mp4,video/quicktime,video/webm";
-
-// ───────────────────────── Subida (estado del navegador) ─────────────────────────
-
-export type ReferenceUpload =
-  | { kind: "idle" }
-  | { kind: "uploading"; file: File; fraction: number }
-  | { kind: "failed"; file: File; message: string };
-
-/**
- * La subida de la referencia vive aquí, en el navegador, y no en el estado del vídeo: mientras se
- * sustituye una referencia lista, el vídeo sigue «lista» hasta que la nueva termina de subir. Se
- * llama desde el flujo (no desde el paso) para que cambiar de paso no corte la subida.
- */
-export function useReferenceUpload(videoId: number) {
-  const client = useQueryClient();
-  const [state, setState] = useState<ReferenceUpload>({ kind: "idle" });
-  const controller = useRef<AbortController | null>(null);
-
-  // Salir de la pantalla corta la subida (y el navegador avisa antes de cerrar la pestaña).
-  useEffect(() => () => controller.current?.abort(), []);
-  useEffect(() => {
-    if (state.kind !== "uploading") return;
-    const warn = (event: BeforeUnloadEvent) => event.preventDefault();
-    window.addEventListener("beforeunload", warn);
-    return () => window.removeEventListener("beforeunload", warn);
-  }, [state.kind]);
-
-  const start = useCallback(
-    async (file: File) => {
-      controller.current?.abort();
-      const own = new AbortController();
-      controller.current = own;
-      setState({ kind: "uploading", file, fraction: 0 });
-      try {
-        await uploadInChunks(file, videoId, {
-          signal: own.signal,
-          onProgress: (fraction) => setState((s) => (s.kind === "uploading" && s.file === file ? { ...s, fraction } : s)),
-        });
-        if (own.signal.aborted) return;
-        // Ya está «preparándose»: se enseña al momento, sin esperar a la siguiente consulta.
-        client.setQueryData<VideoViewJson>(["video", videoId], (view) =>
-          view ? { ...view, video: { ...view.video, referenceStatus: "processing", referenceError: null } } : view,
-        );
-        setState({ kind: "idle" });
-        void client.invalidateQueries({ queryKey: ["video", videoId] });
-      } catch (error) {
-        if (own.signal.aborted) return;
-        if (error instanceof ApiError && error.status === 401) {
-          // eslint-disable-next-line @next/next/no-location-assign-relative-destination
-          window.location.href = `/login?volver=${encodeURIComponent(window.location.pathname)}`;
-          return;
-        }
-        setState({ kind: "failed", file, message: error instanceof Error ? error.message : "No se pudo subir el vídeo." });
-        void client.invalidateQueries({ queryKey: ["video", videoId] });
-      }
-    },
-    [client, videoId],
-  );
-
-  return { state, start };
-}
 
 // ───────────────────────── Piezas ─────────────────────────
 
@@ -208,7 +147,7 @@ function ReferenceFacts({ video }: { video: VideoJson }) {
   return (
     <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
       <span className="inline-flex items-center gap-1.5 font-medium tabular-nums">
-        <Clock className="size-4 text-muted-foreground" aria-label="Duración" />
+        <Clock className="size-4 text-muted-foreground" role="img" aria-label="Duración" />
         {clockTime(duration)}
       </span>
       {duration > MAX_SEGMENT_MS ? (
@@ -273,7 +212,7 @@ function ReferenceBody({
           <div className="flex flex-col gap-3">
             {failedUpload}
             <div className="grid min-h-60 place-items-center rounded-xl bg-muted/40 text-muted-foreground">
-              <Film className="size-6" aria-label="Sin vídeo de referencia" />
+              <Film className="size-6" role="img" aria-label="Sin vídeo de referencia" />
             </div>
           </div>
         );

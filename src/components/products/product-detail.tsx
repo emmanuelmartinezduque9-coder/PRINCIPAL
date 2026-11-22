@@ -131,6 +131,13 @@ export function ProductDetail({ id, initialTab = "fotos" }: { id: string; initia
     retry: (count, error) => !(error instanceof ApiError && error.status === 404) && count < 1,
   });
   const [photoCount, setPhotoCount] = useState<number | null>(null);
+  // La misma consulta que la pestaña Vídeos (comparten caché): el número se ve en la pestaña.
+  const videos = useQuery({
+    queryKey: ["videos", Number(id)],
+    queryFn: () => api<{ videos: unknown[] }>(`/api/productos/${id}/videos`),
+    enabled: /^[1-9]\d{0,15}$/.test(id),
+  });
+  const videoCount = videos.data?.videos.length ?? 0;
   const product = query.data?.product;
   const back = { href: "/productos", label: "Productos" };
 
@@ -184,14 +191,16 @@ export function ProductDetail({ id, initialTab = "fotos" }: { id: string; initia
           <TabsTrigger value="fotos">
             <Images className="size-4" aria-hidden />
             Fotos
+            {photoCount === null ? null : <PhotoCount count={photoCount} />}
           </TabsTrigger>
           <TabsTrigger value="videos">
             <Clapperboard className="size-4" aria-hidden />
             Vídeos
+            {videoCount ? <span className="text-sm text-muted-foreground tabular-nums">{videoCount}</span> : null}
           </TabsTrigger>
         </TabsList>
         <TabsContent value="fotos">
-          <Panel title="Fotos" actions={photoCount === null ? null : <PhotoCount count={photoCount} />}>
+          <Panel>
             <PhotoManager productId={product.id} onCount={setPhotoCount} />
           </Panel>
         </TabsContent>

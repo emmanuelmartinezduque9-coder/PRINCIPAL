@@ -164,7 +164,7 @@ describe("subida por trozos desde el navegador", () => {
     expect(sleeps).toEqual([1000, 1000]);
   });
 
-  it("tras 5 fallos seguidos del mismo trozo se rinde con un mensaje claro", async () => {
+  it("tras el primer intento y 5 reintentos fallidos del mismo trozo (6 fallos seguidos) se rinde con un mensaje claro", async () => {
     const server = fakeServer({ put: (call) => (call.index === 1 ? "network" : undefined) });
     const { run, sleeps } = setup(server);
     await expect(run).rejects.toThrow("La conexión se ha cortado demasiadas veces. Vuelve a intentarlo con mejor cobertura.");
@@ -244,6 +244,58 @@ describe("subida por trozos desde el navegador", () => {
     await run;
     expect(sleeps).toEqual([1000, 1000]);
     expect(server.putIndexes()).toEqual([0, 1, 2]);
+  });
+
+  it("«Reintentar» sigue con la misma subida: no vuelve a empezar ni reenvía lo que ya llegó", async () => {
+    const server = fakeServer({ put: (_call, n) => (n === 3 ? json(400, { error: "Trozo no válido." }) : undefined) });
+    const sessions: Array<{ uploadId: string; chunkBytes: number }> = [];
+    const file = videoFile(12 * MB);
+    const opts = { onProgress: () => {}, fetch: server.fetch, sleep: async () => {}, onSession: (s: { uploadId: string; chunkBytes: number }) => sessions.push(s) };
+    await expect(uploadInChunks(file, VIDEO_ID, opts)).rejects.toThrow("Trozo no válido.");
+    expect(sessions).toEqual([{ uploadId: "subida1", chunkBytes: CHUNK }]);
+
+    const progress: number[] = [];
+    await uploadInChunks(file, VIDEO_ID, { ...opts, onProgress: (f) => progress.push(f), resume: sessions[0] });
+    expect(server.calls.filter((c) => c.method === "POST" && c.url === BASE)).toHaveLength(1);
+    expect(server.putIndexes()).toEqual([0, 1, 2, 2]);
+    expect(server.calls.at(-1)).toMatchObject({ method: "POST", url: `${BASE}/subida1` });
+    expect(progress[0]).toBeCloseTo(2 / 3);
+    expect(progress.at(-1)).toBe(1);
+  });
+
+  it("si la subida guardada ya no existe (404 o 410), empieza otra", async () => {
+    for (const status of [404, 410]) {
+      const server = fakeServer({ progress: () => json(status, { error: "Subida no encontrada." }) });
+      await uploadInChunks(videoFile(12 * MB), VIDEO_ID, {
+        onProgress: () => {},
+        fetch: server.fetch,
+        sleep: async () => {},
+        resume: { uploadId: "subida-vieja", chunkBytes: CHUNK },
+      });
+      expect(server.calls[0]).toMatchObject({ method: "GET", url: `${BASE}/subida-vieja` });
+      expect(server.calls.filter((c) => c.method === "POST" && c.url === BASE)).toHaveLength(1);
+      expect(server.putIndexes()).toEqual([0, 1, 2]);
+    }
+  });
+
+  it("un 404 al repetir «terminar» cuenta como hecho (el primero llegó y la subida ya se recogió)", async () => {
+    const server = fakeServer({ finish: (_c, n) => (n === 1 ? "network" : json(404, { error: "Subida no encontrada." })) });
+    const { run, progress } = setup(server);
+    await run;
+    expect(progress.at(-1)).toBe(1);
+
+    const first = fakeServer({ finish: () => json(404, { error: "Subida no encontrada." }) });
+    await expect(setup(first).run).rejects.toThrow("Subida no encontrada.");
+  });
+
+  it("cancelar durante una espera la corta al momento (sin esperar a que acabe)", async () => {
+    const controller = new AbortController();
+    const server = fakeServer({ put: (call) => (call.index === 1 ? "network" : undefined) });
+    const started = Date.now();
+    const run = uploadInChunks(videoFile(12 * MB), VIDEO_ID, { onProgress: () => {}, fetch: server.fetch, signal: controller.signal });
+    setTimeout(() => controller.abort(), 100);
+    await expect(run).rejects.toMatchObject({ name: "AbortError" });
+    expect(Date.now() - started).toBeLessThan(900);
   });
 
   it("al cancelar se para sin reintentar", async () => {

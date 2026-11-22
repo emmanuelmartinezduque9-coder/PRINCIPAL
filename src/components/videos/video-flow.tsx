@@ -1,7 +1,7 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { Clapperboard, Eye, Film, ImageIcon, ScanSearch, SearchX } from "lucide-react";
+import { Eye, Film, ScanSearch, SearchX } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
 import { productTabHref, type ProductView } from "@/components/products/labels";
@@ -11,11 +11,10 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { api, ApiError } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { type FlowStep, type ProductPhoto, type VideoViewJson } from "./labels";
-import { StepBreakdown } from "./step-breakdown";
-import { StepReference, useReferenceUpload } from "./step-reference";
+import { StepBreakdown, type PromptDraft } from "./step-breakdown";
+import { StepReference } from "./step-reference";
+import { useReferenceUpload } from "./upload-provider";
 import { Stepper, type Step } from "./stepper";
-
-const LOCKED = "Disponible en cuanto termine el desglose";
 
 /** El paso elegido queda en la dirección (`?paso=desglose`) para que recargar no lo pierda. */
 function rememberStep(step: FlowStep) {
@@ -113,16 +112,16 @@ function FlowBody({
   const referenceDone = video.referenceStatus === "ready" && (video.noPerson || imageManifest.some((item) => item.role === "avatar"));
   const breakdownDone = analysis?.status === "done" && !analysis.stale;
   const [current, setCurrent] = useState<FlowStep>(() => initialStep ?? (analysis || referenceDone ? "desglose" : "referencia"));
+  const [draft, setDraft] = useState<PromptDraft>({});
   const select = (step: FlowStep) => {
     setCurrent(step);
     rememberStep(step);
   };
 
-  const steps: Step<FlowStep | "imagen" | "clip">[] = [
+  // Imagen y Clip se añaden cuando exista su pantalla (Tarea 11): ningún paso bloqueado ni «próximamente».
+  const steps: Step<FlowStep>[] = [
     { key: "referencia", label: "Referencia", icon: Film, done: referenceDone },
     { key: "desglose", label: "Desglose", icon: ScanSearch, done: breakdownDone },
-    { key: "imagen", label: "Imagen", icon: ImageIcon, done: false, locked: LOCKED },
-    { key: "clip", label: "Clip", icon: Clapperboard, done: false, locked: LOCKED },
   ];
 
   return (
@@ -136,12 +135,12 @@ function FlowBody({
         </p>
       ) : null}
 
-      <Stepper steps={steps} current={current} onSelect={(key) => (key === "referencia" || key === "desglose") && select(key)} />
+      <Stepper steps={steps} current={current} onSelect={select} />
 
       {current === "referencia" ? (
-        <StepReference view={data} photos={photos} upload={upload.state} onUpload={(file) => void upload.start(file)} />
+        <StepReference view={data} photos={photos} upload={upload.state} onUpload={upload.start} />
       ) : (
-        <StepBreakdown view={data} onGoToReference={() => select("referencia")} />
+        <StepBreakdown view={data} draft={draft} setDraft={setDraft} onGoToReference={() => select("referencia")} />
       )}
     </div>
   );

@@ -78,6 +78,7 @@ export function PromptEditor({
         readOnly={readOnly}
         spellCheck={false}
         aria-invalid={errors.length > 0 || undefined}
+        aria-describedby={issues.length > 0 ? `${id}-avisos` : undefined}
         onChange={(event) => onChange(event.target.value)}
         onKeyDown={(event) => {
           if (onSubmit && event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
@@ -88,13 +89,13 @@ export function PromptEditor({
         className="h-72 resize-y leading-relaxed md:text-[13px]"
       />
       {issues.length > 0 ? (
-        <ul className="flex flex-col gap-1" aria-live="polite">
+        <ul id={`${id}-avisos`} className="flex flex-col gap-1" aria-live="polite">
           {[...errors, ...warnings].map((issue) => (
             <li key={`${issue.level}-${issue.message}`} className="flex gap-2 text-sm">
               {issue.level === "error" ? (
-                <CircleAlert className="mt-0.5 size-4 shrink-0 text-destructive" aria-label="Error" />
+                <CircleAlert className="mt-0.5 size-4 shrink-0 text-destructive" role="img" aria-label="Error" />
               ) : (
-                <TriangleAlert className="mt-0.5 size-4 shrink-0 text-amber-600" aria-label="Aviso" />
+                <TriangleAlert className="mt-0.5 size-4 shrink-0 text-amber-600" role="img" aria-label="Aviso" />
               )}
               <span>{issue.message}</span>
             </li>

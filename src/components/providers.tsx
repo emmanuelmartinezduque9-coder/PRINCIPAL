@@ -3,6 +3,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useState } from "react";
 import { Toaster } from "@/components/ui/sonner";
+import { ReferenceUploadsProvider } from "@/components/videos/upload-provider";
 
 export function Providers({ children }: { children: React.ReactNode }) {
   const [client] = useState(
@@ -15,7 +16,8 @@ export function Providers({ children }: { children: React.ReactNode }) {
   );
   return (
     <QueryClientProvider client={client}>
-      {children}
+      {/* Las subidas de vídeo siguen aunque se cambie de pantalla dentro de la aplicación. */}
+      <ReferenceUploadsProvider>{children}</ReferenceUploadsProvider>
       <Toaster position="top-right" />
     </QueryClientProvider>
   );
