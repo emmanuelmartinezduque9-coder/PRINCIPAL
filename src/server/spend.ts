@@ -441,23 +441,10 @@ export async function spendSummary(user: AuthUser, now: Date = new Date()): Prom
 }
 
 /**
- * Lo que cuentan esos cargos, en micro-dólares: el coste real de los liquidados y lo reservado de
- * los que aún no (igual que el tope). Los liberados no cuentan. Para enseñar lo que costó un paso.
- */
-export async function costOfEntries(entryIds: number[]): Promise<number> {
-  const ids = [...new Set(entryIds)].filter((id) => Number.isSafeInteger(id) && id > 0);
-  if (ids.length === 0) return 0;
-  const [row] = await getDb()
-    .select({ micros: countedMicros })
-    .from(entries)
-    .where(and(inArray(entries.id, ids), inArray(entries.status, COUNTED_STATUSES)));
-  return row?.micros ?? 0;
-}
-
-/**
  * Lo que cuentan los cargos de esos pasos, en micro-dólares, por clave de paso (solo las claves con
  * algún cargo que cuente). Suma todos los intentos de cada paso (fallidos, interrumpidos,
- * rechazados y repetidos: todos llevan la misma clave), con el mismo criterio que `costOfEntries`.
+ * rechazados y repetidos: todos llevan la misma clave), con el mismo criterio que el tope: el coste
+ * real de los liquidados y lo reservado de los que aún no; los liberados no cuentan.
  */
 export async function costOfSteps(stepKeys: string[]): Promise<Map<string, number>> {
   const keys = [...new Set(stepKeys)].filter((key) => typeof key === "string" && key.length > 0);

@@ -20,7 +20,7 @@ import {
   rejectFrame,
   setImageModel,
 } from "@/server/videos/frame";
-import { pollGeneration, quoteGeneration, requestGeneration, submitGeneration, type GenDeps } from "@/server/videos/generations";
+import { finalizeGeneration, quoteGeneration, requestGeneration, submitGeneration, type GenDeps } from "@/server/videos/generations";
 import { createVideo, getVideoFor, updateVideoChoices, type Video } from "@/server/videos/videos";
 import { POST as aprobarRoute } from "@/app/api/videos/[videoId]/imagen/aprobar/route";
 import { POST as generarRoute } from "@/app/api/videos/[videoId]/imagen/generar/route";
@@ -137,8 +137,7 @@ async function frameDone(): Promise<number> {
   for (const jobId of Object.keys(fake.state.jobs)) {
     fake.state.jobs[jobId] = { jobId, status: "done", failure: null, error: null, urls: [`https://cdn.test/${jobId}.png`] };
   }
-  await getPool().query("update generations set last_polled_at = null where id = $1", [generationId]);
-  await pollGeneration(generationId, deps);
+  await finalizeGeneration(generationId, deps);
   const { rows } = await getPool().query("select id from generation_results where generation_id = $1 order by index", [generationId]);
   return rows[0].id;
 }
@@ -220,6 +219,36 @@ describe("petición de la imagen inicial", () => {
 
     expect(fake.calls).toHaveLength(0);
   });
+
+  it("si el prompt o el avatar cambian mientras se presupuesta (otra pestaña), 409 y no se apunta nada", async () => {
+    const changes = [
+      "update videos set image_prompt = image_prompt || ' More light.' where id = $1",
+      "update videos set avatar_photo_id = null where id = $1",
+    ];
+    for (const change of changes) {
+      let done = false;
+      const racing: GenDeps = {
+        ...deps,
+        higgsfield: {
+          ...fake.port,
+          async quoteImages(userId, request, count) {
+            if (!done) {
+              done = true;
+              await getPool().query(change, [v.id]);
+            }
+            return fake.port.quoteImages(userId, request, count);
+          },
+        },
+      };
+      await expect(requestGeneration(ana, v.id, "frame", { expectedCredits: 4 }, racing)).rejects.toMatchObject({
+        status: 409,
+        message: "El vídeo ha cambiado mientras se preparaba el envío. Vuelve a intentarlo.",
+      });
+      await getPool().query("update videos set image_prompt = $2, avatar_photo_id = $3 where id = $1", [v.id, PROMPT, ids.avatar]);
+    }
+    const { rows } = await getPool().query("select count(*)::int as n from generations");
+    expect(rows[0].n).toBe(0);
+  });
 });
 
 // ───────────────────────── Aprobar y rechazar ─────────────────────────
@@ -246,6 +275,42 @@ describe("aprobar y rechazar la imagen", () => {
     const sent = { status: 409, message: "Ya se ha generado un clip con esta imagen." };
     await expect(approveFrame(ana, v.id, resultId)).rejects.toMatchObject(sent);
     await expect(rejectFrame(ana, v.id, "Otra luz")).rejects.toMatchObject(sent);
+    expect(await approvedOf()).toBe(resultId);
+  });
+
+  it("un clip apuntado mientras se rechaza o aprueba la imagen se ve: la comprobación va con el cerrojo del vídeo", async () => {
+    const resultId = await frameDone();
+    await approveFrame(ana, v.id, resultId);
+    const sent = { status: 409, message: "Ya se ha generado un clip con esta imagen." };
+    const waitingForLock = async () => {
+      for (let i = 0; i < 200; i++) {
+        const { rows } = await getPool().query("select count(*)::int as n from pg_locks where locktype = 'advisory' and objid = $1 and not granted", [v.id]);
+        if (rows[0].n > 0) return;
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      throw new Error("No llegó a esperar al cerrojo.");
+    };
+
+    for (const change of [() => rejectFrame(ana, v.id, "Otra luz"), () => approveFrame(ana, v.id, resultId)]) {
+      await getPool().query("delete from generations where kind = 'clip'");
+      // Otra petición tiene el cerrojo del vídeo (como al apuntar un clip) y apunta su clip mientras tanto.
+      const other = await getPool().connect();
+      try {
+        await other.query("begin");
+        await other.query("select pg_advisory_xact_lock($1::int, $2::int)", [0x5647454e, v.id]);
+        const pending = change();
+        pending.catch(() => {});
+        await waitingForLock();
+        await other.query(
+          "insert into generations (video_id, kind, round, status, user_id, request, count, quoted_credits) values ($1, 'clip', 1, 'intent', $2, '{}', 1, 18)",
+          [v.id, ana.id],
+        );
+        await other.query("commit");
+        await expect(pending).rejects.toMatchObject(sent);
+      } finally {
+        other.release();
+      }
+    }
     expect(await approvedOf()).toBe(resultId);
   });
 
@@ -339,9 +404,10 @@ describe("rutas de la imagen", () => {
     const sent = await generarRoute(post({ expectedCredits: priced.credits }), params(v.id));
     expect(sent.status).toBe(202);
     const { generationId } = await sent.json();
-    await submitGeneration(generationId, { higgsfield: local, fetch: deps.fetch }); // primera consulta: pendientes
-    await getPool().query("update generations set last_polled_at = null where id = $1", [generationId]);
-    await pollGeneration(generationId, { higgsfield: local, fetch: deps.fetch }); // segunda: terminadas
+    const localDeps = { higgsfield: local, fetch: deps.fetch };
+    await submitGeneration(generationId, localDeps);
+    // El simulado del modo local termina cada trabajo a la segunda consulta: se finaliza hasta que acaba.
+    for (let i = 0; i < 3; i++) await finalizeGeneration(generationId, localDeps);
     const { rows } = await getPool().query("select id from generation_results where generation_id = $1 order by index", [generationId]);
 
     expect((await aprobarRoute(post({ resultId: "x" }), params(v.id))).status).toBe(404);

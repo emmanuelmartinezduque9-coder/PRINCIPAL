@@ -168,6 +168,13 @@ type GenerationChanges = Partial<typeof generations.$inferInsert>;
 type Db = ReturnType<typeof getDb>;
 type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
 
+/**
+ * Comprobación extra que corre dentro de la transacción de aprobar o rechazar, ya con el cerrojo del
+ * vídeo (el mismo que toma apuntar una generación): lo que mire no puede cambiar a la vez. Si
+ * lanza, no se cambia nada.
+ */
+export type GenerationGuard = (tx: Tx, video: Video) => Promise<void>;
+
 const ACTIVE: GenerationStatus[] = ["intent", "submitting", "submitted"];
 const SPENT: GenerationStatus[] = ["submitted", "done", "failed"];
 
@@ -888,7 +895,13 @@ export async function sweepGenerations(deps: GenDeps = {}): Promise<void> {
  * Rechaza la última ronda terminada de un tipo con un motivo de una línea (hace falta para
  * regenerar). Si su resultado estaba aprobado, deja de estarlo.
  */
-export async function rejectRound(user: AuthUser, videoId: number, kind: GenerationKind, reason: string): Promise<void> {
+export async function rejectRound(
+  user: AuthUser,
+  videoId: number,
+  kind: GenerationKind,
+  reason: string,
+  options: { guard?: GenerationGuard } = {},
+): Promise<void> {
   const video = await getVideoFor(user, videoId);
   requireVideoOwner(user, video);
   const text = typeof reason === "string" ? reason.trim() : "";
@@ -896,6 +909,7 @@ export async function rejectRound(user: AuthUser, videoId: number, kind: Generat
 
   await getDb().transaction(async (tx) => {
     await generationLock(tx, video.id);
+    await options.guard?.(tx, video);
     const rows = await rowsOf(tx, video.id, kind);
     if (rows.some((row) => row.status === "unknown")) throw new HttpError(409, CHECKING);
     if (rows.some((row) => ACTIVE.includes(row.status as GenerationStatus))) throw new HttpError(409, BUSY);
@@ -922,12 +936,19 @@ export async function rejectRound(user: AuthUser, videoId: number, kind: Generat
  * Aprueba un resultado bueno de una generación terminada, no rechazada, de ese tipo y de ese vídeo.
  * Si no, 404. Con el mismo cerrojo que rechazar, para que no se crucen.
  */
-export async function approveResult(user: AuthUser, videoId: number, kind: GenerationKind, resultId: number): Promise<void> {
+export async function approveResult(
+  user: AuthUser,
+  videoId: number,
+  kind: GenerationKind,
+  resultId: number,
+  options: { guard?: GenerationGuard } = {},
+): Promise<void> {
   const video = await getVideoFor(user, videoId);
   requireVideoOwner(user, video);
   if (!Number.isSafeInteger(resultId) || resultId <= 0) throw new HttpError(404, RESULT_NOT_FOUND);
   await getDb().transaction(async (tx) => {
     await generationLock(tx, video.id);
+    await options.guard?.(tx, video);
     const [found] = await tx
       .select({ id: results.id })
       .from(results)

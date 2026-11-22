@@ -10,11 +10,12 @@ import {
   registerRequestBuilder,
   rejectRound,
   type GenDeps,
+  type GenerationGuard,
   type RequestBuilder,
 } from "@/server/videos/generations";
 import { imageManifest, type ManifestItem } from "@/server/videos/manifest";
 import { checkImagePrompt } from "@/server/videos/prompt-check";
-import { getVideoFor, readVideoFrame, requireVideoOwner, type Video } from "@/server/videos/videos";
+import { readVideoFrame, videoSnapshot, type Video } from "@/server/videos/videos";
 
 /**
  * Imagen inicial: la petición a Nano Banana (2 candidatas, 2K, 9:16) con las referencias en el
@@ -102,6 +103,20 @@ async function mediaOf(user: AuthUser, video: Video, item: ManifestItem, deps: G
  * Sin desglose hecho de la referencia actual, o con errores en el prompt, 400 antes de subir nada.
  * Cada archivo se sube una sola vez por persona (`ensureMedia`), aunque se regenere.
  */
+/**
+ * Columnas del vídeo en las que se apoya la petición de la imagen (desglose de la referencia,
+ * prompt y manifiesto). Si cambian entre el presupuesto y el apunte (otra pestaña), 409 y no se
+ * apunta nada.
+ */
+const FRAME_SNAPSHOT = [
+  "referenceStatus",
+  "referenceMediaId",
+  "imagePrompt",
+  "avatarPhotoId",
+  "environmentPhotoId",
+  "noPerson",
+] as const satisfies ReadonlyArray<keyof Video>;
+
 export const buildFrameRequest: RequestBuilder = async (user, video, deps) => {
   if (!(await analysisDone(video))) throw new HttpError(400, ANALYSIS_FIRST);
   const prompt = video.imagePrompt!;
@@ -113,7 +128,11 @@ export const buildFrameRequest: RequestBuilder = async (user, video, deps) => {
   const medias: HfMediaRef[] = [];
   // Una detrás de otra: el orden de las referencias es el del manifiesto.
   for (const item of manifest) medias.push({ role: "image_references", value: await mediaOf(user, video, item, deps) });
-  return { request: { model, prompt, aspectRatio: "9:16", resolution: "2k", medias }, count: FRAME_CANDIDATES };
+  return {
+    request: { model, prompt, aspectRatio: "9:16", resolution: "2k", medias },
+    count: FRAME_CANDIDATES,
+    snapshot: videoSnapshot(video, FRAME_SNAPSHOT),
+  };
 };
 
 registerRequestBuilder("frame", buildFrameRequest);
@@ -123,11 +142,14 @@ registerRequestBuilder("frame", buildFrameRequest);
 /** Un clip que no llegó o que falló no ata la imagen: se puede cambiar antes de volver a pedir el clip. */
 const CLIP_RELEASES_FRAME = ["not_sent", "failed"];
 
-/** Con un clip apuntado, enviado, en duda o generado, la imagen aprobada ya no cambia (409). */
-async function requireNoClip(user: AuthUser, videoId: number): Promise<void> {
-  const video = await getVideoFor(user, videoId);
-  requireVideoOwner(user, video);
-  const [clip] = await getDb()
+/**
+ * Con un clip apuntado, enviándose, enviado, en duda o generado, la imagen aprobada ya no cambia
+ * (409). Corre dentro de aprobar o rechazar, con el cerrojo del vídeo que también toma apuntar el
+ * clip: o el clip se apunta antes y esto lo ve, o el cambio de imagen va antes y el clip ve en su
+ * instantánea que la imagen aprobada cambió.
+ */
+const noClip: GenerationGuard = async (tx, video) => {
+  const [clip] = await tx
     .select({ id: schema.generations.id })
     .from(schema.generations)
     .where(
@@ -139,16 +161,14 @@ async function requireNoClip(user: AuthUser, videoId: number): Promise<void> {
     )
     .limit(1);
   if (clip) throw new HttpError(409, CLIP_SENT);
-}
+};
 
 /** Aprueba una de las candidatas de la imagen inicial. */
 export async function approveFrame(user: AuthUser, videoId: number, resultId: number): Promise<void> {
-  await requireNoClip(user, videoId);
-  await approveResult(user, videoId, "frame", resultId);
+  await approveResult(user, videoId, "frame", resultId, { guard: noClip });
 }
 
 /** Rechaza la última ronda de la imagen inicial con un motivo de una línea (y deja de estar aprobada). */
 export async function rejectFrame(user: AuthUser, videoId: number, reason: string): Promise<void> {
-  await requireNoClip(user, videoId);
-  await rejectRound(user, videoId, "frame", reason);
+  await rejectRound(user, videoId, "frame", reason, { guard: noClip });
 }

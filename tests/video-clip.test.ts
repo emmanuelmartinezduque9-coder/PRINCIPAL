@@ -57,6 +57,9 @@ vi.mock("next/headers", () => ({
  * van por un `fetch` falso que devuelve un JPEG o un MP4 hechos con ffmpeg.
  */
 
+/** Como en las capturas reales: los resultados se sirven desde CloudFront. */
+const CDN = "https://d8j0ntlcm91z4.cloudfront.net";
+
 const PROMPT =
   "@Video1 gives only the camera movement, the rhythm and the action. @Image1 is the first frame. " +
   "The woman is @Image2. The bottle is @Image3.";
@@ -316,6 +319,61 @@ describe("petición del clip", () => {
   });
 });
 
+describe("cambios en otra pestaña mientras se presupuesta", () => {
+  /** El simulado, pero antes de presupuestar el clip ejecuta `meanwhile` (lo que haría otra pestaña). */
+  function quotingWith(meanwhile: () => Promise<void>): GenDeps {
+    let done = false;
+    return {
+      ...deps,
+      higgsfield: {
+        ...fake.port,
+        async quoteVideo(userId, request) {
+          if (!done) {
+            done = true;
+            await meanwhile();
+          }
+          return fake.port.quoteVideo(userId, request);
+        },
+      },
+    };
+  }
+  const clipRows = async () => (await getPool().query("select count(*)::int as n from generations where kind = 'clip'")).rows[0].n;
+
+  it("si la imagen se rechaza entre construir la petición y apuntarla, 409 y no se apunta nada", async () => {
+    await readyForClip();
+    const racing = quotingWith(() => rejectRound(ana, v.id, "frame", "Mejor otra luz"));
+    await expect(requestGeneration(ana, v.id, "clip", { expectedCredits: 18 }, racing)).rejects.toMatchObject({
+      status: 409,
+      message: "El vídeo ha cambiado mientras se preparaba el envío. Vuelve a intentarlo.",
+    });
+    expect(await clipRows()).toBe(0);
+    expect((await fresh()).approvedFrameResultId).toBeNull();
+    expect(fake.calls.some((c) => c.method === "submitVideo")).toBe(false);
+  });
+
+  it("lo mismo si cambian la referencia, el prompt o la resolución; sin cambios se apunta", async () => {
+    await readyForClip();
+    const changes = [
+      "update videos set reference_media_id = 'otra-ref' where id = $1",
+      "update videos set video_prompt = video_prompt || ' Slow.' where id = $1",
+      "update videos set clip_resolution = '720p' where id = $1",
+    ];
+    const original = await fresh();
+    for (const change of changes) {
+      const racing = quotingWith(async () => void (await getPool().query(change, [v.id])));
+      await expect(requestGeneration(ana, v.id, "clip", { expectedCredits: 30 }, racing)).rejects.toMatchObject({ status: 409 });
+      await getPool().query("update videos set reference_media_id = $2, video_prompt = $3, clip_resolution = '480p' where id = $1", [
+        v.id,
+        original.referenceMediaId,
+        original.videoPrompt,
+      ]);
+    }
+    expect(await clipRows()).toBe(0);
+    await requestGeneration(ana, v.id, "clip", { expectedCredits: 18 }, quotingWith(async () => {}));
+    expect(await clipRows()).toBe(1);
+  });
+});
+
 // ───────────────────────── Coste ─────────────────────────
 
 const REPLY: Analysis = {
@@ -353,7 +411,7 @@ describe("coste por vídeo", () => {
 
     await approvedFrame();
     const clipId = await sendClip();
-    await finish(clipId, () => "https://cdn.test/clip.mp4");
+    await finish(clipId, () => `${CDN}/clip.mp4`);
 
     expect(await videoCosts(ana, v.id)).toEqual({ higgsfieldCredits: 4 + 18, claudeMicros: analysisCost });
     expect((await videoView(ana, v.id)).costs).toEqual({ higgsfieldCredits: 22, claudeMicros: analysisCost });
@@ -418,8 +476,8 @@ describe("descarga del clip", () => {
     await expect(clipDownload(ana, v.id)).rejects.toMatchObject({ status: 404, message: "Todavía no hay clip." });
 
     const clipId = await sendClip();
-    await finish(clipId, () => "https://cdn.test/clip-1.mp4");
-    const expected = { url: "https://cdn.test/clip-1.mp4", filename: `brillomax-nandu-video-${v.id}.mp4` };
+    await finish(clipId, () => `${CDN}/clip-1.mp4`);
+    const expected = { url: `${CDN}/clip-1.mp4`, filename: `brillomax-nandu-video-${v.id}.mp4` };
     expect(await clipDownload(ana, v.id)).toEqual(expected);
     expect(await clipDownload(dueno, v.id)).toEqual(expected);
     await expect(clipDownload(luis, v.id)).rejects.toMatchObject({ status: 404, message: "Vídeo no encontrado." });
@@ -429,20 +487,71 @@ describe("descarga del clip", () => {
   it("sirve el clip aprobado antes que el último terminado; nunca una dirección que no sea https", async () => {
     await readyForClip();
     const first = await sendClip();
-    await finish(first, () => "https://cdn.test/primero.mp4");
+    await finish(first, () => `${CDN}/primero.mp4`);
     const firstResult = (await videoView(ana, v.id)).clip.current!.results[0].id;
     await rejectRound(ana, v.id, "clip", "Se mueve demasiado");
     const second = await sendClip();
-    await finish(second, () => "https://cdn.test/segundo.mp4");
-    expect((await clipDownload(ana, v.id)).url).toBe("https://cdn.test/segundo.mp4");
+    await finish(second, () => `${CDN}/segundo.mp4`);
+    expect((await clipDownload(ana, v.id)).url).toBe(`${CDN}/segundo.mp4`);
     // Un clip aprobado que no es el último (por la API no se puede aprobar uno rechazado; aquí se fuerza).
     await getPool().query("update videos set approved_clip_result_id = $2 where id = $1", [v.id, firstResult]);
-    expect((await clipDownload(ana, v.id)).url).toBe("https://cdn.test/primero.mp4");
+    expect((await clipDownload(ana, v.id)).url).toBe(`${CDN}/primero.mp4`);
 
-    await getPool().query("update generation_results set url = 'http://cdn.test/inseguro.mp4' where id = $1", [firstResult]);
-    expect((await clipDownload(ana, v.id)).url).toBe("https://cdn.test/segundo.mp4");
+    await getPool().query("update generation_results set url = 'http://d8j0ntlcm91z4.cloudfront.net/inseguro.mp4' where id = $1", [firstResult]);
+    expect((await clipDownload(ana, v.id)).url).toBe(`${CDN}/segundo.mp4`);
     await getPool().query("update generation_results set url = 'data:video/mp4;base64,AAAA'");
     await expect(clipDownload(ana, v.id)).rejects.toMatchObject({ status: 404, message: "Todavía no hay clip." });
+    // Solo la red de distribución de Higgsfield: ni otro https ni un disfraz del nombre.
+    for (const url of [
+      "https://cdn.test/clip.mp4",
+      "https://cloudfront.net.evil.test/clip.mp4",
+      "https://evilcloudfront.net/clip.mp4",
+      "https://user:pw@d8j0ntlcm91z4.cloudfront.net/clip.mp4",
+      "https://d8j0ntlcm91z4.cloudfront.net:8443/clip.mp4",
+    ]) {
+      await getPool().query("update generation_results set url = $1", [url]);
+      await expect(clipDownload(ana, v.id)).rejects.toMatchObject({ status: 404, message: "Todavía no hay clip." });
+    }
+    await getPool().query("update generation_results set url = 'https://d2ol7oe51mr4n9.cloudfront.net/x.mp4'");
+    expect((await clipDownload(ana, v.id)).url).toBe("https://d2ol7oe51mr4n9.cloudfront.net/x.mp4");
+  });
+
+  it("GET …/clip/descargar pide a CloudFront sin seguir redirecciones, con nosniff y sin pasar de 500 MB", async () => {
+    await readyForClip();
+    const clipId = await sendClip();
+    await finish(clipId, () => `${CDN}/clip.mp4`);
+    await as(ana);
+    const seen: Array<{ url: string; init?: RequestInit }> = [];
+    let next: () => Response = () => new Response(new Uint8Array(mp4), { headers: { "Content-Length": String(mp4.length) } });
+    const spy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      seen.push({ url: String(input), init });
+      return next();
+    });
+    try {
+      const ok = await descargarRoute(new Request("http://localhost/x"), params(v.id));
+      expect(ok.status).toBe(200);
+      expect(seen[0].url).toBe(`${CDN}/clip.mp4`);
+      expect(seen[0].init?.redirect).toBe("error");
+      expect(seen[0].init?.signal).toBeInstanceOf(AbortSignal);
+      expect(ok.headers.get("x-content-type-options")).toBe("nosniff");
+      expect(ok.headers.get("content-length")).toBe(String(mp4.length));
+      expect(Buffer.from(await ok.arrayBuffer())).toEqual(mp4);
+
+      next = () => new Response("x", { headers: { "Content-Length": String(500 * 1024 * 1024 + 1) } });
+      const big = await descargarRoute(new Request("http://localhost/x"), params(v.id));
+      expect(big.status).toBe(502);
+      expect(await big.json()).toEqual({ error: "El clip es demasiado grande para descargarlo." });
+
+      next = () => {
+        throw new TypeError("fetch failed: redirect mode is set to error");
+      };
+      const redirected = await descargarRoute(new Request("http://localhost/x"), params(v.id));
+      expect(redirected.status).toBe(502);
+      next = () => new Response("no", { status: 403 });
+      expect((await descargarRoute(new Request("http://localhost/x"), params(v.id))).status).toBe(502);
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it("GET …/clip/descargar reenvía el archivo como adjunto (modo local simulado, dirección data:)", async () => {

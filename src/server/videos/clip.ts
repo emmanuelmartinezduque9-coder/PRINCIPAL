@@ -16,7 +16,7 @@ import { getProductFor } from "@/server/products";
 import { registerRequestBuilder, type RequestBuilder } from "@/server/videos/generations";
 import { clipManifest } from "@/server/videos/manifest";
 import { checkVideoPrompt } from "@/server/videos/prompt-check";
-import { getVideoFor, requireVideoOwner, type Video } from "@/server/videos/videos";
+import { getVideoFor, requireVideoOwner, videoSnapshot, type Video } from "@/server/videos/videos";
 
 export { CLIP_RESOLUTIONS, DEFAULT_CLIP_RESOLUTION, type ClipResolution } from "@/server/videos/videos";
 
@@ -74,6 +74,24 @@ async function approvedFrameJobId(video: Video): Promise<string | null> {
 }
 
 /**
+ * Columnas del vídeo en las que se apoya la petición del clip. Al apuntar la generación (con el
+ * cerrojo del vídeo) se comprueba que siguen igual: si otra pestaña aprobó o rechazó la imagen, cambió
+ * la referencia, el prompt, el uso de la imagen, la resolución o el avatar mientras se presupuestaba,
+ * no se apunta nada (409).
+ */
+const CLIP_SNAPSHOT = [
+  "approvedFrameResultId",
+  "referenceStatus",
+  "referenceMediaId",
+  "segmentDurationMs",
+  "videoPrompt",
+  "frameUse",
+  "clipResolution",
+  "avatarPhotoId",
+  "noPerson",
+] as const satisfies ReadonlyArray<keyof Video>;
+
+/**
  * La petición del clip. Antes de subir nada: referencia lista, desglose hecho sobre esa misma
  * referencia, imagen aprobada y prompt sin errores. Las fotos se suben al Higgsfield de quien creó
  * el vídeo (una sola vez por archivo: `ensureMedia`).
@@ -128,19 +146,24 @@ export const buildClipRequest: RequestBuilder = async (user, video, deps) => {
     bitrateMode: "high",
     medias,
   };
-  return { request, count: 1 };
+  return { request, count: 1, snapshot: videoSnapshot(video, CLIP_SNAPSHOT) };
 };
 
 registerRequestBuilder("clip", buildClipRequest);
 
 // ───────────────────────── Descarga ─────────────────────────
 
-/** Solo direcciones `https:` guardadas (y `data:` en el modo simulado, que no existe en la nube). */
-function servable(url: string | null): url is string {
+/**
+ * Solo direcciones `https:` guardadas y de la red de distribución de Higgsfield (`*.cloudfront.net`,
+ * como en las capturas reales), y `data:` en el modo simulado, que no existe en la nube. Así la
+ * descarga nunca pide a otro sitio aunque una dirección guardada fuera rara.
+ */
+export function servableClipUrl(url: string | null): url is string {
   if (!url) return false;
   try {
-    const { protocol } = new URL(url);
-    return protocol === "https:" || (protocol === "data:" && higgsfieldFakeMode());
+    const { protocol, hostname, username, password, port } = new URL(url);
+    if (protocol === "data:") return higgsfieldFakeMode();
+    return protocol === "https:" && hostname.endsWith(".cloudfront.net") && !username && !password && port === "";
   } catch {
     return false;
   }
@@ -161,7 +184,7 @@ function slug(text: string): string {
 
 /**
  * Qué se descarga del clip de un vídeo que `user` ve: el aprobado o, si no hay (o su dirección no
- * se puede servir), el último terminado bien. Nombre `<producto>-video-<id>.mp4`.
+ * se puede servir, `servableClipUrl`), el último terminado bien. Nombre `<producto>-video-<id>.mp4`.
  */
 export async function clipDownload(user: AuthUser, videoId: number): Promise<{ url: string; filename: string }> {
   const video = await getVideoFor(user, videoId);
@@ -180,7 +203,7 @@ export async function clipDownload(user: AuthUser, videoId: number): Promise<{ u
     )
     .orderBy(desc(schema.generations.id), asc(schema.generationResults.index));
   const approved = results.find((result) => result.id === video.approvedClipResultId);
-  const chosen = [approved, ...results].find((result) => result && servable(result.url));
+  const chosen = [approved, ...results].find((result) => result && servableClipUrl(result.url));
   if (!chosen?.url) throw new HttpError(404, NO_CLIP);
   return { url: chosen.url, filename: `${slug(product.name)}-video-${video.id}.mp4` };
 }

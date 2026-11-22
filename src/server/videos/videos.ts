@@ -100,6 +100,14 @@ export async function getVideoFor(user: AuthUser, videoId: number): Promise<Vide
   return video;
 }
 
+/**
+ * Las columnas `keys` del vídeo tal como estaban, para la instantánea de un constructor de
+ * peticiones (`RequestBuilder.snapshot`): se vuelven a comparar al apuntar la generación.
+ */
+export function videoSnapshot<K extends keyof Video>(video: Video, keys: readonly K[]): Pick<Video, K> {
+  return Object.fromEntries(keys.map((key) => [key, video[key]])) as Pick<Video, K>;
+}
+
 /** Solo quien creó el vídeo puede continuarlo (se paga con su Higgsfield): si no, 403. */
 export function requireVideoOwner(user: AuthUser, video: Video): void {
   if (video.createdBy !== user.id) throw new HttpError(403, NOT_OWNER);
