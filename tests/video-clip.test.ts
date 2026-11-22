@@ -19,6 +19,7 @@ import {
   CLIP_MODEL,
   CLIP_TOO_BIG,
   CLIP_TOO_SLOW,
+  guardedClipStreamForTests,
   openClipStream,
   CLIP_RESOLUTIONS,
   clipDownload,
@@ -595,6 +596,19 @@ describe("descarga del clip", () => {
     const started = Date.now();
     await expect(read(opened.body)).rejects.toThrow(CLIP_TOO_SLOW);
     expect(Date.now() - started).toBeLessThan(2_000);
+    expect(state.cancelled).toBe(true);
+  });
+
+  it("si quien descarga corta, se quita el aviso del tope y se cancela la descarga de Higgsfield", async () => {
+    const deadline = new AbortController();
+    const removed = vi.spyOn(deadline.signal, "removeEventListener");
+    const { body, state } = slowBody(50, 10, 20);
+    const reader = body.pipeThrough(guardedClipStreamForTests(1_000_000, deadline.signal)).getReader();
+    await reader.read();
+    await reader.cancel();
+    expect(removed).toHaveBeenCalledWith("abort", expect.any(Function));
+    // La cancelación llega a la fuente por la tubería, un poco después.
+    for (let i = 0; i < 50 && !state.cancelled; i++) await new Promise((resolve) => setTimeout(resolve, 10));
     expect(state.cancelled).toBe(true);
   });
 

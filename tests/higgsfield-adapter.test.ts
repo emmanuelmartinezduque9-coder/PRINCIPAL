@@ -27,6 +27,7 @@ import estimateVideoFixture from "./fixtures/higgsfield/estimate_video.json";
 import generateBatchFixture from "./fixtures/higgsfield/generate_batch.json";
 import jobsWaitFixture from "./fixtures/higgsfield/jobs_wait.json";
 import showGenerationsFixture from "./fixtures/higgsfield/show_generations.json";
+import showGenerationsLastPageFixture from "./fixtures/higgsfield/show_generations_last_page.json";
 import mediaConfirmFixture from "./fixtures/higgsfield/media_confirm.json";
 import mediaUploadFixture from "./fixtures/higgsfield/media_upload.json";
 
@@ -602,6 +603,9 @@ describe("generaciones en el adaptador", () => {
       nextCursor: null,
       end: false, // sin `next_cursor`: no se sabe si hay más
     });
+    // La última página real: sin entradas y con `next_cursor: null` explícito.
+    expect(showGenerationsLastPageFixture._origen).toBe("captura real 22/11");
+    expect(readHistory(showGenerationsLastPageFixture.structuredContent, "image")).toEqual({ items: [], nextCursor: null, end: true });
     // El cursor se lee del mismo objeto que trae la lista; `null` explícito es el final; un texto es opaco.
     const entry = { id: "z", params: {} };
     expect(readHistory({ items: [entry], next_cursor: null }, "video")).toMatchObject({ nextCursor: null, end: true });

@@ -229,7 +229,8 @@ function guarded(max: number, signal: AbortSignal): TransformStream<Uint8Array, 
   const stop = () => {
     if (onAbort) signal.removeEventListener("abort", onAbort);
   };
-  return new TransformStream({
+  // `cancel` (quien descarga cortó) es del estándar y Node 22 lo llama, pero los tipos de TypeScript aún no lo traen.
+  const transformer: Transformer<Uint8Array, Uint8Array> & { cancel: () => void } = {
     start(controller) {
       onAbort = () => controller.error(new Error(CLIP_TOO_SLOW));
       if (signal.aborted) onAbort();
@@ -243,8 +244,13 @@ function guarded(max: number, signal: AbortSignal): TransformStream<Uint8Array, 
       } else controller.enqueue(chunk);
     },
     flush: stop,
-  });
+    cancel: stop,
+  };
+  return new TransformStream(transformer);
 }
+
+/** Solo para las pruebas: el tramo que vigila el tope de tamaño y de tiempo. */
+export const guardedClipStreamForTests = guarded;
 
 /**
  * Pide un clip a su dirección guardada (tiene que pasar `servableClipUrl`): sin seguir

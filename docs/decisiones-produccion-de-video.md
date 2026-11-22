@@ -366,3 +366,11 @@ Sustituye lo anterior donde se contradiga.
 - **Identificadores en direcciones** (T8 M5): una entrada del historial cuenta como nuestra por su dirección solo si el identificador tiene al menos 16 caracteres (un UUID) y aparece como trozo entero: tras `/`, `=` o `_` (las reales son `…/hf_<fecha>_<hora>_<id>.png`) y antes de `/`, `.`, `_`, `-`, `?`, `#` o el final (`urlNames`).
 - **Instantánea con `for update`** (T10 M1): al comparar la instantánea, la fila del vídeo se lee bloqueada.
 - **Descarga** (T10 M2/M3): la lógica pasa a `openClipStream` (en `clip.ts`; la ruta solo pone las cabeceras). El tope de la descarga entera también corta el flujo a mitad (y cancela la descarga de Higgsfield) aunque el servidor no respete la señal; el tope de 500 MB se cuenta también sin `Content-Length`. `Content-Length` se reenvía solo si la respuesta no trae `Content-Encoding`.
+
+### Revisión de los menores (086ad44)
+
+- **Añadir trabajos con una finalización caducada aún viva**: al añadir los que faltan, si la fila tenía una reserva de finalización (caducada), se pone `finalizing_at = null` en la misma escritura. Así la finalización vieja, si sigue viva y lenta, ya no encuentra su fila (`where(mine)`) y no pisa `job_ids`/`recheck_until`; la siguiente finalización normal recoge el trabajo nuevo.
+- **Una ya hecha sigue hecha**: al volver a mirar una generación `done`, un resultado ya guardado como bueno cuenta como bueno aunque Higgsfield diga ahora otra cosa de ese trabajo (no pasa a `failed`).
+- **Instantánea con `for no key update`** (bloquea la fila del vídeo sin chocar con las claves ajenas que apuntan a ella).
+- **Descarga**: si quien descarga corta, el tramo que vigila los topes (`cancel`) quita también el aviso del tope de tiempo.
+- **Captura real de la última página del historial**: `tests/fixtures/higgsfield/show_generations_last_page.json` (`{"items":[],"next_cursor":null}`, `"_origen": "captura real 22/11"`): confirma que el final es un `null` explícito.
