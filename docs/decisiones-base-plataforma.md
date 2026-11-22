@@ -126,3 +126,18 @@
 - La pasarela no carga las reglas: recibe las que le pasen. Quien llame debe pasar siempre las tres.
 - Para saber qué falló no hace falta (ni se puede) importar el SDK fuera de `src/llm/`: `LlmCallError.charged` y `.status` lo dicen. Un 429 o un «desconocido» se pueden reintentar más tarde; un 400 o un 401 no se arreglan reintentando.
 - La reserva se calcula por caracteres. Si en uso real aparecen filas con `detail.overrun`, contar los tokens con el punto de conteo de la API antes de reservar (es gratis, pero añade una petición por llamada).
+
+## Higgsfield: comprobación previa de la conexión por persona (22/11/2026)
+
+Hecho desde el Mac del dueño, solo lectura de datos públicos y un alta de aplicación de prueba:
+
+- `https://mcp.higgsfield.ai/.well-known/oauth-protected-resource` indica como servidor de permisos
+  `https://higgsfield.ai/_clerk` y los ámbitos `openid`, `email`, `offline_access`.
+- Ese servidor publica `registration_endpoint` (`/oauth/register`), admite `authorization_code` con
+  PKCE (S256), `refresh_token`, flujo por código de dispositivo y documento de metadatos de cliente.
+- **El alta dinámica de una aplicación propia funciona**: un `POST /oauth/register` con nombre
+  "PRINCIPAL prueba" y una dirección de vuelta local devolvió un `client_id` (cliente público, sin
+  secreto). Esa alta de prueba no se usa para nada más.
+- **Sin comprobar todavía**: que el servidor de Higgsfield acepte llamadas a sus herramientas con
+  el permiso de una aplicación propia, cuánto dura el permiso y los límites. Necesita que el dueño
+  inicie sesión desde la web publicada.
