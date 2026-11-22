@@ -1,12 +1,13 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { BookOpen, LogOut, Package, Sparkles, Users, type LucideIcon } from "lucide-react";
+import { BookOpen, LogOut, Package, Users, type LucideIcon } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import type { AuthUser } from "@/server/auth";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import { Brand } from "./brand";
 
 interface NavItem {
   href: string;
@@ -37,25 +38,14 @@ function useMe() {
   });
 }
 
-export function BrandMark({ className }: { className?: string }) {
-  return (
-    <span className={cn("grid size-9 shrink-0 place-items-center rounded-lg bg-foreground text-background", className)}>
-      <Sparkles className="size-4" aria-hidden />
-    </span>
-  );
-}
-
-function Brand() {
+function HomeLink() {
   return (
     <Link
       href="/productos"
-      className="flex items-center gap-2.5 rounded-lg outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
+      aria-label="PRINCIPAL, ir a Productos"
+      className="rounded-lg outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
     >
-      <BrandMark />
-      <span className="min-w-0 leading-tight">
-        <span className="block text-sm font-semibold tracking-tight">PRINCIPAL</span>
-        <span className="block truncate text-xs text-muted-foreground">Vídeos y ángulos de venta</span>
-      </span>
+      <Brand />
     </Link>
   );
 }
@@ -119,11 +109,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const isActive = (href: string) => pathname === href || pathname.startsWith(`${href}/`);
 
   return (
-    <div className="flex min-h-dvh bg-background">
+    <div className="flex min-h-dvh bg-background md:h-dvh md:min-h-0 md:overflow-hidden">
       {/* Ordenador y tableta: menú lateral fijo. */}
-      <aside className="sticky top-0 hidden h-dvh w-56 shrink-0 flex-col border-r bg-sidebar md:flex lg:w-60">
+      <aside className="hidden w-56 shrink-0 flex-col border-r bg-sidebar md:flex lg:w-60">
         <div className="flex h-16 items-center px-4">
-          <Brand />
+          <HomeLink />
         </div>
         <nav aria-label="Principal" className="flex flex-col gap-0.5 px-3 pt-3">
           {items.map(({ href, label, icon: Icon }) => {
@@ -152,15 +142,15 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </div>
       </aside>
 
-      <div className="flex min-w-0 flex-1 flex-col">
+      <div className="flex min-w-0 flex-1 flex-col md:overflow-y-auto">
         {/* Móvil: cabecera sencilla. */}
         <header className="sticky top-0 z-30 flex h-14 items-center justify-between border-b bg-background/90 px-4 backdrop-blur md:hidden">
-          <Brand />
+          <HomeLink />
           <SignOutButton className="size-10 justify-center" />
         </header>
 
-        <main className="flex-1 px-4 pt-6 pb-28 md:px-8 md:pt-8 md:pb-12">
-          <div className="mx-auto w-full max-w-[1200px]">{children}</div>
+        <main className="flex flex-1 flex-col px-4 pt-6 pb-28 md:px-8 md:pt-6 md:pb-8">
+          <div className="mx-auto flex w-full max-w-[1200px] flex-1 flex-col">{children}</div>
         </main>
       </div>
 

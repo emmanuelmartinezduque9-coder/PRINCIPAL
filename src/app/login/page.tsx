@@ -59,7 +59,7 @@ function LoginForm() {
 
 export default function LoginPage() {
   return (
-    <AuthCard title="Entrar" description="Con tu correo y la contraseña que elegiste.">
+    <AuthCard title="Entrar">
       <Suspense>
         <LoginForm />
       </Suspense>

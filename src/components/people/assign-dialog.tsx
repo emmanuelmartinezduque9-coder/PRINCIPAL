@@ -50,7 +50,7 @@ export function AssignDialog({
       <DialogTrigger asChild>
         <Button variant="outline" className="h-9 gap-1.5 px-2.5">
           <Package className="size-4" />
-          Asignar productos
+          Productos
         </Button>
       </DialogTrigger>
       <DialogContent>

@@ -13,7 +13,7 @@ import {
 } from "@/server/access";
 import { getProductFor, listProductsFor, productNamesByIds, type Product } from "@/server/products";
 import { GET as getProductsRoute, POST as postProductsRoute } from "@/app/api/productos/route";
-import { GET as getProductRoute } from "@/app/api/productos/[id]/route";
+import { GET as getProductRoute, PATCH as patchProductRoute } from "@/app/api/productos/[id]/route";
 import { makeProduct, makeUser, TEST_PASSWORD } from "./helpers/fixtures";
 import { truncateAll } from "./helpers/global-setup";
 
@@ -267,6 +267,25 @@ describe("rutas /api/productos", () => {
     cookie.value = await tokenOf(ana);
     await setAssignments(dueno, ana.id, []);
     expect((await getProductRoute(request(), byId(a.id))).status).toBe(404);
+  });
+
+  it("PATCH /api/productos/[id] edita el producto propio y responde 404 al ajeno sin cambiarlo", async () => {
+    cookie.value = await tokenOf(ana);
+    const patch = (id: number | string, body: unknown) =>
+      patchProductRoute(request(undefined, { method: "PATCH", body: JSON.stringify(body) }), byId(id));
+    const propio = await patch(a.id, { name: "A nueva", countries: ["IT"], language: "it" });
+    expect(propio.status).toBe(200);
+    expect((await propio.json()).product).toMatchObject({ id: a.id, name: "A nueva", language: "it", countries: ["IT"] });
+    const ajeno = await patch(b.id, { name: "Hackeado" });
+    expect(ajeno.status).toBe(404);
+    expect(await ajeno.json()).toEqual({ error: "Producto no encontrado." });
+    expect((await getProductFor(dueno, b.id)).name).toBe("B");
+    expect((await patch("1e3", { name: "x" })).status).toBe(404);
+    const bad = await patch(a.id, { summary: 5 });
+    expect(bad.status).toBe(400);
+    expect(await bad.json()).toEqual({ error: "Escribe en una frase qué hace el producto." });
+    cookie.value = undefined;
+    expect((await patch(a.id, { name: "x" })).status).toBe(401);
   });
 
   it("GET /api/productos lista solo los productos de quien pregunta", async () => {

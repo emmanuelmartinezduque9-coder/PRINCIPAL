@@ -9,7 +9,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { ApiError, api, type Serialized } from "@/lib/api";
 import type { listPeople } from "@/server/people";
 import { InviteDialog } from "./invite-dialog";
-import { PersonCard, ROW_GRID, type ProductOption } from "./person-card";
+import { PersonCard, TABLE_COLUMNS, type ProductOption } from "./person-card";
 
 type PeopleData = Serialized<Awaited<ReturnType<typeof listPeople>>> & { products: ProductOption[] };
 
@@ -33,7 +33,7 @@ function PendingInvite({ invite }: { invite: PeopleData["pending"][number] }) {
   return (
     <li className="flex flex-col gap-2 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
       <div className="min-w-0">
-        <p className="text-base font-medium break-words">{invite.name}</p>
+        <p className="font-medium break-words">{invite.name}</p>
         <p className="text-sm break-all text-muted-foreground">
           {invite.email} · caduca el {formatDate(invite.expiresAt)}
         </p>
@@ -60,12 +60,11 @@ export function PeopleView() {
     <div className="flex flex-col gap-6">
       <PageHeader
         title="Personas"
-        description="Quién entra en la aplicación, qué productos ve y cuánto puede gastar al mes."
         actions={forbidden ? null : <InviteDialog />}
       />
 
       {forbidden ? (
-        <p className="rounded-lg bg-muted px-3 py-3 text-sm">Solo el dueño puede ver y cambiar las personas.</p>
+        <p className="rounded-lg bg-muted px-3 py-3 text-sm">Solo para el dueño.</p>
       ) : query.isLoading ? (
         <div className="flex flex-col gap-3">
           <Skeleton className="h-24" />
@@ -73,16 +72,16 @@ export function PeopleView() {
         </div>
       ) : query.isError || !data ? (
         <p className="rounded-lg bg-destructive/10 px-3 py-3 text-sm">
-          No se pudieron cargar las personas. Recarga la página para volver a intentarlo.
+          No se pudieron cargar las personas. Recarga la página.
         </p>
       ) : (
         <>
           <section aria-label="Personas" className="overflow-hidden rounded-xl border bg-card">
-            <div className={`hidden lg:grid border-b bg-muted/50 px-4 py-2.5 text-xs font-medium tracking-wide text-muted-foreground uppercase ${ROW_GRID}`}>
+            <div className={`hidden border-b bg-muted/50 px-4 py-2.5 text-xs font-medium tracking-wide text-muted-foreground uppercase lg:grid ${TABLE_COLUMNS}`}>
               <span>Persona</span>
               <span>Productos</span>
-              <span>Este mes</span>
-              <span className="text-right">Acciones</span>
+              <span>Gasto del mes</span>
+              <span aria-hidden />
             </div>
             <ul className="divide-y">
               {users.map((person) => (
@@ -94,11 +93,11 @@ export function PeopleView() {
           </section>
 
           {data.pending.length > 0 ? (
-            <section className="flex flex-col gap-2">
-              <h2 className="text-lg font-semibold">Invitaciones pendientes</h2>
-              <p className="text-sm text-muted-foreground">
-                El enlace de una invitación no se puede volver a mostrar. Si se perdió, crea una invitación nueva para ese correo: la anterior queda cancelada.
-              </p>
+            <section className="flex flex-col gap-3">
+              <h2 className="flex items-center gap-2 text-base font-semibold">
+                Invitaciones pendientes
+                <span className="text-sm font-normal text-muted-foreground tabular-nums">{data.pending.length}</span>
+              </h2>
               <ul className="divide-y overflow-hidden rounded-xl border bg-card">
                 {data.pending.map((invite) => (
                   <PendingInvite key={`${invite.email}-${invite.expiresAt}`} invite={invite} />

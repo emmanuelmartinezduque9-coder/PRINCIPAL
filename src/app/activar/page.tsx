@@ -49,7 +49,8 @@ function ActivateForm() {
   return (
     <form onSubmit={submit} className="flex flex-col gap-4">
       <AuthField
-        label="Contraseña nueva (mínimo 10 caracteres)"
+        label="Contraseña nueva"
+        placeholder="Mínimo 10 caracteres"
         name="password"
         type="password"
         autoComplete="new-password"
@@ -77,7 +78,7 @@ function ActivateForm() {
 
 export default function ActivatePage() {
   return (
-    <AuthCard title="Elige tu contraseña" description="Solo tú la sabrás. El enlace sirve una sola vez.">
+    <AuthCard title="Elige tu contraseña">
       <Suspense>
         <ActivateForm />
       </Suspense>

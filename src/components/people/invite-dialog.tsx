@@ -69,7 +69,7 @@ export function InviteDialog() {
     } catch {
       // Sin permiso para el portapapeles: se deja el enlace elegido para copiarlo a mano.
       linkField.current?.select();
-      setError("No se pudo copiar solo. El enlace está seleccionado: cópialo con el menú de tu móvil.");
+      setError("No se pudo copiar solo. El enlace está seleccionado: cópialo a mano.");
     }
   }
 
@@ -101,7 +101,7 @@ export function InviteDialog() {
           <DialogDescription>
             {link
               ? "Envíaselo por WhatsApp o correo. Sirve una sola vez y caduca en 7 días."
-              : "Entrará como colaborador: solo verá los productos que le asignes. Si ya había una invitación sin usar para ese correo, queda cancelada."}
+              : "Solo verá los productos que le asignes."}
           </DialogDescription>
         </DialogHeader>
 
@@ -113,9 +113,6 @@ export function InviteDialog() {
               {copied ? <Check className="size-5" /> : <Copy className="size-5" />}
               {copied ? "Enlace copiado" : "Copiar enlace"}
             </Button>
-            <p className="text-sm text-muted-foreground">
-              Este enlace solo se muestra ahora. Si lo pierdes, crea otra invitación.
-            </p>
             {error ? <p role="alert" className="rounded-lg bg-destructive/10 px-3 py-2 text-sm">{error}</p> : null}
             {confirmClose ? (
               <div role="alertdialog" aria-label="Confirmar cierre" className="flex flex-col gap-2 rounded-lg border border-destructive/40 bg-destructive/5 p-3">

@@ -10,8 +10,51 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { api, ApiError } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
-const MAX_PHOTOS = 6;
-const ACCEPT = "image/jpeg,image/png,image/webp";
+export const MAX_PHOTOS = 6;
+const ACCEPTED_TYPES = ["image/jpeg", "image/png", "image/webp"];
+const ACCEPT = ACCEPTED_TYPES.join(",");
+
+/**
+ * Se queda con las fotos de un formato admitido y avisa de cada archivo que no lo es
+ * (un PDF, un vídeo, una foto HEIC…), sin aceptarlo.
+ */
+export function keepPhotos(files: File[]): File[] {
+  const photos: File[] = [];
+  for (const file of files) {
+    if (ACCEPTED_TYPES.includes(file.type)) photos.push(file);
+    else if (/hei[cf]/i.test(file.type) || /\.hei[cf]$/i.test(file.name)) {
+      // Foto de iPhone: se dice cómo hacer que la cámara guarde en un formato que sirve.
+      toast.error(`${file.name}: usa JPG, PNG o WebP (en iPhone: Ajustes → Cámara → Formatos → «El más compatible»).`, {
+        duration: 10_000,
+      });
+    } else toast.error(`${file.name}: no es una foto JPG, PNG o WebP.`, { duration: 8_000 });
+  }
+  return photos;
+}
+
+/**
+ * Mientras haya una zona de fotos en pantalla, soltar un archivo fuera de ella no abre el
+ * archivo en la pestaña (lo que haría el navegador y se perdería lo escrito).
+ */
+function useBlockStrayDrops() {
+  useEffect(() => {
+    const outsideZone = (event: DragEvent) => !(event.target instanceof Element && event.target.closest("[data-dropzone]"));
+    function onDragOver(event: DragEvent) {
+      if (!outsideZone(event)) return;
+      event.preventDefault();
+      if (event.dataTransfer) event.dataTransfer.dropEffect = "none";
+    }
+    function onDrop(event: DragEvent) {
+      if (outsideZone(event)) event.preventDefault();
+    }
+    window.addEventListener("dragover", onDragOver);
+    window.addEventListener("drop", onDrop);
+    return () => {
+      window.removeEventListener("dragover", onDragOver);
+      window.removeEventListener("drop", onDrop);
+    };
+  }, []);
+}
 
 /** Sube una foto. El servidor decide si vale (formato, peso, cantidad) y explica el motivo. */
 export async function uploadPhoto(productId: number, file: File): Promise<void> {
@@ -50,26 +93,29 @@ export async function uploadPhotos(productId: number, files: File[]): Promise<nu
 
 /**
  * Zona para añadir fotos: se pueden arrastrar desde el ordenador o elegir con un clic
- * (o con Intro / Espacio desde el teclado).
+ * (o con Intro / Espacio desde el teclado). `tile` es una casilla más de la rejilla de fotos;
+ * `fill` ocupa todo el alto libre del panel.
  */
 function PhotoDropzone({
   onFiles,
-  disabled,
   busy,
-  compact,
+  variant,
 }: {
   onFiles: (files: File[]) => void;
-  disabled?: boolean;
   busy?: boolean;
-  /** Más baja cuando ya hay fotos encima. */
-  compact?: boolean;
+  variant: "tile" | "fill";
 }) {
   const input = useRef<HTMLInputElement>(null);
   const [over, setOver] = useState(false);
-  const off = disabled || busy;
+  useBlockStrayDrops();
+
+  function accept(files: File[]) {
+    const photos = keepPhotos(files);
+    if (photos.length) onFiles(photos);
+  }
 
   return (
-    <div>
+    <div className={cn(variant === "tile" ? "aspect-square" : "flex min-h-44 flex-1 flex-col")}>
       <input
         ref={input}
         type="file"
@@ -82,15 +128,17 @@ function PhotoDropzone({
         onChange={(event) => {
           const files = Array.from(event.target.files ?? []);
           event.target.value = "";
-          if (files.length) onFiles(files);
+          accept(files);
         }}
       />
       <button
         type="button"
-        disabled={off}
+        data-dropzone
+        title="JPG, PNG o WebP · hasta 8 MB"
+        disabled={busy}
         onClick={() => input.current?.click()}
         onDragOver={(event) => {
-          if (off || !event.dataTransfer.types.includes("Files")) return;
+          if (busy || !event.dataTransfer.types.includes("Files")) return;
           event.preventDefault();
           event.dataTransfer.dropEffect = "copy";
           setOver(true);
@@ -99,25 +147,30 @@ function PhotoDropzone({
         onDrop={(event) => {
           event.preventDefault();
           setOver(false);
-          if (off) return;
-          const files = Array.from(event.dataTransfer.files);
-          if (files.length) onFiles(files);
+          if (!busy) accept(Array.from(event.dataTransfer.files));
         }}
         className={cn(
-          "flex w-full flex-col items-center justify-center gap-2 rounded-xl *:pointer-events-none border-2 border-dashed px-4 text-center transition-colors outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-60",
-          compact ? "py-5" : "py-10",
+          "flex size-full flex-1 flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed px-4 text-center transition-colors outline-none *:pointer-events-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-progress disabled:opacity-70",
           over ? "border-foreground/60 bg-foreground/[0.04]" : "border-border hover:border-foreground/30 hover:bg-muted/50",
         )}
       >
         <span className="grid size-10 place-items-center rounded-full bg-muted text-muted-foreground">
           {busy ? <Loader2 className="size-5 animate-spin" aria-hidden /> : <ImagePlus className="size-5" aria-hidden />}
         </span>
-        <span className="text-sm font-medium">
-          {busy ? "Subiendo fotos…" : over ? "Suelta las fotos aquí" : "Arrastra las fotos aquí o haz clic para elegirlas"}
-        </span>
-        <span className="text-xs text-muted-foreground">JPG, PNG o WebP · hasta 8 MB cada una · {MAX_PHOTOS} como máximo</span>
+        <span className="text-sm font-medium">{busy ? "Subiendo…" : over ? "Suelta aquí" : "Añadir fotos"}</span>
+        {/* En la casilla no cabe: los formatos se ven al elegir y se avisa si un archivo no vale. */}
+        {variant === "fill" ? <span className="text-xs text-muted-foreground">JPG, PNG o WebP · 8 MB</span> : null}
       </button>
     </div>
+  );
+}
+
+/** «3 / 6» junto al título del panel de fotos. */
+export function PhotoCount({ count }: { count: number }) {
+  return (
+    <span className="text-sm text-muted-foreground tabular-nums" aria-label={`${count} de ${MAX_PHOTOS} fotos`}>
+      {count} / {MAX_PHOTOS}
+    </span>
   );
 }
 
@@ -141,7 +194,7 @@ function Thumb({
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img src={src} alt={alt} className="size-full object-cover" />
       {cover ? (
-        <span className="absolute bottom-2 left-2 rounded-md bg-background/90 px-1.5 py-0.5 text-[11px] font-medium shadow-sm">
+        <span className="absolute bottom-2 left-2 rounded-md bg-background/90 px-1.5 py-0.5 text-xs font-medium shadow-sm">
           Portada
         </span>
       ) : null}
@@ -158,7 +211,9 @@ function Thumb({
   );
 }
 
-const THUMB_GRID = "grid grid-cols-2 gap-3 sm:grid-cols-3";
+const PICKER_GRID = "grid grid-cols-2 gap-3 sm:grid-cols-3";
+/** Las fotos del detalle ocupan todo el ancho: más columnas. */
+const MANAGER_GRID = "grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6";
 
 /** Elegir fotos antes de que el producto exista: se ven en grande y se suben al guardar. */
 export function PhotoPicker({ files, onChange }: { files: File[]; onChange: (files: File[]) => void }) {
@@ -172,9 +227,9 @@ export function PhotoPicker({ files, onChange }: { files: File[]; onChange: (fil
   }
 
   return (
-    <div className="flex flex-col gap-3">
+    <div className="flex flex-1 flex-col gap-3">
       {files.length > 0 ? (
-        <ul className={THUMB_GRID}>
+        <ul className={PICKER_GRID}>
           {files.map((file, index) => (
             <Thumb
               key={`${file.name}-${index}`}
@@ -189,11 +244,7 @@ export function PhotoPicker({ files, onChange }: { files: File[]; onChange: (fil
           ))}
         </ul>
       ) : null}
-      {files.length < MAX_PHOTOS ? (
-        <PhotoDropzone onFiles={add} compact={files.length > 0} />
-      ) : (
-        <p className="text-sm text-muted-foreground">Ya has elegido las {MAX_PHOTOS} fotos que admite. Quita una para añadir otra.</p>
-      )}
+      {files.length < MAX_PHOTOS ? <PhotoDropzone onFiles={add} variant="fill" /> : null}
     </div>
   );
 }
@@ -204,8 +255,8 @@ interface PhotoInfo {
   size: number;
 }
 
-/** Fotos de un producto ya creado: verlas, añadir más y borrar. */
-export function PhotoManager({ productId }: { productId: number }) {
+/** Fotos de un producto ya creado: verlas, añadir más y borrar. Avisa del número de fotos. */
+export function PhotoManager({ productId, onCount }: { productId: number; onCount?: (count: number) => void }) {
   const client = useQueryClient();
   const [toDelete, setToDelete] = useState<PhotoInfo | null>(null);
   const key = ["photos", productId];
@@ -231,22 +282,27 @@ export function PhotoManager({ productId }: { productId: number }) {
     onError: (error) => toast.error(error instanceof Error ? error.message : "No se pudo borrar la foto."),
   });
 
-  const list = photos.data?.photos ?? [];
+  const list = useMemo(() => photos.data?.photos ?? [], [photos.data]);
+  useEffect(() => {
+    if (photos.data) onCount?.(list.length);
+  }, [photos.data, list.length, onCount]);
+  const room = list.length < MAX_PHOTOS;
+  const empty = list.length === 0;
 
   return (
     <div className="flex flex-col gap-3">
       {photos.isLoading ? (
-        <div className={THUMB_GRID}>
+        <div className={MANAGER_GRID}>
           <Skeleton className="aspect-square rounded-xl" />
           <Skeleton className="aspect-square rounded-xl" />
           <Skeleton className="aspect-square rounded-xl" />
         </div>
       ) : photos.isError ? (
         <p role="alert" className="rounded-lg bg-destructive/10 px-3 py-2 text-sm">
-          No se pudieron cargar las fotos. Recarga la página para volver a intentarlo.
+          No se pudieron cargar las fotos. Recarga la página.
         </p>
-      ) : list.length === 0 ? null : (
-        <ul className={THUMB_GRID}>
+      ) : (
+        <ul className={MANAGER_GRID}>
           {list.map((photo, index) => (
             <Thumb
               key={photo.id}
@@ -258,13 +314,20 @@ export function PhotoManager({ productId }: { productId: number }) {
               icon={<Trash2 className="size-4" aria-hidden />}
             />
           ))}
+          {room ? (
+            // Sin fotos, la zona ocupa la fila entera; con fotos, es una casilla más.
+            <li className={empty ? "col-span-full flex h-56 flex-col" : undefined}>
+              <PhotoDropzone
+                onFiles={(files) => {
+                  if (files.length > MAX_PHOTOS - list.length) toast.error(`Un producto admite hasta ${MAX_PHOTOS} fotos.`);
+                  upload.mutate(files.slice(0, MAX_PHOTOS - list.length));
+                }}
+                busy={upload.isPending}
+                variant={empty ? "fill" : "tile"}
+              />
+            </li>
+          ) : null}
         </ul>
-      )}
-
-      {photos.isLoading || photos.isError ? null : list.length < MAX_PHOTOS ? (
-        <PhotoDropzone onFiles={(files) => upload.mutate(files)} busy={upload.isPending} compact={list.length > 0} />
-      ) : (
-        <p className="text-sm text-muted-foreground">Ya tiene las {MAX_PHOTOS} fotos que admite. Borra una para añadir otra.</p>
       )}
 
       <Dialog open={toDelete !== null} onOpenChange={(open) => !open && setToDelete(null)}>

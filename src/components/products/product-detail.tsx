@@ -1,19 +1,116 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
-import { PackageX } from "lucide-react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { CircleAlert, Languages, Loader2, MapPin, PackageX, Pencil } from "lucide-react";
 import Link from "next/link";
-import { buttonVariants } from "@/components/ui/button";
+import { useState } from "react";
+import { toast } from "sonner";
+import { Button, buttonVariants } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
 import { PageHeader } from "@/components/shell/page-header";
 import { Panel } from "@/components/shell/panel";
 import { ApiError, api } from "@/lib/api";
 import { cn } from "@/lib/utils";
-import type { ProductView } from "./labels";
-import { PhotoManager } from "./photo-uploader";
-import { countryLabels, languageLabel } from "./product-list";
+import { countryLabels, languageLabel, type ProductView } from "./labels";
+import { PhotoCount, PhotoManager } from "./photo-uploader";
+import { ProductFields, type ProductValues } from "./product-fields";
 
-const formatDate = (iso: string) => new Intl.DateTimeFormat("es-ES", { dateStyle: "long" }).format(new Date(iso));
+const CHIP = "inline-flex h-7 items-center gap-1.5 rounded-md border bg-card px-2.5 text-sm";
+
+/** Idioma y países como fichas, con su icono. */
+function MarketChips({ product }: { product: ProductView }) {
+  return (
+    <ul className="flex flex-wrap gap-1.5" aria-label="Idioma y países">
+      <li className={CHIP}>
+        <Languages className="size-3.5 text-muted-foreground" aria-label="Idioma" />
+        {languageLabel(product.language)}
+      </li>
+      {countryLabels(product.countries).map((country) => (
+        <li key={country} className={CHIP}>
+          <MapPin className="size-3.5 text-muted-foreground" aria-hidden />
+          {country}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+/** Editar nombre, qué hace, idioma y países de un producto ya creado. */
+function EditProductDialog({ product }: { product: ProductView }) {
+  const client = useQueryClient();
+  const initial = (): ProductValues => ({
+    name: product.name,
+    summary: product.summary,
+    language: product.language,
+    countries: product.countries,
+  });
+  const [open, setOpen] = useState(false);
+  const [values, setValues] = useState<ProductValues>(initial);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function save(event: React.FormEvent) {
+    event.preventDefault();
+    setBusy(true);
+    setError(null);
+    try {
+      await api(`/api/productos/${product.id}`, { method: "PATCH", body: JSON.stringify(values) });
+      await Promise.all([
+        client.invalidateQueries({ queryKey: ["product", String(product.id)] }),
+        client.invalidateQueries({ queryKey: ["products"] }),
+      ]);
+      toast.success("Producto guardado.");
+      setOpen(false);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "No se pudo guardar el producto.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        setOpen(next);
+        if (next) {
+          setValues(initial());
+          setError(null);
+        }
+      }}
+    >
+      <DialogTrigger asChild>
+        <Button variant="outline" className="h-10 gap-2 px-4">
+          <Pencil className="size-4" aria-hidden />
+          Editar
+        </Button>
+      </DialogTrigger>
+      <DialogContent className="sm:max-w-lg" aria-describedby={undefined}>
+        <DialogHeader>
+          <DialogTitle>Editar producto</DialogTitle>
+        </DialogHeader>
+        <form onSubmit={save} className="flex flex-col gap-5">
+          <ProductFields values={values} onChange={setValues} />
+          {error ? (
+            <p role="alert" className="flex gap-2 rounded-lg bg-destructive/10 px-3 py-2 text-sm">
+              <CircleAlert className="mt-0.5 size-4 shrink-0 text-destructive" aria-hidden /> {error}
+            </p>
+          ) : null}
+          <div className="flex justify-end gap-2">
+            <Button type="button" variant="outline" className="h-10 px-4" onClick={() => setOpen(false)}>
+              Cancelar
+            </Button>
+            <Button type="submit" disabled={busy} className="h-10 px-4">
+              {busy ? <Loader2 className="animate-spin" aria-hidden /> : null}
+              Guardar
+            </Button>
+          </div>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
 
 export function ProductDetail({ id }: { id: string }) {
   const query = useQuery({
@@ -22,22 +119,20 @@ export function ProductDetail({ id }: { id: string }) {
     // Un producto que no existe o no es tuyo no mejora por reintentar.
     retry: (count, error) => !(error instanceof ApiError && error.status === 404) && count < 1,
   });
+  const [photoCount, setPhotoCount] = useState<number | null>(null);
   const product = query.data?.product;
   const back = { href: "/productos", label: "Productos" };
 
   if (query.isLoading) {
     return (
       <div className="flex flex-col gap-6" aria-label="Cargando el producto">
-        <div className="flex flex-col gap-3">
-          <Skeleton className="h-5 w-24" />
-          <Skeleton className="h-8 w-80" />
-          <Skeleton className="h-4 w-[28rem] max-w-full" />
+        <div className="flex flex-col gap-2">
+          <Skeleton className="h-7 w-24" />
+          <Skeleton className="h-10 w-80" />
+          <Skeleton className="h-5 w-[28rem] max-w-full" />
+          <Skeleton className="h-7 w-72" />
         </div>
-        <Skeleton className="h-10 w-full" />
-        <div className="grid gap-6 lg:grid-cols-[20rem_minmax(0,1fr)]">
-          <Skeleton className="h-56 rounded-xl" />
-          <Skeleton className="h-80 rounded-xl" />
-        </div>
+        <Skeleton className="h-80 rounded-xl" />
       </div>
     );
   }
@@ -47,15 +142,10 @@ export function ProductDetail({ id }: { id: string }) {
     return (
       <div className="flex flex-col gap-6">
         <PageHeader back={back} title={notFound ? "Producto no encontrado" : "No se pudo abrir el producto"} />
-        <div className="flex flex-col items-center gap-3 rounded-xl border border-dashed px-6 py-16 text-center">
+        <div className="flex flex-col items-center gap-4 rounded-xl border border-dashed px-6 py-16 text-center">
           <span className="grid size-12 place-items-center rounded-full bg-muted text-muted-foreground">
             <PackageX className="size-5" aria-hidden />
           </span>
-          <p className="max-w-sm text-sm text-muted-foreground">
-            {notFound
-              ? "Puede que ya no exista o que no tengas acceso a él."
-              : "Ha fallado la conexión con el servidor. Recarga la página para volver a intentarlo."}
-          </p>
           <Link href="/productos" className={cn(buttonVariants({ variant: "outline" }), "h-10 px-4")}>
             Ver todos los productos
           </Link>
@@ -66,36 +156,14 @@ export function ProductDetail({ id }: { id: string }) {
 
   return (
     <div className="flex flex-col gap-6">
-      <PageHeader back={back} title={product.name} description={product.summary} />
+      <PageHeader back={back} title={product.name} actions={<EditProductDialog product={product} />}>
+        <p className="max-w-[70ch] text-[15px] text-pretty text-muted-foreground">{product.summary}</p>
+        <MarketChips product={product} />
+      </PageHeader>
 
-      <div className="grid items-start gap-6 lg:grid-cols-[20rem_minmax(0,1fr)]">
-        <Panel title="Datos">
-          <dl className="flex flex-col gap-4 text-sm">
-            <div className="flex flex-col gap-1">
-              <dt className="text-muted-foreground">Idioma en el que se vende</dt>
-              <dd>{languageLabel(product.language)}</dd>
-            </div>
-            <div className="flex flex-col gap-1">
-              <dt className="text-muted-foreground">Países</dt>
-              <dd className="flex flex-wrap gap-1.5">
-                {countryLabels(product.countries).map((country) => (
-                  <span key={country} className="rounded-md border px-2 py-0.5 text-xs">
-                    {country}
-                  </span>
-                ))}
-              </dd>
-            </div>
-            <div className="flex flex-col gap-1">
-              <dt className="text-muted-foreground">Añadido el</dt>
-              <dd>{formatDate(product.createdAt)}</dd>
-            </div>
-          </dl>
-        </Panel>
-
-        <Panel title="Fotos" description="La primera es la portada que se ve en la lista.">
-          <PhotoManager productId={product.id} />
-        </Panel>
-      </div>
+      <Panel title="Fotos" actions={photoCount === null ? null : <PhotoCount count={photoCount} />}>
+        <PhotoManager productId={product.id} onCount={setPhotoCount} />
+      </Panel>
     </div>
   );
 }

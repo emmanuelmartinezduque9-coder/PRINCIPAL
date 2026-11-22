@@ -1,12 +1,32 @@
 import { handle } from "@/server/http";
-import { getProductFor } from "@/server/products";
+import { getProductFor, updateProduct } from "@/server/products";
 
 /** Un producto por id. Si no existe o no es de quien pregunta: el mismo 404. */
+// Solo dígitos: "1e3", "12abc" o un número enorme no se convierten en otro id válido.
+const parseId = (id: string) => (/^[1-9]\d{0,15}$/.test(id) ? Number(id) : Number.NaN);
+
 export async function GET(_request: Request, { params }: { params: Promise<{ id: string }> }) {
   return handle(async (user) => {
     const { id } = await params;
-    // Solo dígitos: "1e3", "12abc" o un número enorme no se convierten en otro id válido.
-    const productId = /^[1-9]\d{0,15}$/.test(id) ? Number(id) : Number.NaN;
-    return Response.json({ product: await getProductFor(user!, productId) });
+    return Response.json({ product: await getProductFor(user!, parseId(id)) });
+  });
+}
+
+/** Cambia nombre, frase, idioma o países. Un producto ajeno: el mismo 404 que al leerlo. */
+export async function PATCH(request: Request, { params }: { params: Promise<{ id: string }> }) {
+  return handle(async (user) => {
+    const { id } = await params;
+    const body = (await request.json().catch(() => null)) as Record<string, unknown> | null;
+    const input = body && typeof body === "object" ? body : {};
+    // Un valor que no es texto o no es una lista se rechaza con el mensaje de siempre.
+    const text = (value: unknown) => (value === undefined ? undefined : typeof value === "string" ? value : "");
+    const product = await updateProduct(user!, parseId(id), {
+      name: text(input.name),
+      summary: text(input.summary),
+      language: text(input.language),
+      countries:
+        input.countries === undefined ? undefined : Array.isArray(input.countries) ? input.countries.map((c) => text(c) ?? "") : [],
+    });
+    return Response.json({ product });
   });
 }

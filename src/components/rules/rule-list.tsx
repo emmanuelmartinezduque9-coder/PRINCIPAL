@@ -1,7 +1,7 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { BookOpen, ChevronRight, Info, Lock } from "lucide-react";
+import { BookOpen, ChevronRight, Lock } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect } from "react";
@@ -16,9 +16,6 @@ type RuleItem = Serialized<Awaited<ReturnType<typeof listRules>>[number]>;
 
 export const formatDateTime = (iso: string) =>
   new Intl.DateTimeFormat("es-ES", { dateStyle: "medium", timeStyle: "short" }).format(new Date(iso));
-
-const RULES_INTRO =
-  "Los textos que guían la búsqueda de ángulos de venta. Puedes afinarlos cuando quieras: cada cambio guarda una versión nueva y las anteriores se conservan.";
 
 /** Lista de reglas (columna izquierda en el ordenador; pantalla propia en el móvil). */
 function RuleList({ activeSlug }: { activeSlug: string | null }) {
@@ -35,12 +32,12 @@ function RuleList({ activeSlug }: { activeSlug: string | null }) {
     );
   }
   if (query.error instanceof ApiError && query.error.status === 403) {
-    return <p className="p-4 text-sm text-muted-foreground">Solo el dueño puede ver y cambiar las reglas.</p>;
+    return <p className="p-4 text-sm text-muted-foreground">Solo para el dueño.</p>;
   }
   if (query.isError) {
     return (
       <p role="alert" className="m-2 rounded-lg bg-destructive/10 px-3 py-3 text-sm">
-        No se pudieron cargar las reglas. Recarga la página para volver a intentarlo.
+        No se pudieron cargar las reglas. Recarga la página.
       </p>
     );
   }
@@ -63,11 +60,16 @@ function RuleList({ activeSlug }: { activeSlug: string | null }) {
               )}
             >
               <span className="flex min-w-0 flex-1 flex-col gap-1">
-                <span className={cn("text-sm leading-snug", active ? "font-semibold" : "font-medium")}>{rule.title}</span>
-                <span className="line-clamp-2 text-xs text-muted-foreground">{rule.description}</span>
-                <span className="text-xs text-muted-foreground tabular-nums">
-                  Versión {rule.version} · {formatDateTime(rule.updatedAt)}
+                <span className="flex items-start justify-between gap-2">
+                  <span className={cn("text-sm leading-snug", active ? "font-semibold" : "font-medium")}>{rule.title}</span>
+                  <span
+                    className="mt-px shrink-0 rounded bg-foreground/[0.06] px-1.5 text-xs leading-5 text-muted-foreground tabular-nums"
+                    title={`Versión ${rule.version} · ${formatDateTime(rule.updatedAt)}`}
+                  >
+                    v{rule.version}
+                  </span>
                 </span>
+                <span className="line-clamp-2 text-xs text-muted-foreground">{rule.description}</span>
               </span>
               <ChevronRight className="size-4 shrink-0 text-muted-foreground lg:hidden" aria-hidden />
             </Link>
@@ -93,11 +95,11 @@ export function RulesWorkspace({ children }: { children: React.ReactNode }) {
     return (
       <div className="flex flex-col gap-6">
         <PageHeader title="Reglas" />
-        <div className="flex flex-col items-center gap-3 rounded-xl border border-dashed px-6 py-16 text-center">
+        <div className="flex flex-col items-center gap-4 rounded-xl border border-dashed px-6 py-16 text-center">
           <span className="grid size-12 place-items-center rounded-full bg-muted text-muted-foreground">
             <Lock className="size-5" aria-hidden />
           </span>
-          <p className="font-medium">Solo el dueño puede ver y cambiar las reglas</p>
+          <p className="font-medium">Solo para el dueño</p>
           <Link href="/productos" className={cn(buttonVariants({ variant: "outline" }), "h-10 px-4")}>
             Ir a Productos
           </Link>
@@ -106,34 +108,27 @@ export function RulesWorkspace({ children }: { children: React.ReactNode }) {
     );
   }
 
+  // Desde 768 px la pantalla llena el alto de la ventana: la lista y el texto se desplazan
+  // dentro de su panel (columnas flexibles, sin alturas calculadas a mano).
   return (
-    <div className="flex flex-col gap-6">
-      {/* Con una regla abierta, la explicación pasa bajo la lista para dejar más alto al texto. */}
-      <PageHeader
-        title="Reglas"
-        description={activeSlug ? undefined : RULES_INTRO}
-        className={activeSlug ? "hidden lg:flex" : undefined}
-      />
-      <div className="grid items-start gap-6 lg:grid-cols-[17rem_minmax(0,1fr)]">
+    <div className="flex flex-col gap-6 md:min-h-[32rem] md:flex-1">
+      {/* Con una regla abierta, en el móvil y a media pantalla manda el enlace «‹ Reglas». */}
+      <PageHeader title="Reglas" className={activeSlug ? "hidden shrink-0 lg:flex" : "shrink-0"} />
+      <div className="flex flex-col gap-6 md:min-h-0 md:flex-1 lg:grid lg:grid-cols-[17rem_minmax(0,1fr)] lg:grid-rows-[minmax(0,1fr)]">
         <aside
           aria-label="Lista de reglas"
           className={cn(
-            "rounded-xl bg-card ring-1 ring-foreground/10 lg:sticky lg:top-8",
+            // El contenido va posicionado sobre el panel: una lista larga se desplaza dentro
+            // y no estira la página.
+            "rounded-xl bg-card ring-1 ring-foreground/10 md:relative md:min-h-0 md:flex-1",
             activeSlug ? "hidden lg:block" : undefined,
           )}
         >
-          <RuleList activeSlug={activeSlug} />
-          {activeSlug ? (
-            <div className="flex gap-2 border-t px-4 py-3 text-xs text-muted-foreground">
-              <Info className="mt-px size-3.5 shrink-0" aria-hidden />
-              <p>
-                Cada cambio guarda una versión nueva y las anteriores se conservan. Se aplica a las propuestas nuevas; las
-                ya hechas conservan la versión con la que se hicieron.
-              </p>
-            </div>
-          ) : null}
+          <div className="md:absolute md:inset-0 md:overflow-y-auto">
+            <RuleList activeSlug={activeSlug} />
+          </div>
         </aside>
-        <div className={cn("min-w-0", activeSlug ? undefined : "hidden lg:block")}>{children}</div>
+        <div className={cn("min-w-0 flex-col md:min-h-0 md:flex-1", activeSlug ? "flex" : "hidden lg:flex")}>{children}</div>
       </div>
     </div>
   );
@@ -159,14 +154,11 @@ export function NoRuleSelected() {
   }, [first, router]);
 
   return (
-    <div className="flex min-h-[26rem] flex-col items-center justify-center gap-3 rounded-xl border border-dashed px-6 text-center">
+    <div className="flex min-h-[26rem] flex-1 flex-col items-center justify-center gap-3 rounded-xl border border-dashed px-6 text-center">
       <span className="grid size-12 place-items-center rounded-full bg-muted text-muted-foreground">
         <BookOpen className="size-5" aria-hidden />
       </span>
-      <p className="font-medium">Elige una regla de la lista</p>
-      <p className="max-w-sm text-sm text-muted-foreground">
-        Se abrirá aquí para leerla o cambiarla, con su historial de versiones.
-      </p>
+      <p className="font-medium">Elige una regla</p>
     </div>
   );
 }

@@ -4,14 +4,13 @@ import { useQuery } from "@tanstack/react-query";
 import { ImageOff, Languages, MapPin, Package, Plus, Search, X } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { PageHeader } from "@/components/shell/page-header";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
-import { COUNTRY_LABELS, LANGUAGE_LABELS, type ProductView } from "./labels";
+import { countryLabels, languageLabel, type ProductView } from "./labels";
 
 export function ProductCover({ photoId, className }: { photoId?: number | null; className?: string }) {
   return (
@@ -20,27 +19,8 @@ export function ProductCover({ photoId, className }: { photoId?: number | null; 
         // eslint-disable-next-line @next/next/no-img-element
         <img src={`/api/fotos/${photoId}`} alt="" loading="lazy" className="size-full object-cover" />
       ) : (
-        <span className="flex flex-col items-center gap-1.5 text-xs">
-          <ImageOff className="size-6" aria-hidden />
-          Sin foto
-        </span>
+        <ImageOff className="size-6" aria-label="Sin foto" />
       )}
-    </div>
-  );
-}
-
-export const languageLabel = (code: string) => LANGUAGE_LABELS[code] ?? code;
-export const countryLabels = (codes: string[]) => codes.map((code) => COUNTRY_LABELS[code] ?? code);
-
-export function ProductMarket({ product }: { product: ProductView }) {
-  return (
-    <div className="flex flex-wrap gap-1.5">
-      <Badge variant="secondary">{languageLabel(product.language)}</Badge>
-      {countryLabels(product.countries).map((country) => (
-        <Badge key={country} variant="outline">
-          {country}
-        </Badge>
-      ))}
     </div>
   );
 }
@@ -117,7 +97,6 @@ export function ProductList() {
     <div className="flex flex-col gap-6">
       <PageHeader
         title="Productos"
-        description="Cada producto con sus fotos, el idioma y los países donde se vende."
         actions={
           <Link href="/productos/nuevo" className={cn(buttonVariants(), "h-10 gap-2 px-4")}>
             <Plus className="size-4" aria-hidden />
@@ -155,7 +134,7 @@ export function ProductList() {
                 <X className="size-4" aria-hidden />
               </button>
             ) : (
-              <kbd className="pointer-events-none absolute top-1/2 right-2.5 hidden -translate-y-1/2 rounded border bg-muted px-1.5 font-sans text-[11px] text-muted-foreground sm:block">
+              <kbd className="pointer-events-none absolute top-1/2 right-2.5 hidden -translate-y-1/2 rounded border bg-muted px-1.5 font-sans text-xs text-muted-foreground sm:block">
                 /
               </kbd>
             )}
@@ -182,30 +161,23 @@ export function ProductList() {
           ))}
         </ul>
       ) : query.isError ? (
-        <div role="alert" className="rounded-xl bg-destructive/10 px-5 py-4 text-sm">
-          <p className="font-medium">No se pudieron cargar los productos.</p>
-          <p className="text-muted-foreground">Recarga la página para volver a intentarlo.</p>
-        </div>
+        <p role="alert" className="rounded-xl bg-destructive/10 px-5 py-4 text-sm">
+          No se pudieron cargar los productos. Recarga la página.
+        </p>
       ) : !hasProducts ? (
-        <div className="flex flex-col items-center gap-3 rounded-xl border border-dashed px-6 py-16 text-center">
+        <div className="flex flex-col items-center gap-4 rounded-xl border border-dashed px-6 py-16 text-center">
           <span className="grid size-12 place-items-center rounded-full bg-muted text-muted-foreground">
             <Package className="size-5" aria-hidden />
           </span>
-          <div className="flex flex-col gap-1">
-            <p className="text-base font-medium">Todavía no hay productos</p>
-            <p className="max-w-sm text-sm text-muted-foreground">
-              Añade el primero con su nombre, una frase que diga qué hace y unas fotos.
-            </p>
-          </div>
-          <Link href="/productos/nuevo" className={cn(buttonVariants({ variant: "outline" }), "mt-1 h-10 gap-2 px-4")}>
+          <p className="font-medium">Todavía no hay productos</p>
+          <Link href="/productos/nuevo" className={cn(buttonVariants(), "h-10 gap-2 px-4")}>
             <Plus className="size-4" aria-hidden />
-            Añadir el primer producto
+            Nuevo producto
           </Link>
         </div>
       ) : visible.length === 0 ? (
-        <div className="flex flex-col items-center gap-2 rounded-xl border border-dashed px-6 py-12 text-center">
+        <div className="flex flex-col items-center gap-3 rounded-xl border border-dashed px-6 py-12 text-center">
           <p className="font-medium">Ningún producto se llama así</p>
-          <p className="text-sm text-muted-foreground">Prueba con otra palabra del nombre.</p>
           <button
             type="button"
             onClick={() => setSearch("")}

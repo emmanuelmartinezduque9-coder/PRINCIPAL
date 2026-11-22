@@ -1,6 +1,6 @@
-import { desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import { getDb, schema } from "@/db/client";
-import { scopedProducts } from "@/server/access";
+import { productScope, scopedProducts } from "@/server/access";
 import type { AuthUser } from "@/server/auth";
 import { HttpError } from "@/server/http";
 
@@ -69,6 +69,35 @@ export async function createProduct(
     }
     return product;
   });
+}
+
+export interface ProductChanges {
+  name?: string;
+  summary?: string;
+  language?: string;
+  countries?: string[];
+}
+
+/**
+ * Cambia los datos de un producto que `user` puede ver; lo que no se envía se queda igual.
+ * El ámbito se aplica también en la propia escritura: un producto ajeno (o que deja de estar
+ * asignado entre la lectura y el cambio) responde 404 y no se toca.
+ */
+export async function updateProduct(user: AuthUser, productId: number, changes: ProductChanges): Promise<Product> {
+  const current = await getProductFor(user, productId);
+  const values = validate({
+    name: changes.name ?? current.name,
+    summary: changes.summary ?? current.summary,
+    language: changes.language ?? current.language,
+    countries: changes.countries ?? current.countries,
+  });
+  const [product] = await getDb()
+    .update(schema.products)
+    .set(values)
+    .where(and(eq(schema.products.id, current.id), productScope(user)))
+    .returning();
+  if (!product) throw new HttpError(404, NOT_FOUND);
+  return product;
 }
 
 /**
