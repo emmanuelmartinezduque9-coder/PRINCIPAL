@@ -3,12 +3,13 @@ import path from "node:path";
 import { runMigrations } from "../src/db/migrate";
 import { seed } from "../src/db/seed";
 import { checkCloudEnv } from "../src/lib/cloud-env";
+import { shutdownBudget, stopChildren } from "../src/lib/shutdown";
 
 /**
  * Arranque en la nube: comprueba la configuración, aplica migraciones, prepara los datos
  * iniciales y lanza la web (en todas las interfaces, con inicio de sesión) y el proceso en
  * segundo plano. Si una de las dos piezas se cae, se sale con error para que Railway
- * reinicie el servicio.
+ * reinicie el servicio. Al parar (cada despliegue), espera a que las dos piezas terminen.
  */
 export async function startCloud(): Promise<void> {
   const { problems, warnings } = checkCloudEnv(process.env);
@@ -37,21 +38,24 @@ export async function startCloud(): Promise<void> {
   ];
 
   let closing = false;
-  const stop = (code: number) => {
+  const stop = async (code: number) => {
     if (closing) return;
     closing = true;
-    for (const child of children) child.kill("SIGTERM");
-    setTimeout(() => process.exit(code), 1500);
+    // Se espera a que las dos piezas salgan (el proceso en segundo plano termina antes el paso
+    // que tenga a medias), como mucho lo que el despliegue da para parar.
+    const clean = await stopChildren(children, shutdownBudget(process.env).parentMs);
+    if (!clean) console.error("[nube] Alguna pieza no terminó a tiempo: se cierra a la fuerza.");
+    process.exit(code);
   };
-  process.on("SIGTERM", () => stop(0));
-  process.on("SIGINT", () => stop(0));
+  process.on("SIGTERM", () => void stop(0));
+  process.on("SIGINT", () => void stop(0));
   // Cualquier salida de una pieza, aunque sea limpia, cuenta como fallo: sin ella el servicio no sirve.
   const names = ["la web", "el proceso en segundo plano"];
   children.forEach((child, i) =>
     child.on("error", (error) => {
       console.error(`[nube] No se pudo lanzar ${names[i]}: ${error.message}`);
-      stop(1);
+      void stop(1);
     }),
   );
-  for (const child of children) child.on("exit", (code) => stop(code === 0 ? 1 : (code ?? 1)));
+  for (const child of children) child.on("exit", (code) => void stop(code === 0 ? 1 : (code ?? 1)));
 }

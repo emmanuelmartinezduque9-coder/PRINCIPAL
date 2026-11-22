@@ -4,14 +4,17 @@ import { getDb, getPool, schema } from "@/db/client";
 import { recoverInterruptedSteps } from "@/jobs/boss";
 import {
   HEARTBEAT_MS,
+  jobKey,
   JobPausedError,
   MAX_ATTEMPTS,
   runAsJob,
   runStep,
+  setStopping,
   STALE_RUNNING_MS,
   StepBusyError,
   StepFailedError,
   stepKey,
+  WorkerStoppingError,
   type JobContext,
 } from "@/jobs/steps";
 import { createGateway } from "@/llm/gateway";
@@ -85,6 +88,16 @@ describe("stepKey", () => {
     expect(stepKey(ctx, "ficha", { a: 1 })).toMatch(/^prueba:-:ficha:[0-9a-f]{16}$/);
     expect(stepKey({ ...ctx, productId: 42 }, "ficha", { a: 1 })).toMatch(/^prueba:42:ficha:[0-9a-f]{16}$/);
     expect(stepKey(ctx, "ficha", undefined)).toMatch(/^prueba:-:ficha:[0-9a-f]{16}$/);
+  });
+
+  it("la clave de un trabajo es la misma para el mismo trabajo, persona, producto y datos, y cambia con cualquiera de ellos", () => {
+    const base = jobKey("prueba", 1, null, { a: 1, b: 2 });
+    expect(base).toMatch(/^prueba:-:@trabajo:[0-9a-f]{16}$/);
+    expect(jobKey("prueba", 1, null, { b: 2, a: 1 })).toBe(base);
+    expect(jobKey("otro", 1, null, { a: 1, b: 2 })).not.toBe(base);
+    expect(jobKey("prueba", 2, null, { a: 1, b: 2 })).not.toBe(base);
+    expect(jobKey("prueba", 1, 7, { a: 1, b: 2 })).not.toBe(base);
+    expect(jobKey("prueba", 1, null, { a: 1, b: 3 })).not.toBe(base);
   });
 
   it("cambia con el trabajo, el producto y el nombre del paso", () => {
@@ -334,13 +347,21 @@ describe("runStep", () => {
     }
   });
 
-  it("STALE_RUNNING_MS son 15 minutos y MAX_ATTEMPTS 3", () => {
-    expect(STALE_RUNNING_MS).toBe(15 * 60 * 1000);
+  it("un paso se da por interrumpido tras 2 minutos sin señales de vida, que da cada 30 segundos; 3 intentos", () => {
+    expect(STALE_RUNNING_MS).toBe(2 * 60 * 1000);
+    expect(HEARTBEAT_MS).toBe(30 * 1000);
     expect(MAX_ATTEMPTS).toBe(3);
   });
 
+  it("un paso en silencio desde hace menos de 2 minutos aún no se da por interrumpido; desde hace más, sí", async () => {
+    await insertStep({ key: "k-90s", startedAt: minutesAgo(40), heartbeatAt: new Date(Date.now() - 90_000) });
+    await insertStep({ key: "k-150s", startedAt: minutesAgo(40), heartbeatAt: new Date(Date.now() - 150_000) });
+    await expect(runStep(ctx, "k-90s", async () => "no")).rejects.toBeInstanceOf(StepBusyError);
+    expect(await runStep(ctx, "k-150s", async () => "sí")).toBe("sí");
+  });
+
   it("un paso 'running' reciente no se ejecuta en paralelo", async () => {
-    await insertStep({ key: "k5", startedAt: minutesAgo(14) });
+    await insertStep({ key: "k5", startedAt: minutesAgo(1) });
     await reserveSpend({ userId: ana.id, productId: null, provider: "claude", stepKey: "k5", estimateMicros: RESERVADO });
     let runs = 0;
     const attempt = runStep(ctx, "k5", async () => {
@@ -522,6 +543,132 @@ describe("runStep", () => {
       await pool.query("drop function prueba_fallar_una_vez()");
       await pool.query("drop sequence prueba_fallo_guardado");
     }
+  });
+
+  it("si la base de datos tarda varios segundos en volver, el resultado ya pagado se guarda una vez y el paso no se repite ni se cobra otra vez", async () => {
+    const pool = getPool();
+    await pool.query("create table prueba_guardado (fallando boolean not null)");
+    await pool.query("insert into prueba_guardado values (true)");
+    await pool.query("create sequence prueba_guardado_intentos");
+    await pool.query(`
+      create function prueba_guardado_caido() returns trigger language plpgsql as $$
+      begin
+        if new.status = 'done' and (select fallando from prueba_guardado) then
+          perform nextval('prueba_guardado_intentos');
+          raise exception 'la base de datos no responde (prueba)';
+        end if;
+        return new;
+      end $$`);
+    await pool.query(
+      "create trigger prueba_guardado_caido before update on job_steps for each row execute function prueba_guardado_caido()",
+    );
+    const failedSaves = async () =>
+      Number((await pool.query("select case when is_called then last_value else 0 end as n from prueba_guardado_intentos")).rows[0].n);
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    try {
+      let runs = 0;
+      const pay = async () => {
+        runs++;
+        const { entryId } = await reserveSpend({
+          userId: ana.id,
+          productId: null,
+          provider: "claude",
+          stepKey: "k-guardar",
+          estimateMicros: RESERVADO,
+        });
+        await settleSpend(entryId, { costMicros: 9_000 });
+        return "pagado";
+      };
+      const result = runAsJob({ nota: "guardar" }, () => runStep(ctx, "k-guardar", pay));
+
+      // El guardado falla una y otra vez (varios segundos, con esperas cada vez más largas).
+      await vi.waitFor(async () => expect(await failedSaves()).toBeGreaterThanOrEqual(4), { timeout: 15_000, interval: 100 });
+      expect(await step("k-guardar")).toMatchObject({ status: "running", attempts: 1 });
+
+      // Mientras tanto el paso sigue dando señales de vida: nadie lo da por interrumpido.
+      expect(vi.getTimerCount()).toBe(1);
+      await getDb().update(schema.jobSteps).set({ heartbeatAt: minutesAgo(20) }).where(eq(schema.jobSteps.key, "k-guardar"));
+      vi.advanceTimersByTime(HEARTBEAT_MS);
+      await vi.waitFor(async () => {
+        expect((await step("k-guardar")).heartbeatAt!.getTime()).toBeGreaterThan(minutesAgo(1).getTime());
+      });
+      expect(await recoverInterruptedSteps()).toBe(0);
+      await expect(runStep(ctx, "k-guardar", pay)).rejects.toBeInstanceOf(StepBusyError);
+
+      // La base de datos vuelve: el siguiente intento de guardado entra.
+      await pool.query("update prueba_guardado set fallando = false");
+      expect(await result).toBe("pagado");
+      expect(vi.getTimerCount()).toBe(0);
+      expect(await step("k-guardar")).toMatchObject({ status: "done", attempts: 1, result: "pagado" });
+      expect(await runStep(ctx, "k-guardar", pay)).toBe("pagado");
+      expect(runs).toBe(1);
+      expect(await entriesByStep("k-guardar")).toMatchObject([{ status: "settled", costMicros: 9_000 }]);
+    } finally {
+      vi.useRealTimers();
+      await pool.query("drop trigger prueba_guardado_caido on job_steps");
+      await pool.query("drop function prueba_guardado_caido()");
+      await pool.query("drop sequence prueba_guardado_intentos");
+      await pool.query("drop table prueba_guardado");
+    }
+  });
+
+  it("el fallo de un paso de dentro no gasta además un intento del de fuera; cuando el de dentro se agota, el de fuera ya no se reintenta", async () => {
+    let runs = 0;
+    const nested = () =>
+      runStep(ctx, "k-fuera-2", () =>
+        runStep(ctx, "k-dentro-2", async () => {
+          runs++;
+          throw new Error("no hay red");
+        }),
+      );
+    await expect(nested()).rejects.toThrow("no hay red");
+    expect(await step("k-dentro-2")).toMatchObject({ status: "failed", attempts: 1 });
+    expect(await step("k-fuera-2")).toMatchObject({ status: "failed", attempts: 0, error: "no hay red" });
+
+    await expect(nested()).rejects.toThrow("no hay red");
+    await expect(nested()).rejects.toThrow("no hay red");
+    expect(await step("k-dentro-2")).toMatchObject({ status: "failed", attempts: 3 });
+    expect(await step("k-fuera-2")).toMatchObject({ status: "failed", attempts: MAX_ATTEMPTS });
+
+    await expect(nested()).rejects.toBeInstanceOf(StepFailedError);
+    expect(runs).toBe(3);
+  });
+
+  it("un fallo del paso de fuera que no viene de ninguno de dentro sí gasta su intento", async () => {
+    await expect(
+      runStep(ctx, "k-fuera-3", async () => {
+        await runStep(ctx, "k-dentro-3", async () => "bien");
+        throw new Error("fallo entre pasos");
+      }),
+    ).rejects.toThrow("fallo entre pasos");
+    expect(await step("k-fuera-3")).toMatchObject({ status: "failed", attempts: 1 });
+    expect(await step("k-dentro-3")).toMatchObject({ status: "done", attempts: 1 });
+  });
+
+  it("mientras el proceso se para no se empiezan pasos nuevos: el de fuera queda como encolado, sin gastar intento, y se retoma después", async () => {
+    let first = 0;
+    const job = () =>
+      runStep(ctx, "k-para", async () => {
+        await runStep(ctx, "k-para-1", async () => ++first);
+        if (first === 1 && !resumed) setStopping(true); // llega la orden de parar con el primer paso recién hecho
+        return runStep(ctx, "k-para-2", async () => "dos");
+      });
+    let resumed = false;
+    try {
+      await expect(job()).rejects.toBeInstanceOf(WorkerStoppingError);
+      await expect(runStep(ctx, "k-otro", async () => 1)).rejects.toBeInstanceOf(WorkerStoppingError);
+    } finally {
+      setStopping(false);
+    }
+    expect(await step("k-para-1")).toMatchObject({ status: "done" });
+    expect(await step("k-para-2")).toBeUndefined();
+    expect(await step("k-otro")).toBeUndefined();
+    expect(await step("k-para")).toMatchObject({ status: "queued", attempts: 0, error: null });
+
+    resumed = true;
+    expect(await job()).toBe("dos");
+    expect(first).toBe(1);
+    expect(await step("k-para")).toMatchObject({ status: "done", attempts: 1 });
   });
 
   it("si no se puede anotar el fallo, sale el error del paso y la fila queda para recuperarse como interrumpida", async () => {

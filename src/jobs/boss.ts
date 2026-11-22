@@ -1,4 +1,4 @@
-import { and, eq, inArray, isNotNull, sql, type SQL } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, ne, or, sql, type SQL } from "drizzle-orm";
 import { fromDrizzle, PgBoss, type Job } from "pg-boss";
 import { databaseUrl, getDb, schema } from "@/db/client";
 import {
@@ -9,7 +9,23 @@ import {
   scheduledTasks,
   type ScheduledTask,
 } from "@/jobs/registry";
-import { failExhaustedSteps, JobPausedError, retryableStep, runAsJob, type JobContext } from "@/jobs/steps";
+import {
+  dbNow,
+  failExhaustedSteps,
+  forgottenStep,
+  interruptedStep,
+  isRecordedFailure,
+  jobKey,
+  JobPausedError,
+  retryableStep,
+  runAsJob,
+  runStep,
+  setStopping,
+  StepBusyError,
+  WorkerStoppingError,
+  type JobContext,
+} from "@/jobs/steps";
+import { shutdownBudget } from "@/lib/shutdown";
 import { hasRoom, settleInterruptedSpend } from "@/server/spend";
 
 /**
@@ -18,9 +34,11 @@ import { hasRoom, settleInterruptedSpend } from "@/server/spend";
  * las tareas programadas.
  *
  * La cola no reintenta nada por su cuenta: los reintentos los cuenta `runStep` en `job_steps`.
- * Cuando un paso queda en pausa, falla o se interrumpe, su fila guarda con qué se encoló el
- * trabajo (`payload`), y desde aquí se vuelve a encolar: la fila pasa a `queued` en la misma
- * transacción en la que el trabajo entra en la cola, así que cada uno se reencola una sola vez.
+ * Cada trabajo tiene allí su propia fila desde que se encola (en la misma transacción), y se
+ * ejecuta como un paso que envuelve a los suyos. Cuando el trabajo o uno de sus pasos queda en
+ * pausa, falla, se interrumpe o se pierde, su fila guarda con qué se encoló (`payload`), y desde
+ * aquí se vuelve a encolar: la fila pasa a `queued` en la misma transacción en la que el trabajo
+ * entra en la cola, así que cada uno se reencola una sola vez.
  */
 
 const SCHEMA = "pgboss";
@@ -30,9 +48,6 @@ const JOB_EXPIRE_SECONDS = 2 * 60 * 60;
 
 /** Sin reintentos de la cola: un trabajo que lanza un error no vuelve a ejecutarse solo. */
 const NO_RETRIES = { retryLimit: 0, expireInSeconds: JOB_EXPIRE_SECONDS };
-
-/** Al parar, lo que se espera a que terminen los trabajos en marcha. */
-const STOP_TIMEOUT_MS = 10_000;
 
 const RESUME_TASK = "reanudar-pausados";
 const RECOVER_TASK = "recuperar-pasos";
@@ -114,8 +129,12 @@ function isPlainObject(value: unknown): value is object {
  * objeto que quepa en JSON y no debe llevar secretos (se guarda en claro). Devuelve el
  * identificador del trabajo en la cola.
  *
+ * El nombre tiene que estar definido con `defineJob` en este mismo proceso (también en la web:
+ * quien encola importa el módulo del trabajo). En la misma transacción en la que el trabajo entra
+ * en la cola se escribe su fila `queued` en `job_steps`.
+ *
  * No comprueba permisos: quien encola ya sabe quién es la persona; `runStep` vuelve a comprobar
- * que sigue activa y sigue viendo el producto antes de cada paso.
+ * que sigue activa y sigue viendo el producto antes del trabajo y de cada paso.
  */
 export async function enqueueJob<TData extends object>(
   name: string,
@@ -123,6 +142,7 @@ export async function enqueueJob<TData extends object>(
   data: TData,
 ): Promise<string> {
   assertJobName(name);
+  if (!jobHandler(name)) throw new Error(`No hay ningún trabajo definido con el nombre «${name}».`);
   if (!isId(ctx.userId, 0)) throw new Error("El trabajo no dice bien de quién es.");
   if (ctx.productId !== null && !isId(ctx.productId, 1)) throw new Error("El trabajo no dice bien de qué producto es.");
   if (!isPlainObject(data)) throw new Error("Los datos del trabajo deben ser un objeto.");
@@ -135,23 +155,57 @@ export async function enqueueJob<TData extends object>(
 
   const current = await runtime();
   await ensureQueue(current, name);
+  const key = jobKey(name, ctx.userId, ctx.productId, payload);
   const job: QueuedJob = { userId: ctx.userId, productId: ctx.productId, data: payload };
-  const id = await current.boss.send(name, job, NO_RETRIES);
-  if (!id) throw new Error("No se pudo encolar el trabajo.");
-  return id;
+  return getDb().transaction(async (tx) => {
+    // La fila del trabajo se confirma a la vez que su mensaje: si el mensaje se pierde, o el
+    // proceso muere antes de empezarlo, la fila lo recuerda y el barrido lo vuelve a encolar.
+    // Encolar otra vez un trabajo igual lo deja listo para repetirse, salvo que esté en marcha.
+    const fresh = {
+      jobName: name,
+      userId: ctx.userId,
+      productId: ctx.productId,
+      status: "queued",
+      attempts: 0,
+      payload,
+      updatedAt: dbNow,
+    };
+    await tx
+      .insert(steps)
+      .values({ key, ...fresh })
+      .onConflictDoUpdate({
+        target: steps.key,
+        set: { ...fresh, result: null, error: null, startedAt: null, heartbeatAt: null, finishedAt: null },
+        setWhere: or(ne(steps.status, "running"), interruptedStep),
+      });
+    await settleInterruptedSpend([key], tx);
+    const id = await current.boss.send(name, job, { ...NO_RETRIES, db: fromDrizzle(tx, sql) });
+    if (!id) throw new Error("No se pudo encolar el trabajo.");
+    return id;
+  });
 }
 
-/** Ejecuta un trabajo de la cola. En pausa por tope termina bien: su fila `paused_cap` lo reanudará. */
+/**
+ * Ejecuta un trabajo de la cola como un paso que envuelve a los suyos: su fila pasa a `running`
+ * (con señales de vida) y acaba `done`, `failed`, `paused_cap` o, si el proceso se para a medias,
+ * otra vez `queued`. Un mensaje repetido de un trabajo ya hecho, o que otro proceso tiene en
+ * marcha, no hace nada.
+ */
 async function runJob(name: string, job: Job<QueuedJob>): Promise<void> {
   try {
     const handler = jobHandler(name);
     const queued = job.data;
     if (!handler) throw new Error("No hay nada definido para este trabajo.");
     if (!isPlainObject(queued) || !isPlainObject(queued.data)) throw new Error("El trabajo llegó sin datos válidos.");
+    const { data } = queued;
     const ctx: JobContext = { jobName: name, userId: queued.userId, productId: queued.productId };
-    await runAsJob(queued.data, () => handler(queued.data, ctx));
+    const key = jobKey(name, ctx.userId, ctx.productId, data);
+    await runAsJob(data, () => runStep(ctx, key, () => handler(data, ctx)));
   } catch (error) {
-    if (error instanceof JobPausedError) return;
+    // En pausa por tope o parado a medias: su fila lo reanudará. Para la cola ha terminado bien.
+    if (error instanceof JobPausedError || error instanceof WorkerStoppingError) return;
+    // Otro proceso tiene este mismo trabajo en marcha (no es un paso suyo el que está ocupado).
+    if (error instanceof StepBusyError && !isRecordedFailure(error)) return;
     const message = messageOf(error);
     console.error(`[cola] El trabajo «${name}» no ha terminado: ${message}`);
     // A la cola solo llega el mensaje: el error original puede llevar detalles que no deben guardarse.
@@ -178,13 +232,14 @@ export async function startWorker(): Promise<void> {
   if (previous?.worker) return;
   // Si este proceso ya había encolado algo, su instancia (que solo encola) se cambia por la completa.
   if (previous) await previous.boss.stop({ graceful: false });
+  setStopping(false);
   const current = await openAs(true);
   const { boss } = current;
 
   defineSchedule(RESUME_TASK, "5 * * * *", async () => {
     await resumePausedJobs();
   });
-  // Cada 5 minutos y no solo al arrancar: un paso se da por interrumpido a los 15 minutos sin
+  // Cada 5 minutos y no solo al arrancar: un paso se da por interrumpido a los 2 minutos sin
   // señales de vida, y al arrancar tras una caída todavía no ha pasado ese tiempo.
   defineSchedule(RECOVER_TASK, "*/5 * * * *", async () => {
     await recoverInterruptedSteps();
@@ -210,13 +265,18 @@ export async function startWorker(): Promise<void> {
   await recoverInterruptedSteps();
 }
 
-/** Para la cola de este proceso; espera unos segundos a que terminen los trabajos en marcha. */
+/**
+ * Para la cola de este proceso: deja de coger trabajos y de empezar pasos nuevos, y espera a que
+ * terminen los pasos en marcha (un trabajo a medias se detiene entre dos pasos y se retoma al
+ * volver). Espera como mucho lo que da el despliegue para parar (`shutdownBudget`).
+ */
 export async function stopWorker(): Promise<void> {
   const pending = holder.__principalBoss;
   holder.__principalBoss = null;
   if (!pending) return;
   const current = await pending.catch(() => null);
-  await current?.boss.stop({ graceful: true, timeout: STOP_TIMEOUT_MS });
+  if (current?.worker) setStopping(true);
+  await current?.boss.stop({ graceful: true, timeout: shutdownBudget(process.env).workerMs });
 }
 
 // ───────────────────────── Volver a encolar ─────────────────────────
@@ -272,7 +332,7 @@ async function requeue(job: StalledJob, waiting: SQL | undefined): Promise<boole
   return getDb().transaction(async (tx) => {
     const moved = await tx
       .update(steps)
-      .set({ status: "queued", updatedAt: new Date() })
+      .set({ status: "queued", updatedAt: dbNow })
       .where(and(inArray(steps.key, job.keys), waiting))
       .returning({ key: steps.key });
     if (moved.length === 0) return false;
@@ -320,15 +380,31 @@ export async function resumePausedJobs(now: Date = new Date()): Promise<number> 
 }
 
 /**
- * Recupera lo que quedó a medias: vuelve a encolar los trabajos con pasos que fallaron o que se
- * interrumpieron (más de 15 minutos sin señales de vida: el proceso que los llevaba se cayó), mientras
- * les queden intentos. Lo que un paso interrumpido tenía reservado no se libera: cuenta como
- * gastado. Los que ya no tienen intentos quedan fallidos. Devuelve cuántos trabajos reencoló.
+ * Recupera lo que quedó a medias. Vuelve a encolar los trabajos:
+ * - con pasos que fallaron o se interrumpieron (más de 2 minutos sin señales de vida: el proceso
+ *   que los llevaba se cayó o se reinició), mientras les queden intentos;
+ * - que llevan encolados más de ese tiempo sin que nadie los empiece (su mensaje se perdió, o el
+ *   proceso murió antes de empezarlos). Si en realidad solo estaban esperando turno, el mensaje
+ *   repetido no hace daño: los pasos hechos no se repiten.
+ * Lo que un paso interrumpido tenía reservado no se libera: cuenta como gastado. Los que ya no
+ * tienen intentos quedan fallidos. Devuelve cuántos trabajos reencoló.
  */
-export async function recoverInterruptedSteps(now: Date = new Date()): Promise<number> {
-  await failExhaustedSteps(now);
-  const waiting = and(retryableStep(now), isNotNull(steps.payload));
-  const rows = await getDb().select(stalledColumns).from(steps).where(waiting).orderBy(steps.updatedAt);
+export async function recoverInterruptedSteps(): Promise<number> {
+  await failExhaustedSteps();
+  const waiting = and(isNotNull(steps.payload), or(retryableStep, forgottenStep));
+  const rows = await getDb()
+    .select({ ...stalledColumns, forgotten: sql<boolean>`${steps.status} = 'queued'` })
+    .from(steps)
+    .where(waiting)
+    .orderBy(steps.updatedAt);
   if (rows.length === 0) return 0;
-  return requeueAll(groupByJob(rows), waiting);
+
+  // Un paso que solo espera en `queued` no basta para reencolar: lo decide la fila de su trabajo
+  // (un paso puede quedarse así para siempre si el trabajo ya no llega hasta él).
+  const lost = new Set(rows.filter((row) => !row.forgotten).map((row) => row.key));
+  const jobs = groupByJob(rows).filter((job) => {
+    const own = jobKey(job.jobName, job.userId, job.productId, job.data);
+    return job.keys.some((key) => lost.has(key) || key === own);
+  });
+  return requeueAll(jobs, waiting);
 }

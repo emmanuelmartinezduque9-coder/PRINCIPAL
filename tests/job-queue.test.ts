@@ -4,7 +4,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { getDb, schema } from "@/db/client";
 import { enqueueJob, getBoss, recoverInterruptedSteps, resumePausedJobs, startWorker, stopWorker } from "@/jobs/boss";
 import { defineJob, defineSchedule } from "@/jobs/registry";
-import { listPausedJobs, runStep, type JobContext } from "@/jobs/steps";
+import { jobKey, listPausedJobs, runStep, type JobContext } from "@/jobs/steps";
 import { setAssignments } from "@/server/access";
 import type { AuthUser } from "@/server/auth";
 import { reserveSpend, settleSpend, setGlobalCap, setUserCap } from "@/server/spend";
@@ -89,6 +89,14 @@ const disable = (user: AuthUser) =>
   getDb().update(schema.users).set({ disabledAt: new Date() }).where(eq(schema.users.id, user.id));
 const forAna = () => ({ userId: ana.id, productId: null });
 
+/** La fila del trabajo entero (la que escribe quien encola). */
+const jobRow = (data: Data, user: AuthUser = ana, productId: number | null = null) =>
+  step(jobKey(JOB, user.id, productId, data));
+
+/** Como si hubiera pasado el tiempo: la fila lleva `minutes` sin tocarse. */
+const age = (key: string, minutes: number) =>
+  getDb().update(schema.jobSteps).set({ updatedAt: minutesAgo(minutes) }).where(eq(schema.jobSteps.key, key));
+
 function silenceErrors() {
   return vi.spyOn(console, "error").mockImplementation(() => {});
 }
@@ -126,6 +134,51 @@ describe("cola de trabajos", () => {
     expect(runs).toEqual([{ data: { nota: "hola" }, ctx: { jobName: JOB, userId: ana.id, productId: product.id } }]);
     const [job] = await boss.findJobs(JOB, { id });
     expect(job).toMatchObject({ state: "completed", retryLimit: 0 });
+    expect(await jobRow({ nota: "hola" }, ana, product.id)).toMatchObject({ status: "done", attempts: 1 });
+  });
+
+  it("al encolar queda apuntado el trabajo, con sus datos, a la vez que entra en la cola", async () => {
+    await stopWorker(); // nadie lo ejecuta todavía
+    try {
+      const id = await enqueueJob<Data>(JOB, forAna(), { nota: "apuntado" });
+      expect(await jobRow({ nota: "apuntado" })).toMatchObject({
+        status: "queued",
+        attempts: 0,
+        payload: { nota: "apuntado" },
+        jobName: JOB,
+        userId: ana.id,
+        productId: null,
+      });
+      expect(await (await getBoss()).findJobs(JOB, { id })).toHaveLength(1);
+    } finally {
+      await start();
+    }
+    await runToIdle();
+    expect(runs.map((run) => run.data.nota)).toEqual(["apuntado"]);
+  });
+
+  it("no encola un trabajo que no está definido, y lo dice", async () => {
+    await expect(enqueueJob("trabajo-sin-definir", forAna(), { nota: "x" })).rejects.toThrow(
+      "No hay ningún trabajo definido con el nombre «trabajo-sin-definir».",
+    );
+    expect(await getDb().select().from(schema.jobSteps)).toHaveLength(0);
+  });
+
+  it("encolar dos veces lo mismo seguido lo ejecuta una vez; volver a pedirlo cuando ya terminó lo ejecuta otra vez", async () => {
+    await stopWorker();
+    try {
+      await enqueueJob<Data>(JOB, forAna(), { nota: "repetido" });
+      await enqueueJob<Data>(JOB, forAna(), { nota: "repetido" });
+    } finally {
+      await start();
+    }
+    await runToIdle();
+    expect(runs).toHaveLength(1);
+
+    await enqueueJob<Data>(JOB, forAna(), { nota: "repetido" });
+    await runToIdle();
+    expect(runs).toHaveLength(2);
+    expect(await jobRow({ nota: "repetido" })).toMatchObject({ status: "done", attempts: 1 });
   });
 
   it("quien encola fija los datos para reencolar: cada paso del trabajo los guarda tal cual", async () => {
@@ -164,6 +217,26 @@ describe("cola de trabajos", () => {
     expect(JSON.stringify(job.output)).not.toContain("dato-interno");
     expect(errors).toHaveBeenCalledWith(expect.stringContaining(`«${JOB}»`));
     expect(errors).toHaveBeenCalledWith(expect.stringContaining("se rompió"));
+    expect(await jobRow({ nota: "falla" })).toMatchObject({ status: "failed", attempts: 1, error: "se rompió" });
+  });
+
+  it("un trabajo que falla fuera de sus pasos se reintenta como mucho tres veces en total", async () => {
+    const errors = silenceErrors();
+    work = async () => {
+      throw new Error("fallo entre pasos");
+    };
+    await enqueueJob<Data>(JOB, forAna(), { nota: "entre pasos" });
+    await runToIdle();
+    for (const attempts of [2, 3]) {
+      expect(await recoverInterruptedSteps()).toBe(1);
+      expect(await recoverInterruptedSteps()).toBe(0);
+      await runToIdle();
+      expect(await jobRow({ nota: "entre pasos" })).toMatchObject({ status: "failed", attempts });
+    }
+    expect(await recoverInterruptedSteps()).toBe(0);
+    await runToIdle();
+    expect(runs).toHaveLength(3);
+    expect(errors).toHaveBeenCalledTimes(3);
   });
 
   it("un trabajo encolado antes de arrancar el proceso de trabajos se ejecuta al arrancarlo", async () => {
@@ -189,6 +262,7 @@ describe("pausa por tope", () => {
     expect(runs).toHaveLength(1);
     expect(await listPausedJobs(dueno)).toHaveLength(1);
     expect(await step("k-pausa")).toMatchObject({ status: "paused_cap", attempts: 0, payload: { nota: "sin saldo" } });
+    expect(await jobRow({ nota: "sin saldo" })).toMatchObject({ status: "paused_cap", attempts: 0 });
     // Para la cola, un trabajo en pausa ha terminado bien: no es un fallo.
     expect((await boss.findJobs(JOB, { id }))[0]).toMatchObject({ state: "completed" });
 
@@ -201,6 +275,43 @@ describe("pausa por tope", () => {
     expect(await listPausedJobs(dueno)).toHaveLength(0);
     expect(await step("k-pausa")).toMatchObject({ status: "done", attempts: 1, result: "pagado" });
     expect(await entriesByStep("k-pausa")).toHaveLength(1);
+    expect(await jobRow({ nota: "sin saldo" })).toMatchObject({ status: "done", attempts: 1 });
+  });
+
+  it("si el trabajo reanudado muere antes de llegar a su paso, el barrido lo recoge una sola vez", async () => {
+    work = async (data, ctx) => {
+      await pay(ctx, "k-muere");
+    };
+    await setUserCap(dueno, ana.id, 0);
+    await enqueueJob<Data>(JOB, forAna(), { nota: "muere" });
+    await runToIdle();
+    expect(runs).toHaveLength(1);
+
+    // Se reanuda, pero el proceso muere antes de empezar el trabajo: su mensaje desaparece.
+    await stopWorker();
+    try {
+      await setUserCap(dueno, ana.id, 10_000_000);
+      expect((await step("k-muere")).status).toBe("queued");
+      await (await getBoss()).deleteAllJobs();
+    } finally {
+      await start();
+    }
+    await runToIdle();
+    expect(runs).toHaveLength(1);
+
+    // Recién reencolado no se da por perdido: puede estar esperando turno.
+    expect(await recoverInterruptedSteps()).toBe(0);
+    // Pasado el tiempo sin que nadie lo empiece, sí; y una sola vez.
+    await age(jobKey(JOB, ana.id, null, { nota: "muere" }), 3);
+    await age("k-muere", 3);
+    expect(await recoverInterruptedSteps()).toBe(1);
+    expect(await recoverInterruptedSteps()).toBe(0);
+    expect(await resumePausedJobs()).toBe(0);
+    await runToIdle();
+    expect(runs).toHaveLength(2);
+    expect(await step("k-muere")).toMatchObject({ status: "done", attempts: 1, result: "pagado" });
+    expect(await entriesByStep("k-muere")).toHaveLength(1);
+    expect(await recoverInterruptedSteps()).toBe(0);
   });
 
   it("subir el tope global también reanuda los trabajos en pausa", async () => {
@@ -253,7 +364,8 @@ describe("pausa por tope", () => {
     // Un paso suelto (sin datos para reencolar) no se puede reanudar desde aquí.
     await insertStep({ key: "k-suelto", status: "paused_cap", attempts: 0 });
 
-    expect(await listPausedJobs(dueno)).toHaveLength(3);
+    // El paso suelto no sale: nunca se reanudará solo.
+    expect(await listPausedJobs(dueno)).toHaveLength(2);
     expect(await resumePausedJobs()).toBe(2);
     await runToIdle();
     expect(runs.map((run) => run.data.nota).sort()).toEqual(["a", "b"]);
@@ -283,10 +395,31 @@ describe("pausa por tope", () => {
     expect(await listPausedJobs(luis)).toEqual([
       { jobName: JOB, productId: null, userId: luis.id, since: expect.any(Date) },
     ]);
+
+    // Los trabajos en pausa de una persona desactivada no se van a reanudar: no salen.
+    await disable(luis);
+    expect((await listPausedJobs(dueno)).map((job) => job.userId)).toEqual([ana.id]);
   });
 });
 
 describe("persona desactivada o producto desasignado con trabajos en cola", () => {
+  it("si desactivan a la persona con el trabajo a medias, el siguiente paso no se ejecuta ni gasta", async () => {
+    silenceErrors();
+    work = async (data, ctx) => {
+      await pay(ctx, "k-antes");
+      await disable(ana);
+      await pay(ctx, "k-despues");
+    };
+    await enqueueJob<Data>(JOB, forAna(), { nota: "a medias" });
+    await runToIdle();
+    expect(await step("k-antes")).toMatchObject({ status: "done" });
+    expect(await step("k-despues")).toMatchObject({ status: "failed", error: "Esta cuenta está desactivada.", payload: null });
+    expect(await entriesByStep("k-despues")).toHaveLength(0);
+    // El trabajo queda fallido para siempre: nadie lo reencola.
+    expect(await jobRow({ nota: "a medias" })).toMatchObject({ status: "failed", attempts: 3 });
+    expect(await recoverInterruptedSteps()).toBe(0);
+  });
+
   it("el trabajo de una persona desactivada se detiene sin gastar", async () => {
     const errors = silenceErrors();
     work = async (data, ctx) => {
@@ -296,13 +429,20 @@ describe("persona desactivada o producto desasignado con trabajos en cola", () =
     await disable(ana);
     await runToIdle();
 
-    expect(runs).toHaveLength(1);
-    expect(await step("k-desactivada")).toMatchObject({ status: "failed", error: "Esta cuenta está desactivada." });
+    // El trabajo ni empieza: queda fallido con el motivo y sin datos para reencolar.
+    expect(runs).toHaveLength(0);
+    expect(await jobRow({ nota: "en cola" })).toMatchObject({
+      status: "failed",
+      error: "Esta cuenta está desactivada.",
+      payload: null,
+    });
+    expect(await step("k-desactivada")).toBeUndefined();
     expect(await getDb().select().from(schema.spendEntries)).toHaveLength(0);
-    // Y no se vuelve a intentar.
+    // Y no se vuelve a intentar, tampoco pasado el tiempo.
+    await age(jobKey(JOB, ana.id, null, { nota: "en cola" }), 30);
     expect(await recoverInterruptedSteps()).toBe(0);
     await runToIdle();
-    expect(runs).toHaveLength(1);
+    expect(runs).toHaveLength(0);
     expect(errors).toHaveBeenCalledWith(expect.stringContaining("Esta cuenta está desactivada."));
   });
 
@@ -314,7 +454,8 @@ describe("persona desactivada o producto desasignado con trabajos en cola", () =
     await enqueueJob<Data>(JOB, { userId: dueno.id, productId: null }, { nota: "en cola" });
     await disable(dueno);
     await runToIdle();
-    expect(await step("k-dueno")).toMatchObject({ status: "failed", error: "Esta cuenta está desactivada." });
+    expect(runs).toHaveLength(0);
+    expect(await jobRow({ nota: "en cola" }, dueno)).toMatchObject({ status: "failed", error: "Esta cuenta está desactivada." });
     expect(await getDb().select().from(schema.spendEntries)).toHaveLength(0);
   });
 
@@ -327,7 +468,8 @@ describe("persona desactivada o producto desasignado con trabajos en cola", () =
     await enqueueJob<Data>(JOB, { userId: ana.id, productId: product.id }, { nota: "en cola" });
     await setAssignments(dueno, ana.id, []);
     await runToIdle();
-    expect(await step("k-desasignado")).toMatchObject({ status: "failed", error: "Producto no encontrado." });
+    expect(runs).toHaveLength(0);
+    expect(await jobRow({ nota: "en cola" }, ana, product.id)).toMatchObject({ status: "failed", error: "Producto no encontrado." });
     expect(await getDb().select().from(schema.spendEntries)).toHaveLength(0);
     expect(await recoverInterruptedSteps()).toBe(0);
   });
@@ -345,7 +487,7 @@ describe("recuperación tras una caída", () => {
     await insertStep({ key: "k-caida", startedAt: minutesAgo(16), payload: { nota: "interrumpido" } });
     await reserveSpend({ ...forAna(), provider: "claude", stepKey: "k-caida", estimateMicros: RESERVADO });
     // Otro paso lleva poco en marcha: puede seguir vivo en otro proceso y no se toca.
-    await insertStep({ key: "k-vivo", startedAt: minutesAgo(5), payload: { nota: "vivo" } });
+    await insertStep({ key: "k-vivo", startedAt: new Date(Date.now() - 30_000), payload: { nota: "vivo" } });
     await reserveSpend({ ...forAna(), provider: "claude", stepKey: "k-vivo", estimateMicros: RESERVADO });
     work = async (data, ctx) => {
       await runStep(ctx, "k-caida", async () => "ok");
@@ -383,16 +525,106 @@ describe("recuperación tras una caída", () => {
     expect(await entriesByStep("k-largo")).toMatchObject([{ status: "reserved", costMicros: null }]);
   });
 
-  it("si deja de dar señales de vida más de 15 minutos, sí se reencola", async () => {
+  it("si deja de dar señales de vida más de 2 minutos, sí se reencola", async () => {
     await insertStep({
       key: "k-mudo",
       startedAt: minutesAgo(40),
-      heartbeatAt: minutesAgo(16),
+      heartbeatAt: minutesAgo(3),
       payload: { nota: "mudo" },
     });
     expect(await recoverInterruptedSteps()).toBe(1);
     await runToIdle();
     expect(runs.map((run) => run.data.nota)).toEqual(["mudo"]);
+  });
+
+  it("un trabajo cuyo proceso muere antes de empezarlo no se pierde: el barrido lo vuelve a encolar una vez", async () => {
+    await stopWorker();
+    try {
+      await enqueueJob<Data>(JOB, forAna(), { nota: "perdido" });
+      await (await getBoss()).deleteAllJobs(); // el mensaje se pierde; queda la fila del trabajo
+    } finally {
+      await start();
+    }
+    await runToIdle();
+    expect(runs).toHaveLength(0);
+
+    expect(await recoverInterruptedSteps()).toBe(0); // recién encolado: puede estar esperando turno
+    await age(jobKey(JOB, ana.id, null, { nota: "perdido" }), 3);
+    expect(await recoverInterruptedSteps()).toBe(1);
+    expect(await recoverInterruptedSteps()).toBe(0);
+    await runToIdle();
+    expect(runs.map((run) => run.data.nota)).toEqual(["perdido"]);
+    expect(await jobRow({ nota: "perdido" })).toMatchObject({ status: "done", attempts: 1 });
+  });
+
+  it("un trabajo que muere entre dos pasos se retoma donde iba, sin repetir lo hecho", async () => {
+    // Como lo deja un proceso que murió con el primer paso hecho y el segundo sin empezar.
+    const data = { nota: "entre dos pasos" };
+    await insertStep({ key: jobKey(JOB, ana.id, null, data), startedAt: minutesAgo(10), heartbeatAt: minutesAgo(3), payload: data });
+    await insertStep({ key: "k-uno", status: "done", result: "uno", payload: data });
+    const done: string[] = [];
+    work = async (job, ctx) => {
+      done.push(await runStep(ctx, "k-uno", async () => "uno otra vez"));
+      done.push(await runStep(ctx, "k-dos", async () => "dos"));
+    };
+
+    expect(await recoverInterruptedSteps()).toBe(1);
+    await runToIdle();
+    expect(done).toEqual(["uno", "dos"]);
+    expect(await jobRow(data)).toMatchObject({ status: "done", attempts: 2 });
+  });
+
+  it("un paso que sigue encolado bajo un trabajo que ya no existe no se reencola una y otra vez", async () => {
+    await insertStep({ key: "k-huerfano", status: "queued", attempts: 0, payload: { nota: "huérfano" }, updatedAt: minutesAgo(30) });
+    expect(await recoverInterruptedSteps()).toBe(0);
+    await runToIdle();
+    expect(runs).toHaveLength(0);
+  });
+
+  it("al parar, el proceso termina el paso en marcha, no empieza el siguiente y el trabajo se retoma al volver", async () => {
+    let release!: () => void;
+    let started!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const inFlight = new Promise<void>((resolve) => (started = resolve));
+    let firstRuns = 0;
+    work = async (data, ctx) => {
+      await runStep(ctx, "k-en-marcha", async () => {
+        firstRuns++;
+        started();
+        await gate;
+        return "terminado";
+      });
+      await runStep(ctx, "k-siguiente", async () => "siguiente");
+    };
+    const data = { nota: "despliegue" };
+    await enqueueJob<Data>(JOB, forAna(), data);
+    await inFlight;
+
+    let stopped = false;
+    const stopping = stopWorker().then(() => (stopped = true));
+    try {
+      // La parada espera al paso en marcha.
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      expect(stopped).toBe(false);
+      expect(await step("k-en-marcha")).toMatchObject({ status: "running" });
+      release();
+      await stopping;
+    } finally {
+      release();
+      await stopping;
+      await start();
+    }
+    expect(await step("k-en-marcha")).toMatchObject({ status: "done", result: "terminado" });
+    expect(await step("k-siguiente")).toBeUndefined();
+    expect(await jobRow(data)).toMatchObject({ status: "queued", attempts: 0 });
+
+    // Al volver, pasado el tiempo de espera, el barrido lo retoma donde iba.
+    await age(jobKey(JOB, ana.id, null, data), 3);
+    expect(await recoverInterruptedSteps()).toBe(1);
+    await runToIdle();
+    expect(firstRuns).toBe(1);
+    expect(await step("k-siguiente")).toMatchObject({ status: "done", result: "siguiente" });
+    expect(await jobRow(data)).toMatchObject({ status: "done", attempts: 1 });
   });
 
   it("un paso que falla se reintenta como mucho tres veces en total", async () => {
