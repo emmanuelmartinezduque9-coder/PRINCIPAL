@@ -532,7 +532,7 @@ describe("indicaciones del vídeo: tipo, adaptación, cambios específicos y qui
     const second = fakeMessages([reply()]);
     await runAnalysis(again.analysisId, { gateway: createGateway({ client: second.client }) });
     expect(systemText(second.calls[0])).toContain("Identidad: la persona es la del avatar elegido");
-    expect(systemText(second.calls[0])).toContain("nunca la identidad");
+    expect(systemText(second.calls[0])).toContain("nunca aporta la identidad");
   });
 
   it("si cambian el tipo, la adaptación, los cambios o quién sale, el desglose ya no vale; al volver a lo de antes, sí", async () => {

@@ -211,32 +211,32 @@ export const analysisSchema: z.ZodType<Analysis> = z.object({
 const IDENTITY: Record<AvatarMode, { risk: string; image1: string; video1: string; rule: string }> = {
   automatico: {
     risk: "una identidad que no sea la del avatar (identidad)",
-    image1: "image 1 aporta solo la composición y la distancia de cámara, nunca la identidad",
+    image1: "image 1 es la base: aporta el encuadre, la distancia y el ángulo de cámara, la postura, las manos y sus puntos de contacto y la acción, que se conservan exactamente; nunca aporta la identidad",
     video1: "@Video1 aporta solo la cámara, el ritmo y el tipo de acción, nunca la persona, el producto, el espacio ni el texto.",
     rule: "Identidad: la persona es la del avatar, cuya foto ocupa el sitio «avatar» de los manifiestos. La aplicación lo elige después de este desglose (alguien parecido a la persona de la referencia, del país del anuncio, o el público que pida el encargo), así que aún no lo ves: no describas su cara, su pelo, su edad ni su ropa; cítalo solo por su número.",
   },
   biblioteca: {
     risk: "una identidad que no sea la del avatar elegido (identidad)",
-    image1: "image 1 aporta solo la composición y la distancia de cámara, nunca la identidad",
+    image1: "image 1 es la base: aporta el encuadre, la distancia y el ángulo de cámara, la postura, las manos y sus puntos de contacto y la acción, que se conservan exactamente; nunca aporta la identidad",
     video1: "@Video1 aporta solo la cámara, el ritmo y el tipo de acción, nunca la persona, el producto, el espacio ni el texto.",
     rule: "Identidad: la persona es la del avatar elegido (su foto va en los manifiestos), nunca la de la referencia.",
   },
   elegido: {
     risk: "una identidad que no sea la del avatar elegido (identidad)",
-    image1: "image 1 aporta solo la composición y la distancia de cámara, nunca la identidad",
+    image1: "image 1 es la base: aporta el encuadre, la distancia y el ángulo de cámara, la postura, las manos y sus puntos de contacto y la acción, que se conservan exactamente; nunca aporta la identidad",
     video1: "@Video1 aporta solo la cámara, el ritmo y el tipo de acción, nunca la persona, el producto, el espacio ni el texto.",
     rule: "Identidad: la persona es la del avatar elegido (su foto va en los manifiestos), nunca la de la referencia.",
   },
   sin_sustitucion: {
     risk: "una identidad que no sea la de las personas de la referencia (identidad)",
-    image1: "image 1 aporta la composición, la distancia de cámara y las personas, que se conservan con su cara, pelo, edad y complexión",
+    image1: "image 1 es la base: aporta el encuadre, la distancia y el ángulo de cámara, la postura, las manos y sus puntos de contacto, la acción y las personas, que se conservan con su cara, pelo, edad y complexión",
     video1:
       "@Video1 aporta la cámara, el ritmo y el tipo de acción, nunca el producto, el espacio ni el texto; las personas son las de la referencia, tal como salen en la imagen inicial aprobada.",
     rule: "Identidad: sin sustitución. Se conservan las personas del vídeo de referencia (no hay avatar): las mismas caras, pelo, edad y complexión que en sus fotogramas. No las cambies ni las mezcles con otras. En este vídeo esto sustituye a la regla de que la identidad sale solo del avatar elegido: las personas son las del primer fotograma de la referencia (image 1); si en él no se ve a nadie, descríbelas a partir de los fotogramas de la referencia que recibes.",
   },
   nadie: {
     risk: "una persona que no debería aparecer (identidad)",
-    image1: "image 1 aporta solo la composición y la distancia de cámara, nunca la identidad",
+    image1: "image 1 es la base: aporta el encuadre, la distancia y el ángulo de cámara, la postura, las manos y sus puntos de contacto y la acción, que se conservan exactamente; nunca aporta la identidad",
     video1: "@Video1 aporta solo la cámara, el ritmo y el tipo de acción, nunca la persona, el producto, el espacio ni el texto.",
     rule: "Identidad: en este vídeo no aparece nadie; no hay avatar y no se conserva ninguna persona de la referencia.",
   },
@@ -293,7 +293,7 @@ Devuelve, con la forma pedida:
 3. adaptation: el mapa de adaptación: por cada pieza del original, su equivalente con este producto, la acción física, el resultado visible, qué se conserva, qué cambia y por qué.
 4. risks: los riesgos de la adaptación. Revisa siempre: una función que el producto no tiene (funcion_inexistente), un reveal adelantado (reveal_adelantado), la falta de una foto con mano para la escala (escala), ${identity.risk}, texto en pantalla de la referencia (texto_en_pantalla) y marcas ajenas (marca_ajena); cualquier otro, otro.
 5. frameUse: según la regla de vídeo: si el clip es de un solo plano, start_image (la imagen aprobada es el primer fotograma); si tiene varios planos, contextual_reference.
-6. imagePrompt: el prompt de la imagen inicial según la regla de imagen, en prosa y en párrafos corridos, sin títulos en mayúsculas, de unos 4.900 caracteres. Cita cada referencia del manifiesto de imagen como «image N» y di para qué sirve según su papel (${identity.image1}). La imagen muestra la escena inicial del clip.
+6. imagePrompt: el prompt de la imagen inicial según la regla de imagen y, por encima de todo, sus «Reglas fijas del frame», en prosa y en párrafos corridos, sin títulos en mayúsculas, de unos 4.900 caracteres. La imagen muestra la escena inicial del clip y es una réplica del primer fotograma de la referencia con cambios acotados, no una escena nueva. Sigue este orden: (a) el papel de cada referencia del manifiesto de imagen, citada como «image N» con su número real (${identity.image1}); (b) lo que se conserva exactamente de image 1: recorte, distancia, ángulo, postura, qué mano sujeta qué y por dónde, lado de cada objeto, proporciones dentro del encuadre y estado de la acción, mirando el fotograma y describiendo lo que de verdad se ve; (c) el producto: qué variante se ve en el original y cuál es la del encargo, y el artículo reproducido exactamente como en sus fotos (forma, piezas, color, estampado, orientación, escala en mano); el embalaje solo si se ve en esta toma; (d) lo que cambia, cada cosa como «elemento original → elemento nuevo» (identidad, ropa, variante, decorado), conservando el ambiente que es estilo de la cuenta; (e) la luz del lugar; (f) la estética de móvil de la regla (cámara principal a 1x, fondo legible, sin distorsión, sin bordes curvados ni esquinas oscuras, sin ruido fuerte); (g) sin texto sobreimpreso: se quitan los rótulos del fotograma original y se conservan los textos físicos de la escena.
 7. videoPrompt: el prompt del clip según la plantilla de la regla de vídeo, con menos de 4.000 caracteres. Escríbelo con párrafos o con las etiquetas entre corchetes de la plantilla, nunca con títulos en mayúsculas. Cita cada referencia con @ del manifiesto del clip exactamente como @Video1 y @ImageN (mayúscula inicial, sin espacio) y ninguna otra. ${identity.video1} La imagen inicial aprobada (la que saldrá del prompt de imagen) es la que el manifiesto del clip marca así, y se describe según frameUse. La geometría del producto es fija: forma, proporciones y etiqueta no cambian. No pidas texto en pantalla, subtítulos ni rótulos.
 
 8. personaRef: la persona principal que sale en los fotogramas de la referencia: si sale alguien (present), su sexo (mujer, hombre, otro o desconocido), su edad aproximada en años y sus rasgos visibles en una frase. Si no sale nadie, present false, gender desconocido y approxAge null.
@@ -329,7 +329,7 @@ export function analysisRuleSlugs(kind: VideoKind): string[] {
 const secondsText = (ms: number) => `${(ms / 1000).toFixed(1).replace(".", ",")} s`;
 
 const ROLE_LABEL: Record<ManifestItem["role"], string> = {
-  composicion: "composición (primer fotograma de la referencia: solo encuadre y distancia de cámara)",
+  composicion: "composición (primer fotograma de la referencia: la base de la imagen; encuadre, distancia, ángulo, postura, manos y acción se conservan exactamente)",
   video_referencia: "vídeo de referencia (el tramo)",
   imagen_aprobada: "imagen inicial aprobada",
   avatar: "avatar",

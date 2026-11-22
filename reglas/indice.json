@@ -41,7 +41,7 @@
   {
     "slug": "imagen-nano-banana",
     "title": "Imágenes con Nano Banana",
-    "description": "Cómo se escribe y se juzga la imagen inicial: prosa sin lista negra, realismo de móvil, luz del entorno, identidad solo del avatar elegido y ejemplos validados.",
+    "description": "Cómo se escribe y se juzga la imagen inicial: el fotograma original como ancla, qué cambia y qué se conserva, variante de destino, estética de iPhone, luz del entorno, identidad solo del avatar elegido y ejemplos validados.",
     "file": "imagen-nano-banana.md",
     "source": "docs/reglas-origen/skills-codex/nanobanana-pro-imagenes/SKILL.md",
     "sources": [
@@ -53,13 +53,15 @@
       "docs/reglas-origen/skills-codex/nanobanana-pro-imagenes/references/fewshot-emmanuel-4.txt",
       "docs/reglas-origen/cerebro/reglas/como-se-hace-una-imagen-que-vale.md",
       "docs/reglas-origen/cerebro/reglas/no-adelantar-el-reveal.md",
-      "docs/reglas-origen/raiz/AGENTS.md"
+      "docs/reglas-origen/raiz/AGENTS.md",
+      "docs/reglas-motor-del-dueno.md"
     ],
     "replacesSha256": [
       "4618a8ddecd2f303da03898610dd034371e89cf33f46dd8f60145399ee6eebfc",
-      "bf5f918554eef6817b5a5345c6bd60ab7f1f9163f16742b8c76d3761f0a84dab"
+      "bf5f918554eef6817b5a5345c6bd60ab7f1f9163f16742b8c76d3761f0a84dab",
+      "78ddcf2b38d7f5274bbb5850ff83396da65210a9855e510e78916fe31b4e9bbb"
     ],
-    "updateNote": "Generador: Nano Banana 2.1 a 2K (el que usa Emmanuel), elegible en Ajustes; ya no se dice que sea Pro."
+    "updateNote": "Reglas fijas del frame (22/11/2026): el fotograma original es el ancla, lista de qué cambia y qué se conserva, variante de destino, estética de iPhone 17 Pro Max sin distorsión."
   },
   {
     "slug": "video-seedance",

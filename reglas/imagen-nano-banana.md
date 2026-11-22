@@ -2,6 +2,48 @@
 
 Esta es la guía única para generar las imágenes de este proyecto, por orden de Emmanuel del 01/10/2026. No combinar instrucciones creativas de otras guías de imagen. Las imágenes se generan con Nano Banana 2.1 a 2K, el modelo que usa Emmanuel; el modelo lo fija la aplicación y el dueño puede cambiarlo en Ajustes. Recoge la receta técnica de realismo del 03/10/2026 y los ejemplos validados por Emmanuel el 07/10/2026.
 
+## Reglas fijas del frame (orden de Emmanuel, 22/11/2026)
+
+Estas reglas mandan sobre todo lo demás de esta guía. Salen del primer lote de prueba en la aplicación, cuya imagen salió mal: el modelo reinventó la escena en vez de replicar el fotograma (otra postura, una taza sin asa y con otra forma, un salón de catálogo y esquinas negras de lente).
+
+### 1. El fotograma original es el ancla, no una inspiración
+La captura de la referencia (la imagen de composición) es la BASE de la imagen. El prompt empieza diciéndolo y enumera lo que se conserva EXACTAMENTE: recorte, distancia y altura de cámara, ángulo, postura del cuerpo, qué mano sujeta qué y por dónde, puntos de contacto, lado de la imagen de cada objeto, proporción de manos, objetos y producto dentro del encuadre, y el estado de la acción en ese instante (qué está lleno, abierto, servido). No acercar, no alejar, no recortar de nuevo y no cambiar la pose para acomodar el fondo o el avatar. Después se dice qué cambia, y solo eso.
+
+Describir de nuevo la escena «desde cero» con las propias palabras es el error que hay que evitar: el modelo genera otra foto. La fórmula es «conserva exactamente esto de image 1; cambia solo esto».
+
+### 2. Lista de qué cambia y qué se conserva
+El prompt lleva las dos listas, concretas y comprobables, escritas en prosa:
+- **Se conserva:** la acción, el encuadre, la escala en mano, el ángulo y todo lo de la regla 1.
+- **Cambia:** cada sustitución con la forma «elemento original → elemento nuevo» (identidad, ropa, variante del producto, entorno), para poder comprobarla en la imagen. Ejemplo: «Cambia la máquina rosa y su caja por la variante blanca con fresas y su caja oficial. Conserva la extracción del congelador, el orden de la receta, la escala en mano y el ángulo de cada toma».
+
+### 3. El producto y su variante
+- Separar siempre la variante que se ve en el original de la variante de destino del encargo. El original dice qué ocurre en la toma; la variante de destino dice qué artículo y qué embalaje aparecen.
+- El artículo se reproduce exactamente como en sus fotos de artículo: misma forma, mismas piezas y su número, mismo color y estampado, mismas proporciones, misma orientación (de qué lado queda el asa, hacia dónde mira el botón). No rediseñar, no simplificar, no recolorear una pieza genérica.
+- Si en la toma se ve la caja, manda la foto del embalaje de esa variante; si se ve el aparato, mandan las fotos del artículo; si se ven los dos, cada uno sigue la suya. Una caja de otro color no sirve, ni una caja genérica recoloreada.
+- Si el original ya muestra la misma variante que el destino, decirlo: el producto de image 1 se conserva tal cual y las fotos del artículo solo confirman el detalle.
+- La escala es la del original en mano: no agrandar el producto para hacerlo protagonista.
+
+### 4. Papeles de las referencias, con su número real
+Cada referencia se cita por su número («image N») y con un solo papel: composición (encuadre, pose y acción), avatar (identidad), artículo, embalaje, entorno (espacio, luz y perspectiva). La identidad sale exclusivamente del avatar. Una persona visible en una foto de fondo o de realismo no es un avatar. Identidad, ropa y rasgos se mantienen iguales entre tomas del mismo vídeo.
+
+### 5. Entorno
+Si el encargo trae una foto de entorno, se usa esa y aporta el espacio, la luz y la perspectiva. Si no la trae, el lugar es un sitio real y plausible del mercado del anuncio, del mismo tipo que el original y compatible con la acción (un plano de sacar algo del congelador necesita ver su interior y su puerta), descrito con sustituciones concretas «elemento original → elemento nuevo». Lo que da el ambiente de la cuenta (por ejemplo la tele encendida, las luces cálidas y la manta de una noche en casa) es estilo y se conserva; lo que cambia es el decorado.
+
+### 6. Estética de iPhone 17 Pro Max
+Vídeo vertical de móvil, cercano y cotidiano, cámara principal a 1x:
+- profundidad de campo natural, con el fondo legible (ni todo desenfocado ni recortado);
+- luz práctica del propio lugar, con sus zonas más claras y más oscuras;
+- piel con textura, reflejos y sombras coherentes con una sola situación de luz;
+- perspectiva creíble y contacto real entre manos, objetos y superficies, con sus sombras de contacto.
+
+«Parecer de móvil» NO significa añadir distorsión, bordes curvados, viñeta o esquinas oscuras, ruido fuerte ni mala resolución. Tampoco desenfoque extremo, aspecto de cámara de cine, piel de plástico ni una persona o un producto con pinta de recortado y pegado. Una casa real está usada: nada colocado para la foto, nada simétrico de catálogo.
+
+### 7. Texto
+La imagen no lleva subtítulos, emojis ni rótulos editoriales: los textos sobreimpresos del fotograma original se quitan y se reconstruye lo que tapaban. Los textos físicos que pertenecen a la escena (la marca impresa en el envase, una sábana, un cartel) se conservan.
+
+### 8. Solo los frames que hacen falta
+Se genera la apertura de cada clip que se va a generar. Si el encargo es únicamente el gancho, la del gancho; el cuerpo ya elegido se recupera, no se regenera. Al corregir una imagen, se regenera esa y las demás aprobaciones se conservan.
+
 ## Identidad y realismo (orden de Emmanuel, 14/11/2026)
 En los frames de testeos y lotes, para la identidad y las facciones se usa exclusivamente el avatar elegido por Emmanuel, o el que se haya seleccionado para ese papel. Las personas que aparecen en las referencias de realismo, estilo, composición o fondo NO son avatares salvo asignación expresa. Está prohibido copiar o mezclar sus ojos, nariz, boca, mandíbula, edad, pelo o parecido. Aplicar textura fotográfica al avatar sin sustituir su identidad; la luz sigue la referencia de entorno. Identificar en el prompt el papel y el índice de cada imagen. No reutilizar como identidad una referencia elegida solo para realismo. Fondo y composición no son identidad salvo asignación expresa.
 
@@ -24,7 +66,7 @@ Regla oficial: en vez de «no cars», escribir «an empty, deserted street with 
 - **Nota fechada (03/10/2026):** el criterio de realismo del 03/10 sustituye a tres pautas del 02/09 («todo enfocado», «sombras levantadas y luces quemadas» y «encuadre descuidado de unos dos grados»). Ya no se aplican: manda la variación de exposición y de detalle justificada por la luz y la captura, sin imponer desenfoque, ruido ni encuadre torcido.
 - **Afilado por zonas.** Cartón, letras, tela y pelo crujientes; paredes y sombras **lavadas** por la reducción de ruido. Las dos cosas a la vez.
 - **Piel real** con la formulación que tiene evidencia visual en este modelo: poros y textura acordes a la edad, tono desigual, rojez en nariz y mejillas, pequeñas imperfecciones, asimetría natural, brillo en frente y nariz. *«Keep it subtle and true to life, without smoothing.»*
-- **Perspectiva de 24 mm**: primer plano agrandado, líneas algo arqueadas en los bordes.
+- **Perspectiva de la cámara principal del móvil a 1x** (corregido el 22/11/2026): el primer plano algo más grande que el fondo, como en cualquier foto de móvil, con las líneas rectas. Ya no se pide «24 mm» ni «líneas arqueadas en los bordes»: producía esquinas negras y aspecto de ojo de pez.
 
 ### 5. La imagen NO se retoca (corregido el 02/09/2026)
 Corrección de Emmanuel del 09/09/2026: la piel y la luz se verifican, no se presuponen. No basta escribir «poros» al final del prompt: describir textura localizada en cara y manos, cambios de tono, cutículas y vello acordes al avatar, y comprobarlo a tamaño de móvil. La luz debe producir sombras de contacto, reflejos y caída de intensidad coherentes con una fuente física. El nivel exigido se juzga sobre la imagen, no sobre el texto del prompt. No alterar POV, producto o identidades para resolver la textura.
