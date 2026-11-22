@@ -3,7 +3,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { format } from "date-fns";
 import { es } from "date-fns/locale";
-import { ChevronRight, CircleAlert, Download, Eye, ImageIcon, Link2, ListFilter, Loader2, RefreshCw, ScanSearch, SearchX } from "lucide-react";
+import { ChevronRight, CircleAlert, Download, Eye, ImageIcon, Link2, Link2Off, ListFilter, Loader2, RefreshCw, ScanSearch, SearchX } from "lucide-react";
 import Link from "next/link";
 import { useRef, useState } from "react";
 import { toast } from "sonner";
@@ -27,6 +27,7 @@ import {
   needsReview,
   pollEvery,
   ready,
+  linkNotice,
   referenceState,
   rowProblem,
   rowState,
@@ -390,6 +391,8 @@ export function BatchBoard({ batchId }: { batchId: number }) {
                     const failure = rowProblem(row, states);
                     const problem = (notice && notice.at === rowState(row) ? notice.message : null) ?? failure?.message ?? null;
                     const retryUrl = problem !== null && problem === failure?.message ? failure.link : null;
+                    // Aparte, y sin ser un fallo de la fila: un enlace nuevo que no llegó sobre una referencia que sigue lista.
+                    const aside = linkNotice(row);
                     return (
                       <TableRow key={row.id}>
                         <TableCell className="pl-4">
@@ -419,6 +422,17 @@ export function BatchBoard({ batchId }: { batchId: number }) {
                               </p>
                               {retryUrl ? (
                                 <RetryLink row={row} url={retryUrl} onDone={() => void client.invalidateQueries({ queryKey: ["batch", batchId] })} />
+                              ) : null}
+                            </div>
+                          ) : null}
+                          {aside ? (
+                            <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1">
+                              <p role="status" className="flex items-start gap-1 text-xs text-muted-foreground">
+                                <Link2Off className="mt-px size-3.5 shrink-0" aria-hidden />
+                                {aside.message}
+                              </p>
+                              {aside.link ? (
+                                <RetryLink row={row} url={aside.link} onDone={() => void client.invalidateQueries({ queryKey: ["batch", batchId] })} />
                               ) : null}
                             </div>
                           ) : null}

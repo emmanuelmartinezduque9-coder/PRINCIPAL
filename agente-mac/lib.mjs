@@ -5,29 +5,61 @@
 import os from "node:os";
 import path from "node:path";
 
-export const VERSION = "1.0.0";
+export const VERSION = "1.1.0";
 
 /** Sitios de los que se descarga, con sus subdominios. La misma lista que el servidor. */
 export const LINK_HOSTS = ["instagram.com", "tiktok.com", "youtube.com", "youtu.be", "facebook.com", "fb.watch"];
+
+/**
+ * Los únicos extractores de yt-dlp que se usan: el vídeo suelto de cada sitio (un reel o una
+ * publicación de Instagram, un vídeo de TikTok o su enlace corto, un vídeo o un short de YouTube,
+ * un vídeo o un reel de Facebook). Quedan fuera, a propósito, el extractor genérico (que descarga
+ * cualquier dirección) y los que siguen redirecciones (`FacebookRedirectURL`…), además de perfiles,
+ * listas y directos. Sin esto, un enlace de un sitio admitido que redirige a otra parte haría que
+ * este Mac pidiera cualquier dirección —también de la red de casa— con sus cookies.
+ * Los nombres están comprobados con yt-dlp 2026.10.26 (`yt-dlp --list-extractors`).
+ */
+export const YT_DLP_EXTRACTORS = "Instagram,TikTok,vm.tiktok,youtube,facebook,facebook:reel";
 
 /** Cada cuánto dice el programa «sigo vivo». */
 export const HEARTBEAT_MS = 30_000;
 /** Cada cuánto pregunta si hay algo que descargar, cuando no hay nada. */
 export const POLL_MS = 5_000;
+/** Lo más que espera entre preguntas cuando la web no responde o no reconoce la ficha. */
+export const MAX_BACKOFF_MS = 60_000;
+/** Cada cuánto vuelve a mirar si ya están yt-dlp y ffmpeg, cuando falta alguno. */
+export const TOOLS_RETRY_MS = 60_000;
 /** Cada cuánto renueva la reserva de la tarea mientras yt-dlp descarga. */
 export const LEASE_BEAT_MS = 60_000;
 /** Lo más que se deja trabajar a yt-dlp con un enlace antes de cortarlo. */
 export const YT_DLP_TIMEOUT_MS = 4 * 60_000;
+/** Una carpeta temporal de otra ejecución solo se borra si lleva este tiempo sin tocarse. */
+export const LEFTOVER_AGE_MS = 60 * 60_000;
+
+/** Lo que se escribe cuando la web no reconoce la ficha (una vez, no en cada pregunta). */
+export const BAD_TOKEN_MESSAGE = "Ficha revocada o incorrecta: la web no reconoce la de este Mac. Crea otra en Ajustes → Mac.";
 
 const REQUEST_TIMEOUT_MS = 30_000;
 const CHUNK_TIMEOUT_MS = 5 * 60_000;
 const CHUNK_ATTEMPTS = 3;
 const CHUNK_RETRY_MS = 5_000;
 const KILL_WAIT_MS = 5_000;
+const PROBE_TIMEOUT_MS = 15_000;
 const TOKEN = /^pra_[A-Za-z0-9_-]{43}$/;
 const TMP_PREFIX = "principal-agente-";
 
-/** Si el enlace es de uno de los sitios admitidos: solo `https`, sin usuario ni puerto. */
+/** Direcciones de un sitio admitido que no son un vídeo sino un salto a otra dirección cualquiera. */
+function isRedirector(url) {
+  const host = url.hostname.toLowerCase();
+  // l.facebook.com, lm.facebook.com, l.instagram.com: los «enlaces de salida» de Facebook e Instagram.
+  if (/^lm?\.(facebook|instagram)\.com$/.test(host)) return true;
+  return /^\/+(flx\/warn|l\.php|redirect|linkshim|plugins)(\/|$)/i.test(url.pathname);
+}
+
+/**
+ * Si el enlace es de uno de los sitios admitidos: solo `https`, sin usuario ni puerto, y que no
+ * sea una de sus direcciones de salto (`/flx/warn`, `/l.php`, `l.facebook.com`, `l.instagram.com`…).
+ */
 export function allowedUrl(url) {
   if (typeof url !== "string" || url.length > 2000) return false;
   let parsed;
@@ -38,17 +70,20 @@ export function allowedUrl(url) {
   }
   if (parsed.protocol !== "https:" || parsed.username || parsed.password || parsed.port) return false;
   const host = parsed.hostname.toLowerCase();
-  return LINK_HOSTS.some((allowed) => host === allowed || host.endsWith(`.${allowed}`));
+  if (!LINK_HOSTS.some((allowed) => host === allowed || host.endsWith(`.${allowed}`))) return false;
+  return !isRedirector(parsed);
 }
 
 /**
  * Argumentos de yt-dlp para descargar `url` en `outPath`. Siempre como lista (nunca por una
  * consola) y con `--` delante del enlace: nada de lo que venga en el enlace se lee como opción.
- * Usa la sesión de Brave de este Mac.
+ * Sin archivos de configuración (`--ignore-config`), solo con los extractores de
+ * `YT_DLP_EXTRACTORS` y un único vídeo. Usa la sesión de Brave de este Mac.
  */
 export function ytDlpArgs(url, outPath) {
   return [
-    "--cookies-from-browser", "brave", "--no-playlist", "--max-filesize", "100M",
+    "--ignore-config", "--use-extractors", YT_DLP_EXTRACTORS,
+    "--cookies-from-browser", "brave", "--no-playlist", "--playlist-items", "1", "--max-filesize", "100M",
     "-f", "bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]/b", "--merge-output-format", "mp4",
     "-o", outPath, "--", url,
   ];
@@ -84,16 +119,28 @@ export function checkConfig(raw) {
 
 /**
  * La configuración: las variables `PRINCIPAL_URL` y `PRINCIPAL_AGENTE_TOKEN` si están las dos, o
- * el archivo `~/.principal-agente.json`. `null` si el archivo no existe todavía.
+ * el archivo `~/.principal-agente.json`. `null` si el archivo no existe todavía. El archivo
+ * guarda la ficha: si lo puede leer alguien más que su dueño, se le cierran los permisos (600)
+ * antes de usarlo (`tightened: true`).
  */
 export async function readConfig(env, fs, home = os.homedir()) {
   if (env.PRINCIPAL_URL && env.PRINCIPAL_AGENTE_TOKEN) return checkConfig({ url: env.PRINCIPAL_URL, token: env.PRINCIPAL_AGENTE_TOKEN });
+  const file = path.join(home, ".principal-agente.json");
   let text;
   try {
-    text = await fs.readFile(path.join(home, ".principal-agente.json"), "utf8");
+    text = await fs.readFile(file, "utf8");
   } catch (error) {
     if (error?.code === "ENOENT") return null;
     throw new Error("No se pudo leer ~/.principal-agente.json.");
+  }
+  let tightened = false;
+  if (((await fs.stat(file)).mode & 0o077) !== 0) {
+    try {
+      await fs.chmod(file, 0o600);
+    } catch {
+      throw new Error("~/.principal-agente.json lo pueden leer otras personas de este Mac y no se ha podido cerrar. Ejecuta: chmod 600 ~/.principal-agente.json");
+    }
+    tightened = true;
   }
   let raw;
   try {
@@ -101,7 +148,7 @@ export async function readConfig(env, fs, home = os.homedir()) {
   } catch {
     throw new Error("~/.principal-agente.json no es un JSON válido.");
   }
-  return checkConfig(raw);
+  return tightened ? { ...checkConfig(raw), tightened } : checkConfig(raw);
 }
 
 /** Quita la ficha de cualquier texto antes de escribirlo o enviarlo. */
@@ -111,7 +158,11 @@ function scrub(config, text) {
 
 const messageOf = (error) => (error instanceof Error ? error.message : String(error));
 
-/** Una petición a la web con la ficha. Todas las conexiones salen de este Mac. */
+/**
+ * Una petición a la web con la ficha. Todas las conexiones salen de este Mac, y a ninguna otra
+ * parte: si la web contestara con una redirección, la petición falla en vez de seguirla (la ficha
+ * no viaja a otra dirección).
+ */
 function call(config, deps, method, route, { json, body, timeout = REQUEST_TIMEOUT_MS } = {}) {
   const headers = { Authorization: `Bearer ${config.token}` };
   if (json !== undefined) headers["Content-Type"] = "application/json";
@@ -119,6 +170,7 @@ function call(config, deps, method, route, { json, body, timeout = REQUEST_TIMEO
     method,
     headers,
     body: json !== undefined ? JSON.stringify(json) : body,
+    redirect: "error",
     signal: AbortSignal.timeout(timeout),
   });
 }
@@ -128,20 +180,121 @@ export function heartbeat(config, deps, info) {
   return call(config, deps, "POST", "/api/agente/latido", { json: { version: VERSION, ytDlp: info?.ytDlp ?? null } });
 }
 
-/** Borra las carpetas temporales que dejó una ejecución anterior que se cortó a medias. */
-export async function cleanLeftovers(fs, tmpDir = os.tmpdir()) {
+/**
+ * Borra las carpetas temporales que dejó una ejecución anterior que se cortó a medias: solo las
+ * que llevan más de una hora sin tocarse (una más reciente puede ser de otra copia en marcha).
+ */
+export async function cleanLeftovers(fs, tmpDir = os.tmpdir(), now = Date.now()) {
   const names = await fs.readdir(tmpDir).catch(() => []);
   for (const name of names) {
-    if (name.startsWith(TMP_PREFIX)) await fs.rm(path.join(tmpDir, name), { recursive: true, force: true }).catch(() => {});
+    if (!name.startsWith(TMP_PREFIX)) continue;
+    const dir = path.join(tmpDir, name);
+    const stat = await fs.stat(dir).catch(() => null);
+    if (stat && now - stat.mtimeMs > LEFTOVER_AGE_MS) await fs.rm(dir, { recursive: true, force: true }).catch(() => {});
   }
 }
 
 /**
- * Lanza yt-dlp y espera a que termine, renovando la reserva cada minuto. A los 4 minutos lo
- * corta. Devuelve `{ ok: true }`, `{ ok: false, error }` o `{ lost: true }` (la web retiró la tarea).
+ * Un solo agente a la vez: apunta este proceso en `lockFile`. Devuelve `true` si lo consigue, o
+ * `false` si ya hay otro en marcha (y entonces no se toca nada). Un apunte de un proceso que ya
+ * no existe se sustituye.
+ */
+export async function acquireLock(fs, lockFile, pid = process.pid, isAlive = processAlive) {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      await fs.writeFile(lockFile, `${pid}\n`, { flag: "wx", mode: 0o600 });
+      return true;
+    } catch (error) {
+      if (error?.code !== "EEXIST") throw error;
+    }
+    const other = Number((await fs.readFile(lockFile, "utf8").catch(() => "")).trim());
+    if (Number.isSafeInteger(other) && other > 0 && other !== pid && isAlive(other)) return false;
+    await fs.rm(lockFile, { force: true });
+  }
+  return false;
+}
+
+/** Suelta el apunte si es el de este proceso. */
+export async function releaseLock(fs, lockFile, pid = process.pid) {
+  const owner = Number((await fs.readFile(lockFile, "utf8").catch(() => "")).trim());
+  if (owner === pid) await fs.rm(lockFile, { force: true }).catch(() => {});
+}
+
+function processAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    // EPERM: existe, pero es de otra persona.
+    return error?.code === "EPERM";
+  }
+}
+
+/** Lanza un programa y espera: `{ ok, out }`. Si no se puede lanzar (no está, sin permiso), `ok: false`. */
+function probe(deps, command, args) {
+  return new Promise((resolve) => {
+    let child;
+    try {
+      child = deps.spawn(command, args, { stdio: ["ignore", "pipe", "ignore"] });
+    } catch {
+      resolve({ ok: false, out: "" });
+      return;
+    }
+    let out = "";
+    const timer = setTimeout(() => {
+      child.kill("SIGKILL");
+      resolve({ ok: false, out });
+    }, PROBE_TIMEOUT_MS);
+    child.stdout?.on("data", (chunk) => {
+      out = (out + chunk).slice(0, 200);
+    });
+    child.once("error", () => {
+      clearTimeout(timer);
+      resolve({ ok: false, out });
+    });
+    child.once("close", (code) => {
+      clearTimeout(timer);
+      resolve({ ok: code === 0, out });
+    });
+  });
+}
+
+/**
+ * Si este Mac puede descargar: `yt-dlp` y `ffmpeg` se pueden lanzar. Devuelve qué falta (vacío si
+ * nada) y la versión de yt-dlp. Mientras falte algo, el agente no se lleva tareas: llevárselas
+ * para fallarlas vaciaría la cola sin traer nada.
+ */
+export async function checkTools(deps, config = {}) {
+  const ytDlp = await probe(deps, config.ytDlp ?? "yt-dlp", ["--version"]);
+  const ffmpeg = await probe(deps, config.ffmpeg ?? "ffmpeg", ["-version"]);
+  const missing = [];
+  if (!ytDlp.ok) missing.push("yt-dlp");
+  if (!ffmpeg.ok) missing.push("ffmpeg");
+  return { missing, ytDlp: ytDlp.ok ? ytDlp.out.trim().split("\n")[0].slice(0, 40) || null : null };
+}
+
+/** Corta yt-dlp y todo lo que haya lanzado (ffmpeg): el grupo de procesos entero. */
+function killGroup(child) {
+  try {
+    process.kill(-child.pid, "SIGKILL");
+  } catch {
+    child.kill("SIGKILL");
+  }
+}
+
+/**
+ * Lanza yt-dlp y espera a que termine, renovando la reserva cada minuto. A los 4 minutos lo corta
+ * (a él y a sus hijos). Devuelve `{ ok: true }`, `{ ok: false, error }`, `{ lost: true }` (la web
+ * retiró la tarea) o `{ local: true, error }` (no se pudo ni lanzar: es cosa de este Mac).
  */
 async function download(config, deps, task, file) {
-  const child = deps.spawn(config.ytDlp ?? "yt-dlp", ytDlpArgs(new URL(task.url).href, file), { stdio: ["ignore", "ignore", "pipe"] });
+  let child;
+  try {
+    // En su propio grupo de procesos, para poder cortarlo con todo lo que lance.
+    child = deps.spawn(config.ytDlp ?? "yt-dlp", ytDlpArgs(new URL(task.url).href, file), { stdio: ["ignore", "ignore", "pipe"], detached: true });
+  } catch (error) {
+    return { local: true, error: messageOf(error) };
+  }
   let stderr = "";
   child.stderr?.on("data", (chunk) => {
     stderr = (stderr + chunk).slice(-2000);
@@ -151,14 +304,14 @@ async function download(config, deps, task, file) {
     child.once("close", (code) => resolve({ code }));
   });
   const stop = async () => {
-    child.kill("SIGKILL");
+    (deps.kill ?? killGroup)(child);
     await Promise.race([exited, deps.sleep(KILL_WAIT_MS)]);
   };
 
   for (let waited = 0; ; ) {
     const result = await Promise.race([exited, deps.sleep(LEASE_BEAT_MS).then(() => null)]);
     if (result) {
-      if (result.error) return { ok: false, error: `No se pudo lanzar yt-dlp: ${messageOf(result.error)}` };
+      if (result.error) return { local: true, error: messageOf(result.error) };
       if (result.code === 0) return { ok: true };
       const detail = stderr.trim().split("\n").pop()?.trim();
       return { ok: false, error: detail ? `yt-dlp no pudo descargar el enlace: ${detail}` : "yt-dlp no pudo descargar el enlace" };
@@ -219,8 +372,15 @@ async function upload(config, deps, task, file, size) {
  * siempre al acabar.
  *
  * `config`: `{ url, token }` (ya comprobados). `deps`: `{ fetch, spawn, fs, sleep, log }`.
- * Devuelve `"idle"` (no había nada), `"done"` (entregado) o `"failed"` (no se pudo, o la web
- * retiró la tarea). Nunca escribe la ficha.
+ * Devuelve:
+ * - `"idle"`: no había nada.
+ * - `"done"`: entregado.
+ * - `"failed"`: no se pudo traer (y se le dijo a la web), o la web retiró la tarea.
+ * - `"offline"`: la web no responde (o responde mal): conviene esperar más antes de volver a preguntar.
+ * - `"unauthorized"`: la web no reconoce la ficha.
+ * - `"blocked"`: este Mac no pudo ni lanzar yt-dlp. No se le dice a la web que el enlace falló:
+ *   la reserva caduca sola y la tarea vuelve a la cola.
+ * Nunca escribe la ficha.
  */
 export async function runOnce(config, deps) {
   const log = (text) => deps.log(scrub(config, text));
@@ -229,21 +389,21 @@ export async function runOnce(config, deps) {
     response = await call(config, deps, "POST", "/api/agente/tareas/reclamar");
   } catch (error) {
     log(`No se pudo preguntar a la web: ${messageOf(error)}`);
-    return "idle";
+    return "offline";
   }
   if (response.status === 204) return "idle";
   if (response.status === 401) {
-    log("La web no reconoce la ficha de este Mac. Crea otra en Ajustes → Mac.");
-    return "idle";
+    log(BAD_TOKEN_MESSAGE);
+    return "unauthorized";
   }
   if (!response.ok) {
     log(`La web respondió ${response.status} al preguntar por tareas.`);
-    return "idle";
+    return "offline";
   }
   const task = await response.json().catch(() => null);
   if (!task || !Number.isSafeInteger(task.taskId) || typeof task.uploadId !== "string" || !(task.chunkBytes > 0)) {
     log("La web mandó una tarea que no se entiende.");
-    return "idle";
+    return "offline";
   }
 
   const finish = (result) => call(config, deps, "POST", `/api/agente/tareas/${task.taskId}/terminar`, { json: { ...result, uploadId: task.uploadId } });
@@ -267,6 +427,11 @@ export async function runOnce(config, deps) {
     log(`Descargando ${task.url}`);
     const downloaded = await download(config, deps, task, file);
     if (downloaded.lost) return lost();
+    if (downloaded.local) {
+      // Cosa de este Mac, no del enlace: no se da por fallido.
+      log(`No se pudo lanzar yt-dlp (${downloaded.error}). La tarea se deja para más tarde.`);
+      return "blocked";
+    }
     if (!downloaded.ok) return await giveUp(downloaded.error);
 
     const size = await sizeOf(deps.fs, file);
@@ -285,4 +450,16 @@ export async function runOnce(config, deps) {
   } finally {
     await deps.fs.rm(dir, { recursive: true, force: true }).catch(() => {});
   }
+}
+
+/**
+ * Cuánto esperar antes de la siguiente vuelta, según cómo fue la última y lo que ya se esperaba:
+ * con trabajo hecho, nada; sin nada, 5 s; si la web no responde o no reconoce la ficha, cada vez
+ * el doble, hasta un minuto.
+ */
+export function nextWait(outcome, previous = 0) {
+  if (outcome === "done" || outcome === "failed") return 0;
+  if (outcome === "offline" || outcome === "unauthorized") return Math.min(MAX_BACKOFF_MS, Math.max(POLL_MS, previous) * 2);
+  if (outcome === "blocked") return TOOLS_RETRY_MS;
+  return POLL_MS;
 }

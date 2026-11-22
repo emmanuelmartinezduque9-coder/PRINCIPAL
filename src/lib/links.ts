@@ -10,8 +10,19 @@ export const LINK_HOSTS = ["instagram.com", "tiktok.com", "youtube.com", "youtu.
 const MAX_LINK_LENGTH = 2000;
 
 /**
+ * Direcciones de un sitio admitido que no son un vídeo sino un salto a otra dirección cualquiera
+ * (`facebook.com/flx/warn/?u=…`, `/l.php?u=…`, `l.facebook.com`, `l.instagram.com`,
+ * `youtube.com/redirect?q=…`…). Con ellas, el Mac acabaría pidiendo cualquier dirección.
+ */
+function isRedirector(url: URL): boolean {
+  if (/^lm?\.(facebook|instagram)\.com$/.test(url.hostname.toLowerCase())) return true;
+  return /^\/+(flx\/warn|l\.php|redirect|linkshim|plugins)(\/|$)/i.test(url.pathname);
+}
+
+/**
  * El enlace tal como se guarda y se le da al Mac, o `null` si no se admite: solo `https`, sin
- * usuario ni puerto, y de uno de los sitios de `LINK_HOSTS` o un subdominio suyo.
+ * usuario ni puerto, de uno de los sitios de `LINK_HOSTS` o un subdominio suyo, y que no sea una
+ * de sus direcciones de salto.
  */
 export function linkOf(value: unknown): string | null {
   if (typeof value !== "string") return null;
@@ -26,6 +37,7 @@ export function linkOf(value: unknown): string | null {
   if (url.protocol !== "https:" || url.username || url.password || url.port) return null;
   const host = url.hostname.toLowerCase();
   if (!LINK_HOSTS.some((allowed) => host === allowed || host.endsWith(`.${allowed}`))) return null;
+  if (isRedirector(url)) return null;
   return url.href.length <= MAX_LINK_LENGTH ? url.href : null;
 }
 

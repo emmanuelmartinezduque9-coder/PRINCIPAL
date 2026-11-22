@@ -1,4 +1,4 @@
-import { spawnSync } from "node:child_process";
+import { spawn as realSpawn, spawnSync } from "node:child_process";
 import { EventEmitter } from "node:events";
 import fsSync from "node:fs";
 import fs from "node:fs/promises";
@@ -6,14 +6,24 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
+  acquireLock,
   allowedUrl,
+  BAD_TOKEN_MESSAGE,
   checkConfig,
+  checkTools,
   chunkRanges,
   cleanLeftovers,
   LEASE_BEAT_MS,
+  LEFTOVER_AGE_MS,
   LINK_HOSTS,
+  MAX_BACKOFF_MS,
+  nextWait,
+  POLL_MS,
   readConfig,
+  releaseLock,
   runOnce,
+  TOOLS_RETRY_MS,
+  YT_DLP_EXTRACTORS,
   YT_DLP_TIMEOUT_MS,
   ytDlpArgs,
 } from "../agente-mac/lib.mjs";
@@ -32,12 +42,13 @@ interface Call {
   path: string;
   headers: Record<string, string>;
   body: unknown;
+  redirect: unknown;
 }
 
 let tmp: string;
 let calls: Call[];
 let logs: string[];
-let spawned: Array<{ command: string; args: string[]; killed: string | null }>;
+let spawned: Array<{ command: string; args: string[]; options: { detached?: boolean } | undefined; killed: string | null }>;
 let sleeps: number[];
 
 beforeEach(() => {
@@ -59,7 +70,7 @@ function fakeFetch(routes: Record<string, (call: Call) => Response | Promise<Res
   return async (url: string, init: RequestInit) => {
     const parsed = new URL(url);
     const body = init.body instanceof Uint8Array ? Buffer.from(init.body) : typeof init.body === "string" ? JSON.parse(init.body) : null;
-    const call: Call = { method: init.method ?? "GET", path: parsed.pathname + parsed.search, headers: init.headers as Record<string, string>, body };
+    const call: Call = { method: init.method ?? "GET", path: parsed.pathname + parsed.search, headers: init.headers as Record<string, string>, body, redirect: init.redirect };
     calls.push(call);
     const route = Object.keys(routes).find((key) => call.path.startsWith(key));
     return route ? routes[route](call) : json(200, { ok: true });
@@ -72,10 +83,10 @@ function fakeFetch(routes: Record<string, (call: Call) => Response | Promise<Res
  */
 function fakeSpawn(options: { write?: Buffer; code?: number; afterSleeps?: number; stderr?: string } = {}) {
   const children: EventEmitter[] = [];
-  const spawn = (command: string, args: string[]) => {
+  const spawn = (command: string, args: string[], spawnOptions?: { detached?: boolean }) => {
     const child = new EventEmitter() as EventEmitter & { stderr: EventEmitter; kill: (signal: string) => void };
     child.stderr = new EventEmitter();
-    const record = { command, args, killed: null as string | null };
+    const record = { command, args, options: spawnOptions, killed: null as string | null };
     spawned.push(record);
     const finish = () => {
       if (options.write) fsSync.writeFileSync(args[args.indexOf("-o") + 1], options.write);
@@ -114,15 +125,34 @@ const leftovers = () => fsSync.readdirSync(tmp);
 describe("enlaces y argumentos", () => {
   it("lanza yt-dlp con una lista de argumentos fija y el enlace detrás de `--`", () => {
     expect(ytDlpArgs("https://www.instagram.com/reel/abc/", "/tmp/x.mp4")).toEqual([
-      "--cookies-from-browser", "brave", "--no-playlist", "--max-filesize", "100M",
+      "--ignore-config", "--use-extractors", "Instagram,TikTok,vm.tiktok,youtube,facebook,facebook:reel",
+      "--cookies-from-browser", "brave", "--no-playlist", "--playlist-items", "1", "--max-filesize", "100M",
       "-f", "bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]/b", "--merge-output-format", "mp4",
       "-o", "/tmp/x.mp4", "--", "https://www.instagram.com/reel/abc/"]);
+  });
+
+  it("yt-dlp solo usa los extractores de vídeo suelto: ni el genérico ni los que siguen redirecciones", () => {
+    const args = ytDlpArgs("https://www.instagram.com/reel/abc/", "/tmp/x.mp4");
+    expect(args[0]).toBe("--ignore-config");
+    expect(args[args.indexOf("--use-extractors") + 1]).toBe(YT_DLP_EXTRACTORS);
+    expect(args[args.indexOf("--playlist-items") + 1]).toBe("1");
+    const allowed = YT_DLP_EXTRACTORS.split(",");
+    expect(allowed).toEqual(["Instagram", "TikTok", "vm.tiktok", "youtube", "facebook", "facebook:reel"]);
+    // Ni comodines ni «todo»: una lista cerrada, sin el genérico ni el de redirecciones de Facebook.
+    for (const name of allowed) expect(name).toMatch(/^[A-Za-z][A-Za-z.:]*$/);
+    for (const banned of ["generic", "default", "all", "FacebookRedirectURL", "FacebookPluginsVideo", "youtube:tab"]) {
+      expect(allowed.map((name) => name.toLowerCase())).not.toContain(banned.toLowerCase());
+    }
+    // El enlace va siempre el último y detrás de `--`.
+    expect(args.at(-2)).toBe("--");
   });
 
   it("solo admite enlaces https de los sitios de la lista", () => {
     expect(allowedUrl("https://vm.tiktok.com/abc")).toBe(true);
     expect(allowedUrl("https://www.instagram.com/reel/abc/?igsh=x")).toBe(true);
     expect(allowedUrl("https://youtu.be/abc")).toBe(true);
+    expect(allowedUrl("https://www.facebook.com/reel/1234567890")).toBe(true);
+    expect(allowedUrl("https://www.facebook.com/watch/?v=1234567890")).toBe(true);
     expect(allowedUrl("https://evil.test/?u=instagram.com")).toBe(false);
     expect(allowedUrl("--exec=rm -rf ~")).toBe(false);
     expect(allowedUrl("http://www.instagram.com/reel/a")).toBe(false);
@@ -133,9 +163,38 @@ describe("enlaces y argumentos", () => {
     expect(allowedUrl(undefined)).toBe(false);
   });
 
+  it.each([
+    "https://www.facebook.com/flx/warn/?u=http%3A%2F%2F192.168.1.1%2Fadmin",
+    "https://m.facebook.com/flx/warn?u=https%3A%2F%2Fevil.test%2Fx",
+    "https://www.facebook.com//flx/warn/?u=https%3A%2F%2Fevil.test",
+    "https://www.facebook.com/FLX/WARN/?u=https%3A%2F%2Fevil.test",
+    "https://l.facebook.com/l.php?u=http%3A%2F%2F192.168.1.1%2Fadmin",
+    "https://lm.facebook.com/l.php?u=https%3A%2F%2Fevil.test",
+    "https://www.facebook.com/l.php?u=http%3A%2F%2F10.0.0.1",
+    "https://l.instagram.com/?u=https%3A%2F%2Fevil.test",
+    "https://www.youtube.com/redirect?q=http%3A%2F%2F192.168.1.1",
+    "https://www.facebook.com/plugins/video.php?href=http%3A%2F%2F192.168.1.1",
+  ])("un salto a otra dirección (%s) se rechaza, en el Mac y en el servidor", (url) => {
+    expect(allowedUrl(url)).toBe(false);
+    expect(linkOf(url)).toBeNull();
+  });
+
   it("la lista de sitios es la misma que la del servidor, y los dos deciden igual", () => {
     expect(LINK_HOSTS).toEqual([...SERVER_HOSTS]);
-    for (const url of [REEL, "https://vm.tiktok.com/abc", "https://evil.test/x", "http://youtu.be/x", "https://fb.watch/a/", "https://notinstagram.com/a"]) {
+    for (const url of [
+      REEL,
+      "https://vm.tiktok.com/abc",
+      "https://evil.test/x",
+      "http://youtu.be/x",
+      "https://fb.watch/a/",
+      "https://notinstagram.com/a",
+      "https://www.facebook.com/flx/warn/?u=https%3A%2F%2Fevil.test",
+      "https://www.facebook.com/reel/123",
+      "https://www.facebook.com/l.php?u=x",
+      "https://www.instagram.com/redirecto/",
+      "https://www.youtube.com/redirect?q=x",
+      "https://www.youtube.com/shorts/abc",
+    ]) {
       expect(allowedUrl(url), url).toBe(linkOf(url) !== null);
     }
   });
@@ -175,6 +234,8 @@ describe("una vuelta", () => {
     const out = spawned[0].args[spawned[0].args.indexOf("-o") + 1];
     expect(spawned[0].args).toEqual(ytDlpArgs(REEL, out));
     expect(path.dirname(path.dirname(out))).toBe(tmp);
+    // En su propio grupo de procesos, para poder cortarlo con lo que lance.
+    expect(spawned[0].options).toMatchObject({ detached: true });
 
     const sub = `subida=${TASK.uploadId}`;
     expect(paths()).toEqual([
@@ -189,8 +250,9 @@ describe("una vuelta", () => {
     expect(Buffer.concat(sent).equals(file)).toBe(true);
     expect(sent.map((bytes) => bytes.length)).toEqual([CHUNK, CHUNK, 300]);
     expect(calls.at(-1)!.body).toEqual({ ok: true, uploadId: TASK.uploadId, totalBytes: file.length });
-    // Todas las peticiones llevan la ficha, y la carpeta temporal se borra.
+    // Todas las peticiones llevan la ficha y ninguna sigue una redirección; la carpeta temporal se borra.
     expect(calls.every((call) => call.headers.Authorization === `Bearer ${TOKEN}`)).toBe(true);
+    expect(calls.every((call) => call.redirect === "error")).toBe(true);
     expect(leftovers()).toEqual([]);
   });
 
@@ -239,22 +301,64 @@ describe("una vuelta", () => {
     expect(error.length).toBeLessThanOrEqual(500);
   });
 
-  it("si yt-dlp no deja archivo (más de 100 MB) o no se puede lanzar, lo comunica", async () => {
+  it("si yt-dlp no deja archivo (más de 100 MB), lo comunica", async () => {
     // Termina bien pero sin archivo: `--max-filesize` se lo saltó.
     expect(await runOnce(config(), depsWith(fakeFetch(claimed()), fakeSpawn()))).toBe("failed");
     expect((calls.at(-1)!.body as { error: string }).error).toContain("no dejó ningún archivo");
     expect(paths().some((p) => p.startsWith("PUT "))).toBe(false);
-    // No está instalado.
-    calls = [];
+    expect(leftovers()).toEqual([]);
+  });
+
+  it("si yt-dlp no se puede ni lanzar, es cosa de este Mac: no da el enlace por fallido", async () => {
+    // No está instalado (el error llega después de lanzar) o no hay permiso (falla al lanzar).
     const child = fakeSpawn({ afterSleeps: Infinity });
     const missing = (command: string, args: string[]) => {
       const emitter = child.spawn(command, args);
-      queueMicrotask(() => emitter.emit("error", new Error("spawn yt-dlp ENOENT")));
+      queueMicrotask(() => emitter.emit("error", Object.assign(new Error("spawn yt-dlp ENOENT"), { code: "ENOENT" })));
       return emitter;
     };
-    expect(await runOnce(config(), { ...depsWith(fakeFetch(claimed()), child), spawn: missing })).toBe("failed");
-    expect(calls.at(-1)!.body).toMatchObject({ ok: false, error: "No se pudo lanzar yt-dlp: spawn yt-dlp ENOENT" });
+    expect(await runOnce(config(), { ...depsWith(fakeFetch(claimed()), child), spawn: missing })).toBe("blocked");
+    const denied = () => {
+      throw Object.assign(new Error("spawn yt-dlp EACCES"), { code: "EACCES" });
+    };
+    expect(await runOnce(config(), { ...depsWith(fakeFetch(claimed()), child), spawn: denied })).toBe("blocked");
+    // Ni «terminar» ni trozos: la reserva caduca sola y la tarea vuelve a la cola.
+    expect(paths()).toEqual(["POST /api/agente/tareas/reclamar", "POST /api/agente/tareas/reclamar"]);
+    expect(logs).toEqual([
+      `Descargando ${REEL}`,
+      "No se pudo lanzar yt-dlp (spawn yt-dlp ENOENT). La tarea se deja para más tarde.",
+      `Descargando ${REEL}`,
+      "No se pudo lanzar yt-dlp (spawn yt-dlp EACCES). La tarea se deja para más tarde.",
+    ]);
     expect(leftovers()).toEqual([]);
+  });
+
+  it("al cortar a los 4 minutos mueren yt-dlp y lo que haya lanzado (el grupo de procesos entero)", async () => {
+    // Un «yt-dlp» de verdad que lanza un hijo (como hace con ffmpeg) y no termina.
+    const script = path.join(tmp, "yt-dlp-colgado.sh");
+    const pids = path.join(tmp, "pids");
+    fsSync.writeFileSync(script, `#!/bin/bash\nsleep 300 &\necho "$$ $!" > "${pids}"\nwait\n`, { mode: 0o755 });
+    const work = path.join(tmp, "trabajo");
+    fsSync.mkdirSync(work);
+    const sleep = async (ms: number) => {
+      sleeps.push(ms);
+      if (ms === LEASE_BEAT_MS) await new Promise((resolve) => setTimeout(resolve, 60));
+    };
+    const deps = { fetch: fakeFetch(claimed()), spawn: realSpawn, sleep, fs, log: (text: string) => logs.push(text) };
+    expect(await runOnce({ url: WEB, token: TOKEN, tmpDir: work, ytDlp: script }, deps)).toBe("failed");
+    expect(calls.at(-1)!.body).toMatchObject({ ok: false, error: "yt-dlp tardó más de 4 minutos y se cortó" });
+    const [parent, child] = fsSync.readFileSync(pids, "utf8").trim().split(" ").map(Number);
+    const alive = (pid: number) => {
+      try {
+        process.kill(pid, 0);
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    for (let i = 0; i < 40 && (alive(parent) || alive(child)); i++) await new Promise((resolve) => setTimeout(resolve, 50));
+    expect([alive(parent), alive(child)]).toEqual([false, false]);
+    expect(fsSync.readdirSync(work)).toEqual([]);
   });
 
   it("una tarea con un enlace fuera de la lista se rechaza sin lanzar yt-dlp", async () => {
@@ -317,17 +421,38 @@ describe("una vuelta", () => {
     const broken = async () => {
       throw new Error("fetch failed");
     };
-    expect(await runOnce(config(), { ...depsWith(fakeFetch(), fakeSpawn()), fetch: broken })).toBe("idle");
-    expect(await runOnce(config(), depsWith(fakeFetch({ "/api/agente/tareas/reclamar": () => json(401, { error: "Ficha del Mac no válida." }) }), fakeSpawn()))).toBe("idle");
-    expect(await runOnce(config(), depsWith(fakeFetch({ "/api/agente/tareas/reclamar": () => json(500, {}) }), fakeSpawn()))).toBe("idle");
-    expect(await runOnce(config(), depsWith(fakeFetch(claimed({ taskId: "x" })), fakeSpawn()))).toBe("idle");
+    expect(await runOnce(config(), { ...depsWith(fakeFetch(), fakeSpawn()), fetch: broken })).toBe("offline");
+    expect(await runOnce(config(), depsWith(fakeFetch({ "/api/agente/tareas/reclamar": () => json(401, { error: "Ficha del Mac no válida." }) }), fakeSpawn()))).toBe("unauthorized");
+    expect(await runOnce(config(), depsWith(fakeFetch({ "/api/agente/tareas/reclamar": () => json(500, {}) }), fakeSpawn()))).toBe("offline");
+    expect(await runOnce(config(), depsWith(fakeFetch(claimed({ taskId: "x" })), fakeSpawn()))).toBe("offline");
     expect(spawned).toEqual([]);
+    expect(BAD_TOKEN_MESSAGE).toContain("Ficha revocada o incorrecta");
     expect(logs).toEqual([
       "No se pudo preguntar a la web: fetch failed",
-      "La web no reconoce la ficha de este Mac. Crea otra en Ajustes → Mac.",
+      BAD_TOKEN_MESSAGE,
       "La web respondió 500 al preguntar por tareas.",
       "La web mandó una tarea que no se entiende.",
     ]);
+  });
+
+  it("cuando la web no responde o no reconoce la ficha, pregunta cada vez más despacio, hasta un minuto", () => {
+    expect([POLL_MS, MAX_BACKOFF_MS, TOOLS_RETRY_MS]).toEqual([5_000, 60_000, 60_000]);
+    // Sin nada que hacer, cada 5 s; con trabajo hecho, enseguida.
+    expect(nextWait("idle", 0)).toBe(5_000);
+    expect(nextWait("idle", 60_000)).toBe(5_000);
+    expect(nextWait("done", 5_000)).toBe(0);
+    expect(nextWait("failed", 5_000)).toBe(0);
+    // Sin red o con la ficha revocada: 10 s, 20 s, 40 s, 60 s, 60 s…
+    for (const outcome of ["offline", "unauthorized"]) {
+      const waits: number[] = [];
+      let wait = 5_000;
+      for (let i = 0; i < 6; i++) waits.push((wait = nextWait(outcome, wait)));
+      expect(waits).toEqual([10_000, 20_000, 40_000, 60_000, 60_000, 60_000]);
+      expect(nextWait(outcome, 0)).toBe(10_000);
+    }
+    // En cuanto vuelve, otra vez cada 5 s.
+    expect(nextWait("idle", nextWait("offline", 60_000))).toBe(5_000);
+    expect(nextWait("blocked", 5_000)).toBe(60_000);
   });
 
   it("la ficha nunca aparece en lo que escribe por pantalla", async () => {
@@ -353,7 +478,7 @@ describe("configuración", () => {
     const home = path.join(tmp, "casa");
     fsSync.mkdirSync(home);
     expect(await readConfig({}, fs, home)).toBeNull();
-    fsSync.writeFileSync(path.join(home, ".principal-agente.json"), JSON.stringify({ url: `${WEB}/`, token: ` ${TOKEN} ` }));
+    fsSync.writeFileSync(path.join(home, ".principal-agente.json"), JSON.stringify({ url: `${WEB}/`, token: ` ${TOKEN} ` }), { mode: 0o600 });
     expect(await readConfig({}, fs, home)).toEqual({ url: WEB, token: TOKEN });
     // Las variables mandan si están las dos.
     expect(await readConfig({ PRINCIPAL_URL: "https://otra.test", PRINCIPAL_AGENTE_TOKEN: TOKEN }, fs, home)).toEqual({ url: "https://otra.test", token: TOKEN });
@@ -382,35 +507,113 @@ describe("configuración", () => {
     }
   });
 
-  it("al arrancar borra las carpetas temporales que dejó una ejecución cortada", async () => {
-    fsSync.mkdirSync(path.join(tmp, "principal-agente-abc"));
-    fsSync.writeFileSync(path.join(tmp, "principal-agente-abc", "video.mp4"), "x");
-    fsSync.mkdirSync(path.join(tmp, "otra-cosa"));
-    await cleanLeftovers(fs, tmp);
-    expect(leftovers()).toEqual(["otra-cosa"]);
+  it("si el archivo de la ficha lo pueden leer otras personas del Mac, le cierra los permisos antes de usarlo", async () => {
+    const home = path.join(tmp, "casa");
+    fsSync.mkdirSync(home);
+    const file = path.join(home, ".principal-agente.json");
+    fsSync.writeFileSync(file, JSON.stringify({ url: WEB, token: TOKEN }), { mode: 0o644 });
+    fsSync.chmodSync(file, 0o644);
+    expect(await readConfig({}, fs, home)).toEqual({ url: WEB, token: TOKEN, tightened: true });
+    expect(fsSync.statSync(file).mode & 0o777).toBe(0o600);
+    // Ya cerrado, no hay nada que avisar.
+    expect(await readConfig({}, fs, home)).toEqual({ url: WEB, token: TOKEN });
+    // Si no se puede cerrar, no arranca con la ficha a la vista de otros.
+    fsSync.chmodSync(file, 0o640);
+    const stuck = { ...fs, readFile: fs.readFile, stat: fs.stat, chmod: async () => Promise.reject(new Error("EPERM")) };
+    await expect(readConfig({}, stuck, home)).rejects.toThrow("chmod 600");
+  });
+
+  it("al arrancar borra las carpetas temporales viejas, no las de la última hora", async () => {
+    const old = path.join(tmp, "principal-agente-vieja");
+    const recent = path.join(tmp, "principal-agente-reciente");
+    for (const dir of [old, recent, path.join(tmp, "otra-cosa")]) fsSync.mkdirSync(dir);
+    fsSync.writeFileSync(path.join(old, "video.mp4"), "x");
+    const now = Date.now();
+    const longAgo = new Date(now - LEFTOVER_AGE_MS - 60_000);
+    fsSync.utimesSync(old, longAgo, longAgo);
+    fsSync.utimesSync(path.join(tmp, "otra-cosa"), longAgo, longAgo);
+    await cleanLeftovers(fs, tmp, now);
+    // La reciente puede ser de otra copia del agente que está descargando ahora mismo.
+    expect(leftovers().sort()).toEqual(["otra-cosa", "principal-agente-reciente"]);
+  });
+
+  it("solo un agente a la vez: el segundo no entra, y un apunte de un proceso muerto se sustituye", async () => {
+    const lock = path.join(tmp, "agente.lock");
+    const alive = (pid: number) => pid === 111;
+    expect(await acquireLock(fs, lock, 111, alive)).toBe(true);
+    expect(fsSync.readFileSync(lock, "utf8")).toBe("111\n");
+    expect(fsSync.statSync(lock).mode & 0o777).toBe(0o600);
+    // Otro proceso, con el primero vivo: fuera, y el apunte sigue siendo del primero.
+    expect(await acquireLock(fs, lock, 222, alive)).toBe(false);
+    expect(fsSync.readFileSync(lock, "utf8")).toBe("111\n");
+    // Soltar el de otro no hace nada.
+    await releaseLock(fs, lock, 222);
+    expect(fsSync.existsSync(lock)).toBe(true);
+    // El primero murió sin soltarlo: el siguiente lo sustituye.
+    expect(await acquireLock(fs, lock, 333, () => false)).toBe(true);
+    expect(fsSync.readFileSync(lock, "utf8")).toBe("333\n");
+    await releaseLock(fs, lock, 333);
+    expect(fsSync.existsSync(lock)).toBe(false);
+    // Un apunte con basura tampoco bloquea para siempre.
+    fsSync.writeFileSync(lock, "no es un número");
+    expect(await acquireLock(fs, lock, 444, () => true)).toBe(true);
+  });
+
+  it("antes de recoger nada mira si yt-dlp y ffmpeg se pueden lanzar", async () => {
+    /** Un `spawn` de mentira para las comprobaciones: cada programa responde, falla o no existe. */
+    const tools = (answers: Record<string, { out?: string; code?: number; error?: string; throws?: boolean }>) => (command: string, args: string[]) => {
+      const answer = answers[command] ?? { error: "ENOENT" };
+      if (answer.throws) throw new Error("EACCES");
+      const child = new EventEmitter() as EventEmitter & { stdout: EventEmitter; kill: () => void };
+      child.stdout = new EventEmitter();
+      child.kill = () => {};
+      spawned.push({ command, args, options: undefined, killed: null });
+      queueMicrotask(() => {
+        if (answer.error) return child.emit("error", new Error(answer.error));
+        if (answer.out) child.stdout.emit("data", answer.out);
+        child.emit("close", answer.code ?? 0);
+      });
+      return child;
+    };
+    expect(await checkTools({ spawn: tools({ "yt-dlp": { out: "2026.11.01\n" }, ffmpeg: { out: "ffmpeg version 7.1\n" } }) })).toEqual({ missing: [], ytDlp: "2026.11.01" });
+    expect(spawned.map((call) => [call.command, ...call.args])).toEqual([
+      ["yt-dlp", "--version"],
+      ["ffmpeg", "-version"],
+    ]);
+    expect(await checkTools({ spawn: tools({ ffmpeg: {} }) })).toEqual({ missing: ["yt-dlp"], ytDlp: null });
+    expect(await checkTools({ spawn: tools({ "yt-dlp": { out: "2026.11.01" } }) })).toEqual({ missing: ["ffmpeg"], ytDlp: "2026.11.01" });
+    expect(await checkTools({ spawn: tools({ "yt-dlp": { code: 1 }, ffmpeg: { throws: true } }) })).toEqual({ missing: ["yt-dlp", "ffmpeg"], ytDlp: null });
   });
 });
 
 describe("instalar.sh", () => {
   const ROOT = path.resolve(__dirname, "..");
 
-  /** Una casa de mentira con un `node` de verdad en ~/.local/node/bin y un `launchctl` que apunta lo que le piden. */
-  function fakeMac() {
+  /**
+   * Una casa de mentira con un `node` de verdad en ~/.local/node/bin, `yt-dlp` y `ffmpeg` en
+   * ~/.local/bin (salvo los que se digan en `without`) y un `launchctl` que apunta lo que le piden.
+   */
+  function fakeMac(without: string[] = []) {
     const home = path.join(tmp, "Users", "emma nuel");
     const bin = path.join(tmp, "bin");
     fsSync.mkdirSync(path.join(home, ".local", "node", "bin"), { recursive: true });
+    fsSync.mkdirSync(path.join(home, ".local", "bin"), { recursive: true });
     fsSync.mkdirSync(bin, { recursive: true });
     fsSync.symlinkSync(process.execPath, path.join(home, ".local", "node", "bin", "node"));
+    for (const tool of ["yt-dlp", "ffmpeg"]) {
+      if (!without.includes(tool)) fsSync.writeFileSync(path.join(home, ".local", "bin", tool), "#!/bin/bash\nexit 0\n", { mode: 0o755 });
+    }
     const record = path.join(tmp, "launchctl.log");
     fsSync.writeFileSync(
       path.join(bin, "launchctl"),
       `#!/bin/bash\necho "$@" >> "${record}"\nif [ "$1" = "print" ]; then [ -f "${tmp}/cargado" ] && exit 0 || exit 113; fi\nif [ "$1" = "bootstrap" ]; then touch "${tmp}/cargado"; fi\nif [ "$1" = "bootout" ]; then rm -f "${tmp}/cargado"; fi\nexit 0\n`,
       { mode: 0o755 },
     );
-    const run = (env: Record<string, string> = {}) =>
+    const run = (env: Record<string, string> = {}, input = "") =>
       spawnSync("bash", [path.join(ROOT, "agente-mac", "instalar.sh")], {
         env: { HOME: home, PATH: `${bin}:/usr/bin:/bin`, ...env } as unknown as NodeJS.ProcessEnv,
         encoding: "utf8",
+        input,
       });
     const launchctl = () => (fsSync.existsSync(record) ? fsSync.readFileSync(record, "utf8").trim().split("\n") : []);
     return { home, run, launchctl };
@@ -427,20 +630,17 @@ describe("instalar.sh", () => {
     const plistPath = path.join(home, "Library", "LaunchAgents", "com.principal.agente.plist");
     const plist = fsSync.readFileSync(plistPath, "utf8");
     // Rutas completas de esa casa (con su espacio), sin marcas ni `~`.
-    expect(plist).not.toMatch(/__HOME__|__NODE__/);
+    expect(plist).not.toMatch(/__HOME__|__NODE__|__PATH__/);
     expect(plist).not.toMatch(/<string>[^<]*~/);
     expect(plist).toContain(`<string>${home}/.local/node/bin/node</string>`);
     expect(plist).toContain(`<string>${home}/.principal-tools/agente-mac/agente.mjs</string>`);
-    expect(plist).toContain(`<string>${home}/.local/bin:${home}/.local/node/bin:/opt/homebrew/bin:/usr/bin:/bin</string>`);
+    expect(plist).toContain(`<string>${home}/.local/bin:${home}/.local/node/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>`);
     expect(plist).toContain(`<string>${home}/Library/Logs/principal-agente.log</string>`);
     expect(plist).toContain("<key>KeepAlive</key>");
 
     const uid = process.getuid!();
-    expect(launchctl()).toEqual([
-      `print gui/${uid}/com.principal.agente`,
-      `bootstrap gui/${uid} ${plistPath}`,
-      `kickstart -k gui/${uid}/com.principal.agente`,
-    ]);
+    // Cargarlo basta (arranca solo con RunAtLoad): sin `kickstart`.
+    expect(launchctl()).toEqual([`print gui/${uid}/com.principal.agente`, `bootstrap gui/${uid} ${plistPath}`]);
     // Sin configuración todavía, lo dice y no falla.
     expect(first.stdout).toContain(".principal-agente.json");
     expect(fsSync.existsSync(path.join(home, ".principal-agente.json"))).toBe(false);
@@ -448,35 +648,66 @@ describe("instalar.sh", () => {
     // Segunda vez: descarga el anterior antes de cargar el nuevo, y deja lo mismo.
     const second = run();
     expect(second.status, second.stderr).toBe(0);
-    expect(launchctl().slice(3)).toEqual([
+    expect(launchctl().slice(2)).toEqual([
       `print gui/${uid}/com.principal.agente`,
       `bootout gui/${uid}/com.principal.agente`,
       `print gui/${uid}/com.principal.agente`,
       `bootstrap gui/${uid} ${plistPath}`,
-      `kickstart -k gui/${uid}/com.principal.agente`,
     ]);
     expect(fsSync.readFileSync(plistPath, "utf8")).toBe(plist);
   });
 
-  it("guarda la ficha que le pasan sin enseñarla, y no toca la que ya había", () => {
+  it("pide la ficha sin enseñarla, la guarda cerrada y no toca la que ya había", () => {
     const { home, run } = fakeMac();
     const configPath = path.join(home, ".principal-agente.json");
-    const withToken = run({ PRINCIPAL_URL: WEB, PRINCIPAL_AGENTE_TOKEN: TOKEN });
-    expect(withToken.status, withToken.stderr).toBe(0);
-    expect(JSON.parse(fsSync.readFileSync(configPath, "utf8"))).toEqual({ url: WEB, token: TOKEN });
+    // La ficha llega por la entrada (lo que se pega al pedirla): ni en el comando ni en pantalla.
+    const asked = run({}, `${TOKEN}\n`);
+    expect(asked.status, asked.stderr).toBe(0);
+    expect(JSON.parse(fsSync.readFileSync(configPath, "utf8"))).toEqual({ url: "https://principal-production-6265bcf2.up.railway.app", token: TOKEN });
     expect(fsSync.statSync(configPath).mode & 0o777).toBe(0o600);
-    expect(withToken.stdout + withToken.stderr).not.toContain(TOKEN);
-    expect(withToken.stdout + withToken.stderr).not.toContain("pra_");
-    // Sin variables, la configuración que había se conserva (y se cierra si estaba abierta).
+    expect(asked.stdout + asked.stderr).not.toContain(TOKEN);
+    expect(asked.stdout + asked.stderr).not.toContain("pra_");
+    // Con la configuración ya hecha no vuelve a pedir nada ni la cambia (aunque llegue otra), y la cierra si estaba abierta.
     fsSync.chmodSync(configPath, 0o644);
-    const again = run();
+    const other = "pra_" + "z".repeat(43);
+    const again = run({ PRINCIPAL_URL: "https://otra.test", PRINCIPAL_AGENTE_TOKEN: other }, `${other}\n`);
     expect(again.status, again.stderr).toBe(0);
-    expect(JSON.parse(fsSync.readFileSync(configPath, "utf8"))).toEqual({ url: WEB, token: TOKEN });
+    expect(JSON.parse(fsSync.readFileSync(configPath, "utf8"))).toEqual({ url: "https://principal-production-6265bcf2.up.railway.app", token: TOKEN });
     expect(fsSync.statSync(configPath).mode & 0o777).toBe(0o600);
-    expect(again.stdout + again.stderr).not.toContain(TOKEN);
+    expect(again.stdout + again.stderr).not.toContain("pra_");
   });
 
-  it("sin node, o con uno viejo, se para sin instalar nada", () => {
+  it("una ficha mal pegada no se guarda, y el aviso no la repite", () => {
+    const { home, run } = fakeMac();
+    const configPath = path.join(home, ".principal-agente.json");
+    for (const bad of ["hola", `${TOKEN}sobra`, TOKEN.slice(0, 30), `x${TOKEN}`]) {
+      const result = run({}, `${bad}\n`);
+      expect(result.status).toBe(1);
+      expect(result.stdout + result.stderr).not.toContain(bad);
+      expect(fsSync.existsSync(configPath)).toBe(false);
+      expect(fsSync.existsSync(path.join(home, ".principal-tools"))).toBe(false);
+    }
+    // Por variables también vale (para quien lo lanza desde otro programa), y tampoco se enseña.
+    const viaEnv = run({ PRINCIPAL_URL: WEB, PRINCIPAL_AGENTE_TOKEN: TOKEN });
+    expect(viaEnv.status, viaEnv.stderr).toBe(0);
+    expect(JSON.parse(fsSync.readFileSync(configPath, "utf8"))).toEqual({ url: WEB, token: TOKEN });
+    expect(viaEnv.stdout + viaEnv.stderr).not.toContain("pra_");
+  });
+
+  it("si falta yt-dlp o ffmpeg donde el arranque automático los busca, lo dice y no instala nada", () => {
+    const { home, run, launchctl } = fakeMac(["yt-dlp"]);
+    const result = run({}, `${TOKEN}\n`);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("No se encuentra: yt-dlp");
+    // Dice dónde ha mirado: las mismas carpetas que irán en el plist.
+    expect(result.stderr).toContain(`${home}/.local/bin:${home}/.local/node/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin`);
+    expect(fsSync.existsSync(path.join(home, ".principal-tools"))).toBe(false);
+    expect(fsSync.existsSync(path.join(home, ".principal-agente.json"))).toBe(false);
+    expect(fsSync.existsSync(path.join(home, "Library", "LaunchAgents", "com.principal.agente.plist"))).toBe(false);
+    expect(launchctl()).toEqual([]);
+  });
+
+  it("con un node viejo se para sin instalar nada", () => {
     const { home, run } = fakeMac();
     fsSync.rmSync(path.join(home, ".local", "node", "bin", "node"));
     fsSync.writeFileSync(path.join(home, ".local", "node", "bin", "node"), '#!/bin/bash\necho 18\n', { mode: 0o755 });

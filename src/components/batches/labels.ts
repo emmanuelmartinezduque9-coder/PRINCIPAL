@@ -109,14 +109,27 @@ export function referenceState(row: BatchRowJson, upload: LocalUpload): StepStat
 }
 
 /**
- * Lo que falla en una fila y se enseña bajo ella: el enlace que no se pudo traer (aunque la
- * referencia anterior siga lista) o, si no, el primer paso con error. `link`: se puede reintentar.
+ * Lo que falla en una fila y se enseña bajo ella: el primer paso con error. Si lo que falló es la
+ * referencia porque el Mac no pudo traer su enlace, `link` es esa dirección: se puede reintentar.
  */
 export function rowProblem(row: BatchRowJson, states: StepState[]): { message: string; link: string | null } | null {
   const link = failedLink(row);
-  if (link) return { message: link.error ?? "No se pudo descargar el enlace.", link: row.mine ? link.url : null };
+  if (link && row.referenceStatus !== "ready") {
+    return { message: link.error ?? "No se pudo descargar el enlace.", link: row.mine ? link.url : null };
+  }
   const detail = states.find((state) => state.tone === "error" && state.detail && !state.quiet)?.detail;
   return detail ? { message: detail, link: null } : null;
+}
+
+/**
+ * Un enlace que no se pudo traer cuando la fila **ya tenía una referencia que sigue lista**: no es
+ * un fallo de la fila (se puede seguir trabajando con ella), solo un aviso aparte con su
+ * «Reintentar enlace». No la manda a «Por revisar».
+ */
+export function linkNotice(row: BatchRowJson): { message: string; link: string | null } | null {
+  const link = failedLink(row);
+  if (!link || row.referenceStatus !== "ready") return null;
+  return { message: "El enlace nuevo no se pudo traer; sigue la referencia anterior.", link: row.mine ? link.url : null };
 }
 
 export function analysisState(row: BatchRowJson): StepState {
@@ -193,11 +206,12 @@ export const videoHref = (row: Pick<BatchRowJson, "productId" | "id">) => `/prod
 
 /**
  * «Por revisar»: filas con algo que mirar antes de seguir: un paso con error (también la subida en
- * este navegador), un enlace que no se pudo traer, un desglose que ya no vale, candidatas esperando
- * aprobación o una generación en duda.
+ * este navegador, o una referencia que el Mac no pudo traer), un desglose que ya no vale,
+ * candidatas esperando aprobación o una generación en duda. Un enlace fallido sobre una referencia
+ * que sigue lista no cuenta: la fila se puede seguir trabajando.
  */
 export function needsReview(row: BatchRowJson, upload: LocalUpload = { kind: "idle" }): boolean {
-  if (ready.review(row) || failedLink(row)) return true;
+  if (ready.review(row)) return true;
   if ([row.frame.current?.status, row.clip.current?.status].includes("unknown")) return true;
   const states = [referenceState(row, upload), analysisState(row), generationState(row.frame, "frame"), generationState(row.clip, "clip")];
   return states.some((state) => state.tone === "error" && !state.quiet);

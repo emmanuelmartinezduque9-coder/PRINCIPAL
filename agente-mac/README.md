@@ -10,15 +10,17 @@ falta que esa sesión esté abierta en Brave.
 
 ## 1. Comprobar que el Mac tiene lo que hace falta
 
-Abre Terminal y escribe estas dos líneas, una cada vez:
+Abre Terminal y escribe estas tres líneas, una cada vez:
 
 ```
 yt-dlp --version
+ffmpeg -version
 node -v
 ```
 
 - La primera tiene que responder una fecha, por ejemplo `2026.11.01`.
-- La segunda tiene que responder `v22` o un número mayor.
+- La segunda, un texto que empieza por `ffmpeg version`.
+- La tercera, `v22` o un número mayor.
 
 Si alguna dice «command not found», no sigas: hay que instalar eso primero.
 
@@ -30,46 +32,50 @@ La ficha es la llave con la que este Mac entra en la web.
 2. Pulsa **Crear ficha**.
 3. Pulsa **Copiar**. La ficha solo se enseña esa vez: si la pierdes, crea otra.
 
-## 3. Guardar la ficha en el Mac
-
-Crea un archivo llamado `.principal-agente.json` en tu carpeta personal con este contenido,
-poniendo tu ficha donde dice `pra_…`:
-
-```json
-{
-  "url": "https://principal-production-6265bcf2.up.railway.app",
-  "token": "pra_…"
-}
-```
-
-La forma más cómoda, en Terminal:
-
-```
-nano ~/.principal-agente.json
-```
-
-Pega el contenido, cambia la ficha, y guarda con `Ctrl+O`, `Enter`, `Ctrl+X`.
-
-## 4. Probar
+## 3. Instalar
 
 Desde la carpeta del proyecto:
-
-```
-node agente-mac/agente.mjs
-```
-
-Tiene que escribir **«Conectado con https://…»**. En la web, **Ajustes → Mac** dirá «Conectado».
-Para pararlo, `Ctrl+C`.
-
-## 5. Dejarlo siempre encendido
 
 ```
 bash agente-mac/instalar.sh
 ```
 
-Copia el programa a `~/.principal-tools/agente-mac/` y lo deja arrancando solo cada vez que
-enciendes el Mac. Se puede lanzar las veces que haga falta (por ejemplo, después de actualizar el
-programa).
+El instalador:
+
+1. Comprueba que `node`, `yt-dlp` y `ffmpeg` están donde el arranque automático los va a buscar. Si
+   falta alguno, lo dice y no instala nada.
+2. Te pide la ficha: **pégala y pulsa Intro**. No se ve mientras la pegas, es normal. La guarda en
+   `~/.principal-agente.json`, que solo puedes leer tú.
+3. Copia el programa a `~/.principal-tools/agente-mac/` y lo deja arrancando solo cada vez que
+   enciendes el Mac.
+
+Se puede lanzar las veces que haga falta (por ejemplo, después de actualizar el programa): si la
+ficha ya está guardada, no la vuelve a pedir.
+
+No escribas la ficha en la misma línea que el comando: se quedaría guardada en el historial del
+terminal.
+
+## 4. Comprobar
+
+En la web, **Ajustes → Mac** tiene que decir **«Conectado»**.
+
+Si quieres ver lo que hace sin instalarlo (para probar), con la ficha ya guardada:
+
+```
+node agente-mac/agente.mjs
+```
+
+Tiene que escribir «Conectado con https://…». Para pararlo, `Ctrl+C`. Si el agente instalado ya
+está en marcha, este segundo se cierra solo: solo puede haber uno.
+
+## Cambiar la ficha
+
+Borra el archivo y vuelve a instalar; te la pedirá otra vez:
+
+```
+rm ~/.principal-agente.json
+bash agente-mac/instalar.sh
+```
 
 ## Cómo saber si está funcionando
 
@@ -86,9 +92,14 @@ programa).
 
 ## Si algo no va
 
-- **«La web no reconoce la ficha de este Mac»**: la ficha se revocó o está mal copiada. Crea otra
-  en Ajustes → Mac y cámbiala en `~/.principal-agente.json`.
-- **«No se encuentra yt-dlp»**: instálalo y vuelve a lanzar `bash agente-mac/instalar.sh`.
+- **«Ficha revocada o incorrecta»**: la ficha se revocó o está mal copiada. Crea otra en Ajustes →
+  Mac y cámbiala (ver «Cambiar la ficha»).
+- **«No se puede lanzar yt-dlp»** (o `ffmpeg`): mientras falte, el agente no recoge ningún enlace
+  (no los da por fallidos: esperan en la cola). Instálalo; en un minuto como mucho sigue solo.
+- **Un enlace corto de compartir no va** (`fb.watch/…`, `facebook.com/share/…`,
+  `instagram.com/share/…`): abre el vídeo en Brave y copia la dirección de la barra (la que lleva
+  `/reel/…`, `/watch/…` o `/p/…`). Por seguridad, el agente solo descarga la dirección directa del
+  vídeo y no sigue saltos a otras páginas.
 - **Un enlace falla siempre**: prueba a abrirlo en Brave en este Mac. Si ahí no se ve (vídeo
   privado, borrado o sesión cerrada), el programa tampoco puede. Sube el archivo del vídeo.
 - **Tarda mucho**: cada enlace tiene 4 minutos como mucho; pasado ese tiempo se corta y la web te

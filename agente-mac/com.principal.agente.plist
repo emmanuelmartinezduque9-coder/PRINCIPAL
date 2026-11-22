@@ -2,8 +2,9 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!--
   Plantilla: `instalar.sh` la copia a ~/Library/LaunchAgents/ poniendo en cada marca la carpeta de
-  la persona y la ruta de node de este Mac. launchd no entiende `~` ni busca en el PATH del
-  terminal: todo va con rutas completas.
+  la persona, la ruta de node de este Mac y las carpetas donde se buscan yt-dlp y ffmpeg (las
+  mismas que el instalador comprueba). launchd no entiende `~` ni busca en el PATH del terminal:
+  todo va con rutas completas.
 -->
 <plist version="1.0">
 <dict>
@@ -17,7 +18,7 @@
   <key>EnvironmentVariables</key>
   <dict>
     <key>PATH</key>
-    <string>__HOME__/.local/bin:__HOME__/.local/node/bin:/opt/homebrew/bin:/usr/bin:/bin</string>
+    <string>__PATH__</string>
     <key>HOME</key>
     <string>__HOME__</string>
   </dict>

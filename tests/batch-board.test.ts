@@ -6,6 +6,7 @@ import {
   needsReview,
   pollEvery,
   ready,
+  linkNotice,
   referenceState,
   rowProblem,
   rowState,
@@ -241,23 +242,35 @@ describe("lote v2: «Por revisar» y nombre automático", () => {
     // La subida de un archivo en este navegador manda sobre el enlace.
     expect(referenceState(row({ link: queued }), { kind: "uploading", fraction: 0.5 }).label).toBe("Subiendo 50 %");
 
-    // El fallo del enlace sale bajo la fila con «Reintentar enlace», también si la referencia sigue lista.
+    // Sin referencia, el enlace fallido es el problema de la fila, con «Reintentar enlace».
     const states = (r: BatchRowJson) => [referenceState(r, idle), analysisState(r), generationState(r.frame, "frame"), generationState(r.clip, "clip")];
-    const overReady = row({ link: failed });
-    expect(rowProblem(overReady, states(overReady))).toEqual({ message: failed.error, link: REEL });
     const noReference = row({ referenceStatus: "failed", referenceError: failed.error, link: failed, analysis: null });
     expect(rowProblem(noReference, states(noReference))).toEqual({ message: failed.error, link: REEL });
+    expect(linkNotice(noReference)).toBeNull();
+    expect(needsReview(noReference)).toBe(true);
     // En un vídeo ajeno se ve el fallo, pero no se ofrece reintentar.
-    const foreign = row({ link: failed, mine: false });
+    const foreign = row({ referenceStatus: "failed", referenceError: failed.error, link: failed, analysis: null, mine: false });
     expect(rowProblem(foreign, states(foreign))).toEqual({ message: failed.error, link: null });
+
+    // Sobre una referencia que sigue lista no es un fallo de la fila: un aviso aparte, y el problema
+    // de la fila (si lo hay) sigue siendo el de sus pasos.
+    const overReady = row({ link: failed });
+    expect(rowProblem(overReady, states(overReady))).toBeNull();
+    expect(linkNotice(overReady)).toEqual({ message: "El enlace nuevo no se pudo traer; sigue la referencia anterior.", link: REEL });
+    expect(linkNotice(row({ link: failed, mine: false }))).toMatchObject({ link: null });
+    const withStepError = row({ link: failed, analysis: { status: "failed", error: "Falta la clave de Claude.", stale: false, staleReason: null } });
+    expect(rowProblem(withStepError, states(withStepError))).toEqual({ message: "Falta la clave de Claude.", link: null });
+    expect(linkNotice(withStepError)).not.toBeNull();
+    expect(linkNotice(row())).toBeNull();
+    expect(linkNotice(row({ link: queued }))).toBeNull();
     // Sin enlace, el problema es el del paso que falló, sin nada que reintentar.
     const broken = row({ referenceStatus: "failed", referenceError: "No se pudo preparar el vídeo. Vuelve a subirlo.", analysis: null });
     expect(rowProblem(broken, states(broken))).toEqual({ message: "No se pudo preparar el vídeo. Vuelve a subirlo.", link: null });
     expect(rowProblem(row(), states(row()))).toBeNull();
     expect(rowProblem(row({ link: queued }), states(row({ link: queued })))).toBeNull();
 
-    // «Por revisar» cuenta el enlace fallido; el tablero se vuelve a pedir mientras el Mac trabaja.
-    expect(needsReview(row({ link: failed }))).toBe(true);
+    // «Por revisar» no cuenta un enlace fallido sobre una referencia lista; el tablero se vuelve a pedir mientras el Mac trabaja.
+    expect(needsReview(row({ link: failed }))).toBe(false);
     expect(needsReview(row({ link: downloading }))).toBe(false);
     const view = (rows: BatchRowJson[]) => ({ rows }) as unknown as BatchViewJson;
     expect(pollEvery(view([row({ link: queued })]), false)).toBe(5000);
