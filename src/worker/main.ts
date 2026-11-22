@@ -1,4 +1,5 @@
 import { startWorker, stopWorker } from "@/jobs/boss";
+import "@/jobs/system-check";
 
 /**
  * Proceso en segundo plano: ejecuta los trabajos de la cola y las tareas programadas. Los módulos

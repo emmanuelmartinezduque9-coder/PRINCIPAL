@@ -1,7 +1,7 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { BookOpen, LogOut, Package, Users, type LucideIcon } from "lucide-react";
+import { BookOpen, LogOut, Package, Users, Wallet, type LucideIcon } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef } from "react";
@@ -20,13 +20,14 @@ interface NavItem {
 
 const NAV: NavItem[] = [
   { href: "/productos", label: "Productos", icon: Package },
+  { href: "/gasto", label: "Gasto", icon: Wallet, ownerOnly: true },
   { href: "/reglas", label: "Reglas", icon: BookOpen, ownerOnly: true },
   { href: "/personas", label: "Personas", icon: Users, ownerOnly: true },
 ];
 
 const ROLE_LABELS: Record<AuthUser["role"], string> = { dueno: "Dueño", colaborador: "Colaborador" };
 
-/** Opciones del menú que ve una persona según su papel: el colaborador, Productos; el dueño, además Reglas y Personas (Gasto se añade cuando exista su pantalla). */
+/** Opciones del menú que ve una persona según su papel: el colaborador, Productos; el dueño, además Gasto, Reglas y Personas. */
 export function navFor(role: AuthUser["role"] | undefined): NavItem[] {
   return NAV.filter((item) => !item.ownerOnly || role === "dueno");
 }

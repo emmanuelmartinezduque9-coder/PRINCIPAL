@@ -436,3 +436,12 @@ export async function spendSummary(user: AuthUser, now: Date = new Date()): Prom
 
   return { month, capMicros: await getGlobalCap(), spentMicros, byProduct, byUser };
 }
+
+/** Coste liquidado de un cargo, o `null` si no existe o aún no está liquidado. Para comprobar el libro. */
+export async function settledCostMicros(entryId: number): Promise<number | null> {
+  const [row] = await getDb()
+    .select({ status: entries.status, costMicros: entries.costMicros })
+    .from(entries)
+    .where(eq(entries.id, entryId));
+  return row?.status === "settled" ? row.costMicros : null;
+}

@@ -25,6 +25,7 @@ const registry = globalThis as unknown as {
 };
 const jobs = (registry.__principalJobs ??= new Map());
 const schedules = (registry.__principalSchedules ??= new Map());
+const labels = new Map<string, string>();
 
 /** Lanza si el nombre no vale para la cola. */
 export function assertJobName(name: string): void {
@@ -35,15 +36,22 @@ export function assertJobName(name: string): void {
  * Define un trabajo: lo que hay que hacer cuando llega uno con ese nombre. `data` es lo que se
  * pasó a `enqueueJob`; el manejador debe hacer cada llamada externa dentro de `runStep`, porque
  * un trabajo puede ejecutarse más de una vez (al reanudarse o reintentarse). Definir otra vez el
- * mismo nombre sustituye al anterior.
+ * mismo nombre sustituye al anterior. `label` es cómo se llama en pantalla.
  */
 export function defineJob<TData extends object>(
   name: string,
   handler: (data: TData, ctx: JobContext) => Promise<void>,
+  label?: string,
 ): void {
   assertJobName(name);
   if (schedules.has(name)) throw new Error(`«${name}» ya es una tarea programada.`);
   jobs.set(name, handler as JobHandler);
+  if (label) labels.set(name, label);
+}
+
+/** Nombre legible de un trabajo para las pantallas (el que se dio al definirlo, o su nombre). */
+export function jobLabel(name: string): string {
+  return labels.get(name) ?? name;
 }
 
 /**
