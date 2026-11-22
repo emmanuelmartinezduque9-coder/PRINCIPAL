@@ -8,3 +8,8 @@ Dichas por Emmanuel en el chat; son requisitos del montador con ritmo.
 4. **Mini zooms** para hacer el vídeo más dinámico y menos estático.
 
 Pendiente de concretar con ejemplos reales: cuánta intensidad de zoom, cada cuánto, y qué vídeos suyos considera bien montados.
+
+## Respuestas del dueño (22/11/2026, más tarde)
+
+- **Canción elegida manda siempre**: si eligió una canción para un vídeo, se usa esa canción aunque el vídeo se haya hecho con Genjutsu (vale para V6 y V9 del pedido 54).
+- **El drop va al empezar el cuerpo** (cuando aparece el producto en sí). Se irá afinando con más pruebas.
