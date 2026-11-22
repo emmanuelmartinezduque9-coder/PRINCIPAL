@@ -32,6 +32,11 @@ Fecha: 2026-11-22. Fuente: los cuatro perfiles públicos y sus reels, abiertos e
 - Precios, ventas y anuncios.
 - El caption de 10 de los 12 reels cargados en cada cuenta (solo se abrieron 2 por cuenta).
 
+## Otras cuentas del lote con la misma mecánica (fuera del Grupo B)
+- @drybrellq (Dry.Brella, 41,1 mil seguidores, 15 publicaciones): CTA 'Comment “Potter” if you want one 🧙'; su reel de 10 M vistas tiene 22,3 mil comentarios [visto]. Mismo nicho que potterbrella.us, otra marca [visto].
+- @crypt_weave (40,5 mil seguidores): enlace a /products/cathedral-umbrella, bio 'Goth Clothing', CTA 'Comment “goth” if you want one too'; reel de 2 M vistas [visto]. [inferido] otro nicho (gótico) con el mismo tipo de producto.
+- Esto sugiere que el mismo patrón (marca de nicho + CTA por comentario con palabra clave del nicho) se repite en más de cuatro cuentas, no solo en el Grupo B.
+
 ## Reglas reutilizables (basadas en lo visto)
 1. Un dominio y un nombre de marca por nicho: el nombre lleva la palabra del nicho ("Princess", "Potter", "Bubble", "Rain pod") y la tienda es distinta en cada cuenta [visto].
 2. El nicho puede ir en la bio (princessbrella) o solo en caption y audio (potterbrella); probar ambos, no hay datos para decidir cuál rinde mejor [visto].
