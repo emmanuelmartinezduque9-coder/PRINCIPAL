@@ -1,0 +1,13 @@
+# Encuadre aprobado no equivale a vídeo conforme
+
+Emmanuel detecta zoom no pedido entre referencia y vídeo: desaparece público y se cortan empleados. Ejemplo confirmado ZielAlarm C17 clip1, job 16ae58c1-a040-4ec5-a1db-df727c53b5b4. La imagen realmente enviada conserva el plano amplio; el MP4 original ya empieza cerrado, a 720p sin upscale. No es un recorte del escalado ni del reproductor. El prompt incluía «no zooms», pero omitía describir el público y añadía «no extra people». Esa contradicción puede contribuir, no demuestra la causa interna del modelo.
+
+Fallo de control: se revisaban frames, no se comparaba cada vídeo contra el encuadre aprobado. La revisión de revelado detectó cajas prematuras pero omitió la desaparición del público. No afirmar que un verificador de imágenes verificó el vídeo.
+
+Corrección: contrato `encuadre` con anclas y movimientos autorizados; para frame inicial fijar tamaño/posición de personas, producto, márgenes y elementos de primer plano. En referencia contextual comparar la toma correspondiente, no exigir que comience con ese frame. Conservar cortes y giros realmente pedidos; prohibir solo acercamientos añadidos. No confundir movimiento del producto hacia la cámara con zoom de cámara.
+
+`lanzar.py` exige contrato en toda generación nueva y guarda solicitud antes de esperar. `encuadre_video.py` descarga el original, conserva referencia realmente enviada, extrae inicio + once muestras, y exige veredicto con evidencias ligado al hash del MP4 y al frame. `entregar.py` detiene entrega/upscale hasta revisar. La existencia de un prompt correcto NO aprueba el vídeo. La revisión del asistente no se etiqueta como independiente.
+
+Nuevas correcciones expresas de frames: F08 bandera alemana; F09 reducir; F10 montaje y silueta correctos; F11 aumentar. Diez restantes aprobados. No confundir esa aprobación con aprobación de los clips aún no vistos. Las medidas RentierGlanz siguen siendo aproximadamente 10 cm alto por 9 cm ancho.
+
+Resultado: la nueva versión de ZA C17 conserva el público y el plano abierto. EW C13 clip3 solo recuperó el encuadre inicial: los cortes posteriores vuelven a cerrar, desaparece el perro y los toppings caen sobre el motor. Se retiene, no se declara solucionado. También se retiene EZ C8 clip2 por vertido al motor. En los prompts históricos permanecen instrucciones de close-up/macros contradictorias con las anclas añadidas; no basta añadir una prohibición al final. Antes de otro intento hay que convertir explícitamente ese análisis heredado en un prompt de producción coherente, conservar las acciones solicitadas y mostrar el cambio en el plan. No relanzar automáticamente más intentos pagados tras estos fallos.
