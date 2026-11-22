@@ -349,6 +349,48 @@ export const batchProducts = pgTable(
  * siguientes, y siempre después de comprobar el producto con `getProductFor`. `created_by` sin
  * clave ajena, igual que `products.created_by`.
  */
+/** Tope de una canción guardada (la mayor de la biblioteca real pesa 13 MB). */
+export const MAX_SONG_BYTES = 25 * 1024 * 1024;
+
+/**
+ * Biblioteca de canciones, común a todas las personas: todos las ven y las eligen; solo el dueño
+ * las sube, cambia o borra. Solo `src/server/songs.ts` lee o escribe esta tabla. El audio va en la
+ * propia base de datos, como las fotos. `drop_ms` es el marcador humano del drop (el ancla que se
+ * alinea con el primer fotograma del cuerpo) y `start_ms`, el segundo desde el que suena.
+ */
+export const songs = pgTable(
+  "songs",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    title: text("title").notNull(),
+    /** El número de la biblioteca antigua («canción 12»); `null` si no tiene. */
+    number: integer("number"),
+    /** Secciones o carpetas de la biblioteca («navideñas», «eiswerk»…). */
+    sections: text("sections").array().notNull().default(sql`'{}'::text[]`),
+    durationMs: integer("duration_ms").notNull(),
+    sha256: text("sha256").notNull(),
+    /** `audio/mpeg`, `audio/mp4` o `audio/wav`, según el contenido. */
+    mime: text("mime").notNull(),
+    size: integer("size").notNull(),
+    data: bytea("data").notNull(),
+    dropMs: integer("drop_ms"),
+    startMs: integer("start_ms").notNull().default(0),
+    /** Sin clave ajena: el dueño en el propio ordenador (id 0) no tiene fila en `users`. */
+    createdBy: bigint("created_by", { mode: "number" }).notNull(),
+    createdAt: instant("created_at").notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("songs_sha256").on(t.sha256),
+    check("songs_title_length", sql`char_length(${t.title}) between 1 and 200`),
+    check("songs_size_valid", sql`${t.size} > 0 and ${t.size} <= ${sql.raw(String(MAX_SONG_BYTES))}`),
+    check("songs_mime_valid", sql`${t.mime} in ('audio/mpeg', 'audio/mp4', 'audio/wav')`),
+    check("songs_duration_valid", sql`${t.durationMs} > 0`),
+    check("songs_drop_valid", sql`${t.dropMs} is null or (${t.dropMs} >= 0 and ${t.dropMs} <= ${t.durationMs})`),
+    check("songs_start_valid", sql`${t.startMs} >= 0 and ${t.startMs} <= ${t.durationMs}`),
+    check("songs_number_valid", sql`${t.number} is null or ${t.number} > 0`),
+  ],
+);
+
 export const videos = pgTable(
   "videos",
   {
@@ -434,11 +476,21 @@ export const videos = pgTable(
     batchId: bigint("batch_id", { mode: "number" }).references(() => batches.id, { onDelete: "set null" }),
     /** «Cambios específicos» para este vídeo (máx. 6.000 caracteres, varias líneas); llega al desglose. */
     note: text("note"),
+    /**
+     * La canción elegida para el montaje (no cambia la generación). Si se borra la canción, el
+     * vídeo vuelve a «Audio original» (`deleteSong` lo hace antes de borrarla).
+     */
+    songId: bigint("song_id", { mode: "number" }).references((): AnyPgColumn => songs.id, { onDelete: "set null" }),
+    /** `original` (por defecto) o `cancion`. La canción elegida manda: con canción, siempre `cancion`. */
+    audioMode: text("audio_mode").notNull().default("original"),
     createdAt: instant("created_at").notNull().defaultNow(),
     updatedAt: instant("updated_at").notNull().defaultNow(),
   },
   (t) => [
     index("videos_product").on(t.productId, t.createdAt),
+    index("videos_song").on(t.songId),
+    check("videos_audio_mode_valid", sql`${t.audioMode} in ('cancion', 'original')`),
+    check("videos_audio_mode_song", sql`(${t.songId} is null) = (${t.audioMode} = 'original')`),
     index("videos_reference_status").on(t.referenceStatus),
     index("videos_batch").on(t.batchId),
     index("videos_link_task").on(t.linkTaskId),

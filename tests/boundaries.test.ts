@@ -155,6 +155,17 @@ describe("límites del código", () => {
     expect(offenders).toEqual([]);
   });
 
+  it("solo src/server/songs.ts toca la tabla de canciones", () => {
+    const SONGS_TABLE = [/schema\.songs\b/, /\b(from|into|update|join)\s+"?songs\b/i];
+    expect(SONGS_TABLE.some((p) => p.test("select size from songs where id = 1"))).toBe(true);
+    expect(files.some((f) => f.rel === "src/server/songs.ts" && SONGS_TABLE.some((p) => p.test(f.text)))).toBe(true);
+    const offenders = files
+      .filter((f) => f.rel !== "src/server/songs.ts" && !f.rel.startsWith("src/db/"))
+      .filter((f) => SONGS_TABLE.some((p) => p.test(f.text)))
+      .map((f) => f.rel);
+    expect(offenders).toEqual([]);
+  });
+
   it("dentro del conector, solo mcp.ts importa el SDK de MCP", () => {
     const offenders = files
       .filter((f) => f.rel.startsWith(HIGGSFIELD_LAYER) && f.rel !== "src/connectors/higgsfield/mcp.ts")

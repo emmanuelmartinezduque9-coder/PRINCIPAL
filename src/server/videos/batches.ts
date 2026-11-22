@@ -12,7 +12,19 @@ import { costsOfVideo, type VideoCosts } from "@/server/videos/costs";
 import { generationLock, generationView, pollVideoGenerations, type GenerationView } from "@/server/videos/generations";
 import { analysisLock, type Analysis } from "@/server/videos/analysis";
 import { checkKindInput, cleanNote, cleanProductNotes, isAvatarMode, type AvatarMode, type VideoKind } from "@/server/videos/brief";
-import { createVideo, getVideoFor, insertVideo, productNotesOf, referenceOutdated, staleness, type Video } from "@/server/videos/videos";
+import { songSummaries, type SongSummary } from "@/server/songs";
+import {
+  audioColumns,
+  canChooseSong,
+  checkSongChoice,
+  createVideo,
+  getVideoFor,
+  insertVideo,
+  productNotesOf,
+  referenceOutdated,
+  staleness,
+  type Video,
+} from "@/server/videos/videos";
 
 /**
  * Lotes: muchos vídeos a la vez encima del flujo de cada vídeo. Un lote es solo una lista con
@@ -189,6 +201,8 @@ export async function addVideoToBatch(
     bodyClipIds?: unknown;
     note?: unknown;
     linkUrl?: unknown;
+    /** «Música»: una canción de la biblioteca o `null` / sin enviar («Audio original»). */
+    songId?: unknown;
   },
 ): Promise<Video> {
   const batch = await ownBatch(user, batchId, NOT_CREATOR);
@@ -208,6 +222,7 @@ export async function addVideoToBatch(
     throw new HttpError(400, BAD_AVATAR);
   }
   const bodyClipIds = input.bodyClipIds === undefined ? undefined : await checkVideoBodies(input.productId, input.bodyClipIds);
+  const songId = (await checkSongChoice(input.songId)) ?? null;
   const extras = {
     batchId: batch.id,
     note,
@@ -217,6 +232,7 @@ export async function addVideoToBatch(
     adaptation: adaptation ?? null,
     ...(hookSeconds === undefined ? {} : { hookSeconds }),
     ...(bodyClipIds === undefined ? {} : { bodyClipIds }),
+    ...audioColumns(songId),
   };
   return input.linkUrl == null ? createVideo(user, input.productId, extras) : createVideoFromLink(user, input.productId, input.linkUrl, extras);
 }
@@ -246,6 +262,10 @@ export interface BatchRow {
   link: LinkState | null;
   avatarPhotoId: number | null;
   avatarMode: AvatarMode;
+  /** La canción elegida para el montaje, o `null` («Audio original»). */
+  song: SongSummary | null;
+  /** Quien mira puede cambiar la música (quien creó el vídeo o el dueño). */
+  songEditable: boolean;
   /** El último desglose: su estado, su error y si ya no corresponde (otra referencia u otras indicaciones). */
   analysis: { status: string; error: string | null; stale: boolean; staleReason: "reference" | "brief" | null } | null;
   /** Los riesgos que encontró el último desglose, si está hecho (texto en pantalla, función inexistente…). */
@@ -328,6 +348,7 @@ export async function batchView(user: AuthUser, batchId: number): Promise<BatchV
   const withGenerations = new Set(generated.map((row) => row.videoId));
   const bodiesOf = await bodiesOfVideos(list);
   const links = await linkStatesOf(list.flatMap((video) => (video.linkTaskId === null ? [] : [video.linkTaskId])));
+  const songsOf = await songSummaries(list.map((video) => video.songId));
 
   const rows = await Promise.all(
     list.map(async (video): Promise<BatchRow> => {
@@ -357,6 +378,8 @@ export async function batchView(user: AuthUser, batchId: number): Promise<BatchV
         link: video.linkTaskId === null ? null : (links.get(video.linkTaskId) ?? null),
         avatarPhotoId: video.avatarPhotoId,
         avatarMode: video.avatarMode as AvatarMode,
+        song: video.songId === null ? null : (songsOf.get(video.songId) ?? null),
+        songEditable: canChooseSong(user, video),
         analysis: analysis
           ? { status: analysis.status, error: analysis.error, ...staleness(analysis, { ...video, productNotes: notesOf.get(video.productId) ?? null }) }
           : null,
@@ -391,7 +414,7 @@ async function ownBatchVideo(user: AuthUser, batchId: number, videoId: number): 
 
 /**
  * «Duplicar»: un vídeo nuevo en el mismo lote con lo mismo (producto, tipo, adaptación, gancho y
- * cuerpos, cambios, quién sale, entorno, resolución), en una sola transacción. Si la referencia ya está lista se
+ * cuerpos, cambios, quién sale, entorno, resolución, música), en una sola transacción. Si la referencia ya está lista se
  * reutiliza tal cual (el mismo recorte en Higgsfield y una copia de sus fotogramas): no hay que
  * volver a subirla. Y como el duplicado es idéntico, para no gastar en Claude antes de que se edite:
  * - si el original tiene un desglose que vale (último hecho, de esta referencia y de estas
@@ -427,6 +450,8 @@ export async function duplicateBatchVideo(user: AuthUser, batchId: number, video
       bodyClipIds: video.bodyClipIds,
       environmentPhotoId: video.environmentPhotoId,
       clipResolution: video.clipResolution,
+      songId: video.songId,
+      audioMode: video.audioMode,
       ...(ready
         ? {
             referenceStatus: "ready",

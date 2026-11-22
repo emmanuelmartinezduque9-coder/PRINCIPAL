@@ -6,6 +6,7 @@ import { HttpError } from "@/server/http";
 import { MAX_SEGMENT_MS } from "@/server/media/ffmpeg";
 import { listProductPhotos, type PhotoInfo, type PhotoRole } from "@/server/photos";
 import { getProductFor } from "@/server/products";
+import { songSummaries, type SongSummary } from "@/server/songs";
 import type { Analysis } from "@/server/videos/analysis";
 import { startingAvatar } from "@/lib/default-avatar";
 import { analysisStaleness, checkKindInput, cleanNote, isAvatarMode, type AvatarMode, type VideoKind } from "@/server/videos/brief";
@@ -102,6 +103,9 @@ export interface NewVideoExtras {
   adaptation?: string | null;
   hookSeconds?: number;
   bodyClipIds?: number[];
+  /** Ya comprobada (`checkSongChoice`), con su modo (`audioColumns`). */
+  songId?: number | null;
+  audioMode?: "cancion" | "original";
 }
 
 /**
@@ -298,6 +302,58 @@ export async function updateVideoChoices(user: AuthUser, videoId: number, input:
   return updated;
 }
 
+const SONG_NOT_FOUND = "Canción no encontrada.";
+
+/**
+ * `songId` tal como llega: `undefined` (no se toca), `null` («Audio original») o el id de una
+ * canción que existe (400 si no es un id; 404 si la canción no existe).
+ */
+export async function checkSongChoice(value: unknown): Promise<number | null | undefined> {
+  if (value === undefined || value === null) return value;
+  if (!Number.isSafeInteger(value) || (value as number) <= 0) throw new HttpError(400, "Canción no válida.");
+  if (!(await songSummaries([value as number])).has(value as number)) throw new HttpError(404, SONG_NOT_FOUND);
+  return value as number;
+}
+
+/** Las columnas de audio para una elección: la canción elegida manda (`cancion`); sin canción, `original`. */
+export function audioColumns(songId: number | null): { songId: number | null; audioMode: "cancion" | "original" } {
+  return { songId, audioMode: songId === null ? "original" : "cancion" };
+}
+
+const isForeignKeyError = (error: unknown) =>
+  (error as { code?: string }).code === "23503" || (error as { cause?: { code?: string } }).cause?.code === "23503";
+
+/**
+ * Quién elige la «Música» de un vídeo: quien lo creó y el dueño (en cualquier vídeo que ve: la
+ * música la decide él). No gasta nada, así que no hace falta ser quien paga.
+ */
+export const canChooseSong = (user: AuthUser, video: Pick<Video, "createdBy">) => video.createdBy === user.id || user.role === "dueno";
+
+/**
+ * «Música» del vídeo: una canción de la biblioteca o `null` («Audio original»). Es para el montaje:
+ * no cambia el desglose ni la generación, así que no deja nada por repetir. Quien creó el vídeo o
+ * el dueño (`canChooseSong`).
+ */
+export async function setVideoSong(user: AuthUser, videoId: number, songId: unknown): Promise<Video> {
+  const video = await getVideoFor(user, videoId);
+  if (!canChooseSong(user, video)) throw new HttpError(403, "Solo quien creó este vídeo o el dueño pueden elegir su música.");
+  const chosen = await checkSongChoice(songId);
+  if (chosen === undefined) return video;
+  try {
+    const [updated] = await getDb()
+      .update(schema.videos)
+      .set(audioColumns(chosen))
+      .where(eq(schema.videos.id, video.id))
+      .returning();
+    if (!updated) throw new HttpError(404, NOT_FOUND);
+    return updated;
+  } catch (error) {
+    // La canción se borró justo entre la comprobación y el guardado.
+    if (isForeignKeyError(error)) throw new HttpError(404, SONG_NOT_FOUND);
+    throw error;
+  }
+}
+
 /** Un fotograma de la referencia (JPEG), para quien ve el vídeo. */
 export async function readVideoFrame(user: AuthUser, videoId: number, index: number): Promise<{ mime: string; data: Buffer }> {
   const video = await getVideoFor(user, videoId);
@@ -323,6 +379,10 @@ export interface VideoView {
   referenceOutdated: boolean;
   /** Los cuerpos que van detrás del gancho, en orden (solo cuentan con «Solo gancho»). */
   bodies: VideoBody[];
+  /** La canción elegida para el montaje (con `video.audioMode = "cancion"`), o `null`: audio original. */
+  song: SongSummary | null;
+  /** Quien mira puede cambiar la música (`canChooseSong`). */
+  songEditable: boolean;
   /**
    * Con «Solo gancho»: lo que dura de verdad el gancho (el tramo: como mucho `hookSeconds`, menos
    * si la referencia es más corta) y lo que dura el clip que se genera (4 s como poco). Si el clip
@@ -436,6 +496,8 @@ export async function videoView(user: AuthUser, videoId: number): Promise<VideoV
     frames,
     referenceOutdated: referenceOutdated(video),
     bodies: await bodiesOfVideo(video),
+    song: (await songSummaries([video.songId])).get(video.songId ?? 0) ?? null,
+    songEditable: canChooseSong(user, video),
     hook: hookTiming(video),
     link: await linkStateOf(video.linkTaskId),
     analysis: latest

@@ -9,6 +9,8 @@ import { toast } from "sonner";
 import { BodyPicker, HookStepper } from "@/components/library/body-picker";
 import type { ProductView } from "@/components/products/labels";
 import { PageHeader } from "@/components/shell/page-header";
+import type { SongJson } from "@/components/songs/labels";
+import { MusicPicker } from "@/components/songs/music-picker";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -53,6 +55,8 @@ interface Row {
   bodies: number[];
   /** «Cambios específicos». */
   note: string;
+  /** «Música»: una canción de la biblioteca o `null` (audio original). */
+  song: SongJson | null;
   /** «Más opciones» abierto. */
   open: boolean;
   error: string | null;
@@ -249,7 +253,7 @@ function RowCard({
   const link = row.source.type === "link" ? linkLabel(row.source.url) : null;
   return (
     <li className="flex flex-col gap-3 px-4 py-3">
-      <div className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-3 lg:grid-cols-[auto_minmax(0,11rem)_10rem_minmax(0,1fr)_auto]">
+      <div className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-3 lg:grid-cols-[auto_minmax(0,11rem)_10rem_12rem_minmax(0,1fr)_auto]">
         {row.source.type === "file" ? <FilePreview src={row.source.preview} /> : <LinkPreview />}
         <div className="flex min-w-0 flex-col pt-1">
           <span className="truncate text-sm font-medium" title={row.source.type === "file" ? name : row.source.url}>
@@ -284,6 +288,7 @@ function RowCard({
           </Button>
         </div>
         <KindSelect value={row.kind} onChange={(kind) => onChange({ kind })} className="col-span-3 lg:col-span-1" />
+        <MusicPicker value={row.song} onChange={(song) => onChange({ song })} className="col-span-3 w-full lg:col-span-1" />
         <div className="col-span-3 flex min-w-0 flex-col gap-1 lg:col-span-1">
           <Textarea
             id={noteId}
@@ -407,6 +412,7 @@ export function NewBatch() {
     hookSeconds: DEFAULT_HOOK_SECONDS,
     bodies: [],
     note: "",
+    song: null,
     open: false,
     error: null,
   });
@@ -497,6 +503,7 @@ export function NewBatch() {
                 adaptation: row.kind === "adaptacion_concepto" ? row.adaptation.trim() : null,
                 ...(row.kind === "solo_gancho" ? { hookSeconds: row.hookSeconds, bodyClipIds: row.bodies } : {}),
                 note: row.note.trim() || null,
+                songId: row.song?.id ?? null,
                 // Con enlace, el vídeo nace esperando al Mac; con archivo, se sube después.
                 ...(row.source.type === "link" ? { linkUrl: row.source.url } : {}),
               }),

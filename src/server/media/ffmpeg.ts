@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { detectVideoType } from "./detect";
+import { detectAudioType, detectVideoType, type AudioMime } from "./detect";
 
 /** Herramientas de vídeo con ffmpeg. Siempre `spawn` con lista de argumentos (nunca shell). */
 
@@ -294,6 +294,56 @@ export async function makeThumbnail(input: Buffer, kind: "image" | "video", maxS
     ], "No hemos podido preparar la miniatura.");
     if (stdout.length === 0) throw new MediaError("No hemos podido preparar la miniatura.");
     return stdout;
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+}
+
+const AUDIO_DEMUXER: Record<AudioMime, string> = { "audio/mpeg": "mp3", "audio/mp4": MP4_DEMUXER, "audio/wav": "wav" };
+const UNREADABLE_AUDIO = "No hemos podido leer esta canción.";
+/** Una canción de más de 20 minutos no es una canción para un vídeo. */
+export const MAX_SONG_MS = 20 * 60_000;
+
+/**
+ * Tipo y duración de un archivo de audio. El tipo sale de sus bytes (MP3, M4A o WAV); ffprobe lee
+ * la duración con el demultiplexor de ese tipo, exige una pista de audio y rechaza un MP4 que lleve
+ * vídeo (una carátula no cuenta).
+ */
+export async function probeAudio(input: Buffer): Promise<{ mime: AudioMime; durationMs: number }> {
+  const mime = detectAudioType(input.subarray(0, 16));
+  if (!mime) throw new MediaError("Formato no admitido. Usa MP3, M4A o WAV.");
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "cancion-"));
+  try {
+    const src = path.join(dir, "entrada");
+    await fs.writeFile(src, input);
+    let data: {
+      streams?: Array<{ codec_type?: string; duration?: string; disposition?: { attached_pic?: number } }>;
+      format?: { duration?: string };
+    };
+    try {
+      const { stdout } = await run("ffprobe", [
+        "-v", "error",
+        "-show_entries", "stream=codec_type,duration:stream_disposition=attached_pic:format=duration",
+        "-of", "json",
+        ...inputArgs(AUDIO_DEMUXER[mime], src),
+      ], UNREADABLE_AUDIO);
+      data = JSON.parse(stdout.toString("utf8"));
+    } catch (error) {
+      if (error instanceof FfmpegMissingError) throw error;
+      throw new MediaError(UNREADABLE_AUDIO);
+    }
+    const streams = data.streams ?? [];
+    const audio = streams.find((stream) => stream.codec_type === "audio");
+    if (!audio) throw new MediaError(UNREADABLE_AUDIO);
+    if (streams.some((stream) => stream.codec_type === "video" && stream.disposition?.attached_pic !== 1)) {
+      throw new MediaError("Esto es un vídeo, no una canción.");
+    }
+    let seconds = Number(data.format?.duration);
+    if (!Number.isFinite(seconds) || seconds <= 0) seconds = Number(audio.duration);
+    const durationMs = Number.isFinite(seconds) && seconds > 0 ? Math.round(seconds * 1000) : 0;
+    if (durationMs <= 0) throw new MediaError(UNREADABLE_AUDIO);
+    if (durationMs > MAX_SONG_MS) throw new MediaError("Esta canción dura demasiado: el máximo es de 20 minutos.");
+    return { mime, durationMs };
   } finally {
     await fs.rm(dir, { recursive: true, force: true });
   }

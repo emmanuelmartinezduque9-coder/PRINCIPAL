@@ -8,6 +8,7 @@ import Link from "next/link";
 import { useRef, useState } from "react";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/shell/page-header";
+import { MusicPicker } from "@/components/songs/music-picker";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -283,6 +284,17 @@ export function BatchBoard({ batchId }: { batchId: number }) {
     inFlight.current = false;
   }
 
+  /** «Música» de una fila: se guarda en el vídeo (no cambia el desglose ni la generación). */
+  async function chooseSong(videoId: number, songId: number | null) {
+    try {
+      await api(`/api/videos/${videoId}`, { method: "PUT", body: JSON.stringify({ songId }) });
+    } catch (error) {
+      toast.error(message(error, "No se pudo guardar."));
+    } finally {
+      void client.invalidateQueries({ queryKey: ["batch", batchId] });
+    }
+  }
+
   const generating = (on: boolean) => {
     inFlight.current = on;
     setRunning(on ? "generate" : null);
@@ -368,12 +380,13 @@ export function BatchBoard({ batchId }: { batchId: number }) {
             <section key={group.productId} aria-label={group.name} className="overflow-hidden rounded-xl bg-card ring-1 ring-foreground/10">
               <GroupHeader batchId={batchId} group={group} editable={data.batch.mine} />
               {/* Columnas fijas: las tablas de todos los productos quedan alineadas. */}
-              <Table className="min-w-[66rem] table-fixed">
+              <Table className="min-w-[72rem] table-fixed">
                 <TableHeader>
                   <TableRow className="hover:bg-transparent">
                     <TableHead className="w-14 pl-4" />
                     <TableHead>Vídeo</TableHead>
                     <TableHead className="w-20">Avatar</TableHead>
+                    <TableHead className="w-24">Música</TableHead>
                     <TableHead className="w-52">Referencia</TableHead>
                     <TableHead className="w-28">Desglose</TableHead>
                     <TableHead className="w-28">Imagen</TableHead>
@@ -439,6 +452,14 @@ export function BatchBoard({ batchId }: { batchId: number }) {
                         </TableCell>
                         <TableCell>
                           <AvatarCell row={row} />
+                        </TableCell>
+                        <TableCell>
+                          <MusicPicker
+                            compact
+                            value={row.song}
+                            readOnly={!row.songEditable}
+                            onChange={(song) => void chooseSong(row.id, song?.id ?? null)}
+                          />
                         </TableCell>
                         {states.map((state, index) => (
                           <TableCell key={index}>

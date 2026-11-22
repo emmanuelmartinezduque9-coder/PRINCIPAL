@@ -6,6 +6,8 @@ import { useEffect, useId, useRef, useState } from "react";
 import { toast } from "sonner";
 import { BodyPicker, HookStepper } from "@/components/library/body-picker";
 import { Panel } from "@/components/shell/panel";
+import { MusicPicker } from "@/components/songs/music-picker";
+import type { SongJson } from "@/components/songs/labels";
 import { Textarea } from "@/components/ui/textarea";
 import { api } from "@/lib/api";
 import { createLatestSaver, type LatestSaver } from "@/lib/latest-saver";
@@ -32,6 +34,32 @@ function useSaveBrief(videoId: number) {
       if (before) client.setQueryData(key, before);
       toast.error(error instanceof Error ? error.message : "No se pudo guardar.");
       return false;
+    } finally {
+      void client.invalidateQueries({ queryKey: key });
+    }
+  };
+}
+
+/** «Música»: se ve al instante y, si el servidor no la acepta, vuelve a como estaba. No toca el desglose. */
+function useSaveSong(videoId: number) {
+  const client = useQueryClient();
+  return async (song: SongJson | null) => {
+    const key = ["video", videoId];
+    const before = client.getQueryData<VideoViewJson>(key);
+    client.setQueryData<VideoViewJson>(key, (view) =>
+      view
+        ? {
+            ...view,
+            video: { ...view.video, songId: song?.id ?? null, audioMode: song ? "cancion" : "original" },
+            song: song ? { id: song.id, number: song.number, title: song.title, dropMs: song.dropMs, startMs: song.startMs, durationMs: song.durationMs } : null,
+          }
+        : view,
+    );
+    try {
+      await api(`/api/videos/${videoId}`, { method: "PUT", body: JSON.stringify({ songId: song?.id ?? null }) });
+    } catch (error) {
+      if (before) client.setQueryData(key, before);
+      toast.error(error instanceof Error ? error.message : "No se pudo guardar.");
     } finally {
       void client.invalidateQueries({ queryKey: key });
     }
@@ -137,6 +165,7 @@ function SavedHookSeconds({ value, onSave, disabled }: { value: number; onSave: 
 export function BriefPanel({ view }: { view: VideoViewJson }) {
   const { video, mine, productNotes } = view;
   const save = useSaveBrief(video.id);
+  const saveSong = useSaveSong(video.id);
   const kind = kindOf(video.kind);
   const adapting = kind === "adaptacion_concepto";
   const hookOnly = kind === "solo_gancho";
@@ -155,6 +184,7 @@ export function BriefPanel({ view }: { view: VideoViewJson }) {
           className="shrink-0"
         />
         {hookOnly ? <SavedHookSeconds value={video.hookSeconds} onSave={(hookSeconds) => save({ hookSeconds })} disabled={!mine} /> : null}
+        <MusicPicker value={view.song} onChange={(song) => void saveSong(song)} readOnly={!view.songEditable} className="max-w-64 shrink-0" />
         {productNotes ? (
           <p className="flex min-w-0 items-start gap-2 text-sm text-muted-foreground" title={productNotes}>
             <Layers className="mt-0.5 size-4 shrink-0" role="img" aria-label="Indicaciones del lote" />
