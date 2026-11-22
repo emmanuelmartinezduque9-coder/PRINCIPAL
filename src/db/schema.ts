@@ -194,3 +194,30 @@ export const ruleVersions = pgTable(
   },
   (t) => [unique("rule_versions_slug_version").on(t.slug, t.version)],
 );
+
+/**
+ * Pasos de los trabajos en segundo plano: una fila por paso, con clave única, que se confirma
+ * antes de tocar un servicio externo. Un paso hecho guarda su resultado y no se vuelve a
+ * ejecutar. `payload` son los datos con los que se encoló el trabajo (lo que hace falta para
+ * volver a encolarlo); un paso que no viene de un trabajo encolado no lo tiene. Solo `src/jobs/`
+ * la toca. Sin claves ajenas, igual que el libro de gasto.
+ */
+export const jobSteps = pgTable(
+  "job_steps",
+  {
+    key: text("key").primaryKey(),
+    jobName: text("job_name").notNull(),
+    userId: bigint("user_id", { mode: "number" }).notNull(),
+    productId: bigint("product_id", { mode: "number" }),
+    /** `pending`, `queued`, `running`, `done`, `failed` o `paused_cap`. */
+    status: text("status").notNull(),
+    attempts: integer("attempts").notNull().default(0),
+    payload: jsonb("payload"),
+    result: jsonb("result"),
+    error: text("error"),
+    startedAt: instant("started_at"),
+    finishedAt: instant("finished_at"),
+    updatedAt: instant("updated_at").notNull().defaultNow(),
+  },
+  (t) => [index("job_steps_status").on(t.status)],
+);

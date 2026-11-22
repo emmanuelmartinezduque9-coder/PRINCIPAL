@@ -50,6 +50,13 @@
       "when": 1795318740624,
       "tag": "0006_robust_madrox",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1795321442766,
+      "tag": "0007_abandoned_strong_guy",
+      "breakpoints": true
     }
   ]
 }

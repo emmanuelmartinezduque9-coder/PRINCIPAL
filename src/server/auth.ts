@@ -243,6 +243,21 @@ export async function getSessionUser(token: string, now: Date = new Date()): Pro
   return asAuthUser(row);
 }
 
+/**
+ * Persona activa por su id, para el trabajo en segundo plano, que no tiene sesión. `null` si no
+ * existe o está desactivada, sea colaborador o dueño. El dueño del propio ordenador (id 0) solo
+ * existe con el inicio de sesión apagado.
+ */
+export async function getActiveUser(userId: number): Promise<AuthUser | null> {
+  if (userId === LOCAL_USER.id) return authRequired() ? null : LOCAL_USER;
+  if (!Number.isSafeInteger(userId) || userId < 0) return null;
+  const [row] = await getDb()
+    .select(userColumns)
+    .from(schema.users)
+    .where(and(eq(schema.users.id, userId), isNull(schema.users.disabledAt)));
+  return row ? asAuthUser(row) : null;
+}
+
 export async function logout(token: string): Promise<void> {
   if (!token) return;
   await getDb().delete(schema.sessions).where(eq(schema.sessions.tokenHash, sha256(token)));

@@ -3,6 +3,7 @@ import { getDb, schema } from "@/db/client";
 import {
   acceptInvite,
   createInvite,
+  getActiveUser,
   getSessionUser,
   hashPassword,
   login,
@@ -190,6 +191,37 @@ describe("cuentas desactivadas", () => {
     await getDb().update(schema.users).set({ disabledAt: new Date() }).where(eq(schema.users.id, ana.id));
     expect(await getSessionUser(token)).toBeNull();
     expect(await login("ana@example.com", PASSWORD)).toBeNull();
+  });
+});
+
+describe("persona activa por su id (trabajos en segundo plano, sin sesión)", () => {
+  it("devuelve a la persona si su cuenta está activa, sea colaborador o dueño", async () => {
+    const ana = await person();
+    const dueno = await makeUser("dueno");
+    expect(await getActiveUser(ana.id)).toEqual(ana);
+    expect(await getActiveUser(dueno.id)).toMatchObject({ id: dueno.id, role: "dueno" });
+  });
+
+  it("no devuelve a nadie si la cuenta está desactivada, también si es la del dueño", async () => {
+    const ana = await person();
+    const dueno = await makeUser("dueno");
+    await getDb().update(schema.users).set({ disabledAt: new Date() });
+    expect(await getActiveUser(ana.id)).toBeNull();
+    expect(await getActiveUser(dueno.id)).toBeNull();
+  });
+
+  it("no devuelve a nadie para un id que no existe o no es un id", async () => {
+    for (const id of [999_999, -1, 1.5, Number.NaN]) expect(await getActiveUser(id)).toBeNull();
+  });
+
+  it("el dueño del propio ordenador (id 0) solo existe con el inicio de sesión apagado", async () => {
+    expect(await getActiveUser(0)).toBeNull();
+    process.env.PRINCIPAL_AUTH = "off";
+    try {
+      expect(await getActiveUser(0)).toMatchObject({ id: 0, role: "dueno" });
+    } finally {
+      delete process.env.PRINCIPAL_AUTH;
+    }
   });
 });
 

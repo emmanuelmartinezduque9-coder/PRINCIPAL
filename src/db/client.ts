@@ -22,7 +22,13 @@ export function databaseUrl(): string {
 
 export function getPool(): Pool {
   if (!globalForDb.__principalPool) {
-    globalForDb.__principalPool = new Pool({ connectionString: databaseUrl(), max: 10 });
+    const pool = new Pool({ connectionString: databaseUrl(), max: 10 });
+    // Una conexión en reposo puede cortarse (reinicio de la base de datos, red). Sin nadie
+    // escuchando, ese error tumbaría el proceso; se anota y la siguiente consulta abre otra.
+    pool.on("error", (error) => {
+      console.error("[db] Se perdió una conexión en reposo:", error.message);
+    });
+    globalForDb.__principalPool = pool;
   }
   return globalForDb.__principalPool;
 }

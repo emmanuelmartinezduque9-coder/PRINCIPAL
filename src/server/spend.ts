@@ -247,6 +247,29 @@ export async function releaseSpend(entryId: number): Promise<void> {
   if (!row) throw new Error("Cargo no encontrado.");
 }
 
+/**
+ * Da por gastadas las reservas que quedaron sin cerrar de unos pasos interrumpidos (el proceso se
+ * cayó entre reservar y tener el resultado). No se sabe si la llamada llegó a cobrarse, así que
+ * nunca se liberan: el libro se queda con lo reservado y la fila lleva `detail.outcome: "unknown"`.
+ * Solo debe llamarlo quien acaba de hacerse con esos pasos (`src/jobs/`), y dentro de la misma
+ * transacción (`exec`). Devuelve cuántos cargos cambió.
+ */
+export async function settleInterruptedSpend(stepKeys: string[], exec: Exec = getDb()): Promise<number> {
+  if (stepKeys.length === 0) return 0;
+  const mark = JSON.stringify({ outcome: "unknown", interrupted: true });
+  const updated = await exec
+    .update(entries)
+    .set({
+      status: "settled",
+      settledAt: new Date(),
+      costMicros: sql`${entries.reservedMicros}`,
+      detail: sql`case when jsonb_typeof(${entries.detail}) = 'object' then ${entries.detail} || ${mark}::jsonb else ${mark}::jsonb end`,
+    })
+    .where(and(inArray(entries.stepKey, stepKeys), eq(entries.status, "reserved")))
+    .returning({ id: entries.id });
+  return updated.length;
+}
+
 /** Queda saldo (más de 0) en el tope global y en el de la persona. Sin cuenta activa: no. */
 export async function hasRoom(userId: number, now: Date = new Date()): Promise<boolean> {
   const db = getDb();
@@ -272,13 +295,34 @@ function checkOwnerAndCap(owner: AuthUser, micros: number): void {
   if (!Number.isSafeInteger(micros)) throw new HttpError(400, "El tope no es un importe válido.");
 }
 
-/** Cambia el tope mensual global. Solo el dueño (403 si no). */
+/**
+ * Tras cambiar un tope puede haber trabajos esperando saldo: se reanudan en el momento. Si esto
+ * falla, el tope ya está guardado y la tarea de cada hora los reanudará: no se pierde nada.
+ */
+async function resumeAfterCapChange(): Promise<void> {
+  try {
+    // Importación dinámica: `src/jobs/` importa este módulo y así no se forma un ciclo.
+    const { resumePausedJobs } = await import("@/jobs/boss");
+    await resumePausedJobs();
+  } catch (error) {
+    console.error(
+      "[gasto] No se pudieron reanudar ahora los trabajos en pausa:",
+      error instanceof Error ? error.message : String(error),
+    );
+  }
+}
+
+/** Cambia el tope mensual global. Solo el dueño (403 si no). Reanuda los trabajos en pausa que ya tengan saldo. */
 export async function setGlobalCap(owner: AuthUser, micros: number): Promise<void> {
   checkOwnerAndCap(owner, micros);
   await setSetting(GLOBAL_CAP_SETTING, micros);
+  await resumeAfterCapChange();
 }
 
-/** Cambia el tope mensual propio de un colaborador. Solo el dueño; el dueño no tiene tope propio. */
+/**
+ * Cambia el tope mensual propio de un colaborador. Solo el dueño; el dueño no tiene tope propio.
+ * Reanuda los trabajos en pausa que ya tengan saldo.
+ */
 export async function setUserCap(owner: AuthUser, userId: number, micros: number): Promise<void> {
   checkOwnerAndCap(owner, micros);
   if (!Number.isSafeInteger(userId) || userId <= 0) throw new HttpError(404, "Persona no encontrada.");
@@ -287,6 +331,7 @@ export async function setUserCap(owner: AuthUser, userId: number, micros: number
   if (!person) throw new HttpError(404, "Persona no encontrada.");
   if (person.role === "dueno") throw new HttpError(400, "El dueño no tiene tope propio: solo cuenta el tope global.");
   await db.update(schema.users).set({ spendCapMicros: micros }).where(eq(schema.users.id, userId));
+  await resumeAfterCapChange();
 }
 
 export interface SpendSummary {
