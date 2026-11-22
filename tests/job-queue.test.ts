@@ -367,6 +367,34 @@ describe("recuperación tras una caída", () => {
     expect(await entriesByStep("k-vivo")).toMatchObject([{ status: "reserved" }]);
   });
 
+  it("un paso largo que sigue en marcha (da señales de vida) no se reencola ni pierde su reserva", async () => {
+    await insertStep({
+      key: "k-largo",
+      startedAt: minutesAgo(40),
+      heartbeatAt: new Date(Date.now() - 20_000),
+      payload: { nota: "largo" },
+    });
+    await reserveSpend({ ...forAna(), provider: "claude", stepKey: "k-largo", estimateMicros: RESERVADO });
+
+    expect(await recoverInterruptedSteps()).toBe(0);
+    await runToIdle();
+    expect(runs).toHaveLength(0);
+    expect(await step("k-largo")).toMatchObject({ status: "running", attempts: 1 });
+    expect(await entriesByStep("k-largo")).toMatchObject([{ status: "reserved", costMicros: null }]);
+  });
+
+  it("si deja de dar señales de vida más de 15 minutos, sí se reencola", async () => {
+    await insertStep({
+      key: "k-mudo",
+      startedAt: minutesAgo(40),
+      heartbeatAt: minutesAgo(16),
+      payload: { nota: "mudo" },
+    });
+    expect(await recoverInterruptedSteps()).toBe(1);
+    await runToIdle();
+    expect(runs.map((run) => run.data.nota)).toEqual(["mudo"]);
+  });
+
   it("un paso que falla se reintenta como mucho tres veces en total", async () => {
     const errors = silenceErrors();
     work = async (data, ctx) => {

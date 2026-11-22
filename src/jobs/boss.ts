@@ -184,8 +184,8 @@ export async function startWorker(): Promise<void> {
   defineSchedule(RESUME_TASK, "5 * * * *", async () => {
     await resumePausedJobs();
   });
-  // Cada 5 minutos y no solo al arrancar: un paso se da por interrumpido a los 15 minutos, y al
-  // arrancar tras una caída todavía no ha pasado ese tiempo.
+  // Cada 5 minutos y no solo al arrancar: un paso se da por interrumpido a los 15 minutos sin
+  // señales de vida, y al arrancar tras una caída todavía no ha pasado ese tiempo.
   defineSchedule(RECOVER_TASK, "*/5 * * * *", async () => {
     await recoverInterruptedSteps();
   });
@@ -321,7 +321,7 @@ export async function resumePausedJobs(now: Date = new Date()): Promise<number> 
 
 /**
  * Recupera lo que quedó a medias: vuelve a encolar los trabajos con pasos que fallaron o que se
- * interrumpieron (llevan más de 15 minutos en marcha: el proceso que los llevaba se cayó), mientras
+ * interrumpieron (más de 15 minutos sin señales de vida: el proceso que los llevaba se cayó), mientras
  * les queden intentos. Lo que un paso interrumpido tenía reservado no se libera: cuenta como
  * gastado. Los que ya no tienen intentos quedan fallidos. Devuelve cuántos trabajos reencoló.
  */

@@ -1,6 +1,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import crypto from "node:crypto";
 import { and, eq, gte, inArray, isNull, lt, ne, or, sql } from "drizzle-orm";
+import type { PgUpdateSetSource } from "drizzle-orm/pg-core";
 import { getDb, schema } from "@/db/client";
 import { LlmCapReachedError } from "@/llm/gateway";
 import { getActiveUser, type AuthUser } from "@/server/auth";
@@ -33,10 +34,14 @@ export interface JobContext {
 export const MAX_ATTEMPTS = 3;
 
 /**
- * Un paso que lleva más que esto en marcha se da por interrumpido (el proceso que lo llevaba se
- * cayó). Por eso un paso debe ser una sola llamada externa y durar bastante menos.
+ * Un paso en marcha que lleva más que esto sin dar señales de vida se da por interrumpido (el
+ * proceso que lo llevaba se cayó). Mientras el proceso vive renueva la señal cada `HEARTBEAT_MS`,
+ * así que un paso largo que sigue en marcha nunca se da por interrumpido, dure lo que dure.
  */
 export const STALE_RUNNING_MS = 15 * 60 * 1000;
+
+/** Cada cuánto renueva su señal de vida un paso en marcha. */
+export const HEARTBEAT_MS = 30 * 1000;
 
 export type StepStatus = "pending" | "queued" | "running" | "done" | "failed" | "paused_cap";
 
@@ -156,9 +161,18 @@ async function accessDenial(ctx: JobContext): Promise<string | null> {
 
 const staleSince = (now: Date) => new Date(now.getTime() - STALE_RUNNING_MS);
 
-/** Condición «lleva demasiado en marcha»: se da por interrumpido. */
+/**
+ * Condición «en marcha pero sin señales de vida desde hace demasiado»: se da por interrumpido.
+ * La última señal es el latido; una fila sin latido cuenta desde que empezó.
+ */
 const interrupted = (staleBefore: Date) =>
-  and(eq(steps.status, "running"), or(isNull(steps.startedAt), lt(steps.startedAt, staleBefore)));
+  and(
+    eq(steps.status, "running"),
+    or(
+      lt(steps.heartbeatAt, staleBefore),
+      and(isNull(steps.heartbeatAt), or(isNull(steps.startedAt), lt(steps.startedAt, staleBefore))),
+    ),
+  );
 
 /** Condición «a este paso le toca reintento»: falló o se interrumpió, y le quedan intentos. */
 export const retryableStep = (now: Date) =>
@@ -235,7 +249,7 @@ async function storedResult(key: string): Promise<{ status: string; result: unkn
 }
 
 /**
- * Pasos que llevaban demasiado en marcha y ya habían gastado todos sus intentos: quedan fallidos
+ * Pasos interrumpidos (sin señales de vida) que ya habían gastado todos sus intentos: quedan fallidos
  * y su reserva pendiente cuenta como gastada. Con `key`, solo ese paso. Devuelve cuántos.
  */
 export async function failExhaustedSteps(now: Date = new Date(), key?: string): Promise<number> {
@@ -286,6 +300,7 @@ async function claimStep(
           attempts: 1,
           payload,
           startedAt: now,
+          heartbeatAt: now,
           updatedAt: now,
         })
         .onConflictDoUpdate({
@@ -301,6 +316,7 @@ async function claimStep(
             result: null,
             error: null,
             startedAt: now,
+            heartbeatAt: now,
             finishedAt: null,
             updatedAt: now,
           },
@@ -316,7 +332,13 @@ async function claimStep(
     if (claimed) return { claim: { key, attempts: claimed.attempts, startedAt: now } };
 
     const [row] = await db
-      .select({ status: steps.status, attempts: steps.attempts, startedAt: steps.startedAt, error: steps.error })
+      .select({
+        status: steps.status,
+        attempts: steps.attempts,
+        startedAt: steps.startedAt,
+        heartbeatAt: steps.heartbeatAt,
+        error: steps.error,
+      })
       .from(steps)
       .where(eq(steps.key, key));
     if (!row) continue;
@@ -327,7 +349,8 @@ async function claimStep(
     }
     if (row.status === "failed" && row.attempts >= MAX_ATTEMPTS) throw new StepFailedError(row.error ?? FAILED);
     if (row.status === "running") {
-      const stale = row.startedAt === null || row.startedAt < staleBefore;
+      const lastSeen = row.heartbeatAt ?? row.startedAt;
+      const stale = lastSeen === null || lastSeen < staleBefore;
       if (!stale) throw new StepBusyError();
       if (row.attempts >= MAX_ATTEMPTS && (await failExhaustedSteps(now, key)) > 0) {
         throw new StepFailedError(INTERRUPTED);
@@ -335,6 +358,26 @@ async function claimStep(
     }
   }
   throw new StepBusyError();
+}
+
+/**
+ * Mientras el paso está en marcha, renueva su señal de vida cada `HEARTBEAT_MS`. Devuelve cómo
+ * pararlo. Si un latido no se puede escribir no pasa nada: hacen falta muchos seguidos para que
+ * el paso se dé por interrumpido.
+ */
+function startHeartbeat(claim: Claim): () => void {
+  const timer = setInterval(() => {
+    void (async () => {
+      try {
+        await getDb().update(steps).set({ heartbeatAt: new Date() }).where(stillMine(claim));
+      } catch {
+        // El siguiente latido lo intentará de nuevo.
+      }
+    })();
+  }, HEARTBEAT_MS);
+  // El latido no debe mantener vivo un proceso que ya quiere terminar.
+  timer.unref();
+  return () => clearInterval(timer);
 }
 
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -376,7 +419,7 @@ function messageOf(error: unknown): string {
  * `running` y más tarde se recuperará como interrumpida: lo que importa a quien llama es el error
  * del paso, no este.
  */
-async function mark(claim: Claim, values: Partial<typeof steps.$inferInsert> | Record<string, unknown>): Promise<void> {
+async function mark(claim: Claim, values: PgUpdateSetSource<typeof steps>): Promise<void> {
   try {
     await getDb().update(steps).set(values).where(stillMine(claim));
   } catch (error) {
@@ -415,9 +458,9 @@ function toStored(value: unknown): unknown {
  * Ejecuta un paso una sola vez por clave.
  *
  * - Hecho → devuelve el resultado guardado, sin ejecutar `fn`.
- * - En marcha desde hace poco → `StepBusyError` («Este paso ya está en marcha.»).
- * - Sin empezar, en pausa, fallido con intentos, o en marcha desde hace más de 15 minutos (se
- *   interrumpió) → se ejecuta, y cuenta un intento.
+ * - En marcha y dando señales de vida → `StepBusyError` («Este paso ya está en marcha.»).
+ * - Sin empezar, en pausa, fallido con intentos, o en marcha pero sin señales de vida desde hace
+ *   más de 15 minutos (se interrumpió) → se ejecuta, y cuenta un intento.
  * - Fallido sin intentos → `StepFailedError` con el error guardado, sin ejecutar `fn`.
  *
  * Si `fn` lanza un error de tope de gasto, el paso queda en pausa (`JobPausedError`) sin contar el
@@ -442,9 +485,11 @@ export async function runStep<T>(ctx: JobContext, key: string, fn: () => Promise
   const { claim } = outcome;
 
   let value: T;
+  const stopHeartbeat = startHeartbeat(claim);
   try {
     value = await fn();
   } catch (error) {
+    stopHeartbeat();
     // También si la pausa viene de un paso ejecutado dentro de este.
     if (error instanceof SpendCapError || error instanceof LlmCapReachedError || error instanceof JobPausedError) {
       await markPaused(claim);
@@ -453,6 +498,7 @@ export async function runStep<T>(ctx: JobContext, key: string, fn: () => Promise
     await markFailed(claim, messageOf(error), error instanceof StepFailedError);
     throw error;
   }
+  stopHeartbeat();
 
   let stored: unknown;
   try {

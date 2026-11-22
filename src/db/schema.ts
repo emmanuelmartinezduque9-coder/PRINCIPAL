@@ -216,6 +216,8 @@ export const jobSteps = pgTable(
     result: jsonb("result"),
     error: text("error"),
     startedAt: instant("started_at"),
+    /** Última señal de vida del proceso que lo ejecuta; se renueva mientras el paso está en marcha. */
+    heartbeatAt: instant("heartbeat_at"),
     finishedAt: instant("finished_at"),
     updatedAt: instant("updated_at").notNull().defaultNow(),
   },

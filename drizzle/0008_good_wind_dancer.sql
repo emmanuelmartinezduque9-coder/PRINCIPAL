@@ -1,0 +1,1 @@
+ALTER TABLE "job_steps" ADD COLUMN "heartbeat_at" timestamp with time zone;

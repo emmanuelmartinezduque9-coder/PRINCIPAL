@@ -1,9 +1,12 @@
 import { eq } from "drizzle-orm";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { getDb, getPool, schema } from "@/db/client";
+import { recoverInterruptedSteps } from "@/jobs/boss";
 import {
+  HEARTBEAT_MS,
   JobPausedError,
   MAX_ATTEMPTS,
+  runAsJob,
   runStep,
   STALE_RUNNING_MS,
   StepBusyError,
@@ -244,6 +247,91 @@ describe("runStep", () => {
     });
 
     expect(await entryByStep("otro")).toMatchObject({ status: "reserved", costMicros: null });
+  });
+
+  it("un paso que empezó hace mucho pero sigue dando señales de vida no se ejecuta en paralelo", async () => {
+    await insertStep({ key: "k4c", startedAt: minutesAgo(40), heartbeatAt: minutesAgo(1) });
+    await reserveSpend({ userId: ana.id, productId: null, provider: "claude", stepKey: "k4c", estimateMicros: RESERVADO });
+    let runs = 0;
+    await expect(
+      runStep(ctx, "k4c", async () => {
+        runs++;
+      }),
+    ).rejects.toBeInstanceOf(StepBusyError);
+    expect(runs).toBe(0);
+    expect(await step("k4c")).toMatchObject({ status: "running", attempts: 1 });
+    expect((await entryByStep("k4c")).status).toBe("reserved");
+  });
+
+  it("un paso cuya última señal de vida es de hace más de 15 minutos se da por interrumpido", async () => {
+    await insertStep({ key: "k4d", startedAt: minutesAgo(40), heartbeatAt: minutesAgo(16) });
+    expect(await runStep(ctx, "k4d", async () => "ok")).toBe("ok");
+    expect(await step("k4d")).toMatchObject({ status: "done", attempts: 2 });
+  });
+
+  it("un paso largo que sigue en marcha renueva su señal de vida: ni se reencola ni se ejecuta dos veces", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    try {
+      let runs = 0;
+      let started!: () => void;
+      let finish!: () => void;
+      const running = new Promise<void>((resolve) => (started = resolve));
+      const gate = new Promise<void>((resolve) => (finish = resolve));
+      // Dentro de un trabajo encolado, para que el barrido pudiera reencolarlo.
+      const long = runAsJob({ nota: "largo" }, () =>
+        runStep(ctx, "k-largo", async () => {
+          runs++;
+          started();
+          await gate;
+          return "terminado";
+        }),
+      );
+      await running;
+      expect((await step("k-largo")).heartbeatAt).toBeInstanceOf(Date);
+      await reserveSpend({ userId: ana.id, productId: null, provider: "claude", stepKey: "k-largo", estimateMicros: RESERVADO });
+
+      // Como si llevara 20 minutos en marcha: su última señal queda muy atrás…
+      await getDb().update(schema.jobSteps).set({ heartbeatAt: minutesAgo(20) }).where(eq(schema.jobSteps.key, "k-largo"));
+      // …hasta que le toca dar la siguiente, porque el proceso sigue vivo.
+      vi.advanceTimersByTime(HEARTBEAT_MS);
+      await vi.waitFor(async () => {
+        expect((await step("k-largo")).heartbeatAt!.getTime()).toBeGreaterThan(minutesAgo(1).getTime());
+      });
+
+      expect(await recoverInterruptedSteps()).toBe(0);
+      await expect(runStep(ctx, "k-largo", async () => "otra ejecución")).rejects.toBeInstanceOf(StepBusyError);
+      expect(await step("k-largo")).toMatchObject({ status: "running", attempts: 1 });
+      expect((await entryByStep("k-largo")).status).toBe("reserved");
+
+      finish();
+      expect(await long).toBe("terminado");
+      expect(runs).toBe(1);
+      expect(await step("k-largo")).toMatchObject({ status: "done", attempts: 1 });
+      // Terminado el paso, deja de dar señales.
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("al fallar o quedar en pausa, el paso también deja de dar señales de vida", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    try {
+      await expect(
+        runStep(ctx, "k-latido-1", async () => {
+          expect(vi.getTimerCount()).toBe(1);
+          throw new Error("fallo");
+        }),
+      ).rejects.toThrow("fallo");
+      await expect(
+        runStep(ctx, "k-latido-2", async () => {
+          throw capError();
+        }),
+      ).rejects.toBeInstanceOf(JobPausedError);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("STALE_RUNNING_MS son 15 minutos y MAX_ATTEMPTS 3", () => {

@@ -39,6 +39,11 @@ const DB_CLIENT_EXEMPT = new Set(["src/app/api/health/route.ts"]);
 const ANTHROPIC_SDK = /@anthropic-ai\/sdk/;
 const LLM_LAYER = "src/llm/";
 
+/** La tabla de pasos de los trabajos y la cola: solo `src/jobs/` las usa. */
+const JOB_STEPS_TABLE = [/schema\.jobSteps\b/, /\bjob_steps\b/];
+const PG_BOSS = /["']pg-boss["']/;
+const JOBS_LAYER = "src/jobs/";
+
 describe("límites del código", () => {
   it("encuentra el código fuente (la comprobación no pasa por no mirar nada)", () => {
     expect(files.some((f) => f.rel === "src/server/access.ts")).toBe(true);
@@ -63,6 +68,19 @@ describe("límites del código", () => {
       .filter((f) => f.rel.startsWith("src/app/") || f.rel.startsWith("src/components/"))
       .filter((f) => !DB_CLIENT_EXEMPT.has(f.rel))
       .filter((f) => DB_CLIENT_IMPORT.test(f.text))
+      .map((f) => f.rel);
+    expect(offenders).toEqual([]);
+  });
+
+  it("solo src/jobs toca la tabla de pasos e importa la cola", () => {
+    const steps = files.find((f) => f.rel === "src/jobs/steps.ts");
+    expect(steps && JOB_STEPS_TABLE.some((p) => p.test(steps.text))).toBe(true);
+    const boss = files.find((f) => f.rel === "src/jobs/boss.ts");
+    expect(boss && PG_BOSS.test(boss.text)).toBe(true);
+
+    const offenders = files
+      .filter((f) => !f.rel.startsWith(JOBS_LAYER) && !f.rel.startsWith("src/db/"))
+      .filter((f) => PG_BOSS.test(f.text) || JOB_STEPS_TABLE.some((p) => p.test(f.text)))
       .map((f) => f.rel);
     expect(offenders).toEqual([]);
   });
