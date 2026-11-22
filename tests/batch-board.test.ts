@@ -43,7 +43,6 @@ const row = (over: Partial<BatchRowJson> = {}): BatchRowJson => ({
   referenceStatus: "ready",
   referenceError: null,
   referenceOutdated: false,
-
   link: null,
   avatarPhotoId: 3,
   avatarMode: "elegido",

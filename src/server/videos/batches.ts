@@ -242,7 +242,6 @@ export interface BatchRow {
   referenceError: string | null;
   /** La referencia se preparó con otro tramo (cambió el gancho): hay que volver a subirla. */
   referenceOutdated: boolean;
-
   /** El enlace pegado que el Mac está trayendo, o el último que falló (como en la vista del vídeo). */
   link: LinkState | null;
   avatarPhotoId: number | null;
@@ -355,7 +354,6 @@ export async function batchView(user: AuthUser, batchId: number): Promise<BatchV
         referenceStatus: video.referenceStatus,
         referenceError: video.referenceError,
         referenceOutdated: referenceOutdated(video),
-
         link: video.linkTaskId === null ? null : (links.get(video.linkTaskId) ?? null),
         avatarPhotoId: video.avatarPhotoId,
         avatarMode: video.avatarMode as AvatarMode,
