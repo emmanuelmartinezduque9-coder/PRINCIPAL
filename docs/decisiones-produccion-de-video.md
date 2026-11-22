@@ -465,7 +465,7 @@ Diseño: sección «Lotes v2» de `docs/superpowers/specs/2026-11-22-lotes-desig
   - Cambiar de una foto de avatar a otra no invalida el desglose (como antes): el manifiesto ya lo refleja y la comprobación de prompts avisa.
   - Las instantáneas de la imagen y del clip llevan también `kind`, `adaptation` y `note`.
   - Los desgloses de antes de la `0016` no llevaban «Cambios específicos». Si su vídeo tiene una indicación, quedan para repetir: es la verdad, porque Claude no la vio.
-- **Si las indicaciones cambian mientras Claude responde**: el desglose queda hecho, con su coste y las indicaciones que usó. Sale como «Repetir desglose» y no copia sus prompts al vídeo. Si cambia la referencia, sigue quedando en error como antes.
+- **Si las indicaciones cambian mientras Claude responde**: el desglose queda **superado para siempre**. Se guarda con su resultado, su coste y las indicaciones que usó, pero en error («Las indicaciones cambiaron mientras se hacía el desglose; repítelo.»), y no copia sus prompts al vídeo. Así, aunque se vuelva a las mismas indicaciones, no puede valer con los prompts de otro desglose: se repite (revisión de Lotes v2; antes quedaba «hecho» y desfasado). Si cambia la referencia, sigue quedando en error como antes.
 - **Manifiestos y comprobación de prompts**: el avatar solo entra con `elegido`. Con «sin sustitución» o «nadie» no va ninguna foto de avatar en la imagen ni en el clip, aunque quedara una guardada. La comprobación de prompts sale del manifiesto, así que no pide una referencia de avatar que no existe.
 - **Pantallas**:
   - **Vídeo**, paso Referencia: arriba, a todo el ancho, el selector «Replicar vídeo» / «Adaptación de concepto» y «Cambios específicos» en la misma línea. Debajo, con adaptación, el área «Qué adaptación quieres». Se guarda al salir del campo, o con Intro en el de una línea.
@@ -484,7 +484,7 @@ Diseño: última sección de `docs/superpowers/specs/2026-11-22-lotes-design.md`
   - Llegan al desglose dentro de `<indicaciones_del_encargo>`, en `<indicaciones_del_producto>`, antes de la adaptación y de los cambios del vídeo.
   - Forman parte de lo que se compara para saber si un desglose sigue valiendo (`productNotes` en `Brief` y copia en `video_analyses.product_notes`). Cambiarlas o quitarlas deja «Repetir» en todos los vídeos de ese producto en el lote.
   - Las cambia solo quien creó el lote: 403 para el dueño en un lote ajeno, 404 para quien no lo ve o no ve el producto.
-  - Las instantáneas de la imagen y del clip comparan columnas del vídeo y estas indicaciones no lo son. Si cambian justo entre el presupuesto y el apunte, ese envío no lo detecta; el siguiente sí, porque el desglose ya no vale. Lo acepto: el hueco es de segundos.
+  - Las instantáneas de la imagen y del clip comparan columnas del vídeo, y estas indicaciones no lo son. Por eso, al apuntar una generación también se mira si el desglose sigue valiendo (ver «Revisión de Lotes v2»).
 - **«Cambios específicos»**: de 300 a 6.000 caracteres y varias líneas. Se normalizan los saltos (`\r\n` → `\n`) y se recortan los espacios de los extremos. «Dictar» usa `SpeechRecognition` / `webkitSpeechRecognition` del navegador en `es-ES`, sin servidor. Cada frase reconocida se añade al final del texto. Si el navegador no tiene reconocimiento de voz, el botón no aparece.
 - **Lote nuevo**:
   - Un grupo por producto: portada, selector del producto, cuántos vídeos, las indicaciones y su zona para soltar vídeos. «Añadir otro producto» abre otro grupo en el mismo lote; un producto no se repite en dos grupos.
@@ -494,10 +494,11 @@ Diseño: última sección de `docs/superpowers/specs/2026-11-22-lotes-design.md`
 - **Duplicar**:
   - **Decisión**: si la referencia ya está lista, el duplicado la **reutiliza**. Usa el mismo `reference_media_id` en el Higgsfield de la misma persona, las mismas duraciones y cortes, y una copia de los fotogramas (`insert … select` en la base de datos). No se vuelve a subir nada y cuesta una consulta.
   - Si la referencia no está lista, el duplicado empieza sin referencia y hay que subirla.
-  - Se copian tipo, adaptación, cambios, quién sale, entorno y resolución. No se copian desgloses, prompts ni generaciones.
+  - Se copian tipo, adaptación, cambios, quién sale, entorno y resolución, todo en una sola transacción. Nunca se copian generaciones.
+  - Para no gastar en Claude antes de que se edite la copia: si el original tiene un desglose que vale (el último hecho, de esta referencia y estas indicaciones), se copia al duplicado (resultado, versión 1, sin cargo porque ya cuenta en el original) junto con los prompts y el uso de la imagen del vídeo. Si se edita el duplicado, deja de valer como cualquier otro. Si no hay desglose válido, el duplicado queda fuera del desglose automático (`videos.skip_auto_analysis`) hasta que se cambie algo de él (`updateVideoChoices`), llegue otra referencia o alguien pulse «Desglosar».
   - En el lote nuevo, «Duplicar» copia la tarjeta con el mismo archivo: se sube dos veces, porque cada vídeo hace su propia preparación.
 - **Quitar**:
-  - Borra el vídeo (sus desgloses y fotogramas van en cascada), solo si no tiene ninguna generación, de cualquier estado. Con alguna, 409. Lo comprueba con el mismo cerrojo que apuntar una generación (`generationLock`).
+  - Borra el vídeo (sus desgloses y fotogramas van en cascada), solo si no tiene ninguna generación, de cualquier estado, ni un desglose en cola o en marcha. Si no, 409. Lo comprueba con los cerrojos de apuntar una generación (`generationLock`) y de pedir un desglose (`analysisLock`).
   - El coste en Claude de sus desgloses sigue en el libro de gasto.
   - Lo hace quien creó el lote y el vídeo. En el tablero, la papelera solo sale en las filas que se pueden quitar, y pregunta antes.
 - **«Por revisar»** (`needsReview`): filas con algún paso en error (también una subida fallida en este navegador), un desglose que ya no vale, candidatas esperando aprobación o una generación en duda. Un rechazo con motivo no cuenta. Es un filtro del tablero, con su número; sin filas por revisar, no aparece.
@@ -510,11 +511,11 @@ Diseño: última sección de `docs/superpowers/specs/2026-11-22-lotes-design.md`
 - **Con qué avatar empieza un vídeo** (`startingAvatar`, en `src/lib/default-avatar.ts`, que usan el servidor y el lote nuevo):
   - `sin_sustitucion` o `nadie`: ese modo.
   - `elegido`: la foto habitual si sigue siendo una foto de avatar del producto; si no, la primera foto de avatar; si no hay ninguna, «nadie» (la regla de Lotes v1).
-  - `createVideo` la aplica cuando no se le dice quién sale: vídeo suelto o fila sin cambiar. Un vídeo suelto de un producto sin avatares empieza ahora con «No aparece nadie» en lugar de pidiendo un avatar.
+  - `createVideo` la aplica cuando no se le dice quién sale (vídeo suelto). Con `elegido` y un producto sin fotos de avatar, el vídeo suelto empieza **sin elegir** (`elegido` sin foto) para que la persona decida; el «nadie» de Lotes v1 solo se usa en las tarjetas del lote nuevo.
 - **Cambiarlo**: `PATCH /api/productos/[id]` con `defaultAvatarMode` y/o `defaultAvatarPhotoId`. Lo puede cambiar quien ve el producto, con el mismo ámbito que el resto de su ficha; cualquier otro recibe 404. Elegir una foto pasa a `elegido`; elegir otro modo quita la foto. En la ficha, un selector compacto junto al idioma y los países (fotos de avatar, «Sin sustitución», «No aparece nadie»), sin texto.
 
 ### C. Desglose automático
-- **Datos**: `batches.auto_analyze`, encendido por defecto. Se elige al crear el lote («Desglosar al subir») y se cambia en el tablero, solo quien lo creó.
+- **Datos**: `batches.auto_analyze`. La migración lo añade apagado para los lotes que ya existían y deja encendido el valor por defecto de los nuevos. Se elige al crear el lote («Desglosar al subir») y se cambia en el tablero, solo quien lo creó.
 - **Cuándo**: `autoRequestAnalysis(videoId)` se llama al terminar de preparar la referencia (`processReference`). Además, el seguimiento de cada minuto pasa `autoAnalyzePending`, con 50 vídeos como mucho por pasada: vídeos de lotes con el interruptor encendido, referencia lista y ningún desglose de esa referencia. Así entran los que tenían algo pendiente (la foto del artículo, la adaptación) y los de un lote al que se le enciende el interruptor.
 - **Una sola vez por referencia**: se pide solo si no hay **ningún** desglose de esa misma referencia, en cualquier estado. Se comprueba dentro del cerrojo del vídeo, el mismo de «Desglosar», así que dos llamadas a la vez piden uno.
   - Uno que falló (sin clave, formato…) no se repite solo, porque cada intento cuesta: lo repite la persona.
@@ -524,3 +525,14 @@ Diseño: última sección de `docs/superpowers/specs/2026-11-22-lotes-design.md`
 - **Riesgos en el tablero**: `batchView` lee `result->'risks'` del último desglose, solo si está hecho. Se ven como una etiqueta ámbar junto al título, con el primer tipo y «+N»; el detalle completo va en el título y en `aria-label`.
 - **Comprobación local**: con el Higgsfield simulado y sin `ANTHROPIC_API_KEY`, los cuatro vídeos del lote de prueba pidieron su desglose solos al quedar lista la referencia, con las indicaciones de su producto. Terminaron en «Falta la clave de Claude» y salen en «Por revisar».
 - **Pantallas en modo desarrollo**: con otros trabajos abiertos en el mismo repositorio, `next dev` recargaba la página sin parar, porque vigila desde la raíz del repositorio. Las capturas se hicieron con `tsx scripts/dev.ts --prod` (compila y sirve, sin vigilar).
+
+### Revisión de Lotes v2 (22/11)
+- **Migración `0016`**: se ha vuelto a generar (aún no está en `main`).
+  - `batches.auto_analyze` se añade con `DEFAULT false`, así que los lotes de Lotes v1 que ya existen se quedan sin desglose automático; después el valor por defecto pasa a `true` para los nuevos.
+  - Los «nadie» antiguos se quedan sin foto de avatar antes de añadir `videos_avatar_only_chosen`. Primero van los datos y después las claves ajenas y los `check`.
+  - Nuevos `check` en `video_analyses.kind` y `video_analyses.avatar_mode`.
+  - La prueba de la migración lo comprueba todo.
+- **`tests/boundaries.test.ts`**: `batchProducts`/`batch_products` cuentan como tablas de vídeo.
+- **«Sin sustitución»**: las instrucciones dicen que este modo sustituye a la regla de que la identidad sale solo del avatar elegido. Las personas son las del primer fotograma de la referencia; si no se ve a nadie en él, se describen con los fotogramas que recibe Claude.
+- **Seguimiento justo**: `autoAnalyzePending` filtra en SQL lo que les falta (foto del artículo, avatar si es `elegido`, texto si es adaptación, `skip_auto_analysis`) y ordena por `updated_at`. Así 50 vídeos a los que siempre les falta algo no tapan al resto. Queda un caso: si quien creó el vídeo está desactivado o perdió el producto, el vídeo ocupa un sitio de los 50.
+- **Apuntar una generación**: dentro de la transacción, después de `generationLock`, se vuelve a mirar si el último desglose sigue valiendo (`latestDoneAnalysis`). Así se cubren las indicaciones del lote, que no son una columna del vídeo y que la instantánea no ve. Si no vale, 409 «El vídeo ha cambiado…». Es una consulta más y no toca nada del núcleo de dinero.

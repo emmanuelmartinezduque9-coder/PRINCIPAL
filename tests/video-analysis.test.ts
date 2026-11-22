@@ -561,7 +561,7 @@ describe("indicaciones del vídeo: tipo, adaptación, cambios específicos y qui
     expect((await videoView(ana, v.id)).analysis).toMatchObject({ id: again.analysisId, stale: false });
   });
 
-  it("si las indicaciones cambian mientras Claude responde, queda hecho con las que usó, se ve para repetir y no pisa los prompts", async () => {
+  it("si las indicaciones cambian mientras Claude responde, el desglose queda superado para siempre y no pisa los prompts", async () => {
     await readyVideo();
     const { analysisId } = await requestAnalysis(ana, v.id);
     const { client, calls } = fakeMessages([reply()]);
@@ -573,10 +573,17 @@ describe("indicaciones del vídeo: tipo, adaptación, cambios específicos y qui
     } as unknown as typeof client;
     await runAnalysis(analysisId, { gateway: createGateway({ client: changing }) });
     expect(calls).toHaveLength(1);
-    expect(await analysisRow(analysisId)).toMatchObject({ status: "done", error: null });
+    const superseded = { status: "failed", error: "Las indicaciones cambiaron mientras se hacía el desglose; repítelo." };
+    expect(await analysisRow(analysisId)).toMatchObject(superseded);
+    // Se guarda con lo que usó (y su coste), pero no copia sus prompts.
     expect(await savedBrief(analysisId)).toMatchObject({ note: null });
-    expect((await videoView(ana, v.id)).analysis).toMatchObject({ status: "done", stale: true, staleReason: "brief", result: REPLY });
+    expect((await getPool().query("select result from video_analyses where id = $1", [analysisId])).rows[0].result).toEqual(REPLY);
+    expect((await videoView(ana, v.id)).analysis!.costMicros).toBeGreaterThan(0);
     expect(await getVideoFor(ana, v.id)).toMatchObject({ imagePrompt: null, videoPrompt: null });
+    // Volver a las indicaciones con las que se hizo no lo resucita: sigue sin valer para la imagen.
+    await updateVideoChoices(ana, v.id, { note: null });
+    expect((await videoView(ana, v.id)).analysis).toMatchObject(superseded);
+    expect(await analysisRow(analysisId)).toMatchObject(superseded);
   });
 
   it("si cambian entre pedirlo y empezar, se mandan (y se guardan) las del momento de la llamada", async () => {

@@ -211,11 +211,12 @@ describe("tablero agrupado por producto", () => {
 });
 
 describe("duplicar y quitar filas", () => {
-  it("duplicar copia lo elegido y reutiliza la referencia lista con sus fotogramas, sin desgloses", async () => {
+  it("duplicar copia lo elegido y reutiliza la referencia lista con sus fotogramas; sin desglose válido, espera a que lo cambien", async () => {
     const lote = await createBatch(ana, "A");
     const v = await batchVideo(lote.id, { kind: "adaptacion_concepto", adaptation: "Idea", note: "Más luz" });
     await updateVideoChoices(ana, v.id, { clipResolution: "720p" });
     await readyReference(v.id);
+    // Un desglose de otras indicaciones (replicar, sin nota): no vale y no se copia.
     await getPool().query("insert into video_analyses (video_id, version, status, reference_media_id, created_by) values ($1, 1, 'done', 'media-1', $2)", [
       v.id,
       ana.id,
@@ -237,16 +238,75 @@ describe("duplicar y quitar filas", () => {
       segmentDurationMs: 6000,
       cutsMs: [2000],
       imagePrompt: null,
+      skipAutoAnalysis: true,
     });
     expect((await videoView(ana, copy.id)).frames).toEqual([
       { index: 0, timeMs: 0 },
       { index: 1, timeMs: 500 },
     ]);
     expect(await analysesOf(copy.id)).toEqual([]);
+    // No se gasta en Claude por un duplicado que nadie ha tocado…
+    expect(await autoRequestAnalysis(copy.id)).toBe(false);
+    expect(await autoAnalyzePending()).toBe(0);
+    expect(await analysesOf(copy.id)).toEqual([]);
+    // …hasta que se cambia.
+    await updateVideoChoices(ana, copy.id, { note: "Menos luz" });
+    expect(await autoAnalyzePending()).toBe(1);
+    expect(await analysesOf(copy.id)).toHaveLength(1);
 
     // Sin referencia lista, el duplicado empieza sin referencia.
     const sinReferencia = await batchVideo(lote.id);
-    expect(await duplicateBatchVideo(ana, lote.id, sinReferencia.id)).toMatchObject({ referenceStatus: "none", referenceMediaId: null });
+    expect(await duplicateBatchVideo(ana, lote.id, sinReferencia.id)).toMatchObject({ referenceStatus: "none", referenceMediaId: null, skipAutoAnalysis: false });
+  });
+
+  it("duplicar con un desglose válido lo copia (resultado, prompts y uso de la imagen) sin gastar; al editar el duplicado deja de valer", async () => {
+    const lote = await createBatch(ana, "A");
+    await setBatchProductNotes(ana, lote.id, lampara.id, "Luz cálida");
+    const v = await batchVideo(lote.id, { note: "Más luz" });
+    await readyReference(v.id);
+    const result = { conceptLogic: "Idea", risks: [{ kind: "escala", detail: "Sin mano." }], imagePrompt: "Image 1 …", videoPrompt: "@Video1 …", frameUse: "contextual_reference" };
+    await getPool().query(
+      `insert into video_analyses (video_id, version, status, reference_media_id, note, product_notes, result, rule_versions, spend_entry_id, created_by)
+       values ($1, 1, 'done', 'media-1', 'Más luz', 'Luz cálida', $2, '{"video-seedance": 3}'::jsonb, 77, $3)`,
+      [v.id, JSON.stringify(result), ana.id],
+    );
+    await getPool().query("update videos set image_prompt = 'Image 1 …', video_prompt = '@Video1 …', frame_use = 'contextual_reference' where id = $1", [v.id]);
+
+    const copy = await duplicateBatchVideo(ana, lote.id, v.id);
+    expect(copy).toMatchObject({ imagePrompt: "Image 1 …", videoPrompt: "@Video1 …", frameUse: "contextual_reference", skipAutoAnalysis: false });
+    const [copied] = (
+      await getPool().query(
+        'select version, status, result, note, product_notes as "productNotes", rule_versions as "ruleVersions", spend_entry_id as "spendEntryId" from video_analyses where video_id = $1',
+        [copy.id],
+      )
+    ).rows;
+    expect(copied).toEqual({ version: 1, status: "done", result, note: "Más luz", productNotes: "Luz cálida", ruleVersions: { "video-seedance": 3 }, spendEntryId: null });
+    expect((await videoView(ana, copy.id)).analysis).toMatchObject({ status: "done", stale: false, costMicros: null });
+    expect((await batchView(ana, lote.id)).rows.find((r) => r.id === copy.id)?.risks).toEqual(result.risks);
+    // Ya tiene un desglose de esta referencia: el automático no pide otro.
+    expect(await autoRequestAnalysis(copy.id)).toBe(false);
+    expect(await analysesOf(copy.id)).toHaveLength(1);
+    // Al editar el duplicado, su desglose deja de valer como el de cualquier vídeo.
+    await updateVideoChoices(ana, copy.id, { note: "Otra cosa" });
+    expect((await videoView(ana, copy.id)).analysis).toMatchObject({ stale: true, staleReason: "brief" });
+    expect((await videoView(ana, v.id)).analysis).toMatchObject({ stale: false });
+  });
+
+  it("duplicar es todo o nada: si algo falla a mitad, no queda ningún vídeo", async () => {
+    const lote = await createBatch(ana, "A");
+    const v = await batchVideo(lote.id);
+    await readyReference(v.id);
+    const pool = getPool();
+    await pool.query(`create function prueba_sin_fotogramas() returns trigger language plpgsql as $$
+      begin raise exception 'corte simulado'; end $$`);
+    await pool.query("create trigger prueba_sin_fotogramas before insert on video_frames for each row execute function prueba_sin_fotogramas()");
+    try {
+      await expect(duplicateBatchVideo(ana, lote.id, v.id)).rejects.toThrow();
+    } finally {
+      await pool.query("drop trigger if exists prueba_sin_fotogramas on video_frames");
+      await pool.query("drop function if exists prueba_sin_fotogramas()");
+    }
+    expect((await batchView(ana, lote.id)).rows.map((r) => r.id)).toEqual([v.id]);
   });
 
   it("quitar borra el vídeo mientras no tenga ninguna generación", async () => {
@@ -262,6 +322,21 @@ describe("duplicar y quitar filas", () => {
       [otro.id, false],
     ]);
     await expect(removeBatchVideo(ana, lote.id, otro.id)).rejects.toMatchObject({ status: 409 });
+    // Con un desglose en cola o en marcha, tampoco: se está pagando.
+    await readyReference(v.id);
+    for (const status of ["queued", "running"]) {
+      await getPool().query("delete from video_analyses where video_id = $1", [v.id]);
+      await getPool().query("insert into video_analyses (video_id, version, status, reference_media_id, created_by) values ($1, 1, $2, 'media-1', $3)", [
+        v.id,
+        status,
+        ana.id,
+      ]);
+      await expect(removeBatchVideo(ana, lote.id, v.id)).rejects.toMatchObject({
+        status: 409,
+        message: "Este vídeo se está desglosando: espera a que termine para quitarlo.",
+      });
+    }
+    await getPool().query("update video_analyses set status = 'failed' where video_id = $1", [v.id]);
     await removeBatchVideo(ana, lote.id, v.id);
     await expect(getVideoFor(ana, v.id)).rejects.toMatchObject({ status: 404 });
     expect((await batchView(ana, lote.id)).rows.map((r) => r.id)).toEqual([otro.id]);
@@ -289,14 +364,15 @@ describe("duplicar y quitar filas", () => {
 });
 
 describe("valores por producto: avatar habitual", () => {
-  it("el vídeo nuevo empieza con el avatar habitual; sin él, con el primer avatar; sin avatares, «nadie»", async () => {
+  it("el vídeo nuevo empieza con el avatar habitual; sin él, con el primer avatar; sin avatares, sin elegir", async () => {
     const segundo = (await addProductPhoto(ana, lampara.id, JPEG, "avatar")).id;
     expect(await createVideo(ana, lampara.id)).toMatchObject({ avatarMode: "elegido", avatarPhotoId: avatar });
     await updateProduct(ana, lampara.id, { defaultAvatarPhotoId: segundo });
     expect(await createVideo(ana, lampara.id)).toMatchObject({ avatarMode: "elegido", avatarPhotoId: segundo });
     await updateProduct(ana, lampara.id, { defaultAvatarMode: "sin_sustitucion" });
     expect(await createVideo(ana, lampara.id)).toMatchObject({ avatarMode: "sin_sustitucion", avatarPhotoId: null });
-    expect(await createVideo(ana, botella.id)).toMatchObject({ avatarMode: "nadie", avatarPhotoId: null });
+    // Un vídeo suelto de un producto sin fotos de avatar no se queda en «nadie» sin preguntar.
+    expect(await createVideo(ana, botella.id)).toMatchObject({ avatarMode: "elegido", avatarPhotoId: null });
     // Lo que se elige en el lote manda sobre el habitual.
     const lote = await createBatch(ana, "A");
     expect(await batchVideo(lote.id)).toMatchObject({ avatarMode: "elegido", avatarPhotoId: avatar });
@@ -305,7 +381,9 @@ describe("valores por producto: avatar habitual", () => {
   it("startingAvatar: la foto habitual solo si sigue siendo un avatar del producto", () => {
     expect(startingAvatar({ defaultAvatarMode: "elegido", defaultAvatarPhotoId: 7 }, [3, 7])).toEqual({ avatarMode: "elegido", avatarPhotoId: 7 });
     expect(startingAvatar({ defaultAvatarMode: "elegido", defaultAvatarPhotoId: 9 }, [3, 7])).toEqual({ avatarMode: "elegido", avatarPhotoId: 3 });
+    // Tarjeta del lote sin avatares: «nadie» (Lotes v1); vídeo suelto: sin elegir.
     expect(startingAvatar({ defaultAvatarMode: "elegido", defaultAvatarPhotoId: null }, [])).toEqual({ avatarMode: "nadie", avatarPhotoId: null });
+    expect(startingAvatar({ defaultAvatarMode: "elegido", defaultAvatarPhotoId: null }, [], "elegir")).toEqual({ avatarMode: "elegido", avatarPhotoId: null });
     expect(startingAvatar({ defaultAvatarMode: "nadie", defaultAvatarPhotoId: null }, [3])).toEqual({ avatarMode: "nadie", avatarPhotoId: null });
   });
 
@@ -384,6 +462,20 @@ describe("desglose automático al subir", () => {
 
     // Al encenderlo, el seguimiento pide los que ya estaban listos.
     await setBatchAutoAnalyze(ana, apagado.id, true);
+    expect(await autoAnalyzePending()).toBe(1);
+    expect(await analysesOf(v.id)).toHaveLength(1);
+  });
+
+  it("el seguimiento no se atasca con 50 vídeos a los que siempre les falta algo", async () => {
+    const lote = await createBatch(ana, "A");
+    // 60 vídeos de un producto sin foto de artículo, más antiguos que el que sí se puede desglosar.
+    await getPool().query(
+      `insert into videos (product_id, created_by, title, batch_id, avatar_mode, reference_status, reference_media_id, updated_at)
+       select $1, $2, 'Sin artículo ' || n, $3, 'nadie', 'ready', 'm-' || n, now() - interval '1 day' from generate_series(1, 60) n`,
+      [botella.id, ana.id, lote.id],
+    );
+    const v = await batchVideo(lote.id);
+    await readyReference(v.id);
     expect(await autoAnalyzePending()).toBe(1);
     expect(await analysesOf(v.id)).toHaveLength(1);
   });

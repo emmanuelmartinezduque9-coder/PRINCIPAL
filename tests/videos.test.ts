@@ -36,8 +36,8 @@ beforeEach(async () => {
 describe("vídeos de un producto", () => {
   it("se numeran por producto y empiezan sin referencia", async () => {
     expect(videoDeAna).toMatchObject({ title: "Vídeo 1", createdBy: ana.id, productId: producto.id, referenceStatus: "none", kind: "replicar", adaptation: null, note: null });
-    // Sin avatar habitual ni fotos de avatar, empieza con «No aparece nadie».
-    expect(videoDeAna).toMatchObject({ avatarMode: "nadie", avatarPhotoId: null });
+    // Sin fotos de avatar en el producto, empieza sin elegir: lo decide la persona.
+    expect(videoDeAna).toMatchObject({ avatarMode: "elegido", avatarPhotoId: null });
     const segundo = await createVideo(dueno, producto.id);
     expect(segundo.title).toBe("Vídeo 2");
     const otro = await createVideo(ana, (await makeProduct(ana)).id);

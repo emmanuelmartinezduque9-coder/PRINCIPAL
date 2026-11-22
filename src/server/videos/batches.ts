@@ -7,9 +7,9 @@ import { listProductsFor } from "@/server/products";
 import { downloadableClipUrl, servableClipUrl } from "@/server/videos/clip";
 import { costsOfVideo, type VideoCosts } from "@/server/videos/costs";
 import { generationLock, generationView, pollVideoGenerations, type GenerationView } from "@/server/videos/generations";
-import type { Analysis } from "@/server/videos/analysis";
+import { analysisLock, type Analysis } from "@/server/videos/analysis";
 import { checkKindInput, cleanNote, cleanProductNotes, isAvatarMode, type AvatarMode, type VideoKind } from "@/server/videos/brief";
-import { createVideo, getVideoFor, staleness, type Video } from "@/server/videos/videos";
+import { createVideo, getVideoFor, insertVideo, productNotesOf, staleness, type Video } from "@/server/videos/videos";
 
 /**
  * Lotes: muchos vídeos a la vez encima del flujo de cada vídeo. Un lote es solo una lista con
@@ -355,52 +355,88 @@ async function ownBatchVideo(user: AuthUser, batchId: number, videoId: number): 
 
 /**
  * «Duplicar»: un vídeo nuevo en el mismo lote con lo mismo (producto, tipo, adaptación, cambios,
- * quién sale, entorno, resolución). Si la referencia ya está lista se reutiliza tal cual (el mismo
- * recorte en Higgsfield y una copia de sus fotogramas): no hay que volver a subirla. Si no, el
- * duplicado empieza sin referencia. No copia desgloses, prompts ni generaciones.
+ * quién sale, entorno, resolución), en una sola transacción. Si la referencia ya está lista se
+ * reutiliza tal cual (el mismo recorte en Higgsfield y una copia de sus fotogramas): no hay que
+ * volver a subirla. Y como el duplicado es idéntico, para no gastar en Claude antes de que se edite:
+ * - si el original tiene un desglose que vale (último hecho, de esta referencia y de estas
+ *   indicaciones), se copia (resultado, prompts del vídeo y uso de la imagen; sin cargo, que ya
+ *   está en el original). Si después se edita el duplicado, ese desglose deja de valer como siempre;
+ * - si no lo tiene, el duplicado queda fuera del desglose automático (`skipAutoAnalysis`) hasta
+ *   que se cambie o alguien pulse «Desglosar».
+ * Sin referencia lista, el duplicado empieza sin referencia. Nunca copia generaciones.
  */
 export async function duplicateBatchVideo(user: AuthUser, batchId: number, videoId: number): Promise<Video> {
   const { batch, video } = await ownBatchVideo(user, batchId, videoId);
-  const copy = await createVideo(user, video.productId, {
-    batchId: batch.id,
-    note: video.note,
-    avatarPhotoId: video.avatarPhotoId,
-    avatarMode: video.avatarMode as AvatarMode,
-    kind: video.kind as VideoKind,
-    adaptation: video.adaptation,
-  });
   const ready = video.referenceStatus === "ready";
-  const reference = ready
-    ? {
-        referenceStatus: "ready",
-        referenceSource: video.referenceSource,
-        referenceUrl: video.referenceUrl,
-        referenceDurationMs: video.referenceDurationMs,
-        referenceWidth: video.referenceWidth,
-        referenceHeight: video.referenceHeight,
-        referenceMediaId: video.referenceMediaId,
-        segmentDurationMs: video.segmentDurationMs,
-        cutsMs: video.cutsMs,
-      }
-    : {};
-  return getDb().transaction(async (tx) => {
-    const [updated] = await tx
-      .update(videos)
-      .set({ environmentPhotoId: video.environmentPhotoId, clipResolution: video.clipResolution, ...reference, updatedAt: new Date() })
-      .where(eq(videos.id, copy.id))
-      .returning();
+  const db = getDb();
+  const [latest] = ready
+    ? await db
+        .select()
+        .from(schema.videoAnalyses)
+        .where(and(eq(schema.videoAnalyses.videoId, video.id), eq(schema.videoAnalyses.status, "done")))
+        .orderBy(desc(schema.videoAnalyses.version))
+        .limit(1)
+    : [];
+  const valid = latest && staleness(latest, { ...video, productNotes: await productNotesOf(video) }).staleReason === null ? latest : null;
+
+  return db.transaction(async (tx) => {
+    const copy = await insertVideo(tx, user, video.productId, {
+      batchId: batch.id,
+      note: video.note,
+      avatarPhotoId: video.avatarPhotoId,
+      avatarMode: video.avatarMode,
+      kind: video.kind,
+      adaptation: video.adaptation,
+      environmentPhotoId: video.environmentPhotoId,
+      clipResolution: video.clipResolution,
+      ...(ready
+        ? {
+            referenceStatus: "ready",
+            referenceSource: video.referenceSource,
+            referenceUrl: video.referenceUrl,
+            referenceDurationMs: video.referenceDurationMs,
+            referenceWidth: video.referenceWidth,
+            referenceHeight: video.referenceHeight,
+            referenceMediaId: video.referenceMediaId,
+            segmentDurationMs: video.segmentDurationMs,
+            cutsMs: video.cutsMs,
+            skipAutoAnalysis: valid === null,
+          }
+        : {}),
+      ...(valid ? { imagePrompt: video.imagePrompt, videoPrompt: video.videoPrompt, frameUse: video.frameUse } : {}),
+    });
     if (ready) {
       await tx.execute(sql`insert into video_frames (video_id, index, time_ms, mime, size, data)
         select ${copy.id}, index, time_ms, mime, size, data from video_frames where video_id = ${video.id}`);
     }
-    return updated;
+    if (valid) {
+      await tx.insert(schema.videoAnalyses).values({
+        videoId: copy.id,
+        version: 1,
+        status: "done",
+        result: valid.result,
+        referenceMediaId: valid.referenceMediaId,
+        ruleVersions: valid.ruleVersions,
+        kind: valid.kind,
+        avatarMode: valid.avatarMode,
+        note: valid.note,
+        adaptation: valid.adaptation,
+        productNotes: valid.productNotes,
+        // Sin cargo: lo que costó ya cuenta en el original.
+        spendEntryId: null,
+        createdBy: user.id,
+      });
+    }
+    return copy;
   });
 }
 
+const ANALYSIS_RUNNING = "Este vídeo se está desglosando: espera a que termine para quitarlo.";
+
 /**
  * «Quitar»: borra el vídeo del lote mientras no tenga ninguna generación (409 si la tiene: ya
- * hay créditos de por medio). Sus desgloses se van con él; su coste en Claude sigue en el libro
- * de gasto.
+ * hay créditos de por medio) ni un desglose en cola o en marcha (409). Sus desgloses se van con
+ * él; su coste en Claude sigue en el libro de gasto.
  */
 export async function removeBatchVideo(user: AuthUser, batchId: number, videoId: number): Promise<void> {
   const { video } = await ownBatchVideo(user, batchId, videoId);
@@ -413,6 +449,14 @@ export async function removeBatchVideo(user: AuthUser, batchId: number, videoId:
       .where(eq(schema.generations.videoId, video.id))
       .limit(1);
     if (generation) throw new HttpError(409, HAS_GENERATIONS);
+    // Y el de pedir un desglose: uno en cola o en marcha se está pagando.
+    await tx.execute(analysisLock(video.id));
+    const [running] = await tx
+      .select({ id: schema.videoAnalyses.id })
+      .from(schema.videoAnalyses)
+      .where(and(eq(schema.videoAnalyses.videoId, video.id), inArray(schema.videoAnalyses.status, ["queued", "running"])))
+      .limit(1);
+    if (running) throw new HttpError(409, ANALYSIS_RUNNING);
     await tx.delete(videos).where(eq(videos.id, video.id));
   });
 }

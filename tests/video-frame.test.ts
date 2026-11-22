@@ -252,6 +252,28 @@ describe("petición de la imagen inicial", () => {
     expect(uploads().map((u) => u.filename)).toEqual([`fotograma-${v.id}.jpg`, `foto-${ids.articulo}.jpg`, `foto-${ids.entorno}.png`]);
   });
 
+  it("si las indicaciones del lote cambian mientras se presupuesta, 409 y no se apunta nada", async () => {
+    const pool = getPool();
+    const { rows } = await pool.query("insert into batches (name, created_by) values ('Lote', $1) returning id", [ana.id]);
+    await pool.query("update videos set batch_id = $2 where id = $1", [v.id, rows[0].id]);
+    const racing: GenDeps = {
+      ...deps,
+      higgsfield: {
+        ...fake.port,
+        async quoteImages(userId, request, count) {
+          // No es una columna del vídeo: la instantánea no lo ve, pero el desglose deja de valer.
+          await pool.query("insert into batch_products (batch_id, product_id, notes) values ($1, $2, 'De noche')", [rows[0].id, producto.id]);
+          return fake.port.quoteImages(userId, request, count);
+        },
+      },
+    };
+    await expect(requestGeneration(ana, v.id, "frame", { expectedCredits: 4 }, racing)).rejects.toMatchObject({
+      status: 409,
+      message: "El vídeo ha cambiado mientras se preparaba el envío. Vuelve a intentarlo.",
+    });
+    expect((await pool.query("select count(*)::int as n from generations")).rows[0].n).toBe(0);
+  });
+
   it("si el prompt o el avatar cambian mientras se presupuesta (otra pestaña), 409 y no se apunta nada", async () => {
     const changes = [
       "update videos set image_prompt = image_prompt || ' More light.' where id = $1",

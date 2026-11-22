@@ -23,7 +23,7 @@ import { getActiveUser, type AuthUser } from "@/server/auth";
 import { HttpError } from "@/server/http";
 import { makeThumbnail } from "@/server/media/ffmpeg";
 import { getProductFor } from "@/server/products";
-import { getVideoFor, requireVideoOwner, type Video } from "@/server/videos/videos";
+import { getVideoFor, latestDoneAnalysis, requireVideoOwner, type Video } from "@/server/videos/videos";
 
 /**
  * Generaciones en Higgsfield: el núcleo del dinero. No sabe nada de imágenes ni de clips: cada
@@ -369,13 +369,16 @@ export async function requestGeneration(
   try {
     generationId = await getDb().transaction(async (tx) => {
       await generationLock(tx, video.id);
+      const [current] = await tx.select().from(schema.videos).where(eq(schema.videos.id, video.id)).for("no key update");
       if (snapshot && Object.keys(snapshot).length > 0) {
-        const [current] = await tx.select().from(schema.videos).where(eq(schema.videos.id, video.id)).for("no key update");
         const changed =
           !current ||
           (Object.keys(snapshot) as Array<keyof Video>).some((key) => JSON.stringify(current[key]) !== JSON.stringify(snapshot[key]));
         if (changed) throw new HttpError(409, VIDEO_CHANGED);
       }
+      // Lo que no es una columna del vídeo (las indicaciones del lote) también puede haber cambiado:
+      // si el último desglose ya no vale, no se apunta nada.
+      if (current && (await latestDoneAnalysis(current))?.staleReason) throw new HttpError(409, VIDEO_CHANGED);
       const round = nextRound(await rowsOf(tx, video.id, kind));
       const [row] = await tx
         .insert(generations)

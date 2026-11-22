@@ -409,6 +409,11 @@ export const videos = pgTable(
       (): AnyPgColumn => generationResults.id,
       { onDelete: "set null" },
     ),
+    /**
+     * El desglose automático del lote no se pide para este vídeo hasta que se cambie (un duplicado
+     * sin desglose válido que copiar: así no se gasta antes de editarlo).
+     */
+    skipAutoAnalysis: boolean("skip_auto_analysis").notNull().default(false),
     /** El lote al que pertenece, si se creó desde un lote. */
     batchId: bigint("batch_id", { mode: "number" }).references(() => batches.id, { onDelete: "set null" }),
     /** «Cambios específicos» para este vídeo (máx. 6.000 caracteres, varias líneas); llega al desglose. */
@@ -492,6 +497,8 @@ export const videoAnalyses = pgTable(
       .where(sql`${t.status} in ('queued', 'running', 'paused')`),
     index("video_analyses_status").on(t.status, t.updatedAt),
     check("video_analyses_status_valid", sql`${t.status} in ('queued', 'running', 'done', 'failed', 'paused')`),
+    check("video_analyses_kind_valid", sql`${t.kind} in ('replicar', 'adaptacion_concepto')`),
+    check("video_analyses_avatar_mode_valid", sql`${t.avatarMode} in ('elegido', 'sin_sustitucion', 'nadie')`),
   ],
 );
 

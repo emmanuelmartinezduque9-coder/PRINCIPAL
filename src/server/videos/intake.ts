@@ -113,6 +113,8 @@ async function prepare(ctx: JobContext, videoId: number, uploadId: string, deps:
         referenceMediaId: mediaId,
         segmentDurationMs,
         cutsMs,
+        // Una referencia nueva es un cambio: el desglose automático vuelve a contar con este vídeo.
+        skipAutoAnalysis: false,
         updatedAt: new Date(),
       })
       .where(and(eq(schema.videos.id, video.id), eq(schema.videos.referenceStatus, "processing")))

@@ -64,6 +64,7 @@ const BUSY = "Ya hay un desglose en marcha.";
 const BUSY_PAUSED = "El desglose está en pausa (tope de gasto).";
 const PAUSED = "En pausa: se ha alcanzado el tope de gasto.";
 const REFERENCE_CHANGED = "La referencia cambió; vuelve a pedir el desglose.";
+const BRIEF_CHANGED_WHILE_RUNNING = "Las indicaciones cambiaron mientras se hacía el desglose; repítelo.";
 export const ACCESS_LOST = "El desglose se detuvo porque se perdió el acceso al producto. Repítelo.";
 const NOT_QUEUED = "No se pudo poner en marcha el desglose. Inténtalo de nuevo.";
 const BAD_PHOTO = "No se pudo preparar una de las fotos del producto. Cámbiala y repite el desglose.";
@@ -138,7 +139,7 @@ const IDENTITY: Record<AvatarMode, { risk: string; image1: string; video1: strin
     image1: "image 1 aporta la composición, la distancia de cámara y las personas, que se conservan con su cara, pelo, edad y complexión",
     video1:
       "@Video1 aporta la cámara, el ritmo y el tipo de acción, nunca el producto, el espacio ni el texto; las personas son las de la referencia, tal como salen en la imagen inicial aprobada.",
-    rule: "Identidad: sin sustitución. Se conservan las personas del vídeo de referencia (no hay avatar): las mismas caras, pelo, edad y complexión que en sus fotogramas. No las cambies ni las mezcles con otras.",
+    rule: "Identidad: sin sustitución. Se conservan las personas del vídeo de referencia (no hay avatar): las mismas caras, pelo, edad y complexión que en sus fotogramas. No las cambies ni las mezcles con otras. En este vídeo esto sustituye a la regla de que la identidad sale solo del avatar elegido: las personas son las del primer fotograma de la referencia (image 1); si en él no se ve a nadie, descríbelas a partir de los fotogramas de la referencia que recibes.",
   },
   nadie: {
     risk: "una persona que no debería aparecer (identidad)",
@@ -306,7 +307,7 @@ async function buildContent(user: AuthUser, video: Video, brief: Brief, product:
 const analyses = schema.videoAnalyses;
 
 /** Cerrojo por vídeo: dos peticiones a la vez no crean dos desgloses ni repiten versión. */
-const analysisLock = (videoId: number) => sql`select pg_advisory_xact_lock(hashtextextended(${`principal.videos.desglose:${videoId}`}, 0))`;
+export const analysisLock = (videoId: number) => sql`select pg_advisory_xact_lock(hashtextextended(${`principal.videos.desglose:${videoId}`}, 0))`;
 
 /** Pasa a `status` un desglose que sigue sin terminar; uno hecho o fallido no se toca. */
 async function setStatus(analysisId: number, status: "running" | "paused" | "failed", error: string | null, spendEntryId?: number): Promise<boolean> {
@@ -456,11 +457,11 @@ export async function requestAnalysis(user: AuthUser, videoId: number): Promise<
  */
 export async function autoRequestAnalysis(videoId: number): Promise<boolean> {
   const [row] = await getDb()
-    .select({ createdBy: schema.videos.createdBy, autoAnalyze: schema.batches.autoAnalyze })
+    .select({ createdBy: schema.videos.createdBy, autoAnalyze: schema.batches.autoAnalyze, skip: schema.videos.skipAutoAnalysis })
     .from(schema.videos)
     .innerJoin(schema.batches, eq(schema.batches.id, schema.videos.batchId))
     .where(eq(schema.videos.id, videoId));
-  if (!row?.autoAnalyze) return false;
+  if (!row?.autoAnalyze || row.skip) return false;
   const user = await getActiveUser(row.createdBy);
   if (!user) return false;
   let video: Video;
@@ -479,8 +480,10 @@ export async function autoRequestAnalysis(videoId: number): Promise<boolean> {
 const AUTO_BATCH_LIMIT = 50;
 
 /**
- * Para el seguimiento: vídeos de lotes con «Desglosar al subir» con la referencia lista y sin
- * ningún desglose de esa referencia (p. ej. la foto del artículo llegó después). Devuelve cuántos pidió.
+ * Para el seguimiento: vídeos de lotes con «Desglosar al subir» con la referencia lista, sin
+ * ningún desglose de esa referencia y sin nada que les falte (p. ej. la foto del artículo llegó
+ * después). Lo que falta se filtra ya en la consulta, y van primero los que llevan más tiempo sin
+ * cambiar: así 50 vídeos a los que siempre les falta algo no tapan a los demás. Devuelve cuántos pidió.
  */
 export async function autoAnalyzePending(): Promise<number> {
   const rows = await getDb()
@@ -491,10 +494,15 @@ export async function autoAnalyzePending(): Promise<number> {
       and(
         eq(schema.batches.autoAnalyze, true),
         eq(schema.videos.referenceStatus, "ready"),
+        eq(schema.videos.skipAutoAnalysis, false),
         sql`not exists (select 1 from video_analyses a where a.video_id = ${schema.videos.id} and a.reference_media_id = ${schema.videos.referenceMediaId})`,
+        // Los requisitos de `missingForAnalysis`, en SQL.
+        sql`exists (select 1 from product_photos p where p.product_id = ${schema.videos.productId} and p.role = 'articulo')`,
+        sql`(${schema.videos.avatarMode} <> 'elegido' or exists (select 1 from product_photos p where p.id = ${schema.videos.avatarPhotoId} and p.product_id = ${schema.videos.productId} and p.role = 'avatar'))`,
+        sql`(${schema.videos.kind} <> 'adaptacion_concepto' or nullif(trim(${schema.videos.adaptation}), '') is not null)`,
       ),
     )
-    .orderBy(asc(schema.videos.id))
+    .orderBy(asc(schema.videos.updatedAt), asc(schema.videos.id))
     .limit(AUTO_BATCH_LIMIT);
   let requested = 0;
   for (const { id } of rows) {
@@ -606,11 +614,16 @@ export async function runAnalysis(analysisId: number, deps: { gateway?: LlmGatew
         .where(and(eq(analyses.id, analysisId), inArray(analyses.status, ACTIVE)));
       return;
     }
+    // Si las indicaciones cambiaron mientras Claude respondía, el desglose queda superado para
+    // siempre: se guarda (con su resultado, sus indicaciones y su coste) pero en error, y sus prompts
+    // no pisan los del vídeo. Aunque luego se vuelva a las mismas indicaciones, no vale: se repite.
+    const now = { ...video, productNotes: await productNotesOf(video) };
+    const superseded = analysisStaleness({ ...step.brief, referenceMediaId: row.referenceMediaId }, now) !== null;
     const [saved] = await tx
       .update(analyses)
       .set({
-        status: "done",
-        error: null,
+        status: superseded ? "failed" : "done",
+        error: superseded ? BRIEF_CHANGED_WHILE_RUNNING : null,
         result: step.result,
         ...step.brief,
         ruleVersions: step.ruleVersions,
@@ -619,11 +632,7 @@ export async function runAnalysis(analysisId: number, deps: { gateway?: LlmGatew
       })
       .where(and(eq(analyses.id, analysisId), inArray(analyses.status, ACTIVE)))
       .returning({ videoId: analyses.videoId });
-    if (!saved) return;
-    // Si las indicaciones cambiaron mientras Claude respondía, el desglose queda hecho con las que
-    // usó (y se ve como «Repetir desglose»), pero sus prompts no pisan los del vídeo.
-    const now = { ...video, productNotes: await productNotesOf(video) };
-    if (analysisStaleness({ ...step.brief, referenceMediaId: row.referenceMediaId }, now) !== null) return;
+    if (!saved || superseded) return;
     await tx
       .update(schema.videos)
       .set({ imagePrompt: step.result.imagePrompt, videoPrompt: step.result.videoPrompt, frameUse: step.result.frameUse, updatedAt: new Date() })

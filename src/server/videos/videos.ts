@@ -52,23 +52,39 @@ export interface NewVideoExtras {
 /**
  * Crea un vídeo vacío en un producto visible, titulado «Vídeo N» (N = los que ya tiene + 1). Desde
  * un lote llega además su lote, su tipo, sus cambios específicos y quién sale, ya comprobados. Si
- * no se dice quién sale, empieza con el avatar habitual del producto (`startingAvatar`).
+ * no se dice quién sale, empieza con el avatar habitual del producto (`startingAvatar`; sin fotos
+ * de avatar, sin elegir).
  */
 export async function createVideo(user: AuthUser, productId: number, extras: NewVideoExtras = {}): Promise<Video> {
   const product = await getProductFor(user, productId);
   if (extras.avatarMode === undefined) {
     const avatars = (await listProductPhotos(user, product.id)).filter((photo) => photo.role === "avatar").map((photo) => photo.id);
-    extras = { ...extras, ...startingAvatar(product, avatars) };
+    // Un vídeo suelto sin fotos de avatar en el producto empieza sin elegir: lo decide la persona.
+    extras = { ...extras, ...startingAvatar(product, avatars, "elegir") };
   }
-  return getDb().transaction(async (tx) => {
-    await tx.execute(titleLock(product.id));
-    const [{ n }] = await tx.select({ n: count() }).from(schema.videos).where(eq(schema.videos.productId, product.id));
-    const [video] = await tx
-      .insert(schema.videos)
-      .values({ productId: product.id, createdBy: user.id, title: `Vídeo ${n + 1}`, ...extras })
-      .returning();
-    return video;
-  });
+  return getDb().transaction((tx) => insertVideo(tx, user, product.id, extras));
+}
+
+type Tx = Parameters<Parameters<ReturnType<typeof getDb>["transaction"]>[0]>[0];
+
+/**
+ * Inserta un vídeo «Vídeo N» dentro de una transacción (con el cerrojo de títulos del producto),
+ * con las columnas que se le den. El producto ya está comprobado por quien llama. Lo usan
+ * `createVideo` y duplicar un vídeo del lote, que hace más cosas en la misma transacción.
+ */
+export async function insertVideo(
+  tx: Tx,
+  user: AuthUser,
+  productId: number,
+  values: Partial<typeof schema.videos.$inferInsert> = {},
+): Promise<Video> {
+  await tx.execute(titleLock(productId));
+  const [{ n }] = await tx.select({ n: count() }).from(schema.videos).where(eq(schema.videos.productId, productId));
+  const [video] = await tx
+    .insert(schema.videos)
+    .values({ ...values, productId, createdBy: user.id, title: `Vídeo ${n + 1}` })
+    .returning();
+  return video;
 }
 
 /**
@@ -202,7 +218,8 @@ export async function updateVideoChoices(user: AuthUser, videoId: number, input:
   if (Object.keys(changes).length === 0) return video;
   const [updated] = await getDb()
     .update(schema.videos)
-    .set({ ...changes, updatedAt: new Date() })
+    // Un duplicado que esperaba a que lo cambiaran ya puede tener su desglose automático.
+    .set({ ...changes, skipAutoAnalysis: false, updatedAt: new Date() })
     .where(and(eq(schema.videos.id, video.id), eq(schema.videos.createdBy, user.id)))
     .returning();
   if (!updated) throw new HttpError(404, NOT_FOUND);

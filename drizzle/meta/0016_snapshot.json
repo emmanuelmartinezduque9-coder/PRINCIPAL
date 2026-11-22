@@ -1985,6 +1985,14 @@
         "video_analyses_status_valid": {
           "name": "video_analyses_status_valid",
           "value": "\"video_analyses\".\"status\" in ('queued', 'running', 'done', 'failed', 'paused')"
+        },
+        "video_analyses_kind_valid": {
+          "name": "video_analyses_kind_valid",
+          "value": "\"video_analyses\".\"kind\" in ('replicar', 'adaptacion_concepto')"
+        },
+        "video_analyses_avatar_mode_valid": {
+          "name": "video_analyses_avatar_mode_valid",
+          "value": "\"video_analyses\".\"avatar_mode\" in ('elegido', 'sin_sustitucion', 'nadie')"
         }
       },
       "isRLSEnabled": false
@@ -2219,6 +2227,13 @@
           "type": "bigint",
           "primaryKey": false,
           "notNull": false
+        },
+        "skip_auto_analysis": {
+          "name": "skip_auto_analysis",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
         },
         "batch_id": {
           "name": "batch_id",
