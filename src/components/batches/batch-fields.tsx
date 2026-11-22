@@ -123,11 +123,21 @@ export function AvatarSelect({
 }
 
 /** Tipo de la fila: en la lista, el nombre entero; en la fila, el corto (cabe en la columna). */
-export function KindSelect({ value, onChange, className }: { value: VideoKind; onChange: (kind: VideoKind) => void; className?: string }) {
+export function KindSelect({
+  value,
+  onChange,
+  className,
+  label = "Tipo de vídeo",
+}: {
+  value: VideoKind;
+  onChange: (kind: VideoKind) => void;
+  className?: string;
+  label?: string;
+}) {
   const { short, long, icon: Icon } = KIND_LABELS[value];
   return (
     <Select value={value} onValueChange={(v) => onChange(v as VideoKind)}>
-      <SelectTrigger aria-label="Tipo de vídeo" title={long} className={cn("h-9 w-full min-w-0", className)}>
+      <SelectTrigger aria-label={label} title={long} className={cn("h-9 w-full min-w-0", className)}>
         <SelectValue>
           <Icon className="size-4 text-muted-foreground" aria-hidden />
           {short}

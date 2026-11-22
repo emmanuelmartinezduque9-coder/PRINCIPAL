@@ -67,12 +67,23 @@ interface Group {
   key: string;
   productId: number | null;
   notes: string;
+  /** «Tipo» del grupo: el que reciben las tarjetas nuevas (cada una lo puede cambiar después). */
+  kind: VideoKind;
+  /** Con «Solo gancho», la duración que reciben las tarjetas nuevas. */
+  hookSeconds: number;
   rows: Row[];
 }
 
 let counter = 0;
 const nextKey = (prefix: string) => `${prefix}-${++counter}`;
-const newGroup = (productId: number | null = null): Group => ({ key: nextKey("grupo"), productId, notes: "", rows: [] });
+const newGroup = (productId: number | null = null): Group => ({
+  key: nextKey("grupo"),
+  productId,
+  notes: "",
+  kind: "replicar",
+  hookSeconds: DEFAULT_HOOK_SECONDS,
+  rows: [],
+});
 
 const sizeLabel = (bytes: number) =>
   bytes < 1024 * 1024
@@ -403,13 +414,14 @@ export function NewBatch() {
     URL.revokeObjectURL(row.source.preview);
     previews.current.delete(row.source.preview);
   };
-  const newRow = (source: Source): Row => ({
+  /** Una tarjeta nueva, con el tipo (y la duración del gancho) que tenga elegido su grupo. */
+  const newRow = (source: Source, group: Pick<Group, "kind" | "hookSeconds">): Row => ({
     key: nextKey("fila"),
     source,
     avatar: null,
-    kind: "replicar",
+    kind: group.kind,
     adaptation: "",
-    hookSeconds: DEFAULT_HOOK_SECONDS,
+    hookSeconds: group.hookSeconds,
     bodies: [],
     note: "",
     song: null,
@@ -422,10 +434,11 @@ export function NewBatch() {
     updateGroup(groupKey, (group) => ({ ...group, rows: group.rows.map((row) => (row.key === rowKey ? { ...row, ...changes } : row)) }));
 
   function addFiles(groupKey: string, files: File[]) {
+    const defaults = groups.find((group) => group.key === groupKey) ?? newGroup();
     const videos = files.filter(isVideoFile);
     if (videos.length < files.length) toast.error("Solo vídeos MP4, MOV o WebM.");
     const rows = videos.map((file): Row => {
-      const row = newRow({ type: "file", file, preview: preview(file) });
+      const row = newRow({ type: "file", file, preview: preview(file) }, defaults);
       return { ...row, error: tooBig(row) ? "Pesa más de 100 MB." : null };
     });
     updateGroup(groupKey, (group) => ({ ...group, rows: [...group.rows, ...rows] }));
@@ -436,7 +449,7 @@ export function NewBatch() {
     updateGroup(groupKey, (group) => {
       const present = new Set(group.rows.flatMap((row) => (row.source.type === "link" ? [row.source.url] : [])));
       const fresh = links.filter((url) => !present.has(url));
-      return { ...group, rows: [...group.rows, ...fresh.map((url) => newRow({ type: "link", url }))] };
+      return { ...group, rows: [...group.rows, ...fresh.map((url) => newRow({ type: "link", url }, group))] };
     });
   }
 
@@ -573,7 +586,7 @@ export function NewBatch() {
             className="flex flex-col overflow-hidden rounded-xl bg-card ring-1 ring-foreground/10"
           >
             <div className="flex flex-col gap-3 border-b px-4 py-3">
-              <div className="flex items-center gap-3">
+              <div className="flex flex-wrap items-center gap-3">
                 <ProductCover product={product} />
                 <ProductSelect
                   label="Producto"
@@ -589,6 +602,20 @@ export function NewBatch() {
                   )}
                 />
                 <span className="text-sm text-muted-foreground tabular-nums">{group.rows.length === 1 ? "1 vídeo" : `${group.rows.length} vídeos`}</span>
+                <div className="flex items-center gap-2" title="Tipo de los vídeos que vas a añadir">
+                  <span className="text-sm text-muted-foreground" aria-hidden>
+                    Tipo
+                  </span>
+                  <KindSelect
+                    label="Tipo de los vídeos que vas a añadir"
+                    value={group.kind}
+                    onChange={(kind) => updateGroup(group.key, (g) => ({ ...g, kind }))}
+                    className="w-48"
+                  />
+                  {group.kind === "solo_gancho" ? (
+                    <HookStepper value={group.hookSeconds} onChange={(hookSeconds) => updateGroup(group.key, (g) => ({ ...g, hookSeconds }))} disabled={busy} />
+                  ) : null}
+                </div>
                 {groups.length > 1 ? (
                   <Button
                     variant="ghost"

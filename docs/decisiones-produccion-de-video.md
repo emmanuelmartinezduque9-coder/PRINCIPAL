@@ -688,3 +688,8 @@ La nube no llega a Instagram; el Mac del dueño sí. Un programa pequeño en ese
 - **Migración** `0019` (sobre la `0018` del agente del Mac).
 - **Pantalla.** Lista por secciones (la primera sección real de cada canción; sin sección, al final) con búsqueda por número exacto o título sin tildes, y a la derecha la canción elegida: onda calculada en el navegador, inicio (azul) y drop (rojo) arrastrables o con flechas, «Marcar drop aquí» e «Inicio aquí» mientras suena, «Escuchar desde el drop». Los colaboradores la ven igual pero sin editar.
 - **Música por vídeo.** Control compacto «Música» en la pantalla del vídeo (junto al tipo), en las tarjetas de «Nuevo lote» (también las de enlace pegado) y como columna del tablero (número de la canción). El selector busca por número o título, escucha desde el drop y Enter elige la primera.
+
+## Nuevo lote: «Tipo» por producto (22/11)
+
+- Cada grupo de producto de «Nuevo lote» tiene, junto al producto y al número de vídeos, un «Tipo» (Replicar, Adaptación de concepto, Solo gancho) que es el tipo con el que nacen las tarjetas que se añaden después en ese grupo, por archivo o por enlace (como «Tipo de los vídeos que vas a añadir» del panel antiguo). Con «Solo gancho» se ve también la duración del gancho, que heredan las tarjetas nuevas. Cambiarlo no toca las tarjetas que ya están: cada una conserva su propio selector. Es solo de la pantalla: no se guarda en el servidor.
+- El cuadro de «Indicaciones» del grupo enseña su texto de ayuda «Indicaciones para los vídeos de {producto}» mientras está vacío (comprobado con Playwright).
