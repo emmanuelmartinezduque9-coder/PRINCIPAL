@@ -2,8 +2,9 @@
 
 import { useQueryClient } from "@tanstack/react-query";
 import { Layers } from "lucide-react";
-import { useId, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { toast } from "sonner";
+import { BodyPicker, HookStepper } from "@/components/library/body-picker";
 import { Panel } from "@/components/shell/panel";
 import { Textarea } from "@/components/ui/textarea";
 import { api } from "@/lib/api";
@@ -14,7 +15,7 @@ import { appendDictation, DictateButton } from "./dictate-button";
 import type { VideoViewJson } from "./labels";
 import { Segmented } from "./segmented";
 
-type BriefChanges = { kind?: VideoKind; adaptation?: string | null; note?: string | null };
+type BriefChanges = { kind?: VideoKind; adaptation?: string | null; note?: string | null; hookSeconds?: number; bodyClipIds?: number[] };
 
 /** Guarda en el vídeo; se ve al instante y, si el servidor no lo acepta, vuelve a como estaba. */
 function useSaveBrief(videoId: number) {
@@ -95,14 +96,36 @@ function SavedText({
 }
 
 /**
+ * «Duración del gancho»: cada clic se ve al momento y se guarda cuando se deja de pulsar (así
+ * pasar de 4 a 7 es un solo guardado y no tres que se crucen).
+ */
+function SavedHookSeconds({ value, onSave, disabled }: { value: number; onSave: (seconds: number) => Promise<boolean>; disabled: boolean }) {
+  const [draft, setDraft] = useState<number | null>(null);
+  useEffect(() => {
+    if (draft === null) return;
+    const timer = setTimeout(() => {
+      if (draft === value) setDraft(null);
+      else void onSave(draft).finally(() => setDraft(null));
+    }, 450);
+    return () => clearTimeout(timer);
+    // `onSave` cambia en cada pintado: el temporizador solo depende de lo que se ha pulsado.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draft, value]);
+  return <HookStepper value={draft ?? value} onChange={setDraft} disabled={disabled} />;
+}
+
+/**
  * Tipo de vídeo, «Cambios específicos» (con dictado) y «Qué adaptación quieres» (solo con
- * adaptación). Si el vídeo es de un lote con indicaciones para su producto, se ven (no se cambian aquí).
+ * adaptación). Con «Solo gancho», la duración del gancho y los cuerpos que van detrás (de los
+ * cuerpos del producto). Si el vídeo es de un lote con indicaciones para su producto, se ven (no
+ * se cambian aquí).
  */
 export function BriefPanel({ view }: { view: VideoViewJson }) {
   const { video, mine, productNotes } = view;
   const save = useSaveBrief(video.id);
   const kind = kindOf(video.kind);
   const adapting = kind === "adaptacion_concepto";
+  const hookOnly = kind === "solo_gancho";
 
   return (
     <Panel className="gap-4">
@@ -117,6 +140,7 @@ export function BriefPanel({ view }: { view: VideoViewJson }) {
           disabled={!mine}
           className="shrink-0"
         />
+        {hookOnly ? <SavedHookSeconds value={video.hookSeconds} onSave={(hookSeconds) => save({ hookSeconds })} disabled={!mine} /> : null}
         {productNotes ? (
           <p className="flex min-w-0 items-start gap-2 text-sm text-muted-foreground" title={productNotes}>
             <Layers className="mt-0.5 size-4 shrink-0" role="img" aria-label="Indicaciones del lote" />
@@ -124,6 +148,12 @@ export function BriefPanel({ view }: { view: VideoViewJson }) {
           </p>
         ) : null}
       </div>
+      {hookOnly && (mine || view.bodies.length > 0) ? (
+        <div className="flex flex-col gap-2">
+          <span className="text-sm font-medium">Cuerpos</span>
+          <BodyPicker productId={video.productId} value={video.bodyClipIds} onChange={(bodyClipIds) => void save({ bodyClipIds })} readOnly={!mine} />
+        </div>
+      ) : null}
       {mine || video.note || adapting ? (
         <div className={cn("grid gap-4", adapting && "lg:grid-cols-2")}>
           {mine || video.note ? (

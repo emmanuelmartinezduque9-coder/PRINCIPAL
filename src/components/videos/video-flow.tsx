@@ -156,6 +156,7 @@ function FlowBody({
   const { video, analysis, imageManifest } = data;
   const referenceDone =
     video.referenceStatus === "ready" &&
+    !data.referenceOutdated &&
     (video.avatarMode !== "elegido" || imageManifest.some((item) => item.role === "avatar")) &&
     (video.kind !== "adaptacion_concepto" || !!video.adaptation?.trim());
   const breakdownDone = analysis?.status === "done" && !analysis.stale;

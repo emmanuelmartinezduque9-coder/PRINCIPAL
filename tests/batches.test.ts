@@ -89,7 +89,7 @@ describe("lotes", () => {
       { productId: deAna.id, avatarPhotoId: avatarAna, avatarMode: "sin_sustitucion" },
       { productId: deAna.id, avatarPhotoId: null, avatarMode: "no_person" },
       { productId: deAna.id, avatarPhotoId: null, avatarMode: undefined },
-      { productId: deAna.id, avatarPhotoId: null, avatarMode: "nadie", kind: "solo_gancho" },
+      { productId: deAna.id, avatarPhotoId: null, avatarMode: "nadie", kind: "solo_cuerpo" },
       { productId: deAna.id, avatarPhotoId: null, avatarMode: "nadie", adaptation: "Otra idea" },
       { productId: deAna.id, avatarPhotoId: null, avatarMode: "nadie", kind: "adaptacion_concepto", adaptation: "x".repeat(12_001) },
     ];

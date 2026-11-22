@@ -384,13 +384,23 @@ export const videos = pgTable(
      * personas de la referencia) o `nadie`. Solo con `elegido` hay foto de avatar.
      */
     avatarMode: text("avatar_mode").notNull().default("elegido"),
-    /** `replicar` (por defecto) o `adaptacion_concepto`. */
+    /** `replicar` (por defecto), `adaptacion_concepto` o `solo_gancho`. */
     kind: text("kind").notNull().default("replicar"),
     /**
      * «Qué adaptación quieres» (máx. 12.000 caracteres). Solo cuenta con `kind = adaptacion_concepto`;
      * si se pasa a `replicar` se conserva sin usarse, para no perderla por un clic.
      */
     adaptation: text("adaptation"),
+    /**
+     * Duración del gancho en segundos (2–8). Solo cuenta con `kind = solo_gancho`: la referencia se
+     * recorta a esa duración al prepararse (`segmentMsFor`).
+     */
+    hookSeconds: integer("hook_seconds").notNull().default(4),
+    /**
+     * Los cuerpos (`product_bodies.id`) que se pegan detrás del gancho, en orden. Solo cuentan con
+     * `kind = solo_gancho`. Sin clave ajena (es una lista): un cuerpo desmarcado deja de salir.
+     */
+    bodyClipIds: jsonb("body_clip_ids").$type<number[]>().notNull().default([]),
     /** Prompt de la imagen inicial (en inglés): lo propone el desglose y la persona lo puede cambiar. */
     imagePrompt: text("image_prompt"),
     /** Prompt del clip (en inglés, con `@Video1` y `@ImageN`). */
@@ -426,7 +436,8 @@ export const videos = pgTable(
     index("videos_reference_status").on(t.referenceStatus),
     index("videos_batch").on(t.batchId),
     check("videos_note_length", sql`${t.note} is null or char_length(${t.note}) <= 6000`),
-    check("videos_kind_valid", sql`${t.kind} in ('replicar', 'adaptacion_concepto')`),
+    check("videos_kind_valid", sql`${t.kind} in ('replicar', 'adaptacion_concepto', 'solo_gancho')`),
+    check("videos_hook_seconds_valid", sql`${t.hookSeconds} between 2 and 8`),
     check("videos_adaptation_length", sql`${t.adaptation} is null or char_length(${t.adaptation}) <= 12000`),
     check("videos_avatar_mode_valid", sql`${t.avatarMode} in ('elegido', 'sin_sustitucion', 'nadie')`),
     check("videos_avatar_only_chosen", sql`${t.avatarMode} = 'elegido' or ${t.avatarPhotoId} is null`),
@@ -483,6 +494,8 @@ export const videoAnalyses = pgTable(
     avatarMode: text("avatar_mode").notNull().default("elegido"),
     note: text("note"),
     adaptation: text("adaptation"),
+    /** Duración del gancho con la que se hizo; solo con `solo_gancho`. */
+    hookSeconds: integer("hook_seconds"),
     /** «Indicaciones» del lote para el producto del vídeo, si las había. */
     productNotes: text("product_notes"),
     spendEntryId: bigint("spend_entry_id", { mode: "number" }),
@@ -497,7 +510,7 @@ export const videoAnalyses = pgTable(
       .where(sql`${t.status} in ('queued', 'running', 'paused')`),
     index("video_analyses_status").on(t.status, t.updatedAt),
     check("video_analyses_status_valid", sql`${t.status} in ('queued', 'running', 'done', 'failed', 'paused')`),
-    check("video_analyses_kind_valid", sql`${t.kind} in ('replicar', 'adaptacion_concepto')`),
+    check("video_analyses_kind_valid", sql`${t.kind} in ('replicar', 'adaptacion_concepto', 'solo_gancho')`),
     check("video_analyses_avatar_mode_valid", sql`${t.avatarMode} in ('elegido', 'sin_sustitucion', 'nadie')`),
   ],
 );
@@ -620,4 +633,68 @@ export const uploadSessions = pgTable(
     createdAt: instant("created_at").notNull().defaultNow(),
   },
   (t) => [index("upload_sessions_video").on(t.videoId), index("upload_sessions_created").on(t.createdAt)],
+);
+
+/**
+ * Biblioteca de clips: copia en caché del historial de vídeos de Higgsfield de cada persona (una
+ * fila por persona y trabajo), para que la pantalla cargue al instante. Solo guarda direcciones
+ * `https` de `*.cloudfront.net` (`servableClipUrl`). `video_id` marca los clips que salieron de un
+ * vídeo de PRINCIPAL. Solo `src/server/videos/` toca esta tabla y la siguiente. `user_id` sin
+ * clave ajena, igual que `credentials`.
+ */
+export const libraryClips = pgTable(
+  "library_clips",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    userId: bigint("user_id", { mode: "number" }).notNull(),
+    /** El `job_id` de Higgsfield (el `id` de la entrada del historial). */
+    jobId: text("job_id").notNull(),
+    /** Miniatura (`results.minUrl`), si es servible. */
+    thumbUrl: text("thumb_url"),
+    /** El vídeo (`results.rawUrl`). */
+    videoUrl: text("video_url").notNull(),
+    model: text("model").notNull().default(""),
+    /** Cuándo se generó en Higgsfield (`createdAt`). */
+    createdAtHf: instant("created_at_hf").notNull(),
+    /**
+     * Principio del prompt (máx. 300 caracteres, recortado en `library.ts`), para reconocer el
+     * clip. Sin CHECK: es texto de fuera y un recuento distinto no debe tumbar la actualización.
+     */
+    prompt: text("prompt"),
+    /** El vídeo de PRINCIPAL del que salió, si su trabajo coincide con un resultado de una generación. */
+    videoId: bigint("video_id", { mode: "number" }).references((): AnyPgColumn => videos.id, { onDelete: "set null" }),
+    /** Última vez que se vio en el historial. */
+    fetchedAt: instant("fetched_at").notNull().defaultNow(),
+  },
+  (t) => [
+    unique("library_clips_user_job").on(t.userId, t.jobId),
+    index("library_clips_user_created").on(t.userId, t.createdAtHf, t.id),
+  ],
+);
+
+/**
+ * Cuerpos de un producto: clips de la biblioteca marcados para pegarse detrás de un gancho
+ * (`videos.body_clip_ids`). Los ve quien ve el producto; cada persona marca solo sus propios clips.
+ * `created_by` sin clave ajena, igual que `products.created_by`.
+ */
+export const productBodies = pgTable(
+  "product_bodies",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    productId: bigint("product_id", { mode: "number" })
+      .notNull()
+      .references(() => products.id, { onDelete: "cascade" }),
+    libraryClipId: bigint("library_clip_id", { mode: "number" })
+      .notNull()
+      .references(() => libraryClips.id, { onDelete: "cascade" }),
+    /** Nombre corto para reconocerlo en el selector (1–60 caracteres). */
+    label: text("label").notNull(),
+    createdBy: bigint("created_by", { mode: "number" }).notNull(),
+    createdAt: instant("created_at").notNull().defaultNow(),
+  },
+  (t) => [
+    unique("product_bodies_product_clip").on(t.productId, t.libraryClipId),
+    index("product_bodies_clip").on(t.libraryClipId),
+    check("product_bodies_label_length", sql`char_length(${t.label}) between 1 and 60`),
+  ],
 );

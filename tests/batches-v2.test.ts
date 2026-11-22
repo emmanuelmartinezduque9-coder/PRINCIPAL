@@ -437,6 +437,20 @@ describe("desglose automático al subir", () => {
     expect((await analysesOf(v.id)).map((a) => a.media)).toEqual(["media-1", "media-2"]);
   });
 
+  it("un «Solo gancho» con la referencia preparada para otro tramo no se desglosa solo hasta que se vuelve a subir", async () => {
+    const lote = await createBatch(ana, "Ganchos");
+    // La referencia (6 s) se preparó entera; el vídeo es un gancho de 4 s: hay que volver a subirla.
+    const v = await batchVideo(lote.id, { kind: "solo_gancho", hookSeconds: 4 });
+    await readyReference(v.id);
+    expect(await autoRequestAnalysis(v.id)).toBe(false);
+    expect(await autoAnalyzePending()).toBe(0);
+    expect(await analysesOf(v.id)).toEqual([]);
+    // Subida de nuevo (tramo de 4 s): ahora sí.
+    await getPool().query("update videos set segment_duration_ms = 4000 where id = $1", [v.id]);
+    expect(await autoAnalyzePending()).toBe(1);
+    expect(await analysesOf(v.id)).toHaveLength(1);
+  });
+
   it("no pide nada con el interruptor apagado, fuera de un lote o si falta algo; el seguimiento lo pide cuando ya no falta", async () => {
     const apagado = await createBatch(ana, "A", { autoAnalyze: false });
     const v = await batchVideo(apagado.id);

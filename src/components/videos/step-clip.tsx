@@ -4,6 +4,8 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Check, Clapperboard, Download, ImageIcon, Loader2, ThumbsUp, VideoOff } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
+import { ClipPreview, useHoverPreview } from "@/components/library/clip-preview";
+import { bodyDownloadUrl } from "@/components/library/labels";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { api } from "@/lib/api";
@@ -147,6 +149,48 @@ function Player({ view }: { view: VideoViewJson }) {
   );
 }
 
+type BodyJson = VideoViewJson["bodies"][number];
+
+/** Un cuerpo en la lista del clip: su número, su miniatura (con vista previa al pasar) y su descarga. */
+function BodyRow({ body, order }: { body: BodyJson; order: number }) {
+  const preview = useHoverPreview();
+  return (
+    <li className="flex items-center gap-3 py-2">
+      <span className="w-4 shrink-0 text-right text-xs font-medium text-muted-foreground tabular-nums">{order}</span>
+      <span className="relative h-16 w-9 shrink-0 overflow-hidden rounded-md bg-muted ring-1 ring-foreground/10" {...preview.handlers}>
+        <ClipPreview thumbUrl={body.thumbUrl} videoUrl={body.videoUrl} active={preview.active} />
+      </span>
+      <span className="min-w-0 flex-1 truncate text-sm" title={body.label}>
+        {body.label}
+      </span>
+      <a
+        href={bodyDownloadUrl(body.id)}
+        download
+        aria-label={`Descargar el cuerpo ${body.label}`}
+        title="Descargar"
+        className={cn(buttonVariants({ variant: "ghost", size: "icon" }), "size-9 shrink-0 text-muted-foreground")}
+      >
+        <Download aria-hidden />
+      </a>
+    </li>
+  );
+}
+
+/** «Solo gancho»: los cuerpos que van detrás del gancho, en orden, cada uno con su descarga (se unen al montar). */
+function Bodies({ bodies }: { bodies: BodyJson[] }) {
+  if (bodies.length === 0) return null;
+  return (
+    <section aria-label="Cuerpos" className="flex flex-col rounded-xl bg-card px-4 py-2 ring-1 ring-foreground/10">
+      <h3 className="pt-1.5 pb-0.5 text-sm font-medium">Cuerpos</h3>
+      <ol className="flex flex-col divide-y">
+        {bodies.map((body, index) => (
+          <BodyRow key={body.id} body={body} order={index + 1} />
+        ))}
+      </ol>
+    </section>
+  );
+}
+
 /** Paso «Clip»: reproductor vertical y, al lado, resolución y precio, aprobar, rechazar y descargar. */
 export function StepClip({
   view,
@@ -169,6 +213,7 @@ export function StepClip({
   const approved = result !== undefined && clip.approvedResultId === result.id;
   const downloadable = clip.approvedResultId !== null || result !== undefined;
   const saveResolution = useSaveResolution(video);
+  const hookOnly = video.kind === "solo_gancho";
 
   return (
     <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,360px)_340px] lg:gap-8">
@@ -223,9 +268,11 @@ export function StepClip({
             className={cn(buttonVariants({ variant: approved ? "default" : "outline" }), "h-11 gap-2")}
           >
             <Download data-icon="inline-start" />
-            Descargar
+            {hookOnly ? "Descargar gancho" : "Descargar"}
           </a>
         ) : null}
+
+        {hookOnly ? <Bodies bodies={view.bodies} /> : null}
 
         {mine && closed && !canRequest ? <NoRegenerationsLeft what="clip" /> : null}
       </aside>

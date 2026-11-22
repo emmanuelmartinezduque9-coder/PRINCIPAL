@@ -197,7 +197,7 @@ async function setUnknown(id: number): Promise<void> {
 
 /** Una entrada del historial como la real: con fecha, modelo, entradas y resolución. */
 function hist(jobId: string, prompt: string | null, over: Partial<HfHistoryItem> = {}): HfHistoryItem {
-  return { jobId, type: "image", model: frameModel, prompt, createdAt: new Date(), media: [{ id: MEDIA, url: null }], resolution: "2k", thumbUrl: null, ...over };
+  return { jobId, type: "image", model: frameModel, prompt, createdAt: new Date(), media: [{ id: MEDIA, url: null }], resolution: "2k", thumbUrl: null, completed: false, resultUrl: null, ...over };
 }
 
 /** Pide y envía una imagen inicial (4 créditos). */

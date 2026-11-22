@@ -108,7 +108,8 @@ function Requirement({ ok, icon: Icon, label }: { ok: boolean; icon: LucideIcon;
 function StartPanel({ view, onGoToReference }: { view: VideoViewJson; onGoToReference: () => void }) {
   const { video, imageManifest, mine } = view;
   const request = useRequestAnalysis(video.id);
-  const reference = video.referenceStatus === "ready";
+  // Preparada con otro gancho no cuenta: hay que volver a subirla.
+  const reference = video.referenceStatus === "ready" && !view.referenceOutdated;
   const person = video.avatarMode !== "elegido" || imageManifest.some((item) => item.role === "avatar");
   const article = imageManifest.some((item) => item.role === "articulo");
   const adapting = video.kind === "adaptacion_concepto";
@@ -441,7 +442,12 @@ export function StepBreakdown({
 
   if (!analysis) return <StartPanel view={view} onGoToReference={onGoToReference} />;
 
-  const repeat = mine ? (
+  // Con la referencia preparada para otro gancho no se puede repetir el desglose: primero, subirla de nuevo.
+  const repeat = !mine ? null : view.referenceOutdated ? (
+    <Button variant="outline" className="h-8 bg-background px-3" onClick={onGoToReference}>
+      Ir a la referencia
+    </Button>
+  ) : (
     <RepeatButton
       dirty={isDirty(draft, video)}
       pending={request.isPending}
@@ -450,7 +456,7 @@ export function StepBreakdown({
         request.mutate();
       }}
     />
-  ) : null;
+  );
 
   if (analysis.status === "queued" || analysis.status === "running") {
     return (
@@ -495,7 +501,11 @@ export function StepBreakdown({
         <div role="status" className="flex flex-wrap items-center gap-3 rounded-xl bg-amber-500/10 px-4 py-3 text-sm ring-1 ring-amber-500/25">
           <TriangleAlert className="size-4 shrink-0 text-amber-600" aria-hidden />
           <span className="min-w-0 flex-1">
-            {analysis.staleReason === "brief" ? "Las indicaciones del vídeo han cambiado." : "Este desglose es del vídeo de referencia anterior."}
+            {view.referenceOutdated
+              ? "El gancho ha cambiado: vuelve a subir el vídeo de referencia."
+              : analysis.staleReason === "brief"
+                ? "Las indicaciones del vídeo han cambiado."
+                : "Este desglose es del vídeo de referencia anterior."}
           </span>
           {repeat}
         </div>

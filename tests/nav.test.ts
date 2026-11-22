@@ -4,15 +4,15 @@ import { navFor } from "@/components/shell/app-shell";
 const labels = (role: Parameters<typeof navFor>[0]) => navFor(role).map((item) => item.label);
 
 describe("menú lateral según el papel", () => {
-  it("el dueño ve Productos, Lotes, Gasto, Reglas, Personas y Ajustes, en ese orden", () => {
-    expect(labels("dueno")).toEqual(["Productos", "Lotes", "Gasto", "Reglas", "Personas", "Ajustes"]);
+  it("el dueño ve Productos, Lotes, Biblioteca, Gasto, Reglas, Personas y Ajustes, en ese orden", () => {
+    expect(labels("dueno")).toEqual(["Productos", "Lotes", "Biblioteca", "Gasto", "Reglas", "Personas", "Ajustes"]);
   });
 
-  it("el colaborador ve Productos, Lotes y Ajustes (su propia conexión de Higgsfield)", () => {
-    expect(labels("colaborador")).toEqual(["Productos", "Lotes", "Ajustes"]);
+  it("el colaborador ve Productos, Lotes, Biblioteca (sus clips de Higgsfield) y Ajustes (su propia conexión)", () => {
+    expect(labels("colaborador")).toEqual(["Productos", "Lotes", "Biblioteca", "Ajustes"]);
   });
 
   it("mientras no se sabe quién es, solo se ofrece lo que es de todos", () => {
-    expect(labels(undefined)).toEqual(["Productos", "Lotes", "Ajustes"]);
+    expect(labels(undefined)).toEqual(["Productos", "Lotes", "Biblioteca", "Ajustes"]);
   });
 });

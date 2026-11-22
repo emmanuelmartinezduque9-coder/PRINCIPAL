@@ -5,11 +5,12 @@ import { HttpError } from "@/server/http";
 import { coverPhotoIds, listProductPhotos } from "@/server/photos";
 import { listProductsFor } from "@/server/products";
 import { downloadableClipUrl, servableClipUrl } from "@/server/videos/clip";
+import { bodiesOfVideos, checkVideoBodies } from "@/server/videos/bodies";
 import { costsOfVideo, type VideoCosts } from "@/server/videos/costs";
 import { generationLock, generationView, pollVideoGenerations, type GenerationView } from "@/server/videos/generations";
 import { analysisLock, type Analysis } from "@/server/videos/analysis";
 import { checkKindInput, cleanNote, cleanProductNotes, isAvatarMode, type AvatarMode, type VideoKind } from "@/server/videos/brief";
-import { createVideo, getVideoFor, insertVideo, productNotesOf, staleness, type Video } from "@/server/videos/videos";
+import { createVideo, getVideoFor, insertVideo, productNotesOf, referenceOutdated, staleness, type Video } from "@/server/videos/videos";
 
 /**
  * Lotes: muchos vídeos a la vez encima del flujo de cada vídeo. Un lote es solo una lista con
@@ -166,18 +167,27 @@ export async function listBatchesFor(user: AuthUser): Promise<BatchSummary[]> {
 /**
  * Crea un vídeo en el lote por el camino normal (`createVideo`: producto visible, «Vídeo N»), con
  * quién sale (un avatar, una foto con papel «avatar» de ese producto; «sin sustitución»; o
- * «nadie»), su tipo (con su adaptación si es «Adaptación de concepto») y sus cambios específicos
- * opcionales de una línea. Solo quien creó el lote. Valores que no valen: 400.
+ * «nadie»), su tipo (con su adaptación si es «Adaptación de concepto»; con la duración del gancho y
+ * sus cuerpos, de ese mismo producto, si es «Solo gancho») y sus cambios específicos opcionales. Solo quien creó el lote. Valores que no valen: 400.
  */
 export async function addVideoToBatch(
   user: AuthUser,
   batchId: number,
-  input: { productId: number; avatarPhotoId: number | null; avatarMode: unknown; kind?: unknown; adaptation?: unknown; note?: unknown },
+  input: {
+    productId: number;
+    avatarPhotoId: number | null;
+    avatarMode: unknown;
+    kind?: unknown;
+    adaptation?: unknown;
+    hookSeconds?: unknown;
+    bodyClipIds?: unknown;
+    note?: unknown;
+  },
 ): Promise<Video> {
   const batch = await ownBatch(user, batchId, NOT_CREATOR);
 
   const note = cleanNote(input.note);
-  const { kind, adaptation } = checkKindInput(input);
+  const { kind, adaptation, hookSeconds } = checkKindInput(input);
   if (!isAvatarMode(input.avatarMode)) throw new HttpError(400, "Valor no válido.");
   const avatarMode = input.avatarMode;
   if (avatarMode !== "elegido" && input.avatarPhotoId !== null) {
@@ -190,6 +200,7 @@ export async function addVideoToBatch(
   if (input.avatarPhotoId !== null && !photos.some((photo) => photo.id === input.avatarPhotoId && photo.role === "avatar")) {
     throw new HttpError(400, BAD_AVATAR);
   }
+  const bodyClipIds = input.bodyClipIds === undefined ? undefined : await checkVideoBodies(input.productId, input.bodyClipIds);
   return createVideo(user, input.productId, {
     batchId: batch.id,
     note,
@@ -197,6 +208,8 @@ export async function addVideoToBatch(
     avatarMode,
     kind: kind ?? "replicar",
     adaptation: adaptation ?? null,
+    ...(hookSeconds === undefined ? {} : { hookSeconds }),
+    ...(bodyClipIds === undefined ? {} : { bodyClipIds }),
   });
 }
 
@@ -208,6 +221,10 @@ export interface BatchRow {
   /** «Cambios específicos». */
   note: string | null;
   kind: VideoKind;
+  /** Duración del gancho (solo cuenta con «Solo gancho»). */
+  hookSeconds: number;
+  /** Cuántos cuerpos lleva detrás del gancho (solo cuenta con «Solo gancho»). */
+  bodies: number;
   /** «Adaptación de concepto» sin «Qué adaptación quieres» todavía: no se puede desglosar. */
   needsAdaptation: boolean;
   mine: boolean;
@@ -215,6 +232,8 @@ export interface BatchRow {
   updatedAt: Date;
   referenceStatus: string;
   referenceError: string | null;
+  /** La referencia se preparó con otro tramo (cambió el gancho): hay que volver a subirla. */
+  referenceOutdated: boolean;
   avatarPhotoId: number | null;
   avatarMode: AvatarMode;
   /** El último desglose: su estado, su error y si ya no corresponde (otra referencia u otras indicaciones). */
@@ -273,6 +292,7 @@ export async function batchView(user: AuthUser, batchId: number): Promise<BatchV
             avatarMode: analyses.avatarMode,
             note: analyses.note,
             adaptation: analyses.adaptation,
+            hookSeconds: analyses.hookSeconds,
             productNotes: analyses.productNotes,
             risks: sql<Analysis["risks"] | null>`${analyses.result}->'risks'`,
           })
@@ -296,6 +316,7 @@ export async function batchView(user: AuthUser, batchId: number): Promise<BatchV
           .from(schema.generations)
           .where(inArray(schema.generations.videoId, list.map((video) => video.id)));
   const withGenerations = new Set(generated.map((row) => row.videoId));
+  const bodiesOf = await bodiesOfVideos(list);
 
   const rows = await Promise.all(
     list.map(async (video): Promise<BatchRow> => {
@@ -313,12 +334,15 @@ export async function batchView(user: AuthUser, batchId: number): Promise<BatchV
         productName: products.get(video.productId) ?? "",
         note: video.note,
         kind: video.kind as VideoKind,
+        hookSeconds: video.hookSeconds,
+        bodies: bodiesOf.get(video.id)?.length ?? 0,
         needsAdaptation: video.kind === "adaptacion_concepto" && !video.adaptation,
         mine: video.createdBy === user.id,
         createdAt: video.createdAt,
         updatedAt: video.updatedAt,
         referenceStatus: video.referenceStatus,
         referenceError: video.referenceError,
+        referenceOutdated: referenceOutdated(video),
         avatarPhotoId: video.avatarPhotoId,
         avatarMode: video.avatarMode as AvatarMode,
         analysis: analysis
@@ -354,8 +378,8 @@ async function ownBatchVideo(user: AuthUser, batchId: number, videoId: number): 
 }
 
 /**
- * «Duplicar»: un vídeo nuevo en el mismo lote con lo mismo (producto, tipo, adaptación, cambios,
- * quién sale, entorno, resolución), en una sola transacción. Si la referencia ya está lista se
+ * «Duplicar»: un vídeo nuevo en el mismo lote con lo mismo (producto, tipo, adaptación, gancho y
+ * cuerpos, cambios, quién sale, entorno, resolución), en una sola transacción. Si la referencia ya está lista se
  * reutiliza tal cual (el mismo recorte en Higgsfield y una copia de sus fotogramas): no hay que
  * volver a subirla. Y como el duplicado es idéntico, para no gastar en Claude antes de que se edite:
  * - si el original tiene un desglose que vale (último hecho, de esta referencia y de estas
@@ -387,6 +411,8 @@ export async function duplicateBatchVideo(user: AuthUser, batchId: number, video
       avatarMode: video.avatarMode,
       kind: video.kind,
       adaptation: video.adaptation,
+      hookSeconds: video.hookSeconds,
+      bodyClipIds: video.bodyClipIds,
       environmentPhotoId: video.environmentPhotoId,
       clipResolution: video.clipResolution,
       ...(ready
@@ -421,6 +447,7 @@ export async function duplicateBatchVideo(user: AuthUser, batchId: number, video
         avatarMode: valid.avatarMode,
         note: valid.note,
         adaptation: valid.adaptation,
+        hookSeconds: valid.hookSeconds,
         productNotes: valid.productNotes,
         // Sin cargo: lo que costó ya cuenta en el original.
         spendEntryId: null,

@@ -120,8 +120,8 @@ describe("límites del código", () => {
 
   it("solo las tablas de vídeo se tocan desde src/server/videos", () => {
     const VIDEO_TABLES = [
-      /schema\.(videos|videoFrames|uploadSessions|videoAnalyses|generations|generationResults|batches|batchProducts)\b/,
-      /\b(video_frames|upload_sessions|video_analyses|generation_results|batch_products)\b/,
+      /schema\.(videos|videoFrames|uploadSessions|videoAnalyses|generations|generationResults|batches|batchProducts|libraryClips|productBodies)\b/,
+      /\b(video_frames|upload_sessions|video_analyses|generation_results|batch_products|library_clips|product_bodies)\b/,
     ];
     expect(VIDEO_TABLES.some((p) => p.test("getDb().update(schema.generations)"))).toBe(true);
     expect(VIDEO_TABLES.some((p) => p.test("select thumb from generation_results"))).toBe(true);
@@ -130,6 +130,13 @@ describe("límites del código", () => {
     expect(VIDEO_TABLES.some((p) => p.test("select * from video_analyses"))).toBe(true);
     expect(VIDEO_TABLES.some((p) => p.test("getDb().delete(schema.batchProducts)"))).toBe(true);
     expect(VIDEO_TABLES.some((p) => p.test("select notes from batch_products"))).toBe(true);
+    // La biblioteca de clips y los cuerpos de producto también son tablas de vídeo.
+    expect(VIDEO_TABLES.some((p) => p.test("getDb().insert(schema.libraryClips)"))).toBe(true);
+    expect(VIDEO_TABLES.some((p) => p.test("getDb().delete(schema.productBodies)"))).toBe(true);
+    expect(VIDEO_TABLES.some((p) => p.test("update library_clips lc set video_id = 1"))).toBe(true);
+    expect(VIDEO_TABLES.some((p) => p.test("select 1 from product_bodies b"))).toBe(true);
+    expect(files.some((f) => f.rel === "src/server/videos/library.ts" && VIDEO_TABLES.some((p) => p.test(f.text)))).toBe(true);
+    expect(files.some((f) => f.rel === "src/server/videos/bodies.ts" && VIDEO_TABLES.some((p) => p.test(f.text)))).toBe(true);
     expect(files.some((f) => f.rel === "src/server/videos/videos.ts" && VIDEO_TABLES.some((p) => p.test(f.text)))).toBe(true);
     const offenders = files
       .filter((f) => !f.rel.startsWith("src/server/videos/") && !f.rel.startsWith("src/db/"))

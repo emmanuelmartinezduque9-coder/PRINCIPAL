@@ -87,19 +87,27 @@ function CostCell({ row }: { row: BatchRowJson }) {
   );
 }
 
-/** El tipo del vídeo: icono y palabra corta, con el nombre entero en el título. */
+const KIND_TINT: Record<BatchRowJson["kind"], string> = {
+  replicar: "bg-muted text-muted-foreground",
+  adaptacion_concepto: "bg-violet-500/12 text-violet-800 dark:text-violet-300",
+  solo_gancho: "bg-teal-500/12 text-teal-800 dark:text-teal-300",
+};
+
+/**
+ * El tipo del vídeo: icono y palabra corta, con el nombre entero en el título. Con «Solo gancho»,
+ * «gancho + N» (N = cuerpos que lleva detrás) y, en el título, los segundos del gancho.
+ */
 function KindChip({ row }: { row: BatchRowJson }) {
   const { short, long, icon: Icon } = KIND_LABELS[row.kind];
+  const hookOnly = row.kind === "solo_gancho";
+  const bodies = row.bodies === 1 ? "1 cuerpo" : `${row.bodies} cuerpos`;
   return (
     <span
-      title={long}
-      className={cn(
-        "inline-flex h-5 shrink-0 items-center gap-1 rounded px-1.5 text-[11px] font-medium",
-        row.kind === "adaptacion_concepto" ? "bg-violet-500/12 text-violet-800 dark:text-violet-300" : "bg-muted text-muted-foreground",
-      )}
+      title={hookOnly ? `${long} · ${row.hookSeconds} s · ${bodies}` : long}
+      className={cn("inline-flex h-5 shrink-0 items-center gap-1 rounded px-1.5 text-[11px] font-medium tabular-nums", KIND_TINT[row.kind])}
     >
       <Icon className="size-3" aria-hidden />
-      {short}
+      {hookOnly ? `Gancho + ${row.bodies}` : short}
     </span>
   );
 }

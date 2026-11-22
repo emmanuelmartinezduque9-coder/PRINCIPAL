@@ -16,7 +16,7 @@ import { ensureMedia } from "@/server/higgsfield";
 import { processReference } from "@/server/videos/intake";
 import { videoSweep } from "@/server/videos/sweep";
 import { appendChunk, CHUNK_BYTES, cleanStaleUploads, finishUpload, startUpload, uploadPath } from "@/server/videos/upload";
-import { createVideo, getVideoFor, readVideoFrame, videoView, type Video } from "@/server/videos/videos";
+import { createVideo, getVideoFor, readVideoFrame, updateVideoChoices, videoView, type Video } from "@/server/videos/videos";
 import { makeProduct, makeUser } from "./helpers/fixtures";
 import { truncateAll } from "./helpers/global-setup";
 import { makeSampleVideo } from "./helpers/sample-video";
@@ -96,6 +96,41 @@ describe("preparar la referencia", () => {
     const frame = await readVideoFrame(ana, v.id, 3);
     expect(frame.mime).toBe("image/jpeg");
     expect(frame.data.subarray(0, 3)).toEqual(Buffer.from([0xff, 0xd8, 0xff]));
+  });
+
+  it("con «Solo gancho» el tramo es el gancho: fotogramas, cortes y recorte subido salen de esos segundos", async () => {
+    await updateVideoChoices(ana, v.id, { kind: "solo_gancho", hookSeconds: 3 });
+    const uploadId = await upload(samples.seis);
+    await processReference(v.id, uploadId, { higgsfield: fake.port });
+    const video = await getVideoFor(ana, v.id);
+    expect(video.referenceStatus).toBe("ready");
+    expect(video.segmentDurationMs).toBe(3000);
+    expect(Math.abs(video.referenceDurationMs! - 6000)).toBeLessThan(150);
+    const view = await videoView(ana, v.id);
+    // Un fotograma cada medio segundo, solo de los 3 primeros segundos.
+    expect(view.frames).toHaveLength(6);
+    expect(view.frames.every((frame) => frame.timeMs < 3000)).toBe(true);
+    // La muestra corta en 2 s y en 4 s: dentro del gancho solo queda el primero.
+    expect(video.cutsMs).toHaveLength(1);
+    expect(video.cutsMs![0]).toBeLessThan(3000);
+    // El recorte que se sube a Higgsfield dura lo que el gancho.
+    const sent = uploads()[0].args as { bytes: Buffer };
+    const clip = path.join(dir, "gancho.mp4");
+    fs.writeFileSync(clip, sent.bytes);
+    expect(Math.abs((await probeVideo(clip)).durationMs - 3000)).toBeLessThan(150);
+    expect(view.referenceOutdated).toBe(false);
+    // Cambiar ahora el gancho pide subirla otra vez.
+    await updateVideoChoices(ana, v.id, { hookSeconds: 5 });
+    expect((await videoView(ana, v.id)).referenceOutdated).toBe(true);
+  });
+
+  it("un gancho más largo que la referencia usa la referencia entera", async () => {
+    await updateVideoChoices(ana, v.id, { kind: "solo_gancho", hookSeconds: 8 });
+    const uploadId = await upload(samples.seis);
+    await processReference(v.id, uploadId, { higgsfield: fake.port });
+    const video = await getVideoFor(ana, v.id);
+    expect(video.segmentDurationMs).toBe(video.referenceDurationMs);
+    expect((await videoView(ana, v.id)).referenceOutdated).toBe(false);
   });
 
   it("de una referencia de más de 30 s solo se usan los primeros 30", async () => {

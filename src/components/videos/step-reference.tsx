@@ -1,7 +1,7 @@
 "use client";
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { CircleAlert, Clock, Film, Loader2, Plug, RefreshCw, Upload } from "lucide-react";
+import { CircleAlert, Clock, Film, FishingHook, Loader2, Plug, RefreshCw, Upload } from "lucide-react";
 import Link from "next/link";
 import { useRef, useState } from "react";
 import { toast } from "sonner";
@@ -147,13 +147,19 @@ function Frames({ view }: { view: VideoViewJson }) {
 
 function ReferenceFacts({ video }: { video: VideoJson }) {
   const duration = video.referenceDurationMs ?? 0;
+  const segment = video.segmentDurationMs ?? duration;
   return (
     <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
       <span className="inline-flex items-center gap-1.5 font-medium tabular-nums">
         <Clock className="size-4 text-muted-foreground" role="img" aria-label="Duración" />
         {clockTime(duration)}
       </span>
-      {duration > MAX_SEGMENT_MS ? (
+      {video.kind === "solo_gancho" && segment < duration ? (
+        <span className="inline-flex items-center gap-1.5 text-muted-foreground tabular-nums">
+          <FishingHook className="size-4" aria-hidden />
+          Gancho: los primeros {secondsLabel(segment / 1000)}
+        </span>
+      ) : duration > MAX_SEGMENT_MS ? (
         <span className="text-muted-foreground">Se usan los primeros 30 segundos (el máximo del modelo).</span>
       ) : null}
     </div>
@@ -244,6 +250,11 @@ function ReferenceBody({
       return (
         <div className="flex flex-col gap-4">
           {failedUpload}
+          {view.referenceOutdated ? (
+            <Notice tone="warn" icon={FishingHook} action={canUpload ? <ReplaceButton onFile={onFile} label="Subir de nuevo" /> : null}>
+              El gancho ha cambiado: vuelve a subir el vídeo.
+            </Notice>
+          ) : null}
           <ReferenceFacts video={video} />
           <Frames view={view} />
         </div>
@@ -283,7 +294,7 @@ function ReferenceBody({
 }
 
 /** Botón «Cambiar vídeo» para sustituir una referencia lista. */
-function ReplaceButton({ onFile }: { onFile: (file: File) => void }) {
+function ReplaceButton({ onFile, label = "Cambiar vídeo" }: { onFile: (file: File) => void; label?: string }) {
   const input = useRef<HTMLInputElement>(null);
   return (
     <>
@@ -300,9 +311,9 @@ function ReplaceButton({ onFile }: { onFile: (file: File) => void }) {
           if (file) onFile(file);
         }}
       />
-      <Button variant="outline" className="h-8 gap-1.5" onClick={() => input.current?.click()}>
+      <Button variant="outline" className="h-8 gap-1.5 bg-background" onClick={() => input.current?.click()}>
         <RefreshCw aria-hidden />
-        Cambiar vídeo
+        {label}
       </Button>
     </>
   );
@@ -357,7 +368,9 @@ export function StepReference({
       <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_22rem]">
         <Panel
           title="Vídeo de referencia"
-          actions={canUpload && video.referenceStatus === "ready" && upload.kind !== "uploading" ? <ReplaceButton onFile={onUpload} /> : null}
+          actions={
+            canUpload && video.referenceStatus === "ready" && !view.referenceOutdated && upload.kind !== "uploading" ? <ReplaceButton onFile={onUpload} /> : null
+          }
         >
           {needsConnection ? (
             <Notice

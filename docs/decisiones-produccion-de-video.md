@@ -536,3 +536,61 @@ Diseño: última sección de `docs/superpowers/specs/2026-11-22-lotes-design.md`
 - **«Sin sustitución»**: las instrucciones dicen que este modo sustituye a la regla de que la identidad sale solo del avatar elegido. Las personas son las del primer fotograma de la referencia; si no se ve a nadie en él, se describen con los fotogramas que recibe Claude.
 - **Seguimiento justo**: `autoAnalyzePending` filtra en SQL lo que les falta (foto del artículo, avatar si es `elegido`, texto si es adaptación, `skip_auto_analysis`) y ordena por `updated_at`. Así 50 vídeos a los que siempre les falta algo no tapan al resto. Queda un caso: si quien creó el vídeo está desactivado o perdió el producto, el vídeo ocupa un sitio de los 50.
 - **Apuntar una generación**: dentro de la transacción, después de `generationLock`, se vuelve a mirar si el último desglose sigue valiendo (`latestDoneAnalysis`). Así se cubren las indicaciones del lote, que no son una columna del vídeo y que la instantánea no ve. Si no vale, 409 «El vídeo ha cambiado…». Es una consulta más y no toca nada del núcleo de dinero.
+
+## Lotes v2-E: biblioteca de clips y «Solo gancho + cuerpo» (22/11)
+
+Diseño: `docs/superpowers/specs/2026-11-22-lotes-design.md`, apartado «v2-E». Cómo lo usaba el dueño: `docs/importacion/lote-antiguo-funciones.md` §1.6.
+
+### A. Biblioteca (`src/server/videos/library.ts`, tabla `library_clips`)
+- **Dónde vive**: en `src/server/videos/`, con las demás tablas de vídeo. `tests/boundaries.test.ts` cuenta `libraryClips`/`library_clips` y `productBodies`/`product_bodies` como tablas de vídeo; no hay frontera nueva.
+- **Qué se lee de Higgsfield**: `history(userId, "video", 50, cursor, { onlyCompleted: true })` (el adaptador manda `only_completed: true`). El puerto gana dos campos en cada entrada del historial: `completed` (`status` terminado) y `resultUrl` (`results.rawUrl`, solo `https`). Siempre con la conexión de la persona de la sesión; ninguna función acepta otra persona.
+- **Qué se guarda**: una fila por persona y trabajo (`unique (user_id, job_id)`), con `video_url`, `thumb_url`, `model`, `created_at_hf`, el principio del prompt (≤ 300 caracteres, en una línea, recortado por caracteres enteros) y `fetched_at`.
+  - Solo direcciones `https` de `*.cloudfront.net`: se reutiliza `servableClipUrl` de `clip.ts`. Un vídeo que no la pasa no entra; una miniatura que no la pasa se queda sin miniatura (la pantalla enseña un icono y el vídeo se sigue viendo).
+  - El prompt no lleva `CHECK` en la base de datos: es texto de fuera, y un recuento distinto de caracteres no debe tumbar toda la actualización. El límite está en el código.
+- **Cuándo se para**. El encargo decía «hasta un clip que ya tenga». Parar en el primer clip conocido pierde clips: uno que termina tarde aparece en el historial *por debajo* de otros más nuevos que ya se conocen. Por eso:
+  - se lee cada página entera y se para en una página que traiga un clip conocido **creado antes de la última actualización menos 2 horas** (`LIBRARY_LATE_MARGIN_MS`; las generaciones se dan por perdidas a la hora). De ahí hacia atrás ya estaba todo terminado y visto;
+  - también se para al final del historial (`next_cursor: null`) y a las **10 páginas de 50**. El tope vale siempre, no solo la primera vez;
+  - en el uso normal (actualizar cada pocos minutos) sigue siendo una sola página.
+- **Todo o nada**: las páginas se juntan en memoria y se guardan en una sola transacción al final. Si Higgsfield falla a mitad no queda una carga a medias (que haría parar antes de tiempo la siguiente).
+- **Clips de PRINCIPAL**: en la misma transacción, `video_id` se rellena cuando el `job_id` coincide con un `generation_results` de un clip de esa misma persona. La pantalla ofrece «Abrir su vídeo» solo si quien mira ve el producto.
+- **Sin conectar**: `refreshLibrary` comprueba primero la credencial (`credentialStatus`) y responde 409 con `code: "higgsfield_connect"` sin llamar a Higgsfield. Si es Higgsfield quien rechaza el permiso, el mismo 409; si no responde, 503.
+- **Caché y actualización sola**: `listLibrary` no llama nunca a Higgsfield. Devuelve `stale` (caché vacía o `max(fetched_at)` de hace más de 10 minutos) y la pantalla, al abrirse, lanza una actualización una sola vez si viene a `true`. La primera página se vuelve a guardar en cada actualización, así que `max(fetched_at)` es la hora de la última. Una cuenta de Higgsfield sin ningún vídeo se actualiza cada vez que se abre (una llamada).
+- **Paginación**: por cursor `(created_at_hf, id)` descendente; 96 clips por página en la pantalla («Cargar más»).
+- **Con filtro de producto**: se enseñan los clips marcados como cuerpo de ese producto, **sean de quien sean** (así el dueño ve todos y un colaborador los de sus productos). Sin filtro, cada persona ve solo sus clips; el dueño tampoco ve los de otros.
+- **No se borra nada**: un clip borrado en Higgsfield se queda en la caché. Borrar exigiría releer el historial entero.
+- **Modo local**: el Higgsfield simulado arranca con 132 vídeos de muestra (`sampleLibrary`, solo desde `getHiggsfield()`, nunca en las pruebas) para que la pantalla tenga algo que enseñar.
+
+### B. Cuerpos (`src/server/videos/bodies.ts`, tabla `product_bodies`)
+- Un cuerpo es un clip de la biblioteca marcado para un producto, con un nombre corto (1–60 caracteres; vacío → «Cuerpo N»). `unique (product_id, library_clip_id)`: marcar otra vez el mismo clip le cambia el nombre.
+- **Quién**: marca quien ve el producto, y solo clips de **su** biblioteca (un clip ajeno da el mismo 404 que uno que no existe; el dueño tampoco marca clips de otros). Lo ven quienes ven el producto. Desmarca quien lo marcó o el dueño; otra persona que ve el producto, 403.
+- **Descarga**: `GET /api/cuerpos/[id]/descargar`, para quien ve el producto, por el mismo camino que el clip (`openClipStream`: solo Higgsfield, sin redirecciones, con topes), como `<producto>-cuerpo-<nombre>.mp4`.
+
+### C. Tipo `solo_gancho`
+- `videos.kind` admite `solo_gancho`; `videos.hook_seconds` (entero 2–8, por defecto 4, con `CHECK`) y `videos.body_clip_ids` (lista ordenada de `product_bodies.id`, `jsonb`). `video_analyses` guarda `hook_seconds` (solo con `solo_gancho`).
+- **Cuerpos del vídeo**: ids de cuerpos **de ese mismo producto**, sin repetir y como mucho 10 (400 si no). Es una lista sin clave ajena: un cuerpo desmarcado después deja de salir en el vídeo y no cuenta en el tablero. Los cuerpos no cambian el desglose (Claude solo sabe que el cuerpo existe).
+- **Tramo de la referencia**: `segmentMsFor(video, duración) = min(duración, hook_seconds)`; con los otros tipos, hasta 30 s como antes. De ese tramo salen los fotogramas, los cortes y el recorte que se sube a Higgsfield.
+- **Cambiar el gancho con la referencia lista** (el mecanismo que pedía el encargo). El archivo original no se guarda, así que no se puede recortar de nuevo: hay que volver a subirlo. No se apunta nada ni se borra nada; **se calcula**: `referenceOutdated(video)` es `true` si la referencia está lista y su tramo guardado (`segment_duration_ms`) ya no es `segmentMsFor(video, reference_duration_ms)`.
+  - Sin columna ni estado nuevos, y sin carreras: si el gancho cambia mientras se prepara la referencia, al terminar el tramo no coincide y sale el aviso.
+  - **Se puede deshacer**: un clic equivocado en el tipo no destruye la referencia; al volver a lo de antes vuelve a valer (lo mismo que ya pasa con la adaptación guardada).
+  - No pide subir cuando no hace falta: una referencia de 3 s con el gancho en 4 ya se usa entera, y pasar a 5 o a «Replicar» no cambia el tramo.
+  - Mientras está así: no se puede desglosar (400 «El gancho ha cambiado: vuelve a subir el vídeo de referencia.»), ni presupuestar o enviar la imagen o el clip; el desglose automático la salta (también en la consulta SQL); la pantalla del vídeo lo dice en la referencia con «Subir de nuevo», y el tablero pone «Resubir» (con el motivo debajo) y la cuenta en «Por revisar».
+- **Desglose**: el tipo y `hook_seconds` forman parte de las indicaciones (`Brief`), así que cambiarlos deja el desglose por repetir (`brief`), igual que el tipo y los cambios específicos. Con `solo_gancho`, las instrucciones añaden que el encargo es SOLO el gancho, de N segundos, que el cuerpo ya existe y se une después, y que no se diseña, describe ni continúa. Usa las mismas reglas que «Replicar».
+- **Clip**: la duración sale como siempre del tramo (`clipDurationSeconds`), así que sigue al gancho. Seedance no baja de 4 s: un gancho de 2 o 3 s sale de 4 s y se recorta al montar.
+- **Lo que entrega la web**: el gancho y, al lado, los cuerpos en orden, cada uno con su descarga. Unirlos con la canción sigue siendo cosa del montador.
+
+### D. Pantallas
+- **Menú**: «Biblioteca» para todos, después de Lotes.
+- **`/biblioteca`**: rejilla densa de miniaturas 9:16 (8 columnas a 1440 px, 2 a 390 px), con la fecha y, si es cuerpo, una ficha con el producto (o con el nombre del cuerpo cuando se filtra por producto). Las imágenes llevan `loading="lazy"`.
+  - Pasar el ratón (con una pausa de 140 ms, para no descargar un vídeo por cada miniatura que se roza) o llegar con el teclado reproduce el vídeo sin sonido. En pantallas táctiles el toque abre el clip.
+  - Un clic lo abre en grande y con sonido. Ahí están «Usar como cuerpo de…» (producto y nombre corto), los productos de los que ya es cuerpo con «Quitar» y, si salió de PRINCIPAL, «Abrir su vídeo». Va en la misma ventana que el reproductor para no añadir un botón a cada miniatura.
+  - «Actualizar» dice cuántos clips nuevos ha traído. Sin conexión: aviso con «Ir a Ajustes».
+  - `?producto=7` abre ya filtrada (es adonde lleva el selector de cuerpos cuando el producto no tiene ninguno).
+- **Vídeo y lote nuevo**: «Solo gancho» es el tercer tipo. Al elegirlo aparecen la duración del gancho (− 4 s +, también con las flechas) y los cuerpos del producto en miniatura: un clic añade al final o quita, los elegidos van primero y numerados, se reordenan con las flechas y al pasar por encima se ve el vídeo. En la pantalla del vídeo la duración se guarda al dejar de pulsar.
+- **Tablero**: el tipo sale como «Gancho + N» (N = cuerpos); en el título, los segundos.
+- **Paso «Clip»**: «Descargar gancho» y, debajo, los cuerpos en orden con su descarga.
+
+### Lo que queda fuera
+- «Variaciones de gancho» y el cuerpo automático (`reference_match`) del panel antiguo.
+- Unir gancho y cuerpos en la web (lo hace el montador).
+- Cargar más de 500 clips antiguos, y quitar de la caché los borrados en Higgsfield.
+

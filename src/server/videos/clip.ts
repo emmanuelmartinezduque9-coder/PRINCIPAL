@@ -10,10 +10,20 @@ import { ensureMedia } from "@/server/higgsfield";
 import { HttpError } from "@/server/http";
 import { listProductPhotos, readProductPhoto } from "@/server/photos";
 import { getProductFor } from "@/server/products";
+import { fileSlug } from "@/server/videos/filename";
 import { registerRequestBuilder, type RequestBuilder } from "@/server/videos/generations";
 import { clipManifest } from "@/server/videos/manifest";
 import { checkVideoPrompt } from "@/server/videos/prompt-check";
-import { BRIEF_CHANGED, getVideoFor, latestDoneAnalysis, requireVideoOwner, videoSnapshot, type Video } from "@/server/videos/videos";
+import {
+  BRIEF_CHANGED,
+  getVideoFor,
+  latestDoneAnalysis,
+  REFERENCE_OUTDATED,
+  referenceOutdated,
+  requireVideoOwner,
+  videoSnapshot,
+  type Video,
+} from "@/server/videos/videos";
 
 export { CLIP_RESOLUTIONS, DEFAULT_CLIP_RESOLUTION, type ClipResolution } from "@/server/videos/videos";
 
@@ -22,7 +32,9 @@ export { CLIP_RESOLUTIONS, DEFAULT_CLIP_RESOLUTION, type ClipResolution } from "
  * cámara, ritmo y acción; lo dice el prompt), `@Image1` la imagen inicial aprobada (como primer
  * fotograma o como referencia de la escena, según `frameUse`) y después las fotos del producto
  * en el orden del manifiesto. Vertical, sin audio (`generate_audio: false` siempre explícito),
- * `bitrate_mode: "high"`, a la resolución del vídeo (480p por defecto) y con la duración del tramo.
+ * `bitrate_mode: "high"`, a la resolución del vídeo (480p por defecto) y con la duración del tramo
+ * (con «Solo gancho», el tramo es el gancho; Seedance no baja de 4 s, así que un gancho de 2 o 3 s
+ * sale de 4 y se recorta al montar).
  *
  * Al importar este módulo se registra el constructor `"clip"` en las generaciones: lo importan las
  * rutas que piden precio o generan.
@@ -81,6 +93,7 @@ const CLIP_SNAPSHOT = [
   "avatarMode",
   "kind",
   "adaptation",
+  "hookSeconds",
   "note",
 ] as const satisfies ReadonlyArray<keyof Video>;
 
@@ -93,6 +106,7 @@ const CLIP_SNAPSHOT = [
 export const buildClipRequest: RequestBuilder = async (user, video, deps) => {
   requireVideoOwner(user, video);
   if (video.referenceStatus !== "ready" || !video.referenceMediaId || !video.segmentDurationMs) throw new HttpError(409, NO_REFERENCE);
+  if (referenceOutdated(video)) throw new HttpError(409, REFERENCE_OUTDATED);
   const analysis = await latestDoneAnalysis(video);
   if (!analysis) throw new HttpError(409, NO_ANALYSIS);
   if (analysis.staleReason === "reference") throw new HttpError(409, REFERENCE_CHANGED);
@@ -159,19 +173,6 @@ export function servableClipUrl(url: string | null): url is string {
   }
 }
 
-/** Nombre del archivo: el producto en minúsculas, sin acentos ni signos. */
-function slug(text: string): string {
-  const base = text
-    .normalize("NFD")
-    .replace(/[̀-ͯ]/g, "")
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 60)
-    .replace(/-+$/, "");
-  return base || "producto";
-}
-
 /**
  * Qué se descarga del clip de un vídeo que `user` ve: el aprobado o, si no hay (o su dirección no
  * se puede servir, `servableClipUrl`), el último terminado bien. Nombre `<producto>-video-<id>.mp4`.
@@ -181,7 +182,7 @@ export async function clipDownload(user: AuthUser, videoId: number): Promise<{ u
   const product = await getProductFor(user, video.productId);
   const url = await downloadableClipUrl(video);
   if (!url) throw new HttpError(404, NO_CLIP);
-  return { url, filename: `${slug(product.name)}-video-${video.id}.mp4` };
+  return { url, filename: `${fileSlug(product.name, "producto")}-video-${video.id}.mp4` };
 }
 
 /**

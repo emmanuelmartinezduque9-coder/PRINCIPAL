@@ -128,7 +128,7 @@ describe("vídeos de un producto", () => {
     expect(await updateVideoChoices(ana, videoDeAna.id, { note: "  " })).toMatchObject({ note: null });
 
     const bad: Array<[Record<string, unknown>, string]> = [
-      [{ kind: "solo_gancho" }, "Valor no válido."],
+      [{ kind: "solo_cuerpo" }, "Valor no válido."],
       [{ kind: 1 }, "Valor no válido."],
       [{ adaptation: 5 }, "Valor no válido."],
       [{ adaptation: "x".repeat(12_001) }, "«Qué adaptación quieres» no puede tener más de 12.000 caracteres."],

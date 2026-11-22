@@ -493,6 +493,8 @@ describe("generaciones en el adaptador", () => {
           media: [{ id: "eafdd350-...", url: "https://d2ol7oe51mr4n9.cloudfront.net/user_XXXX/eafdd350-....png" }],
           resolution: "2k",
           thumbUrl: "https://.../..._min.webp",
+          completed: true,
+          resultUrl: "https://d8j0ntlcm91z4.cloudfront.net/user_XXXX/hf_20261121_233605_852dd20b-....png",
         },
       ],
       nextCursor: 1795304064.437977,
@@ -502,6 +504,32 @@ describe("generaciones en el adaptador", () => {
     expect(mcpCalls[1].args).toEqual({ only_completed: false, type: "image", size: 50, cursor: 1795304064.437977 });
     await port.history(ANA, "image", 50, "eyJwYWdlIjoyfQ==");
     expect(mcpCalls[2].args).toEqual({ only_completed: false, type: "image", size: 50, cursor: "eyJwYWdlIjoyfQ==" });
+  });
+
+  it("history con `onlyCompleted` pide solo lo terminado y lee el vídeo entero (rawUrl) y si terminó, para la biblioteca", async () => {
+    const item = (id: string, status: string, results: object) => ({ id, type: "video", status, model: "topaz_video", params: { prompt: "" }, results, createdAt: 1795304165.5 });
+    const { port, mcpCalls } = setup([
+      {
+        isError: false,
+        text: "",
+        data: {
+          items: [
+            item("a", "completed", { rawUrl: "https://d8j0ntlcm91z4.cloudfront.net/user_XXXX/a.mp4", minUrl: "https://d8j0ntlcm91z4.cloudfront.net/user_XXXX/a_min.webp" }),
+            item("b", "in_progress", {}),
+            item("c", "completed", { rawUrl: "http://sin-cifrar.example/c.mp4" }),
+          ],
+          next_cursor: null,
+        },
+      },
+    ]);
+    const page = await port.history(ANA, "video", 50, null, { onlyCompleted: true });
+    expect(mcpCalls[0].args).toEqual({ only_completed: true, type: "video", size: 50 });
+    expect(page.end).toBe(true);
+    expect(page.items.map(({ jobId, completed, resultUrl, thumbUrl }) => ({ jobId, completed, resultUrl, thumbUrl }))).toEqual([
+      { jobId: "a", completed: true, resultUrl: "https://d8j0ntlcm91z4.cloudfront.net/user_XXXX/a.mp4", thumbUrl: "https://d8j0ntlcm91z4.cloudfront.net/user_XXXX/a_min.webp" },
+      { jobId: "b", completed: false, resultUrl: null, thumbUrl: null },
+      { jobId: "c", completed: true, resultUrl: null, thumbUrl: null },
+    ]);
   });
 
   it("un envío con un error de validación o de créditos es un rechazo con el texto de Higgsfield", async () => {
@@ -599,7 +627,7 @@ describe("generaciones en el adaptador", () => {
     expect(readSubmit(generateBatchFixture.structuredContent)).toEqual({ jobIds: ["540c3252-e858-49ee-998d-adceebf077de"], rejected: [] });
     expect(readSubmit({})).toBeNull();
     expect(readHistory({ items: [{ id: "z", model: "m", params: { prompt: "" }, createdAt: "2026-11-22T08:00:00Z" }] }, "video")).toEqual({
-      items: [{ jobId: "z", type: "video", model: "m", prompt: "", createdAt: new Date("2026-11-22T08:00:00Z"), media: [], resolution: null, thumbUrl: null }],
+      items: [{ jobId: "z", type: "video", model: "m", prompt: "", createdAt: new Date("2026-11-22T08:00:00Z"), media: [], resolution: null, thumbUrl: null, completed: false, resultUrl: null }],
       nextCursor: null,
       end: false, // sin `next_cursor`: no se sabe si hay más
     });

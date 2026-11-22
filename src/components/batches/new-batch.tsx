@@ -6,13 +6,14 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
+import { BodyPicker, HookStepper } from "@/components/library/body-picker";
 import type { ProductView } from "@/components/products/labels";
 import { PageHeader } from "@/components/shell/page-header";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { MAX_ADAPTATION, MAX_NOTE, MAX_PRODUCT_NOTES } from "@/components/videos/brief-labels";
+import { DEFAULT_HOOK_SECONDS, MAX_ADAPTATION, MAX_NOTE, MAX_PRODUCT_NOTES } from "@/components/videos/brief-labels";
 import { appendDictation, DictateButton } from "@/components/videos/dictate-button";
 import type { ProductPhoto } from "@/components/videos/labels";
 import { useReferenceUploads } from "@/components/videos/upload-provider";
@@ -43,6 +44,9 @@ interface Row {
   kind: VideoKind;
   /** «Qué adaptación quieres» (solo con adaptación). */
   adaptation: string;
+  /** Duración del gancho y cuerpos que van detrás, en orden (solo con «Solo gancho»). */
+  hookSeconds: number;
+  bodies: number[];
   /** «Cambios específicos». */
   note: string;
   /** «Más opciones» abierto. */
@@ -125,9 +129,13 @@ function DropZone({ onFiles, big, disabled }: { onFiles: (files: File[]) => void
   );
 }
 
-/** Una tarjeta: el archivo, el tipo y los cambios; el avatar, en «Más opciones». */
+/**
+ * Una tarjeta: el archivo, el tipo y los cambios; el avatar, en «Más opciones». Con «Solo gancho»,
+ * la duración del gancho y los cuerpos del producto que van detrás.
+ */
 function RowCard({
   row,
+  productId,
   index,
   avatars,
   loadingAvatars,
@@ -138,6 +146,7 @@ function RowCard({
   onRemove,
 }: {
   row: Row;
+  productId: number | null;
   index: number;
   avatars: ProductPhoto[];
   loadingAvatars: boolean;
@@ -204,6 +213,12 @@ function RowCard({
           className="min-h-20 resize-y lg:ml-12 lg:w-[calc(100%-3rem)]"
         />
       ) : null}
+      {row.kind === "solo_gancho" && productId !== null ? (
+        <div className="flex flex-wrap items-start gap-x-4 gap-y-3 lg:ml-12">
+          <HookStepper value={row.hookSeconds} onChange={(hookSeconds) => onChange({ hookSeconds })} disabled={busy} />
+          <BodyPicker productId={productId} value={row.bodies} onChange={(bodies) => onChange({ bodies })} className="min-w-0 flex-1" />
+        </div>
+      ) : null}
       {row.open ? (
         <div className="flex items-center gap-3 lg:ml-12">
           <span className="text-sm text-muted-foreground">Avatar</span>
@@ -224,7 +239,8 @@ function RowCard({
  * `/lotes/nuevo`, agrupado por producto como el panel antiguo: cada grupo tiene su producto, sus
  * «Indicaciones para los vídeos de …» y sus tarjetas (una por referencia que se suelta en él);
  * «Añadir otro producto» abre otro grupo en el mismo lote. Cada tarjeta pide tipo y cambios; el
- * avatar empieza con el habitual del producto y se cambia en «Más opciones». «Crear y subir» crea
+ * avatar empieza con el habitual del producto y se cambia en «Más opciones»; con «Solo gancho»
+ * pide además la duración del gancho y los cuerpos. «Crear y subir» crea
  * el lote (con un nombre automático si se deja vacío), guarda las indicaciones, crea los vídeos y
  * pone las subidas en la cola (como mucho 2 a la vez).
  */
@@ -297,6 +313,8 @@ export function NewBatch() {
         avatar: null,
         kind: "replicar",
         adaptation: "",
+        hookSeconds: DEFAULT_HOOK_SECONDS,
+        bodies: [],
         note: "",
         open: false,
         error: file.size > MAX_REFERENCE_BYTES ? "Pesa más de 100 MB." : null,
@@ -365,6 +383,7 @@ export function NewBatch() {
                 avatarMode: typeof avatar === "number" ? "elegido" : avatar,
                 kind: row.kind,
                 adaptation: row.kind === "adaptacion_concepto" ? row.adaptation.trim() : null,
+                ...(row.kind === "solo_gancho" ? { hookSeconds: row.hookSeconds, bodyClipIds: row.bodies } : {}),
                 note: row.note.trim() || null,
               }),
             });
@@ -440,7 +459,8 @@ export function NewBatch() {
                   products={productList.filter((p) => !used.has(p.id))}
                   value={group.productId}
                   onChange={(productId) =>
-                    updateGroup(group.key, (g) => ({ ...g, productId, rows: g.rows.map((row) => ({ ...row, avatar: null })) }))
+                    // Otro producto: su avatar habitual y sus propios cuerpos.
+                    updateGroup(group.key, (g) => ({ ...g, productId, rows: g.rows.map((row) => ({ ...row, avatar: null, bodies: [] })) }))
                   }
                   className={cn(
                     "max-w-72",
@@ -480,6 +500,7 @@ export function NewBatch() {
                   <RowCard
                     key={row.key}
                     row={row}
+                    productId={group.productId}
                     index={index}
                     avatars={avatars}
                     loadingAvatars={group.productId !== null && loading}

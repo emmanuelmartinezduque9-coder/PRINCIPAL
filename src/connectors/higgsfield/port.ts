@@ -81,6 +81,10 @@ export interface HfHistoryItem {
   resolution: string | null;
   /** Miniatura del resultado (solo `results.minUrl`), para que la persona lo reconozca. */
   thumbUrl: string | null;
+  /** `true` si Higgsfield la da por terminada (`status: "completed"`). */
+  completed: boolean;
+  /** El resultado entero (`results.rawUrl`); `null` si no consta. Para la biblioteca de clips. */
+  resultUrl: string | null;
 }
 
 /** Cursor de una página del historial tal como lo da Higgsfield (número o texto opaco). */
@@ -123,8 +127,18 @@ export interface HiggsfieldPort {
   submitVideo(userId: number, request: HfVideoRequest, options?: { quoteRef?: string | null }): Promise<HfSubmitResult>;
   /** Estado de los trabajos, esperando como mucho `waitSeconds` (0–15). En el orden pedido. */
   jobs(userId: number, jobIds: string[], waitSeconds: number): Promise<HfJob[]>;
-  /** Generaciones de la persona en cualquier estado, de la más reciente a la más antigua (para reconciliar un envío dudoso). */
-  history(userId: number, type: "image" | "video", limit: number, cursor?: HfHistoryCursor | null): Promise<HfHistoryPage>;
+  /**
+   * Generaciones de la persona, de la más reciente a la más antigua. Por defecto en cualquier
+   * estado (para reconciliar un envío dudoso); con `onlyCompleted`, solo las terminadas (para la
+   * biblioteca de clips).
+   */
+  history(
+    userId: number,
+    type: "image" | "video",
+    limit: number,
+    cursor?: HfHistoryCursor | null,
+    options?: { onlyCompleted?: boolean },
+  ): Promise<HfHistoryPage>;
 }
 
 /** La persona no tiene su Higgsfield conectado. */

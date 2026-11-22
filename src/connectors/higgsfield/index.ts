@@ -19,10 +19,13 @@ export function higgsfieldFakeMode(env: Record<string, string | undefined> = pro
   return env.PRINCIPAL_HIGGSFIELD_FAKE === "1" && !isCloud(env);
 }
 
+/** Vídeos de muestra en el historial del modo local (dos páginas y pico: se ve el «Cargar más»). */
+const LOCAL_SAMPLE_CLIPS = 132;
+
 const holder = globalThis as unknown as { __principalHiggsfield?: HiggsfieldPort; __principalHiggsfieldFake?: FakeHiggsfield };
 
 /** El real; con `PRINCIPAL_HIGGSFIELD_FAKE=1` y fuera de la nube, uno simulado en memoria. */
 export function getHiggsfield(): HiggsfieldPort {
-  if (higgsfieldFakeMode()) return (holder.__principalHiggsfieldFake ??= createFakeHiggsfield({}, { autoComplete: true })).port;
+  if (higgsfieldFakeMode()) return (holder.__principalHiggsfieldFake ??= createFakeHiggsfield({}, { autoComplete: true, sampleLibrary: LOCAL_SAMPLE_CLIPS })).port;
   return (holder.__principalHiggsfield ??= createHiggsfieldPort());
 }

@@ -32,12 +32,15 @@ const row = (over: Partial<BatchRowJson> = {}): BatchRowJson => ({
   productName: "P",
   note: null,
   kind: "replicar",
+  hookSeconds: 4,
+  bodies: 0,
   needsAdaptation: false,
   mine: true,
   createdAt: "",
   updatedAt: "",
   referenceStatus: "ready",
   referenceError: null,
+  referenceOutdated: false,
   avatarPhotoId: 3,
   avatarMode: "elegido",
   analysis: { status: "done", error: null, stale: false, staleReason: null },
@@ -67,6 +70,16 @@ describe("tablero del lote: qué filas cuenta cada acción", () => {
     // Un desglose de otras indicaciones se repite, igual que uno de otra referencia.
     expect(ready.breakdown(row({ analysis: { status: "done", error: null, stale: true, staleReason: "brief" } }))).toBe(true);
     expect(ready.breakdown(row({ analysis: null, mine: false }))).toBe(false);
+  });
+
+  it("una referencia preparada con otro gancho hay que volver a subirla: ni se desglosa ni cuenta como lista", () => {
+    const outdated = row({ kind: "solo_gancho", referenceOutdated: true, analysis: { status: "done", error: null, stale: true, staleReason: "brief" } });
+    expect(ready.breakdown(outdated)).toBe(false);
+    expect(referenceState(outdated, { kind: "idle" })).toMatchObject({ label: "Resubir", tone: "error" });
+    expect(needsReview(outdated)).toBe(true);
+    // Mientras se sube la nueva, manda la subida.
+    expect(referenceState(outdated, { kind: "uploading", fraction: 0.5 })).toMatchObject({ label: "Subiendo 50 %", tone: "busy" });
+    expect(referenceState(row({ kind: "solo_gancho" }), { kind: "idle" })).toMatchObject({ label: "Lista", tone: "ok" });
   });
 
   it("imágenes: desglose vigente y ronda disponible; un clip enviado ata la imagen", () => {

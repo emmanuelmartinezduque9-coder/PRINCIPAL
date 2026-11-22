@@ -361,6 +361,13 @@ function thumbOf(entry: Record<string, unknown>): string | null {
   return url && /^https:/.test(url) ? url : null;
 }
 
+/** El resultado entero de una generación del historial (`results.rawUrl`), si es `https`. */
+function resultOf(entry: Record<string, unknown>): string | null {
+  const results = isObject(entry.results) ? entry.results : {};
+  const url = text(results.rawUrl);
+  return url && /^https:/.test(url) ? url : null;
+}
+
 /**
  * Lee una página de `show_generations`: `{ items: [{ id, type, status, model, params: { prompt,
  * resolution, input_images… }, results, createdAt }], next_cursor }`. Las entradas sin `id` se
@@ -388,6 +395,8 @@ export function readHistory(data: unknown, type: "image" | "video"): HfHistoryPa
       media: mediaOf(params),
       resolution: text(params.resolution),
       thumbUrl: thumbOf(entry),
+      completed: DONE.has((text(entry.status) ?? "").toLowerCase()),
+      resultUrl: resultOf(entry),
     });
   }
   const raw = found.holder.next_cursor;
@@ -620,9 +629,9 @@ export function createHiggsfieldPort(
         return found;
       });
     },
-    async history(userId, type, limit, cursor) {
+    async history(userId, type, limit, cursor, options = {}) {
       return withCaller(userId, async (caller) => {
-        const args: Record<string, unknown> = { only_completed: false, type, size: limit };
+        const args: Record<string, unknown> = { only_completed: options.onlyCompleted === true, type, size: limit };
         if (typeof cursor === "number" || typeof cursor === "string") args.cursor = cursor;
         const result = await caller.callTool("show_generations", args);
         const page = result.isError ? null : readHistory(result.data, type);

@@ -1,13 +1,13 @@
 import { HttpError } from "@/server/http";
 
 /**
- * Las indicaciones de un vídeo que llegan al desglose de Claude: el tipo (replicar la referencia o
- * adaptar su concepto), «Qué adaptación quieres», «Cambios específicos», las «Indicaciones» del
+ * Las indicaciones de un vídeo que llegan al desglose de Claude: el tipo (replicar la referencia,
+ * adaptar su concepto o hacer solo el gancho, con su duración), «Qué adaptación quieres», «Cambios específicos», las «Indicaciones» del
  * lote para su producto y quién sale (el avatar elegido, las personas de la referencia o nadie). Un desglose guarda las que usó: si cambian
  * después, ya no vale (`analysisStaleness`), igual que si cambia la referencia.
  */
 
-export const VIDEO_KINDS = ["replicar", "adaptacion_concepto"] as const;
+export const VIDEO_KINDS = ["replicar", "adaptacion_concepto", "solo_gancho"] as const;
 export type VideoKind = (typeof VIDEO_KINDS)[number];
 
 export const AVATAR_MODES = ["elegido", "sin_sustitucion", "nadie"] as const;
@@ -16,6 +16,11 @@ export type AvatarMode = (typeof AVATAR_MODES)[number];
 export const MAX_ADAPTATION = 12_000;
 export const MAX_NOTE = 6_000;
 export const MAX_PRODUCT_NOTES = 4_000;
+
+/** «Duración del gancho» (segundos) de un vídeo «Solo gancho». */
+export const MIN_HOOK_SECONDS = 2;
+export const MAX_HOOK_SECONDS = 8;
+export const DEFAULT_HOOK_SECONDS = 4;
 
 export const isVideoKind = (value: unknown): value is VideoKind => VIDEO_KINDS.includes(value as VideoKind);
 export const isAvatarMode = (value: unknown): value is AvatarMode => AVATAR_MODES.includes(value as AvatarMode);
@@ -26,6 +31,7 @@ const thousands = (n: number) => String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ".")
 const ADAPTATION_TOO_LONG = `«Qué adaptación quieres» no puede tener más de ${thousands(MAX_ADAPTATION)} caracteres.`;
 const ADAPTATION_ONLY = "«Qué adaptación quieres» solo va con «Adaptación de concepto».";
 const NOTE_TOO_LONG = `«Cambios específicos» no puede tener más de ${thousands(MAX_NOTE)} caracteres.`;
+const BAD_HOOK_SECONDS = `El gancho dura entre ${MIN_HOOK_SECONDS} y ${MAX_HOOK_SECONDS} segundos.`;
 const PRODUCT_NOTES_TOO_LONG = `Las indicaciones no pueden tener más de ${thousands(MAX_PRODUCT_NOTES)} caracteres.`;
 
 /** Lo que cuenta de un vídeo para su desglose. */
@@ -34,16 +40,22 @@ export interface BriefSource {
   avatarMode: string;
   note: string | null;
   adaptation: string | null;
+  /** Duración del gancho (en un vídeo siempre hay; en un desglose, solo si era «Solo gancho»). */
+  hookSeconds: number | null;
   /** «Indicaciones para los vídeos de {producto}» del lote del vídeo. */
   productNotes: string | null;
 }
 
-/** Lo que se manda a Claude y se guarda en el desglose. La adaptación solo con `adaptacion_concepto`. */
+/**
+ * Lo que se manda a Claude y se guarda en el desglose. La adaptación solo con
+ * `adaptacion_concepto`; la duración del gancho solo con `solo_gancho`.
+ */
 export interface Brief {
   kind: VideoKind;
   avatarMode: AvatarMode;
   note: string | null;
   adaptation: string | null;
+  hookSeconds: number | null;
   productNotes: string | null;
 }
 
@@ -53,13 +65,15 @@ export function briefOf(video: BriefSource): Brief {
     avatarMode: video.avatarMode as AvatarMode,
     note: video.note,
     adaptation: video.kind === "adaptacion_concepto" ? video.adaptation : null,
+    hookSeconds: video.kind === "solo_gancho" ? video.hookSeconds : null,
     productNotes: video.productNotes,
   };
 }
 
 /**
  * Por qué un desglose ya no corresponde al vídeo: `reference` si cambió la referencia, `brief` si
- * cambiaron las indicaciones (tipo, adaptación, cambios específicos o quién sale); `null` si vale.
+ * cambiaron las indicaciones (tipo, adaptación, duración del gancho, cambios específicos o quién
+ * sale); `null` si vale.
  */
 export function analysisStaleness(
   analysis: BriefSource & { referenceMediaId: string | null },
@@ -73,6 +87,7 @@ export function analysisStaleness(
     used.avatarMode === now.avatarMode &&
     used.note === now.note &&
     used.adaptation === now.adaptation &&
+    used.hookSeconds === now.hookSeconds &&
     used.productNotes === now.productNotes;
   return same ? null : "brief";
 }
@@ -93,14 +108,23 @@ export const cleanNote = (value: unknown) => cleanText(value, MAX_NOTE, NOTE_TOO
 export const cleanProductNotes = (value: unknown) => cleanText(value, MAX_PRODUCT_NOTES, PRODUCT_NOTES_TOO_LONG);
 
 /**
- * Comprueba el tipo y la adaptación que se quieren guardar sobre `current` (lo que ya tiene el
- * vídeo; `replicar` sin adaptación al crearlo). Devuelve los cambios, o 400.
+ * Comprueba el tipo, la adaptación y la duración del gancho que se quieren guardar sobre `current`
+ * (lo que ya tiene el vídeo; `replicar` sin adaptación al crearlo). Devuelve los cambios, o 400.
+ * La duración del gancho es un entero de 2 a 8; se puede guardar con cualquier tipo (solo cuenta
+ * con «Solo gancho»).
  */
 export function checkKindInput(
-  input: { kind?: unknown; adaptation?: unknown },
+  input: { kind?: unknown; adaptation?: unknown; hookSeconds?: unknown },
   current: { kind: string } = { kind: "replicar" },
-): { kind?: VideoKind; adaptation?: string | null } {
-  const changes: { kind?: VideoKind; adaptation?: string | null } = {};
+): { kind?: VideoKind; adaptation?: string | null; hookSeconds?: number } {
+  const changes: { kind?: VideoKind; adaptation?: string | null; hookSeconds?: number } = {};
+  if (input.hookSeconds !== undefined) {
+    const seconds = input.hookSeconds;
+    if (typeof seconds !== "number" || !Number.isInteger(seconds) || seconds < MIN_HOOK_SECONDS || seconds > MAX_HOOK_SECONDS) {
+      throw new HttpError(400, BAD_HOOK_SECONDS);
+    }
+    changes.hookSeconds = seconds;
+  }
   if (input.kind !== undefined) {
     if (!isVideoKind(input.kind)) throw new HttpError(400, BAD_VALUE);
     changes.kind = input.kind;

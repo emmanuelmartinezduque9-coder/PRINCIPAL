@@ -24,7 +24,7 @@ const isPhotoChoice = (value: unknown) => value === undefined || value === null 
 
 /**
  * Cambia `title`, `avatarPhotoId`, `environmentPhotoId` (id o `null`), `avatarMode`, `clipResolution`,
- * `kind`, `adaptation`, `note`, `imagePrompt`, `videoPrompt` o `frameUse`. Solo quien creó el vídeo. Con algún prompt o `frameUse`, la
+ * `kind`, `adaptation`, `hookSeconds`, `bodyClipIds`, `note`, `imagePrompt`, `videoPrompt` o `frameUse`. Solo quien creó el vídeo. Con algún prompt o `frameUse`, la
  * respuesta lleva también los avisos de los prompts (`imageIssues`, `videoIssues`).
  */
 export async function PUT(request: Request, { params }: { params: Promise<{ videoId: string }> }) {
@@ -32,7 +32,8 @@ export async function PUT(request: Request, { params }: { params: Promise<{ vide
     const { videoId } = await params;
     const body = (await request.json().catch(() => null)) as Record<string, unknown> | null;
     const input = body && typeof body === "object" && !Array.isArray(body) ? body : {};
-    const { title, avatarPhotoId, environmentPhotoId, avatarMode, clipResolution, kind, adaptation, note, imagePrompt, videoPrompt, frameUse } = input;
+    const { title, avatarPhotoId, environmentPhotoId, avatarMode, clipResolution, kind, adaptation, hookSeconds, bodyClipIds, note, imagePrompt, videoPrompt, frameUse } =
+      input;
     if (title !== undefined && typeof title !== "string") return badRequest("Escribe el título del vídeo.");
     if (!isPhotoChoice(avatarPhotoId)) return badRequest("Elige una foto con papel «Avatar» de este producto.");
     if (!isPhotoChoice(environmentPhotoId)) return badRequest("Elige una foto con papel «Entorno» de este producto.");
@@ -49,6 +50,8 @@ export async function PUT(request: Request, { params }: { params: Promise<{ vide
       clipResolution: clipResolution as string | undefined,
       kind,
       adaptation,
+      hookSeconds,
+      bodyClipIds,
       note,
     });
     if (imagePrompt === undefined && videoPrompt === undefined && frameUse === undefined) return Response.json({ video });

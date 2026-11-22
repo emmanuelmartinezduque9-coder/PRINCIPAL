@@ -2,11 +2,13 @@ import { and, asc, count, desc, eq, sql } from "drizzle-orm";
 import { getDb, schema } from "@/db/client";
 import type { AuthUser } from "@/server/auth";
 import { HttpError } from "@/server/http";
+import { MAX_SEGMENT_MS } from "@/server/media/ffmpeg";
 import { listProductPhotos, type PhotoInfo, type PhotoRole } from "@/server/photos";
 import { getProductFor } from "@/server/products";
 import type { Analysis } from "@/server/videos/analysis";
 import { startingAvatar } from "@/lib/default-avatar";
 import { analysisStaleness, checkKindInput, cleanNote, isAvatarMode, type AvatarMode, type VideoKind } from "@/server/videos/brief";
+import { bodiesOfVideo, checkVideoBodies, type VideoBody } from "@/server/videos/bodies";
 import { analysisCostMicros, costsOfVideo, type VideoCosts } from "@/server/videos/costs";
 import { clipManifest, imageManifest, type ManifestItem } from "@/server/videos/manifest";
 import { checkImagePrompt, checkVideoPrompt, type PromptIssue } from "@/server/videos/prompt-check";
@@ -34,6 +36,29 @@ export const isClipResolution = (value: unknown): value is ClipResolution =>
 const MAX_TITLE = 100;
 
 const NOT_FOUND = "Vídeo no encontrado.";
+/** La referencia se preparó con otro tramo (cambió el tipo o la duración del gancho): hay que subirla otra vez. */
+export const REFERENCE_OUTDATED = "El gancho ha cambiado: vuelve a subir el vídeo de referencia.";
+
+/**
+ * El tramo de la referencia que usa un vídeo, en milisegundos: con «Solo gancho», los primeros
+ * `hookSeconds` segundos; si no, hasta 30 s. Nunca más de lo que dura la referencia.
+ */
+export function segmentMsFor(video: Pick<Video, "kind" | "hookSeconds">, durationMs: number): number {
+  return Math.min(durationMs, video.kind === "solo_gancho" ? video.hookSeconds * 1000 : MAX_SEGMENT_MS);
+}
+
+/**
+ * `true` si la referencia lista se preparó con un tramo que ya no es el del vídeo (se pasó a o
+ * desde «Solo gancho», o cambió la duración del gancho, después de prepararla). El archivo
+ * original no se guarda, así que no se puede recortar de nuevo: hay que volver a subirlo. Se
+ * calcula, no se apunta: si se deshace el cambio, la referencia vuelve a valer.
+ */
+export function referenceOutdated(
+  video: Pick<Video, "kind" | "hookSeconds" | "referenceStatus" | "referenceDurationMs" | "segmentDurationMs">,
+): boolean {
+  if (video.referenceStatus !== "ready" || video.referenceDurationMs === null || video.segmentDurationMs === null) return false;
+  return video.segmentDurationMs !== segmentMsFor(video, video.referenceDurationMs);
+}
 const NOT_OWNER = "Solo quien creó este vídeo puede continuarlo: se paga con su Higgsfield.";
 
 /** Cerrojo de aviso por producto para numerar los vídeos («Vídeo N») sin repetir número. */
@@ -47,6 +72,8 @@ export interface NewVideoExtras {
   avatarMode?: AvatarMode;
   kind?: VideoKind;
   adaptation?: string | null;
+  hookSeconds?: number;
+  bodyClipIds?: number[];
 }
 
 /**
@@ -169,6 +196,9 @@ export interface VideoChoicesInput {
   clipResolution?: string;
   kind?: unknown;
   adaptation?: unknown;
+  hookSeconds?: unknown;
+  /** Lista ordenada de cuerpos (`product_bodies.id`) de este producto. */
+  bodyClipIds?: unknown;
   note?: unknown;
 }
 
@@ -178,7 +208,10 @@ export interface VideoChoicesInput {
  * vídeo. El avatar y el entorno tienen que ser fotos de ese producto con ese papel; la resolución,
  * una de `CLIP_RESOLUTIONS`; el tipo y quién sale, de sus listas (400 si no).
  * «Sin sustitución» y «nadie» quitan el avatar y elegir un avatar pasa a `elegido`; pedir un avatar
- * con otro modo es un 400. La adaptación solo se escribe con «Adaptación de concepto».
+ * con otro modo es un 400. La adaptación solo se escribe con «Adaptación de concepto». La
+ * duración del gancho va de 2 a 8 s y los cuerpos tienen que ser de este producto. Cambiar el tipo
+ * a o desde «Solo gancho», o la duración del gancho, con la referencia ya lista no la borra, pero
+ * deja de valer hasta que se vuelva a subir (`referenceOutdated`).
  */
 export async function updateVideoChoices(user: AuthUser, videoId: number, input: VideoChoicesInput): Promise<Video> {
   const video = await getVideoFor(user, videoId);
@@ -199,6 +232,7 @@ export async function updateVideoChoices(user: AuthUser, videoId: number, input:
 
   Object.assign(changes, checkKindInput(input, video));
   if (input.note !== undefined) changes.note = cleanNote(input.note);
+  if (input.bodyClipIds !== undefined) changes.bodyClipIds = await checkVideoBodies(video.productId, input.bodyClipIds);
 
   if (input.avatarMode !== undefined && !isAvatarMode(input.avatarMode)) throw new HttpError(400, "Valor no válido.");
   if (input.avatarMode !== undefined && input.avatarMode !== "elegido" && typeof input.avatarPhotoId === "number") {
@@ -247,6 +281,10 @@ export interface VideoView {
   /** Nombre de quien lo creó (para el aviso de solo lectura); `null` si esa cuenta no existe. */
   creatorName: string | null;
   frames: Array<{ index: number; timeMs: number }>;
+  /** La referencia está lista pero se preparó con otro tramo: hay que volver a subirla (`referenceOutdated`). */
+  referenceOutdated: boolean;
+  /** Los cuerpos que van detrás del gancho, en orden (solo cuentan con «Solo gancho»). */
+  bodies: VideoBody[];
   /** El último desglose (el de versión más alta), o `null` si aún no se ha pedido ninguno. */
   analysis: {
     id: number;
@@ -347,6 +385,8 @@ export async function videoView(user: AuthUser, videoId: number): Promise<VideoV
     mine: video.createdBy === user.id,
     creatorName: await creatorNameOf(video),
     frames,
+    referenceOutdated: referenceOutdated(video),
+    bodies: await bodiesOfVideo(video),
     analysis: latest
       ? {
           id: latest.id,

@@ -20,11 +20,11 @@ const CLIP_RELEASES_FRAME = ["not_sent", "failed"];
  */
 export const ready = {
   /**
-   * Referencia lista, quién sale (avatar, «sin sustitución» o «nadie»), la adaptación si es una
+   * Referencia lista (y preparada con el gancho actual), quién sale (avatar, «sin sustitución» o «nadie»), la adaptación si es una
    * adaptación, y sin desglose (o el último falló o ya no corresponde).
    */
   breakdown(row: BatchRowJson): boolean {
-    if (!row.mine || row.referenceStatus !== "ready" || row.needsAdaptation) return false;
+    if (!row.mine || row.referenceStatus !== "ready" || row.referenceOutdated || row.needsAdaptation) return false;
     if (row.avatarMode === "elegido" && row.avatarPhotoId === null) return false;
     const analysis = row.analysis;
     if (!analysis) return true;
@@ -80,6 +80,7 @@ export function referenceState(row: BatchRowJson, upload: LocalUpload): StepStat
   if (upload.kind === "failed") return { label: "Error", tone: "error", detail: upload.message };
   switch (row.referenceStatus) {
     case "ready":
+      if (row.referenceOutdated) return { label: "Resubir", tone: "error", detail: "El gancho ha cambiado: vuelve a subir el vídeo de referencia en su página." };
       return { label: "Lista", tone: "ok" };
     case "processing":
       return { label: "Preparando", tone: "busy" };

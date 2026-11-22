@@ -561,6 +561,61 @@ describe("indicaciones del vídeo: tipo, adaptación, cambios específicos y qui
     expect((await videoView(ana, v.id)).analysis).toMatchObject({ id: again.analysisId, stale: false });
   });
 
+  it("con «Solo gancho», Claude sabe que es SOLO el gancho de N segundos y que el cuerpo ya existe", async () => {
+    await readyVideo();
+    await updateVideoChoices(ana, v.id, { kind: "solo_gancho", hookSeconds: 4 });
+    // La referencia, como la deja la preparación de un «Solo gancho» de 4 s sobre un vídeo de 6 s.
+    await getPool().query("update videos set segment_duration_ms = 4000 where id = $1", [v.id]);
+    const { analysisId } = await requestAnalysis(ana, v.id);
+    const { client, calls } = fakeMessages([reply()]);
+    await runAnalysis(analysisId, { gateway: createGateway({ client }) });
+
+    const system = systemText(calls[0]);
+    expect(system).toContain("Tipo de vídeo: solo gancho.");
+    expect(system).toContain("SOLO el gancho del anuncio: sus primeros 4 segundos");
+    expect(system).toContain("El cuerpo del anuncio ya existe");
+    expect(system).toContain("no lo diseñes");
+    expect(system).not.toContain("Tipo de vídeo: adaptación de concepto.");
+    expect(texts(calls[0]).join("\n")).toContain("Duración del tramo de la referencia (solo el gancho): 4,0 s.");
+    const { rows } = await getPool().query("select kind, hook_seconds from video_analyses where id = $1", [analysisId]);
+    expect(rows[0]).toEqual({ kind: "solo_gancho", hook_seconds: 4 });
+    expect((await videoView(ana, v.id)).analysis).toMatchObject({ status: "done", stale: false });
+  });
+
+  it("al replicar no se habla de gancho ni se guarda su duración", async () => {
+    await readyVideo();
+    await updateVideoChoices(ana, v.id, { hookSeconds: 6 });
+    const { analysisId } = await requestAnalysis(ana, v.id);
+    const { client, calls } = fakeMessages([reply()]);
+    await runAnalysis(analysisId, { gateway: createGateway({ client }) });
+    expect(systemText(calls[0])).not.toContain("solo gancho");
+    expect(texts(calls[0]).join("\n")).toContain("Duración del tramo de la referencia: 6,0 s.");
+    const { rows } = await getPool().query("select hook_seconds from video_analyses where id = $1", [analysisId]);
+    expect(rows[0].hook_seconds).toBeNull();
+    // Sin «Solo gancho», cambiar la duración del gancho no toca nada.
+    await updateVideoChoices(ana, v.id, { hookSeconds: 3 });
+    expect(await videoView(ana, v.id)).toMatchObject({ referenceOutdated: false, analysis: { stale: false } });
+  });
+
+  it("cambiar la duración del gancho o pasar a o desde «Solo gancho» deja el desglose por repetir y pide subir otra vez la referencia", async () => {
+    await readyVideo();
+    await updateVideoChoices(ana, v.id, { kind: "solo_gancho", hookSeconds: 4 });
+    await getPool().query("update videos set segment_duration_ms = 4000 where id = $1", [v.id]);
+    const { analysisId } = await requestAnalysis(ana, v.id);
+    await runAnalysis(analysisId, { gateway: createGateway({ client: fakeMessages([reply()]).client }) });
+    expect(await videoView(ana, v.id)).toMatchObject({ referenceOutdated: false, analysis: { stale: false } });
+
+    for (const change of [{ hookSeconds: 5 }, { kind: "replicar" }, { kind: "adaptacion_concepto", adaptation: "Otra idea" }]) {
+      await updateVideoChoices(ana, v.id, change);
+      expect(await videoView(ana, v.id)).toMatchObject({ referenceOutdated: true, analysis: { stale: true, staleReason: "brief" } });
+      // No se puede desglosar hasta volver a subir la referencia, y no se llama a Claude.
+      await expect(requestAnalysis(ana, v.id)).rejects.toMatchObject({ status: 400, message: "El gancho ha cambiado: vuelve a subir el vídeo de referencia." });
+      // La referencia no se borra: al deshacer el cambio vuelve a valer, y el desglose también.
+      await updateVideoChoices(ana, v.id, { kind: "solo_gancho", hookSeconds: 4 });
+      expect(await videoView(ana, v.id)).toMatchObject({ referenceOutdated: false, analysis: { stale: false, staleReason: null } });
+    }
+  });
+
   it("si las indicaciones cambian mientras Claude responde, el desglose queda superado para siempre y no pisa los prompts", async () => {
     await readyVideo();
     const { analysisId } = await requestAnalysis(ana, v.id);

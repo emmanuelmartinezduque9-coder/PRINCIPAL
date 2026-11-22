@@ -8,7 +8,6 @@ import {
   detectCuts,
   extractFrames,
   frameTimesMs,
-  MAX_SEGMENT_MS,
   MediaError,
   MIN_REFERENCE_MS,
   normalizeClip,
@@ -16,12 +15,12 @@ import {
 } from "@/server/media/ffmpeg";
 import { autoRequestAnalysis } from "@/server/videos/analysis";
 import { clipPath, discardUpload, PREPARE_FAILED, REFERENCE_JOB, UPLOAD_GONE, uploadPath } from "@/server/videos/upload";
-import { getVideoFor } from "@/server/videos/videos";
+import { getVideoFor, segmentMsFor } from "@/server/videos/videos";
 
 /**
  * Preparación de la referencia (trabajo `video.referencia`): del archivo subido salen la
  * duración y el tamaño, los fotogramas (a la base de datos), los cortes de plano y un recorte
- * normalizado de 30 s como mucho, que se sube al Higgsfield de quien creó el vídeo. El vídeo no
+ * normalizado de 30 s como mucho (con «Solo gancho», solo los segundos del gancho), que se sube al Higgsfield de quien creó el vídeo. El vídeo no
  * se guarda: los archivos temporales se borran siempre al acabar, bien o mal. Un fallo deja la
  * referencia en error con el motivo en español y no se reintenta (el archivo ya no está).
  */
@@ -85,7 +84,8 @@ async function prepare(ctx: JobContext, videoId: number, uploadId: string, deps:
 
   const probe = await probeVideo(file);
   if (probe.durationMs < MIN_REFERENCE_MS) throw new ReferenceProblem(TOO_SHORT);
-  const segmentDurationMs = Math.min(probe.durationMs, MAX_SEGMENT_MS);
+  // Con «Solo gancho», el tramo es solo el gancho: fotogramas, cortes y recorte salen de él.
+  const segmentDurationMs = segmentMsFor(video, probe.durationMs);
   const frames = await extractFrames(file, frameTimesMs(segmentDurationMs));
   const cutsMs = (await detectCuts(file, segmentDurationMs)).filter((ms) => ms > 0 && ms < segmentDurationMs);
   const clip = clipPath(uploadId);

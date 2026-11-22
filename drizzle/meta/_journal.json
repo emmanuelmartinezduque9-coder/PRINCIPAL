@@ -120,6 +120,13 @@
       "when": 1795358916681,
       "tag": "0016_safe_squirrel_girl",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1795364834951,
+      "tag": "0017_biblioteca_solo_gancho",
+      "breakpoints": true
     }
   ]
 }
