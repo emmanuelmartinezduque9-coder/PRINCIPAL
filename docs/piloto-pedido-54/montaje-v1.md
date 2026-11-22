@@ -131,3 +131,30 @@ coordinador:** los cuerpos ya no se usan enteros: se eligen in/out (sin cambiar 
   `analisis_clips/`; trabajo y logs en `/Volumes/T7/PRINCIPAL/pedido-54/trabajo/v1/`; mediciones en
   `/Volumes/T7/PRINCIPAL/referencias-edicion/eiswerk-top10/` y `…/referencias-pedido-54/`.
 - No se tocó nada del sistema antiguo ni ningún vídeo anterior; no se usó Higgsfield.
+
+### 3.6 V7 HaarZauber (montado el 22/11, más tarde)
+- **Salida:** `HaarZauber - DE/07 - HaarZauber - DE (v1).mp4`: 10,00 s, 240 fotogramas, 1080×1920 H.264 + AAC. En
+  `HaarZauber - DE/revision/` están `… (v1) - autocomprobacion.txt/.json`, `- cortes.jpg`, `- contactos.jpg` y
+  `- plan-aplicado.json`. Las ediciones antiguas del 07 (sin «(v1)») siguen sin tocar.
+- **Gancho:** Topaz 1bc5d366 del Genjutsu 5505b172, descargado en `/Volumes/T7/PRINCIPAL/pedido-54/descargas/`
+  (`V7-gancho-topaz-1bc5d366.mp4`; el 480p `V7-gancho-480p-5505b172.mp4` tiene las mismas duraciones: 4,04 s de
+  vídeo y 3,20 s de audio). Las cajas son de HaarZauber (visto). Una toma con cuatro clientes que cogen caja. Entra en
+  f3 y corta en f87 (3,50 s), con la última clienta girándose con la caja. Se descarta la cola con el dependiente
+  solo. El audio del gancho no se usa: solo suena la canción.
+- **Drop** (17,74 s, canción nº 3) **en el corte gancho→cuerpo, a 3,50 s** (medido: 0 ms). El primer plano del
+  cuerpo es el cepillo rosa subiendo a cuadro, que entra 1 fotograma después del corte. El inicio de la canción
+  queda en 14,24 s (la tarjeta decía 14,35).
+- **Cuerpo:** las ventanas están fijadas a mano en el plan, porque el automático abría con el reparto de mechones
+  (sin producto) y dejaba solo 3 de 8 cortes en beat. Orden: producto (1,12 s) → cepillado arriba (1,12) → mechón que
+  se riza (1,12) → peine (0,58) → mechón liso que se suelta (1,08) → resultado con ondas (1,46). 5 de 6 cortes caen en
+  beat (±21 ms, 107,7 bpm). El corte que falta es el del drop, que va anclado al marcador humano (46 ms del beat de
+  librosa).
+- **Rótulos:** «Jede vielbeschäftigte Mama braucht genau DAS! 🎁😍» de 0 a 7,46 s, y el CTA desde **7,46 s, en el
+  penúltimo corte**: el último plano dura 1,46 s (< 1,5 s, porque el tramo final del clip no da más).
+- **Autocomprobación:** OK al primer montaje, sin cortes no previstos. Pico −4,3 dBFS (sin voz).
+- **Para mirar:** el plano del peine dura 0,58 s, algo por debajo del 0,6 s del patrón. Los dos planos de cepillado
+  salen de la misma toma IA y quedan como corte en salto. El CTA va sobre dos planos (mechón + resultado). Nadie lo ha
+  escuchado.
+- El plan está en `montador/planes/V07-v1.json`; en el Mac, en
+  `/Volumes/T7/PRINCIPAL/pedido-54/trabajo/v1/V07-v1/V07-v1.json`, porque se lanzó con `montador.py <plan>`
+  directamente.

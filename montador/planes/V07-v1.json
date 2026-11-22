@@ -1,0 +1,77 @@
+{
+ "id": "V07-v1",
+ "tipo": "gancho+cuerpo",
+ "pedido": "app-6852a9fdeb44480983cc86d73a67d471-54",
+ "video": 7,
+ "cuenta": "HaarZauber",
+ "clips": [
+  {
+   "role": "hook",
+   "path": "/Volumes/T7/PRINCIPAL/pedido-54/descargas/V7-gancho-topaz-1bc5d366.mp4",
+   "in_frame": 3,
+   "out_frame": 87
+  },
+  {
+   "role": "body",
+   "auto": true,
+   "path": "/Volumes/T7/AUTOMATIZACION SEGA/Motor/order-preparation/app-8082c194d416445a9cd108923e243156-81/NanoBanana/_UPSCALE/71696eaa-b5ed-4571-8fc3-b75b8d133c9b/final_1080p.mp4",
+   "ventanas": [
+    [
+     3.75,
+     4.875
+    ],
+    [
+     5.541667,
+     6.666667
+    ],
+    [
+     7.625,
+     8.75
+    ],
+    [
+     9.0,
+     9.583333
+    ],
+    [
+     10.125,
+     11.25
+    ],
+    [
+     11.416667,
+     12.875
+    ]
+   ]
+  }
+ ],
+ "audio": {
+  "mode": "cancion",
+  "song": "/Volumes/AutomatizacionProyecto/AUTOMATIZACION IA VIDEOS/NanoBanana/_EDICIONES/music-library/b06202f2588ad3bebe04ffa1c2f53c6df101844127ef7d31ae7b00dc609a2929.mp3",
+  "drop": 17.74,
+  "product_shown": {},
+  "music_gain_db": 0,
+  "peak_limit": 0.94
+ },
+ "texts": [
+  {
+   "role": "main",
+   "text": "Jede vielbeschäftigte Mama braucht genau DAS! 🎁😍"
+  },
+  {
+   "role": "cta",
+   "text": "Kommentiere „HaarZauber“, wenn du auch eine willst! 😇🎄"
+  }
+ ],
+ "notas": [
+  "Gancho: Topaz 1bc5d366 del gancho Genjutsu 5505b172 (4,04 s, mismas duraciones que el 480p; cajas HaarZauber vistas en los fotogramas). Sin voz: el audio del gancho no se usa, solo la canción.",
+  "Gancho de una toma con cuatro recogidas en la tienda: entra en f3 (0,125 s, la primera clienta ya en marcha) y corta en f87 (3,625 s) con la última clienta girándose con la caja; se descarta la cola con el dependiente solo (3,75–4,04 s).",
+  "Drop 17,74 s en el corte gancho→cuerpo (3,50 s): el primer plano del cuerpo es el primer plano del cepillo rosa en la mano (cuerpo 3,75–4,875 s; el cepillo entra en cuadro en f91, 1 fotograma después del corte).",
+  "Cuerpo con ventanas fijadas a mano (segundos del clip), elegidas mirando la hoja a 4 fps y la actividad, con cada corte sobre un beat (107,7 bpm): producto → cepillado arriba → mechón que se riza → peine → mechón liso que se suelta → resultado con ondas. Se descarta el inicio del cuerpo (0–3,4 s, separar mechones).",
+  "Último plano 1,46 s (el tramo final del clip no da más): el CTA entra en el penúltimo corte, como en V12."
+ ],
+ "version": 1,
+ "zoom": {
+  "enabled": false
+ },
+ "work_dir": "/Volumes/T7/PRINCIPAL/pedido-54/trabajo/v1/V07-v1",
+ "output": "/Volumes/T7/AUTOMATIZACION SEGA/videos editados/2026-11-22/PRINCIPAL-pedido-54/HaarZauber - DE/07 - HaarZauber - DE (v1).mp4"
+}
