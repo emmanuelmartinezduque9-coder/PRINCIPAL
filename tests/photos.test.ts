@@ -215,4 +215,37 @@ describe("fotos de producto", () => {
     await expect(importProductPhotos(dueno, producto.id, [{ bytes: JPEG, role: "x" as never }])).rejects.toMatchObject({ status: 400 });
     expect(await listProductPhotos(dueno, producto.id)).toHaveLength(2);
   });
+
+  it("la importación conserva lo guardado antes de un fallo y propaga su código", async () => {
+    await expect(
+      importProductPhotos(dueno, producto.id, [
+        { bytes: JPEG, role: "articulo" },
+        { bytes: PNG, role: "avatar" },
+        { bytes: HEIC, role: "otro" },
+        { bytes: JPEG, role: "entorno" },
+      ]),
+    ).rejects.toMatchObject({ status: 400, message: expect.stringContaining("Formato de foto no admitido") });
+    expect((await listProductPhotos(dueno, producto.id)).map((p) => p.role)).toEqual(["articulo", "avatar"]);
+  });
+
+  it("si el producto llega a 12 fotos a mitad de una importación, se queda con las 12 y rechaza el resto", async () => {
+    for (let i = 0; i < 10; i++) await addProductPhoto(ana, producto.id, JPEG);
+    await expect(
+      importProductPhotos(dueno, producto.id, [
+        { bytes: JPEG, role: "articulo" },
+        { bytes: JPEG, role: "avatar" },
+        { bytes: JPEG, role: "entorno" },
+      ]),
+    ).rejects.toMatchObject({ status: 400, message: "Este producto ya tiene 12 fotos." });
+    const roles = (await listProductPhotos(dueno, producto.id)).map((p) => p.role);
+    expect(roles).toHaveLength(12);
+    expect(roles.slice(10)).toEqual(["articulo", "avatar"]);
+  });
+
+  it("la base rechaza un papel que no existe aunque se salte el servidor", async () => {
+    const { id } = await addProductPhoto(ana, producto.id, JPEG);
+    const { getDb } = await import("@/db/client");
+    const { sql } = await import("drizzle-orm");
+    await expect(getDb().execute(sql`update product_photos set role = 'x' where id = ${id}`)).rejects.toThrow();
+  });
 });

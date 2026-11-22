@@ -69,24 +69,25 @@ const ROLE_ICONS: Record<PhotoRole, LucideIcon> = {
   otro: Shapes,
 };
 
+/** Un color propio por papel: se reconoce de un vistazo sin leer nada. */
+const ROLE_TINT: Record<PhotoRole, string> = {
+  articulo: "bg-amber-500 text-white",
+  embalaje: "bg-sky-500 text-white",
+  avatar: "bg-violet-500 text-white",
+  entorno: "bg-emerald-500 text-white",
+  otro: "bg-slate-500 text-white",
+};
+
 /** Una foto elegida y el papel que tendrá. */
 export interface PendingPhoto {
   file: File;
   role: PhotoRole;
 }
 
-/** Los cinco papeles como botones de icono; el activo se ve marcado. */
-function RoleSelector({
-  value,
-  onChange,
-  className,
-}: {
-  value: PhotoRole;
-  onChange: (role: PhotoRole) => void;
-  className?: string;
-}) {
+/** Los cinco papeles como botones de icono (para elegir el papel de las fotos que se van a subir). */
+function RoleSelector({ value, onChange }: { value: PhotoRole; onChange: (role: PhotoRole) => void }) {
   return (
-    <div role="group" aria-label="Papel de la foto" className={cn("inline-flex gap-0.5 rounded-lg bg-background/90 p-0.5 shadow-sm", className)}>
+    <div role="group" aria-label="Papel de las fotos nuevas" className="inline-flex gap-1 rounded-full bg-muted p-1">
       {PHOTO_ROLES.map((role) => {
         const Icon = ROLE_ICONS[role];
         const on = role === value;
@@ -98,16 +99,117 @@ function RoleSelector({
             aria-label={PHOTO_ROLE_LABELS[role]}
             title={PHOTO_ROLE_HINTS[role]}
             data-role={role}
-            onClick={() => !on && onChange(role)}
+            onClick={() => onChange(role)}
             className={cn(
-              "grid size-7 place-items-center rounded-md transition-colors outline-none focus-visible:ring-3 focus-visible:ring-ring/60",
-              on ? "bg-foreground text-background" : "text-muted-foreground hover:bg-muted hover:text-foreground",
+              "grid size-8 place-items-center rounded-full transition-colors outline-none focus-visible:ring-3 focus-visible:ring-ring/60",
+              on ? ROLE_TINT[role] : "text-muted-foreground hover:bg-background hover:text-foreground",
             )}
           >
             <Icon className="size-4" aria-hidden />
           </button>
         );
       })}
+    </div>
+  );
+}
+
+/**
+ * Papel actual de una foto como una insignia de icono y color; al pulsarla (o con Intro / Espacio)
+ * se abre un menú con los cinco papeles. Flechas para moverse, Esc para cerrar.
+ */
+function RoleBadge({ value, onChange }: { value: PhotoRole; onChange: (role: PhotoRole) => void }) {
+  const [open, setOpen] = useState(false);
+  const root = useRef<HTMLDivElement>(null);
+  const trigger = useRef<HTMLButtonElement>(null);
+  const items = useRef<(HTMLButtonElement | null)[]>([]);
+  const Icon = ROLE_ICONS[value];
+
+  useEffect(() => {
+    if (!open) return;
+    items.current[PHOTO_ROLES.indexOf(value)]?.focus();
+    const away = (event: MouseEvent) => {
+      if (!root.current?.contains(event.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", away);
+    return () => document.removeEventListener("mousedown", away);
+  }, [open, value]);
+
+  function close() {
+    setOpen(false);
+    trigger.current?.focus();
+  }
+
+  function onKeyDown(event: React.KeyboardEvent) {
+    const at = items.current.findIndex((el) => el === document.activeElement);
+    const move = (to: number) => {
+      event.preventDefault();
+      items.current[(to + PHOTO_ROLES.length) % PHOTO_ROLES.length]?.focus();
+    };
+    if (event.key === "ArrowDown") move(at + 1);
+    else if (event.key === "ArrowUp") move(at - 1);
+    else if (event.key === "Home") move(0);
+    else if (event.key === "End") move(PHOTO_ROLES.length - 1);
+    else if (event.key === "Escape") {
+      event.preventDefault();
+      close();
+    } else if (event.key === "Tab") setOpen(false);
+  }
+
+  return (
+    <div ref={root} className="absolute bottom-2 left-2 z-10" onKeyDown={open ? onKeyDown : undefined}>
+      <button
+        ref={trigger}
+        type="button"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-label={`Papel: ${PHOTO_ROLE_LABELS[value]}. Cambiar`}
+        title={PHOTO_ROLE_HINTS[value]}
+        data-role-badge={value}
+        onClick={() => setOpen((o) => !o)}
+        className={cn(
+          "grid size-10 place-items-center rounded-full shadow-md ring-2 ring-background transition-transform outline-none hover:scale-105 focus-visible:ring-ring",
+          ROLE_TINT[value],
+        )}
+      >
+        <Icon className="size-5" aria-hidden />
+      </button>
+      {open ? (
+        <div
+          role="menu"
+          aria-label="Papel de la foto"
+          className="absolute bottom-12 left-0 flex w-36 flex-col rounded-xl bg-popover p-1 text-popover-foreground shadow-lg ring-1 ring-foreground/10"
+        >
+          {PHOTO_ROLES.map((role, index) => {
+            const ItemIcon = ROLE_ICONS[role];
+            return (
+              <button
+                key={role}
+                ref={(el) => {
+                  items.current[index] = el;
+                }}
+                type="button"
+                role="menuitemradio"
+                aria-checked={role === value}
+                data-role={role}
+                title={PHOTO_ROLE_HINTS[role]}
+                onClick={() => {
+                  if (role !== value) onChange(role);
+                  close();
+                }}
+                className={cn(
+                  "flex h-8 items-center gap-2 rounded-lg px-1.5 text-left text-sm outline-none hover:bg-muted focus-visible:bg-muted",
+                  role === value && "font-medium",
+                )}
+              >
+                <span className={cn("grid size-6 place-items-center rounded-full", ROLE_TINT[role])}>
+                  <ItemIcon className="size-3.5" aria-hidden />
+                </span>
+                {PHOTO_ROLE_LABELS[role]}
+              </button>
+            );
+          })}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -177,8 +279,26 @@ function PhotoDropzone({
   }
 
   return (
-    <div className={cn("flex flex-col gap-2", variant === "tile" ? "aspect-square" : "min-h-44 flex-1")}>
-      <RoleSelector value={role} onChange={onRole} className="self-start border border-border shadow-none" />
+    <div
+      data-dropzone
+      onDragOver={(event) => {
+        if (busy || !event.dataTransfer.types.includes("Files")) return;
+        event.preventDefault();
+        event.dataTransfer.dropEffect = "copy";
+        setOver(true);
+      }}
+      onDragLeave={() => setOver(false)}
+      onDrop={(event) => {
+        event.preventDefault();
+        setOver(false);
+        if (!busy) accept(Array.from(event.dataTransfer.files));
+      }}
+      className={cn(
+        "flex flex-col items-center gap-1 rounded-xl border-2 border-dashed p-2 transition-colors",
+        variant === "tile" ? "aspect-square" : "min-h-44 flex-1",
+        over ? "border-foreground/60 bg-foreground/[0.04]" : "border-border",
+      )}
+    >
       <input
         ref={input}
         type="file"
@@ -194,27 +314,14 @@ function PhotoDropzone({
           accept(files);
         }}
       />
+      <RoleSelector value={role} onChange={onRole} />
       <button
         type="button"
-        data-dropzone
         title="JPG, PNG o WebP · hasta 8 MB"
         disabled={busy}
         onClick={() => input.current?.click()}
-        onDragOver={(event) => {
-          if (busy || !event.dataTransfer.types.includes("Files")) return;
-          event.preventDefault();
-          event.dataTransfer.dropEffect = "copy";
-          setOver(true);
-        }}
-        onDragLeave={() => setOver(false)}
-        onDrop={(event) => {
-          event.preventDefault();
-          setOver(false);
-          if (!busy) accept(Array.from(event.dataTransfer.files));
-        }}
         className={cn(
-          "flex size-full flex-1 flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed px-4 text-center transition-colors outline-none *:pointer-events-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-progress disabled:opacity-70",
-          over ? "border-foreground/60 bg-foreground/[0.04]" : "border-border hover:border-foreground/30 hover:bg-muted/50",
+          "flex w-full flex-1 flex-col items-center justify-center gap-2 rounded-lg px-4 text-center transition-colors outline-none *:pointer-events-none hover:bg-muted/50 focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-progress disabled:opacity-70",
         )}
       >
         <span className="grid size-10 place-items-center rounded-full bg-muted text-muted-foreground">
@@ -259,15 +366,15 @@ function Thumb({
   className?: string;
 }) {
   return (
-    <li className={cn("group relative aspect-square overflow-hidden rounded-xl bg-muted ring-1 ring-foreground/10", className)}>
+    <li className={cn("group relative aspect-square rounded-xl bg-muted ring-1 ring-foreground/10", className)}>
       {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img src={src} alt={alt} className="absolute inset-0 size-full object-cover" />
+      <img src={src} alt={alt} className="absolute inset-0 size-full rounded-xl object-cover" />
       {cover ? (
         <span className="absolute top-2 left-2 rounded-md bg-background/90 px-1.5 py-0.5 text-xs font-medium shadow-sm">
           Portada
         </span>
       ) : null}
-      <RoleSelector value={role} onChange={onRole} className="absolute inset-x-2 bottom-2 justify-between" />
+      <RoleBadge value={role} onChange={onRole} />
       <button
         type="button"
         aria-label={removeLabel}
@@ -357,8 +464,20 @@ export function PhotoManager({ productId, onCount }: { productId: number; onCoun
   const changeRole = useMutation({
     mutationFn: ({ id, role }: { id: number; role: PhotoRole }) =>
       api(`/api/fotos/${id}`, { method: "PATCH", body: JSON.stringify({ role }) }),
+    // El cambio se ve al instante y se deshace si el servidor lo rechaza.
+    onMutate: async ({ id, role }) => {
+      await client.cancelQueries({ queryKey: key });
+      const before = client.getQueryData<{ photos: PhotoInfo[] }>(key);
+      client.setQueryData<{ photos: PhotoInfo[] }>(key, (data) =>
+        data ? { photos: data.photos.map((p) => (p.id === id ? { ...p, role } : p)) } : data,
+      );
+      return { before };
+    },
+    onError: (error, _vars, context) => {
+      if (context?.before) client.setQueryData(key, context.before);
+      toast.error(error instanceof Error ? error.message : "No se pudo cambiar el papel.");
+    },
     onSettled: refresh,
-    onError: (error) => toast.error(error instanceof Error ? error.message : "No se pudo cambiar el papel."),
   });
   const remove = useMutation({
     mutationFn: (id: number) => api(`/api/fotos/${id}`, { method: "DELETE" }),

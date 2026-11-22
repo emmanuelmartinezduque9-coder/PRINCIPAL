@@ -1,0 +1,2 @@
+ALTER TABLE "product_photos" ADD COLUMN "role" text DEFAULT 'articulo' NOT NULL;--> statement-breakpoint
+ALTER TABLE "product_photos" ADD CONSTRAINT "product_photos_role_valid" CHECK ("product_photos"."role" in ('articulo', 'embalaje', 'avatar', 'entorno', 'otro'));

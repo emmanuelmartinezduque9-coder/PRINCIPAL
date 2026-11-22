@@ -2,6 +2,7 @@ import { sql } from "drizzle-orm";
 import {
   bigint,
   bigserial,
+  check,
   customType,
   index,
   integer,
@@ -116,7 +117,10 @@ export const productPhotos = pgTable(
     createdBy: bigint("created_by", { mode: "number" }).notNull(),
     createdAt: instant("created_at").notNull().defaultNow(),
   },
-  (t) => [index("product_photos_product").on(t.productId, t.id)],
+  (t) => [
+    index("product_photos_product").on(t.productId, t.id),
+    check("product_photos_role_valid", sql`${t.role} in ('articulo', 'embalaje', 'avatar', 'entorno', 'otro')`),
+  ],
 );
 
 /**

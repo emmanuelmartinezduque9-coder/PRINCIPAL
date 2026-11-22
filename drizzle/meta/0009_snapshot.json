@@ -1,5 +1,5 @@
 {
-  "id": "f3ebc1f0-20a5-4241-9d0e-34d7c8e39a02",
+  "id": "4abee1a7-8dcd-43cc-b8f2-810aeac4a946",
   "prevId": "8cd70ce2-7417-41d4-b8be-23ed663b2016",
   "version": "7",
   "dialect": "postgresql",
@@ -428,7 +428,12 @@
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
-      "checkConstraints": {},
+      "checkConstraints": {
+        "product_photos_role_valid": {
+          "name": "product_photos_role_valid",
+          "value": "\"product_photos\".\"role\" in ('articulo', 'embalaje', 'avatar', 'entorno', 'otro')"
+        }
+      },
       "isRLSEnabled": false
     },
     "public.products": {

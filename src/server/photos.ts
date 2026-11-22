@@ -50,10 +50,14 @@ const INFO_COLUMNS = {
   size: schema.productPhotos.size,
   role: schema.productPhotos.role,
 };
-const toInfo = (row: { id: number; mime: string; size: number; role: string }): PhotoInfo => ({
-  ...row,
-  role: isPhotoRole(row.role) ? row.role : "otro",
-});
+/** Un papel guardado que no es válido no se disfraza de «otro»: la base lo impide, así que es un fallo grave. */
+function toInfo(row: { id: number; mime: string; size: number; role: string }): PhotoInfo {
+  if (!isPhotoRole(row.role)) {
+    console.error(`[fotos] La foto ${row.id} tiene un papel guardado no válido: ${JSON.stringify(row.role)}`);
+    throw new HttpError(500, "Una foto tiene un papel no válido. Avisa a quien administra la aplicación.");
+  }
+  return { ...row, role: row.role };
+}
 
 /**
  * Guarda una foto del producto, por defecto como «artículo». Rechaza papel desconocido, vacías,

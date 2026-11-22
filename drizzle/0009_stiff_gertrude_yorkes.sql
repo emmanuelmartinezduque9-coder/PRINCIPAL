@@ -1,1 +1,0 @@
-ALTER TABLE "product_photos" ADD COLUMN "role" text DEFAULT 'articulo' NOT NULL;
