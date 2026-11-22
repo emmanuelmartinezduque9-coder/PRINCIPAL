@@ -1,3 +1,4 @@
+import { isCloud } from "@/lib/cloud-env";
 import crypto from "node:crypto";
 import { and, eq, gt, isNull } from "drizzle-orm";
 import { getDb, schema } from "@/db/client";
@@ -30,7 +31,7 @@ export interface AuthUser {
 /** Sin inicio de sesión: solo cuando la aplicación corre en el propio ordenador. */
 export function authRequired(): boolean {
   // En la nube el inicio de sesión no se puede desactivar, ni por error de configuración.
-  if (process.env.PRINCIPAL_CLOUD === "1" || process.env.RAILWAY_PROJECT_ID) return true;
+  if (isCloud()) return true;
   return process.env.PRINCIPAL_AUTH !== "off";
 }
 

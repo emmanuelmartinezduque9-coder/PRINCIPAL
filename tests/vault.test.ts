@@ -1,10 +1,14 @@
-import { afterEach, describe, expect, it } from "vitest";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { decryptSecret, encryptSecret } from "@/lib/vault";
 
-const original = process.env.VAULT_KEY;
 afterEach(() => {
-  process.env.VAULT_KEY = original;
+  vi.unstubAllEnvs();
 });
+
+const key = (bytes: number) => Buffer.alloc(bytes, 5).toString("base64");
 
 describe("bóveda en sobre", () => {
   it("lo cifrado se descifra con el mismo contexto", () => {
@@ -51,14 +55,55 @@ describe("bóveda en sobre", () => {
 
   it("no se descifra con otra clave maestra", () => {
     const enc = encryptSecret({ t: "abc" }, "7:higgsfield");
-    process.env.VAULT_KEY = Buffer.alloc(32, 9).toString("base64");
+    vi.stubEnv("VAULT_KEY", Buffer.alloc(32, 9).toString("base64"));
     expect(() => decryptSecret(enc, "7:higgsfield")).toThrow();
   });
 
   it("VAULT_KEY que no mide 32 bytes se rechaza", () => {
-    process.env.VAULT_KEY = Buffer.alloc(16, 1).toString("base64");
-    expect(() => encryptSecret({ t: "abc" }, "7:higgsfield")).toThrow(
-      "VAULT_KEY debe ser una clave de 32 bytes en base64",
-    );
+    for (const bad of [key(16), key(33), "no es base64 válido!!", key(32) + "A"]) {
+      vi.stubEnv("VAULT_KEY", bad);
+      expect(() => encryptSecret({ t: "abc" }, "7:higgsfield"), bad).toThrow(
+        "VAULT_KEY debe ser una clave de 32 bytes en base64",
+      );
+    }
+  });
+
+  it("VAULT_KEY vacía se rechaza y no cae al archivo local", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "vault-vacia-"));
+    vi.stubEnv("PRINCIPAL_DATA_DIR", dir);
+    vi.stubEnv("VAULT_KEY", "");
+    expect(() => encryptSecret({ t: "abc" }, "7:x")).toThrow("VAULT_KEY debe ser");
+    expect(fs.existsSync(path.join(dir, "vault.key"))).toBe(false);
+  });
+
+  it("en la nube sin VAULT_KEY falla y no crea archivo", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "vault-nube-"));
+    vi.stubEnv("PRINCIPAL_DATA_DIR", dir);
+    vi.stubEnv("PRINCIPAL_CLOUD", "1");
+    vi.stubEnv("VAULT_KEY", undefined as unknown as string);
+    expect(() => encryptSecret({ t: "abc" }, "7:x")).toThrow("Falta VAULT_KEY");
+    expect(fs.existsSync(path.join(dir, "vault.key"))).toBe(false);
+    vi.stubEnv("VAULT_KEY", "");
+    expect(() => encryptSecret({ t: "abc" }, "7:x")).toThrow("VAULT_KEY debe ser");
+  });
+
+  it("en la nube con una clave válida funciona (Railway también cuenta como nube)", () => {
+    vi.stubEnv("RAILWAY_PROJECT_ID", "proyecto");
+    vi.stubEnv("VAULT_KEY", key(32));
+    expect(decryptSecret(encryptSecret({ t: 1 }, "7:x"), "7:x")).toEqual({ t: 1 });
+  });
+
+  it("en local sin VAULT_KEY crea un archivo 0600 y lo reutiliza", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "vault-local-"));
+    vi.stubEnv("PRINCIPAL_DATA_DIR", dir);
+    vi.stubEnv("PRINCIPAL_CLOUD", undefined as unknown as string);
+    vi.stubEnv("RAILWAY_PROJECT_ID", undefined as unknown as string);
+    vi.stubEnv("VAULT_KEY", undefined as unknown as string);
+    const enc = encryptSecret({ t: "abc" }, "7:x");
+    const file = path.join(dir, "vault.key");
+    expect(fs.statSync(file).mode & 0o777).toBe(0o600);
+    expect(decryptSecret(enc, "7:x")).toEqual({ t: "abc" });
+    fs.writeFileSync(file, "corrupta");
+    expect(() => decryptSecret(enc, "7:x")).toThrow("no es válida");
   });
 });

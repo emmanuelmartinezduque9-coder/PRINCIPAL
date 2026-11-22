@@ -19,7 +19,7 @@ function check(userId: number, kind: string): void {
 const where = (userId: number, kind: string) =>
   and(eq(schema.credentials.userId, userId), eq(schema.credentials.kind, kind));
 
-/** Crea o sustituye la credencial de esa persona y tipo. */
+/** Crea o sustituye la credencial de esa persona y tipo. `meta` llega al navegador: nunca debe contener secretos. */
 export async function saveCredential(
   userId: number,
   kind: string,

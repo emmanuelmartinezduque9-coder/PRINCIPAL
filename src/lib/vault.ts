@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { isCloud } from "./cloud-env";
 import { dataDir } from "./paths";
 
 /**
@@ -22,23 +23,35 @@ const IV_BYTES = 12;
 const TAG_BYTES = 16;
 const ALGORITHM = "aes-256-gcm";
 
+const KEY_ERROR = "VAULT_KEY debe ser una clave de 32 bytes en base64";
+
+/** Base64 estricto de 32 bytes: rechaza caracteres ajenos y relleno incorrecto. */
+function parseKey(text: string, error: string): Buffer {
+  const key = Buffer.from(text, "base64");
+  if (key.length !== KEY_BYTES || key.toString("base64") !== text) throw new Error(error);
+  return key;
+}
+
 function loadKey(): Buffer {
   const fromEnv = process.env.VAULT_KEY;
-  if (fromEnv) {
-    const key = Buffer.from(fromEnv, "base64");
-    if (key.length !== KEY_BYTES) throw new Error("VAULT_KEY debe ser una clave de 32 bytes en base64");
-    return key;
+  // Definida (aunque vacía) o inválida: error, nunca se recurre al archivo.
+  if (fromEnv !== undefined) return parseKey(fromEnv.trim(), KEY_ERROR);
+  if (isCloud()) {
+    throw new Error("Falta VAULT_KEY: en la nube la clave de la bóveda debe venir de la variable de entorno (32 bytes en base64)");
   }
+  // Solo en local: archivo fuera del proyecto, creado de forma atómica.
   const file = path.join(dataDir(), "vault.key");
-  if (fs.existsSync(file)) {
-    const key = Buffer.from(fs.readFileSync(file, "utf8").trim(), "base64");
-    if (key.length !== KEY_BYTES) throw new Error(`La clave de ${file} no es válida`);
-    return key;
-  }
+  const readFile = () => parseKey(fs.readFileSync(file, "utf8").trim(), `La clave de ${file} no es válida`);
+  if (fs.existsSync(file)) return readFile();
   fs.mkdirSync(dataDir(), { recursive: true });
   const key = crypto.randomBytes(KEY_BYTES);
-  fs.writeFileSync(file, key.toString("base64"), { mode: 0o600 });
-  return key;
+  try {
+    fs.writeFileSync(file, key.toString("base64"), { flag: "wx", mode: 0o600 });
+    return key;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "EEXIST") return readFile();
+    throw error;
+  }
 }
 
 function seal(key: Buffer, plain: Buffer, aad: Buffer): { iv: Buffer; tag: Buffer; body: Buffer } {
