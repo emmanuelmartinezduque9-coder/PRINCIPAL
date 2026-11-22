@@ -1,4 +1,5 @@
-import { bigint, bigserial, index, jsonb, pgTable, text, timestamp } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
+import { bigint, bigserial, index, jsonb, pgTable, primaryKey, text, timestamp } from "drizzle-orm/pg-core";
 
 const instant = (name: string) => timestamp(name, { withTimezone: true, mode: "date" });
 
@@ -46,3 +47,35 @@ export const invites = pgTable("invites", {
   expiresAt: instant("expires_at").notNull(),
   usedAt: instant("used_at"),
 });
+
+/**
+ * Productos. Solo `src/server/access.ts` y `src/server/products.ts` consultan esta tabla y la de
+ * asignaciones: así cada consulta respeta qué productos puede ver cada persona.
+ */
+export const products = pgTable("products", {
+  id: bigserial("id", { mode: "number" }).primaryKey(),
+  name: text("name").notNull(),
+  /** La frase de qué hace el producto. */
+  summary: text("summary").notNull(),
+  language: text("language").notNull().default("de"),
+  countries: text("countries").array().notNull().default(sql`'{DE,AT,CH}'::text[]`),
+  /** Sin clave ajena: el dueño en el propio ordenador (id 0) no tiene fila en `users`. */
+  createdBy: bigint("created_by", { mode: "number" }).notNull(),
+  createdAt: instant("created_at").notNull().defaultNow(),
+});
+
+/** Qué colaborador puede ver qué producto. El dueño los ve todos sin necesidad de asignación. */
+export const productAssignments = pgTable(
+  "product_assignments",
+  {
+    productId: bigint("product_id", { mode: "number" })
+      .notNull()
+      .references(() => products.id, { onDelete: "cascade" }),
+    userId: bigint("user_id", { mode: "number" })
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    assignedBy: bigint("assigned_by", { mode: "number" }).notNull(),
+    assignedAt: instant("assigned_at").notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.productId, t.userId] }), index("product_assignments_user").on(t.userId)],
+);
