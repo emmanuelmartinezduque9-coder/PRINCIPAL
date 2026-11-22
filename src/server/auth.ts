@@ -30,7 +30,7 @@ export interface AuthUser {
 /** Sin inicio de sesión: solo cuando la aplicación corre en el propio ordenador. */
 export function authRequired(): boolean {
   // En la nube el inicio de sesión no se puede desactivar, ni por error de configuración.
-  if (process.env.PRINCIPAL_CLOUD === "1") return true;
+  if (process.env.PRINCIPAL_CLOUD === "1" || process.env.RAILWAY_PROJECT_ID) return true;
   return process.env.PRINCIPAL_AUTH !== "off";
 }
 
@@ -177,7 +177,13 @@ export function resetLoginAttempts(): void {
 }
 
 let dummy: Promise<string> | undefined;
-const dummyHash = () => (dummy ??= hashPassword(randomToken()));
+const dummyHash = () => {
+  dummy ??= hashPassword(randomToken()).catch((error) => {
+    dummy = undefined; // un fallo no se guarda: el siguiente intento vuelve a calcularlo
+    throw error;
+  });
+  return dummy;
+};
 
 /** Inicia sesión. Devuelve null si el correo o la contraseña no valen, o si está bloqueado. */
 export async function login(

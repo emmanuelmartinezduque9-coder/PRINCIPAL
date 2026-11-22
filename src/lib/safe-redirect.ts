@@ -7,7 +7,10 @@ export function safeBackPath(back: string | null | undefined, origin: string): s
   try {
     const url = new URL(back, origin);
     if (url.origin !== new URL(origin).origin) return "/";
-    return url.pathname + url.search + url.hash;
+    const path = url.pathname + url.search + url.hash;
+    // `/.//x`, `/a/..//x` o `/%2e//x` se normalizan a `//x`, que el navegador tomaría por otro sitio.
+    if (path.startsWith("//") || path.startsWith("/\\") || path.includes("\\")) return "/";
+    return path;
   } catch {
     return "/";
   }

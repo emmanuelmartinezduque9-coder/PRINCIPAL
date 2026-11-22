@@ -77,6 +77,16 @@ describe("protección de la API", () => {
     }
   });
 
+  it("PRINCIPAL_AUTH=off tampoco vale en Railway", async () => {
+    process.env.PRINCIPAL_AUTH = "off";
+    process.env.RAILWAY_PROJECT_ID = "proyecto";
+    try {
+      expect(authRequired()).toBe(true);
+    } finally {
+      delete process.env.RAILWAY_PROJECT_ID;
+    }
+  });
+
   it("un fallo interno sale como 500 genérico, sin filtrar el detalle, y queda en el registro", async () => {
     const token = await sessionToken();
     const log = vi.spyOn(console, "error").mockImplementation(() => {});
