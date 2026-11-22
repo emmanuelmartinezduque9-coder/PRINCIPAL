@@ -35,6 +35,10 @@ const DB_CLIENT_IMPORT = /(from\s*|import\s*\(\s*|require\s*\(\s*)["'][^"']*db\/
 // Salud comprueba que la base de datos responde: necesita abrirla.
 const DB_CLIENT_EXEMPT = new Set(["src/app/api/health/route.ts"]);
 
+/** El SDK de Anthropic, se importe como se importe (también sus subrutas). */
+const ANTHROPIC_SDK = /@anthropic-ai\/sdk/;
+const LLM_LAYER = "src/llm/";
+
 describe("límites del código", () => {
   it("encuentra el código fuente (la comprobación no pasa por no mirar nada)", () => {
     expect(files.some((f) => f.rel === "src/server/access.ts")).toBe(true);
@@ -42,6 +46,8 @@ describe("límites del código", () => {
     expect(PRODUCT_TABLE_PATTERNS.some((p) => p.test(access.text))).toBe(true);
     expect(DB_CLIENT_IMPORT.test('import { getDb } from "@/db/client";')).toBe(true);
     expect(DB_CLIENT_IMPORT.test('const { getDb } = await import("../../db/client");')).toBe(true);
+    const gateway = files.find((f) => f.rel === "src/llm/gateway.ts");
+    expect(gateway && ANTHROPIC_SDK.test(gateway.text)).toBe(true);
   });
 
   it("solo access.ts y products.ts tocan las tablas de productos", () => {
@@ -57,6 +63,14 @@ describe("límites del código", () => {
       .filter((f) => f.rel.startsWith("src/app/") || f.rel.startsWith("src/components/"))
       .filter((f) => !DB_CLIENT_EXEMPT.has(f.rel))
       .filter((f) => DB_CLIENT_IMPORT.test(f.text))
+      .map((f) => f.rel);
+    expect(offenders).toEqual([]);
+  });
+
+  it("solo src/llm importa el SDK de Anthropic", () => {
+    const offenders = files
+      .filter((f) => !f.rel.startsWith(LLM_LAYER))
+      .filter((f) => ANTHROPIC_SDK.test(f.text))
       .map((f) => f.rel);
     expect(offenders).toEqual([]);
   });
