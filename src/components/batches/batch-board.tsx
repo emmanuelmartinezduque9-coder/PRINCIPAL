@@ -199,7 +199,7 @@ function LinkSource({ url }: { url: string }) {
   );
 }
 
-/** «Reintentar enlace»: vuelve a pedir al Mac el enlace que falló. */
+/** «Reintentar»: vuelve a pedir al Mac el enlace que falló. */
 function RetryLink({ row, url, onDone }: { row: BatchRowJson; url: string; onDone: () => void }) {
   const [busy, setBusy] = useState(false);
   async function retry() {
@@ -216,16 +216,17 @@ function RetryLink({ row, url, onDone }: { row: BatchRowJson; url: string; onDon
   return (
     <Button variant="outline" className="h-7 gap-1.5 px-2 text-xs" disabled={busy} onClick={() => void retry()}>
       {busy ? <Loader2 className="animate-spin" data-icon="inline-start" /> : <RefreshCw data-icon="inline-start" />}
-      Reintentar enlace
+      Reintentar
     </Button>
   );
 }
 
 /**
  * «Cambiar enlace»: para una fila cuyo enlace falló o cuya referencia aún no está lista, pide al
- * Mac otro enlace (se valida como al pegar; el servidor acepta cualquier enlace admitido).
+ * Mac otro enlace (se valida como al pegar; el servidor acepta cualquier enlace admitido). `inline`:
+ * botón con texto junto a «Enlace no disponible», en vez del lápiz de la columna de acciones.
  */
-function ChangeLink({ row, onDone }: { row: BatchRowJson; onDone: () => void }) {
+function ChangeLink({ row, onDone, inline = false }: { row: BatchRowJson; onDone: () => void; inline?: boolean }) {
   const [open, setOpen] = useState(false);
   const [text, setText] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -258,16 +259,25 @@ function ChangeLink({ row, onDone }: { row: BatchRowJson; onDone: () => void }) 
         }
       }}
     >
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <PopoverTrigger asChild>
-            <Button variant="ghost" size="icon" className="size-8 text-muted-foreground" aria-label={`Cambiar enlace de ${row.title}`}>
-              <Pencil aria-hidden />
-            </Button>
-          </PopoverTrigger>
-        </TooltipTrigger>
-        <TooltipContent>Cambiar enlace</TooltipContent>
-      </Tooltip>
+      {inline ? (
+        <PopoverTrigger asChild>
+          <Button variant="outline" className="h-7 gap-1.5 px-2 text-xs">
+            <Pencil data-icon="inline-start" />
+            Cambiar enlace
+          </Button>
+        </PopoverTrigger>
+      ) : (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <PopoverTrigger asChild>
+              <Button variant="ghost" size="icon" className="size-8 text-muted-foreground" aria-label={`Cambiar enlace de ${row.title}`}>
+                <Pencil aria-hidden />
+              </Button>
+            </PopoverTrigger>
+          </TooltipTrigger>
+          <TooltipContent>Cambiar enlace</TooltipContent>
+        </Tooltip>
+      )}
       <PopoverContent className="flex w-96 flex-col gap-2" align="end">
         <form
           className="flex gap-2"
@@ -765,6 +775,8 @@ export function BatchBoard({ batchId }: { batchId: number }) {
                     const failure = rowProblem(row, states);
                     const problem = (notice && notice.at === rowState(row) ? notice.message : null) ?? failure?.message ?? null;
                     const retryUrl = problem !== null && problem === failure?.message ? failure.link : null;
+                    // «Enlace no disponible»: un estado neutro, con «Reintentar» y «Cambiar enlace» al lado.
+                    const linkDown = problem !== null && problem === failure?.message && failure.neutral === true;
                     // Aparte, y sin ser un fallo de la fila: un enlace nuevo que no llegó sobre una referencia que sigue lista.
                     const aside = linkNotice(row);
                     return (
@@ -788,7 +800,16 @@ export function BatchBoard({ batchId }: { batchId: number }) {
                             </div>
                           ) : null}
                           {row.note ? <div className="mt-0.5 line-clamp-2 text-xs whitespace-pre-line text-muted-foreground">{row.note}</div> : null}
-                          {problem ? (
+                          {problem && linkDown ? (
+                            <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1">
+                              <p role="status" className="flex items-start gap-1 text-xs text-muted-foreground">
+                                <Link2Off className="mt-px size-3.5 shrink-0" aria-hidden />
+                                {problem}
+                              </p>
+                              {retryUrl ? <RetryLink row={row} url={retryUrl} onDone={refresh} /> : null}
+                              {canChangeLink(row) ? <ChangeLink row={row} onDone={refresh} inline /> : null}
+                            </div>
+                          ) : problem ? (
                             <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1">
                               <p role="alert" className="flex items-start gap-1 text-xs text-destructive">
                                 <CircleAlert className="mt-px size-3.5 shrink-0" aria-hidden />
@@ -842,7 +863,7 @@ export function BatchBoard({ batchId }: { batchId: number }) {
                                 <TooltipContent>Descargar</TooltipContent>
                               </Tooltip>
                             ) : null}
-                            {canChangeLink(row) ? <ChangeLink row={row} onDone={refresh} /> : null}
+                            {canChangeLink(row) && !linkDown ? <ChangeLink row={row} onDone={refresh} /> : null}
                             {row.mine && rowSupportsEditReference(row) ? <EditReferenceCell row={row} onDone={refresh} /> : null}
                             {data.batch.mine && row.mine ? <RowActions batchId={batchId} row={row} /> : null}
                             <Link

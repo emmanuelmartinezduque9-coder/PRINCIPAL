@@ -169,6 +169,19 @@ describe("ficha de montaje", () => {
     expect((await taskRow(taskId)).payload).toMatchObject({ kind: "replicar", clips: [{ role: "clip", url: CLIP }], song: null, hookMs: null, editReferenceUrl: null });
   });
 
+  it("la edición de referencia: la del vídeo o, si no tiene, la de su producto en el lote", async () => {
+    await mac();
+    const batch = await createBatch(dueno, "Lote");
+    const product = await makeProduct(dueno, { name: "EisWerk" });
+    const GRUPO = "https://www.instagram.com/reel/grupo/";
+    const PROPIA = "https://www.instagram.com/reel/propia/";
+    await getDb().insert(schema.batchProducts).values({ batchId: batch.id, productId: product.id, editReferenceUrl: GRUPO });
+    const heredada = await videoWithClip(dueno, { batchId: batch.id }, product);
+    const propia = await videoWithClip(dueno, { batchId: batch.id, editReferenceUrl: PROPIA }, product);
+    expect((await taskRow((await startEdit(dueno, heredada.id, T0)).taskId)).payload).toMatchObject({ editReferenceUrl: GRUPO });
+    expect((await taskRow((await startEdit(dueno, propia.id, T0)).taskId)).payload).toMatchObject({ editReferenceUrl: PROPIA });
+  });
+
   it("rótulos: los guardados mandan; si no, los del desglose; si no, las indicaciones y el CTA de siempre", () => {
     const product = { name: "FalterPfote", language: "de" };
     const none = { editMainText: null, editCtaText: null, note: null };

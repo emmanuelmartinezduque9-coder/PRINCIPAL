@@ -1,17 +1,24 @@
-import { handle } from "@/server/http";
-import { setBatchProductNotes } from "@/server/videos/batches";
+import { badRequest, handle } from "@/server/http";
+import { setBatchProductEditReference, setBatchProductNotes } from "@/server/videos/batches";
 
 const parseId = (value: string) => (/^[1-9]\d{0,15}$/.test(value) ? Number(value) : Number.NaN);
 
 /**
- * Guarda las «Indicaciones para los vídeos de {producto}» del lote: `{ notes }` (texto o `null`;
- * vacío las quita) → `{ notes }`. Solo quien creó el lote.
+ * Guarda lo que el lote dice de un producto: `{ notes?, editReferenceUrl? }` (cada uno, texto o
+ * `null`; vacío lo quita; lo que no venga no se toca) → `{ notes?, editReferenceUrl? }`. `notes`:
+ * las «Indicaciones para los vídeos de {producto}». `editReferenceUrl`: la «Edición de referencia»
+ * del grupo, que pasa también a los vídeos del grupo sin una propia. Solo quien creó el lote.
  */
 export async function PUT(request: Request, { params }: { params: Promise<{ id: string; productId: string }> }) {
   return handle(async (user) => {
     const { id, productId } = await params;
     const body = (await request.json().catch(() => null)) as Record<string, unknown> | null;
-    const notes = await setBatchProductNotes(user!, parseId(id), parseId(productId), body?.notes ?? null);
-    return Response.json({ notes });
+    const hasNotes = body !== null && "notes" in body;
+    const hasEdit = body !== null && "editReferenceUrl" in body;
+    if (!hasNotes && !hasEdit) return badRequest("Nada que guardar.");
+    const result: { notes?: string | null; editReferenceUrl?: string | null } = {};
+    if (hasNotes) result.notes = await setBatchProductNotes(user!, parseId(id), parseId(productId), body.notes ?? null);
+    if (hasEdit) result.editReferenceUrl = await setBatchProductEditReference(user!, parseId(id), parseId(productId), body.editReferenceUrl);
+    return Response.json(result);
   });
 }

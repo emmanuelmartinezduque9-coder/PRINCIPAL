@@ -40,10 +40,26 @@ export function checkLink(text: string): { url: string } | { error: string } {
 
 /**
  * «Edición de referencia»: un icono pequeño que se despliega en un campo para pegar el enlace del
- * vídeo cuya edición se copia. Con enlace, el icono va en color de marca.
+ * vídeo cuya edición se copia. Con enlace, el icono va en color de marca. `inherited`: la tarjeta
+ * no tiene la suya y usa la de su grupo («Edición · del grupo»).
  */
-export function EditReferenceButton({ value, open, onOpenChange }: { value: string; open: boolean; onOpenChange: (open: boolean) => void }) {
-  const label = value ? `Edición de referencia: ${linkLabel(value).host}` : "Edición de referencia";
+export function EditReferenceButton({
+  value,
+  inherited = "",
+  open,
+  onOpenChange,
+}: {
+  value: string;
+  inherited?: string;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const shown = value || inherited;
+  const label = value
+    ? `Edición de referencia: ${linkLabel(value).host}`
+    : inherited
+      ? `Edición de referencia del grupo: ${linkLabel(inherited).host}`
+      : "Edición de referencia";
   return (
     <Tooltip>
       <TooltipTrigger asChild>
@@ -53,10 +69,14 @@ export function EditReferenceButton({ value, open, onOpenChange }: { value: stri
           aria-label={label}
           aria-expanded={open}
           onClick={() => onOpenChange(!open)}
-          className={cn("h-8 gap-1.5 px-2.5 text-muted-foreground", value && "border-brand/30 bg-brand/10 text-brand-ink hover:bg-brand/15 hover:text-brand-ink")}
+          className={cn(
+            "h-8 gap-1.5 px-2.5 text-muted-foreground",
+            value && "border-brand/30 bg-brand/10 text-brand-ink hover:bg-brand/15 hover:text-brand-ink",
+            !value && inherited && "border-dashed border-brand/30 text-brand-ink",
+          )}
         >
           <Clapperboard aria-hidden />
-          <span>{value ? "Edición ✓" : "Edición"}</span>
+          <span>{value ? "Edición ✓" : shown ? "Edición · del grupo" : "Edición"}</span>
         </Button>
       </TooltipTrigger>
       <TooltipContent>{label}</TooltipContent>

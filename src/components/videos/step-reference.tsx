@@ -1,7 +1,7 @@
 "use client";
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { CircleAlert, Clock, Download, Film, FishingHook, Link2, Loader2, MonitorOff, Plug, RefreshCw, Upload } from "lucide-react";
+import { CircleAlert, Clock, Download, Film, FishingHook, Link2, Link2Off, Loader2, MonitorOff, Plug, RefreshCw, Upload } from "lucide-react";
 import Link from "next/link";
 import { useRef, useState } from "react";
 import { toast } from "sonner";
@@ -88,16 +88,16 @@ function UploadZone({ onFile, compact }: { onFile: (file: File) => void; compact
   );
 }
 
-function Notice({ tone, icon: Icon, children, action }: { tone: "warn" | "error"; icon: typeof CircleAlert; children: React.ReactNode; action?: React.ReactNode }) {
+function Notice({ tone, icon: Icon, children, action }: { tone: "warn" | "error" | "neutral"; icon: typeof CircleAlert; children: React.ReactNode; action?: React.ReactNode }) {
   return (
     <div
       role={tone === "error" ? "alert" : "status"}
       className={cn(
         "flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg px-3 py-2.5 text-sm",
-        tone === "error" ? "bg-destructive/10" : "bg-warning/10",
+        tone === "error" ? "bg-destructive/10" : tone === "warn" ? "bg-warning/10" : "bg-muted",
       )}
     >
-      <Icon className={cn("size-4 shrink-0", tone === "error" ? "text-destructive" : "text-warning-ink")} aria-hidden />
+      <Icon className={cn("size-4 shrink-0", tone === "error" ? "text-destructive" : tone === "warn" ? "text-warning-ink" : "text-muted-foreground")} aria-hidden />
       <span className="min-w-0 flex-1">{children}</span>
       {action}
     </div>
@@ -184,7 +184,7 @@ function LinkField({ videoId, offline, onRequested }: { videoId: number; offline
       {offline ? (
         <p role="status" className="flex items-center gap-1.5 text-xs text-muted-foreground">
           <MonitorOff className="size-3.5 shrink-0" aria-hidden />
-          El Mac no está conectado: sube el archivo del vídeo.
+          El Mac no está conectado.
         </p>
       ) : error ? (
         <p role="alert" className="flex items-center gap-1.5 text-xs text-destructive">
@@ -353,13 +353,13 @@ function ReferenceBody({
   const failedLink =
     link?.status === "failed" ? (
       <Notice
-        tone="error"
-        icon={CircleAlert}
+        tone="neutral"
+        icon={Link2Off}
         action={
           canUpload && linkField ? (
             <Button variant="outline" className="h-8 gap-1.5 bg-background" onClick={() => onRetryLink(link.url)}>
               <RefreshCw aria-hidden />
-              Reintentar enlace
+              Reintentar
             </Button>
           ) : null
         }

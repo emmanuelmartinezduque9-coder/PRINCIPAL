@@ -1,4 +1,4 @@
-import { and, asc, count, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, count, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import { getDb, schema } from "@/db/client";
 import { createVideoFromLink } from "@/server/agent";
 import { linkStatesOf, type LinkState } from "@/server/agent-tasks";
@@ -102,7 +102,9 @@ export async function setBatchProductNotes(user: AuthUser, batchId: number, prod
   const db = getDb();
   const where = and(eq(schema.batchProducts.batchId, batch.id), eq(schema.batchProducts.productId, productId));
   if (clean === null) {
-    await db.delete(schema.batchProducts).where(where);
+    // Sin indicaciones: la fila sigue solo si guarda la «Edición de referencia» del grupo.
+    await db.delete(schema.batchProducts).where(and(where, isNull(schema.batchProducts.editReferenceUrl)));
+    await db.update(schema.batchProducts).set({ notes: null, updatedAt: new Date() }).where(where);
     return null;
   }
   await db
@@ -110,6 +112,39 @@ export async function setBatchProductNotes(user: AuthUser, batchId: number, prod
     .values({ batchId: batch.id, productId, notes: clean })
     .onConflictDoUpdate({ target: [schema.batchProducts.batchId, schema.batchProducts.productId], set: { notes: clean, updatedAt: new Date() } });
   return clean;
+}
+
+/**
+ * Guarda la «Edición de referencia» de un producto del lote (un enlace admitido; `null` o vacío la
+ * quita) y la aplica a los vídeos de ese producto en el lote que no tienen una propia: los que no
+ * tienen ninguna o tienen la que tenía el grupo hasta ahora. Un vídeo con su propio enlace no se
+ * toca. Solo quien creó el lote y con un producto que ve.
+ */
+export async function setBatchProductEditReference(user: AuthUser, batchId: number, productId: number, url: unknown): Promise<string | null> {
+  const batch = await ownBatch(user, batchId);
+  const clean = checkEditReferenceUrl(url ?? null) ?? null;
+  await listProductPhotos(user, productId);
+  const table = schema.batchProducts;
+  const where = and(eq(table.batchId, batch.id), eq(table.productId, productId));
+  return getDb().transaction(async (tx) => {
+    const [before] = await tx.select({ url: table.editReferenceUrl }).from(table).where(where).for("update");
+    const previous = before?.url ?? null;
+    if (clean === null) {
+      await tx.delete(table).where(and(where, isNull(table.notes)));
+      await tx.update(table).set({ editReferenceUrl: null, updatedAt: new Date() }).where(where);
+    } else {
+      await tx
+        .insert(table)
+        .values({ batchId: batch.id, productId, editReferenceUrl: clean })
+        .onConflictDoUpdate({ target: [table.batchId, table.productId], set: { editReferenceUrl: clean, updatedAt: new Date() } });
+    }
+    const inherits = previous === null ? isNull(videos.editReferenceUrl) : or(isNull(videos.editReferenceUrl), eq(videos.editReferenceUrl, previous));
+    await tx
+      .update(videos)
+      .set({ editReferenceUrl: clean, updatedAt: new Date() })
+      .where(and(eq(videos.batchId, batch.id), eq(videos.productId, productId), inherits));
+    return clean;
+  });
 }
 
 const BUDGET_CONFIRMED = "El presupuesto de este lote ya está confirmado: crea otro lote para más vídeos.";
@@ -343,12 +378,17 @@ export interface BatchRow {
   edit: EditView;
 }
 
-/** Un producto del lote: su portada, sus «Indicaciones» y cuántos vídeos suyos ve quien mira. */
+/**
+ * Un producto del lote: su portada, sus «Indicaciones», su «Edición de referencia» (la de los
+ * vídeos del grupo sin una propia: `row.editReferenceUrl ?? group.editReferenceUrl`) y cuántos
+ * vídeos suyos ve quien mira.
+ */
 export interface BatchGroup {
   productId: number;
   name: string;
   coverPhotoId: number | null;
   notes: string | null;
+  editReferenceUrl: string | null;
   videos: number;
 }
 
@@ -403,10 +443,11 @@ export async function batchView(user: AuthUser, batchId: number): Promise<BatchV
 
   const groupIds = [...new Set(list.map((video) => video.productId))];
   const notes = await db
-    .select({ productId: schema.batchProducts.productId, notes: schema.batchProducts.notes })
+    .select({ productId: schema.batchProducts.productId, notes: schema.batchProducts.notes, editReferenceUrl: schema.batchProducts.editReferenceUrl })
     .from(schema.batchProducts)
     .where(eq(schema.batchProducts.batchId, batch.id));
   const notesOf = new Map(notes.map((row) => [row.productId, row.notes]));
+  const editReferenceOf = new Map(notes.map((row) => [row.productId, row.editReferenceUrl]));
   const covers = await coverPhotoIds(user, groupIds);
   const generated =
     list.length === 0
@@ -477,6 +518,7 @@ export async function batchView(user: AuthUser, batchId: number): Promise<BatchV
       name: products.get(productId) ?? "",
       coverPhotoId: covers.get(productId) ?? null,
       notes: notesOf.get(productId) ?? null,
+      editReferenceUrl: editReferenceOf.get(productId) ?? null,
       videos: list.filter((video) => video.productId === productId).length,
     }),
   );

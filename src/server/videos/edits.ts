@@ -10,7 +10,7 @@ import type { Analysis } from "@/server/videos/analysis";
 import { bodiesOfVideo } from "@/server/videos/bodies";
 import { downloadableClipUrl, servableClipUrl } from "@/server/videos/clip";
 import { fileSlug } from "@/server/videos/filename";
-import { canChooseSong, getVideoFor, hookTiming, type Video } from "@/server/videos/videos";
+import { canChooseSong, effectiveEditReferenceUrl, getVideoFor, hookTiming, type Video } from "@/server/videos/videos";
 
 /**
  * Montaje automático (el paso que sigue a los clips): cada vídeo se monta en el Mac del dueño, que
@@ -152,7 +152,8 @@ async function specParts(video: Video, product: Product): Promise<Omit<EditSpec,
     songOf: (taskId) =>
       song ? { url: songRouteOf(taskId), id: song.id, title: song.title, dropMs: song.dropMs, startMs: song.startMs, durationMs: song.durationMs } : null,
     texts: editTextsFor(video, product, await latestAnalysisResult(video.id)),
-    editReferenceUrl: video.editReferenceUrl,
+    // La del vídeo o, si no tiene, la de su producto en el lote.
+    editReferenceUrl: await effectiveEditReferenceUrl(video),
   };
 }
 

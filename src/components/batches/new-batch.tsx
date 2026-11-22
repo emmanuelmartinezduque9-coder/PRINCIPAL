@@ -40,7 +40,7 @@ import {
   type VariantJson,
 } from "./batch-fields";
 import { autoBatchName } from "./labels";
-import { newGroup, nextKey, type Group, type Row, type Source } from "./draft";
+import { effectiveEditReference, newGroup, nextKey, type Group, type Row, type Source } from "./draft";
 import { useNewBatchDraft } from "./draft-provider";
 import { checkLink, EditReferenceButton, EditReferenceField } from "./edit-reference";
 import { Indications } from "./indications";
@@ -407,6 +407,7 @@ function RowCard({
   variants,
   busy,
   editReference,
+  groupEditReference,
   onChange,
   onDuplicate,
   onRemove,
@@ -424,6 +425,8 @@ function RowCard({
   busy: boolean;
   /** El servidor guarda la «Edición de referencia». */
   editReference: boolean;
+  /** La «Edición de referencia» del grupo, la que usa la tarjeta si no tiene la suya. */
+  groupEditReference: string;
   onChange: (changes: Partial<Row>) => void;
   onDuplicate: () => void;
   onRemove: () => void;
@@ -450,7 +453,7 @@ function RowCard({
             />
             <MusicPicker value={row.song} onChange={(song) => onChange({ song })} className="max-w-40" />
             <span className="mx-1 h-5 w-px bg-border" aria-hidden />
-            {editReference ? <EditReferenceButton value={row.editReference} open={refOpen} onOpenChange={setRefOpen} /> : null}
+            {editReference ? <EditReferenceButton value={row.editReference} inherited={groupEditReference} open={refOpen} onOpenChange={setRefOpen} /> : null}
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button variant="ghost" size="icon" className="size-8 text-muted-foreground" aria-label={`Duplicar ${name}`} disabled={busy} onClick={onDuplicate}>
@@ -578,6 +581,7 @@ function GroupHeader({
   onRemove: () => void;
 }) {
   const [notesOpen, setNotesOpen] = useState(group.notes.trim() !== "");
+  const [refOpen, setRefOpen] = useState(false);
   const variant = variants.find((v) => v.id === group.variant);
   const coverId = variant?.articlePhotoIds[0] ?? product?.coverPhotoId ?? null;
   return (
@@ -616,18 +620,28 @@ function GroupHeader({
         {product ? (
           <>
             <VariantSwatches variants={variants} coverPhotoId={product.coverPhotoId ?? null} value={group.variant} onChange={(variant) => onChange({ variant })} />
-            <Indications value={group.notes} open={notesOpen} onOpenChange={setNotesOpen}>
-              <Textarea
-                autoFocus={group.notes === ""}
-                aria-label={`Indicaciones para los vídeos de ${product.name}`}
-                placeholder={`Para todos los vídeos de ${product.name}`}
-                value={group.notes}
-                maxLength={MAX_PRODUCT_NOTES}
-                rows={2}
-                onChange={(event) => onChange({ notes: event.target.value })}
-                className="min-h-16 resize-y"
+            <div className="flex min-w-0 items-start gap-3">
+              <Indications value={group.notes} open={notesOpen} onOpenChange={setNotesOpen} className="min-w-0 flex-1">
+                <Textarea
+                  autoFocus={group.notes === ""}
+                  aria-label={`Indicaciones para los vídeos de ${product.name}`}
+                  placeholder={`Para todos los vídeos de ${product.name}`}
+                  value={group.notes}
+                  maxLength={MAX_PRODUCT_NOTES}
+                  rows={2}
+                  onChange={(event) => onChange({ notes: event.target.value })}
+                  className="min-h-16 resize-y"
+                />
+              </Indications>
+              <EditReferenceButton value={group.editReference} open={refOpen} onOpenChange={setRefOpen} />
+            </div>
+            {refOpen ? (
+              <EditReferenceField
+                value={group.editReference}
+                onSave={(url) => onChange({ editReference: url ?? "" })}
+                onClose={() => setRefOpen(false)}
               />
-            </Indications>
+            ) : null}
           </>
         ) : null}
       </div>
@@ -791,7 +805,10 @@ export function NewBatch() {
       for (const group of filled) {
         // Las indicaciones antes que los vídeos: así el primer desglose ya las lleva.
         try {
-          await api(`/api/lotes/${id}/productos/${group.productId}`, { method: "PUT", body: JSON.stringify({ notes: group.notes.trim() || null }) });
+          await api(`/api/lotes/${id}/productos/${group.productId}`, {
+            method: "PUT",
+            body: JSON.stringify({ notes: group.notes.trim() || null, ...(editReference ? { editReferenceUrl: group.editReference.trim() || null } : {}) }),
+          });
         } catch (error) {
           toast.error(error instanceof Error ? error.message : "No se pudieron guardar las indicaciones.");
           continue;
@@ -811,16 +828,12 @@ export function NewBatch() {
                 ...(row.kind === "solo_gancho" ? { hookSeconds: row.hookSeconds, bodyClipIds: row.bodies } : {}),
                 note: row.note.trim() || null,
                 songId: row.song?.id ?? null,
+                // La «Edición de referencia»: la de la tarjeta o, si no tiene, la de su grupo.
+                ...(editReference ? { editReferenceUrl: effectiveEditReference(group, row) || null } : {}),
                 // Con enlace, el vídeo nace esperando al Mac; con archivo, se sube después.
                 ...(row.source.type === "link" ? { linkUrl: row.source.url } : {}),
               }),
             });
-            // La «Edición de referencia» va aparte, por el PUT del vídeo (solo si el servidor la guarda).
-            if (editReference && row.editReference.trim()) {
-              await api(`/api/videos/${video.id}`, { method: "PUT", body: JSON.stringify({ editReferenceUrl: row.editReference.trim() }) }).catch((error: unknown) =>
-                toast.error(error instanceof Error ? error.message : "No se pudo guardar la edición de referencia."),
-              );
-            }
             if (row.source.type === "file") enqueue(video.id, row.source.file);
             done.add(row.key);
           } catch (error) {
@@ -891,6 +904,7 @@ export function NewBatch() {
                     variants={variants}
                     busy={busy}
                     editReference={editReference}
+                    groupEditReference={group.editReference}
                     onChange={(changes) => updateRow(group.key, row.key, changes)}
                     onDuplicate={() => duplicate(group.key, row)}
                     onRemove={() => removeRow(group.key, row)}

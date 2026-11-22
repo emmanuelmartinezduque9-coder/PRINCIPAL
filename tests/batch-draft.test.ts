@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { emptyDraft, hasContent, newGroup, parseDraft, serializeDraft, type Draft, type Row } from "@/components/batches/draft";
+import { effectiveEditReference, emptyDraft, hasContent, newGroup, parseDraft, serializeDraft, type Draft, type Row } from "@/components/batches/draft";
 
 const row = (over: Partial<Row>): Row => ({
   key: "fila-1",
@@ -40,6 +40,7 @@ describe("borrador de «Nuevo lote»", () => {
           kind: "solo_gancho",
           hookSeconds: 6,
           variant: 5,
+          editReference: "https://www.instagram.com/reel/GRUPO/",
           rows: [
             row({ key: "a", kind: "solo_gancho", hookSeconds: 6, bodies: [3, 4], note: "Más corto", avatar: 9, song, open: true, editReference: "https://www.tiktok.com/@a/video/1" }),
             row({ key: "b", kind: "adaptacion_concepto", adaptation: "Para perros", avatar: "nadie" }),
@@ -82,9 +83,17 @@ describe("borrador de «Nuevo lote»", () => {
     expect(parsed.name).toBe("");
     expect(parsed.autoAnalyze).toBe(true);
     expect(parsed.batchId).toBeNull();
-    expect(parsed.groups[0]).toMatchObject({ productId: null, notes: "Algo", kind: "replicar", hookSeconds: 4, variant: null });
+    expect(parsed.groups[0]).toMatchObject({ productId: null, notes: "Algo", kind: "replicar", hookSeconds: 4, variant: null, editReference: "" });
     expect(parsed.groups[0].rows).toHaveLength(1);
     expect(parsed.groups[0].rows[0]).toMatchObject({ avatar: null, bodies: [1], kind: "solo_gancho", editReference: "" });
+  });
+
+  it("la «Edición de referencia» del grupo: cuenta como contenido y la heredan las tarjetas sin la suya", () => {
+    const grupo = "https://www.instagram.com/reel/GRUPO/";
+    expect(hasContent({ ...emptyDraft(), groups: [{ ...newGroup(), editReference: grupo }] })).toBe(true);
+    expect(effectiveEditReference({ editReference: grupo }, { editReference: "" })).toBe(grupo);
+    expect(effectiveEditReference({ editReference: grupo }, { editReference: "https://vm.tiktok.com/x" })).toBe("https://vm.tiktok.com/x");
+    expect(effectiveEditReference({ editReference: "" }, { editReference: "" })).toBe("");
   });
 
   it("un lote ya creado a medias se conserva para seguir con «Añadir y subir»", () => {

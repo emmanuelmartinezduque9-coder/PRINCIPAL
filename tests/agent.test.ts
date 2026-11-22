@@ -22,9 +22,11 @@ import {
   finishTask,
   LEASE_MS,
   LINK_HOSTS,
+  LINK_RETRY_DELAY_MS,
   linkOf,
   listAgents,
   MAX_LEASE_AGE_MS,
+  MAX_LINK_RETRIES,
   MAX_QUEUE_AGE_MS,
   MAX_TASK_ATTEMPTS,
   QUEUE_WAIT_MS,
@@ -75,9 +77,10 @@ const PDF_BYTES = Buffer.concat([Buffer.from("%PDF-1.7\n"), Buffer.alloc(100)]);
 
 const REEL = "https://www.instagram.com/reel/abc/";
 const TIKTOK = "https://vm.tiktok.com/xyz";
-const MAC_OFFLINE = "El Mac no está conectado ahora mismo. Sube el archivo del vídeo.";
-const LINK_FAILED = "No se pudo descargar el enlace. Sube el archivo del vídeo.";
-const LINK_TOO_SLOW = "El Mac no trajo el enlace a tiempo. Pégalo otra vez o sube el archivo del vídeo.";
+const MAC_OFFLINE = "El Mac no está conectado ahora mismo.";
+const LINK_FAILED = "Enlace no disponible";
+// Se pase del tiempo o no pueda, la persona ve el mismo estado neutro.
+const LINK_TOO_SLOW = LINK_FAILED;
 const TASK_LOST = { status: 409, message: "Esta tarea ya no es tuya." };
 const T0 = new Date("2026-11-22T10:00:00Z");
 const later = (ms: number) => new Date(T0.getTime() + ms);
@@ -125,6 +128,13 @@ const succeed = (agentId: number, task: ClaimedTask, totalBytes: number, now: Da
   finishTask(agentId, task.taskId, { ok: true, uploadId: task.uploadId, totalBytes }, now);
 const fail = (agentId: number, task: ClaimedTask, error = "yt-dlp no pudo descargar el enlace", now: Date = T0) =>
   finishTask(agentId, task.taskId, { ok: false, uploadId: task.uploadId, error }, now);
+/** La tarea ya es el último reintento automático: si falla, el vídeo lo dice sin más reintentos. */
+const lastTry = (task: ClaimedTask) => getDb().update(schema.agentTasks).set({ autoRetry: MAX_LINK_RETRIES }).where(eq(schema.agentTasks.id, task.taskId));
+/** El Mac no pudo y no quedan reintentos automáticos. */
+const failForGood = async (agentId: number, task: ClaimedTask, error?: string, now?: Date) => {
+  await lastTry(task);
+  await fail(agentId, task, error, now);
+};
 
 /** Deja el vídeo con una referencia lista (subida como archivo), con un fotograma. */
 async function makeReady(video: Video): Promise<void> {
@@ -557,7 +567,7 @@ describe("una referencia que ya funciona no se pierde por un enlace", () => {
     await requestLinkDownload(dueno, v.id, REEL, T0);
     const task = await claim(agentId);
     await send(agentId, task, 0, mp4(100));
-    await fail(agentId, task);
+    await failForGood(agentId, task);
     expect(await referenceOf(v)).toEqual(READY);
     // El fallo se ve en la vista del vídeo, no en la referencia.
     expect(await linkOfVideo(v)).toEqual({ url: REEL, status: "failed", error: LINK_FAILED });
@@ -625,7 +635,7 @@ describe("una referencia que ya funciona no se pierde por un enlace", () => {
     await makeReady(v);
     const { agentId } = await mac();
     await requestLinkDownload(dueno, v.id, REEL, T0);
-    await fail(agentId, await claim(agentId));
+    await failForGood(agentId, await claim(agentId));
     expect((await linkOfVideo(v))?.status).toBe("failed");
     const again = await requestLinkDownload(dueno, v.id, REEL, T0);
     expect(await linkOfVideo(v)).toEqual({ url: REEL, status: "queued", error: null });
@@ -733,7 +743,7 @@ describe("subir un archivo con un enlace pendiente", () => {
     await makeReady(v);
     const { agentId } = await mac();
     await requestLinkDownload(dueno, v.id, REEL, T0);
-    await fail(agentId, await claim(agentId));
+    await failForGood(agentId, await claim(agentId));
     expect((await linkOfVideo(v))?.status).toBe("failed");
     await startUpload(dueno, v.id, { filename: "a.mp4", totalBytes: 100 });
     expect(await linkOfVideo(v)).toBeNull();
@@ -1111,26 +1121,57 @@ describe("entrega del archivo", () => {
     expect((await getVideoFor(dueno, v.id)).referenceStatus).toBe("processing");
   });
 
-  it("si el Mac informa de un fallo, el vídeo lo enseña sin detalles técnicos", async () => {
+  it("si el Mac informa de un fallo, el servidor lo reintenta solo 3 veces, cada 2 minutos, y después el vídeo lo enseña sin detalles técnicos", async () => {
     const { agentId } = await mac();
     const { taskId } = await requestLinkDownload(dueno, v.id, REEL, T0);
     const task = await claim(agentId);
     await send(agentId, task, 0, mp4(100));
     const detail = "yt-dlp: ERROR: [Instagram] abc: Requested content is not available /Users/emmanuel/.cache " + "x".repeat(600);
     await fail(agentId, task, detail);
+    // El detalle queda recortado en la tarea, solo para el dueño; lo que había llegado se borra.
+    expect(await taskOf(taskId)).toMatchObject({ status: "failed", error: detail.slice(0, 500) });
+    expect(await sessionRows()).toEqual([]);
+    expect(fs.existsSync(uploadPath(task.uploadId))).toBe(false);
+
+    // Cada fallo pone en cola el mismo enlace otra vez, reservable 2 minutos después; el vídeo sigue esperando.
+    let failedAt = T0;
+    let current = task;
+    for (let retry = 1; retry <= MAX_LINK_RETRIES; retry++) {
+      const due = new Date(failedAt.getTime() + LINK_RETRY_DELAY_MS);
+      const queued = (await tasks()).at(-1)!;
+      expect(queued).toMatchObject({ videoId: v.id, url: REEL, status: "queued", autoRetry: retry, availableAt: due, attempts: 0 });
+      expect(await getVideoFor(dueno, v.id)).toMatchObject({ referenceStatus: "uploading", referenceError: null, linkTaskId: queued.id });
+      expect(await linkOfVideo(v)).toEqual({ url: REEL, status: "queued", error: null });
+      expect(await claimTask(agentId, new Date(due.getTime() - 1000))).toBeNull();
+      current = await claim(agentId, due);
+      expect(current).toMatchObject({ taskId: queued.id, url: REEL });
+      expect(current.uploadId).not.toBe(task.uploadId);
+      failedAt = new Date(due.getTime() + 5000);
+      await fail(agentId, current, detail, failedAt);
+    }
+
+    // Agotados los reintentos: estado neutro, sin más tareas.
+    expect(await tasks()).toHaveLength(1 + MAX_LINK_RETRIES);
+    expect(await claimTask(agentId, later(60 * MINUTE))).toBeNull();
     const video = await getVideoFor(dueno, v.id);
     expect(video).toMatchObject({ referenceStatus: "failed", referenceError: LINK_FAILED });
     expect(JSON.stringify(await videoView(dueno, v.id))).not.toContain("yt-dlp");
     expect(await linkOfVideo(v)).toEqual({ url: REEL, status: "failed", error: LINK_FAILED });
-    // El detalle queda recortado en la tarea, solo para el dueño.
-    expect(await taskOf(taskId)).toMatchObject({ status: "failed", error: detail.slice(0, 500) });
     expect(await sessionRows()).toEqual([]);
-    expect(fs.existsSync(uploadPath(task.uploadId))).toBe(false);
-    // No se reintenta sola.
-    expect(await claimTask(agentId, T0)).toBeNull();
-    // Y se puede volver a pegar el enlace.
+    // «Reintentar» (volver a pegar el enlace) empieza de cero.
     await requestLinkDownload(dueno, v.id, REEL, T0);
     expect(await getVideoFor(dueno, v.id)).toMatchObject({ referenceStatus: "uploading", referenceError: null });
+    expect((await tasks()).at(-1)).toMatchObject({ status: "queued", autoRetry: 0, availableAt: null });
+  });
+
+  it("un reintento automático no se hace si el vídeo ya no espera ese enlace", async () => {
+    const { agentId } = await mac();
+    await requestLinkDownload(dueno, v.id, REEL, T0);
+    const first = await claim(agentId);
+    // Mientras tanto se pega otro enlace: el primero ya no es del vídeo.
+    await requestLinkDownload(dueno, v.id, TIKTOK, T0);
+    await expect(fail(agentId, first)).rejects.toMatchObject({ status: 409 });
+    expect((await tasks()).filter((t) => t.status === "queued").map((t) => t.url)).toEqual([TIKTOK]);
   });
 
   it("el archivo que entrega el Mac pasa los mismos límites: 100 MB y tipo por contenido", async () => {
@@ -1218,7 +1259,7 @@ describe("crear el vídeo ya con su enlace", () => {
     for (const url of urls) created.push(await addVideoToBatch(dueno, batch.id, batchInput(v.productId, url)));
     created.push(await addVideoToBatch(dueno, batch.id, batchInput(v.productId)));
     // El primero falla, el segundo lo tiene el Mac, el tercero espera y el cuarto no tiene enlace.
-    await fail(agentId, await claim(agentId, new Date()), "yt-dlp: ERROR privado", new Date());
+    await failForGood(agentId, await claim(agentId, new Date()), "yt-dlp: ERROR privado", new Date());
     await claim(agentId, new Date());
     const rows = (await batchView(dueno, batch.id)).rows;
     expect(rows.map((row) => [row.id, row.referenceStatus, row.link])).toEqual([
@@ -1287,13 +1328,13 @@ describe("crear el vídeo ya con su enlace", () => {
     await makeReady(ready);
     await requestLinkDownload(dueno, ready.id, TIKTOK);
     await claim(agentId, new Date());
-    await fail(agentId, await claim(agentId, new Date()), "x", new Date());
+    await failForGood(agentId, await claim(agentId, new Date()), "x", new Date());
     expect((await linkOfVideo(ready))?.status).toBe("failed");
     const copyOfReady = await duplicateBatchVideo(dueno, batch.id, ready.id);
     expect(copyOfReady).toMatchObject({ referenceStatus: "ready", referenceMediaId: "ref-media", linkTaskId: null });
     for (const copy of [copyOfPending, copyOfReady]) expect(await linkOfVideo(copy)).toBeNull();
     // Las tareas siguen siendo solo las de los originales.
-    expect((await tasks()).map((task) => task.videoId).sort()).toEqual([pending.id, ready.id].sort());
+    expect([...new Set((await tasks()).map((task) => task.videoId))].sort()).toEqual([pending.id, ready.id].sort());
     const rows = (await batchView(dueno, batch.id)).rows;
     expect(rows.filter((row) => row.link !== null).map((row) => row.id).sort()).toEqual([pending.id, ready.id].sort());
   });
@@ -1429,6 +1470,7 @@ describe("rutas", () => {
     const { token } = await mac(dueno, new Date());
     const { taskId } = await requestLinkDownload(dueno, v.id, REEL);
     const task = await (await claimRoute(agentRequest(token))).json();
+    await lastTry(task);
     const failed = await finishRoute(
       agentRequest(token, { body: JSON.stringify({ ok: false, uploadId: task.uploadId, error: "yt-dlp no pudo descargar el enlace" }) }),
       taskParams(taskId),
