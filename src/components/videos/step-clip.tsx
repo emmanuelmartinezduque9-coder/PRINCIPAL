@@ -26,7 +26,8 @@ const RESOLUTIONS: Array<{ value: ClipResolution; note?: string }> = [
 /**
  * Guardar la resolución del clip. La caché del vídeo solo cambia con lo que devuelve el servidor:
  * así el presupuesto (cuya clave lleva la resolución guardada) nunca se pide con una resolución que
- * el servidor aún no tiene. Al guardarse, el presupuesto del clip se vuelve a pedir.
+ * el servidor aún no tiene. Al guardarse cambia esa clave y el presupuesto se vuelve a pedir solo una
+ * vez (sin invalidarlo aparte).
  */
 function useSaveResolution(video: VideoJson) {
   const client = useQueryClient();
@@ -35,22 +36,25 @@ function useSaveResolution(video: VideoJson) {
       api<{ video: VideoJson }>(`/api/videos/${video.id}`, { method: "PUT", body: JSON.stringify({ clipResolution }) }),
     onSuccess: ({ video: saved }) => {
       client.setQueryData<VideoViewJson>(["video", video.id], (v) => (v ? { ...v, video: saved } : v));
-      void client.invalidateQueries({ queryKey: ["quote", video.id, "clip"] });
     },
     onError: (error) => toast.error(error instanceof Error ? error.message : "No se pudo guardar."),
     onSettled: () => client.invalidateQueries({ queryKey: ["video", video.id] }),
   });
 }
 
-/** Resolución del clip: se guarda al elegir; mientras se guarda, la opción elegida ya se ve marcada. */
+/**
+ * Resolución del clip: se guarda al elegir; mientras se guarda, la opción elegida ya se ve marcada y
+ * los demás clics se ignoran (así no se cruzan dos guardados).
+ */
 function ResolutionPicker({ video, save }: { video: VideoJson; save: ReturnType<typeof useSaveResolution> }) {
   const shown = save.isPending && save.variables ? save.variables : video.clipResolution;
   const selected = Math.max(0, RESOLUTIONS.findIndex((r) => r.value === shown));
   const choose = (value: ClipResolution) => {
-    if (value !== shown) save.mutate(value);
+    if (save.isPending || value === shown) return;
+    save.mutate(value);
   };
   return (
-    <div role="radiogroup" aria-label="Resolución" className="grid grid-cols-3 gap-1 rounded-lg bg-muted p-1">
+    <div role="radiogroup" aria-label="Resolución" aria-busy={save.isPending} className="grid grid-cols-3 gap-1 rounded-lg bg-muted p-1">
       {RESOLUTIONS.map(({ value, note }, index) => {
         const on = index === selected;
         return (

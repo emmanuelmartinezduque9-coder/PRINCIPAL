@@ -1,9 +1,6 @@
 import { and, asc, desc, eq } from "drizzle-orm";
 import {
   higgsfieldFakeMode,
-  HiggsfieldAuthError,
-  HiggsfieldNotConnectedError,
-  isHiggsfieldError,
   type HfMediaRef,
   type HfVideoRequest,
 } from "@/connectors/higgsfield";
@@ -48,13 +45,6 @@ export function clipDurationSeconds(segmentDurationMs: number): number {
 
 const EXTENSIONS: Record<string, string> = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp" };
 
-/** Un fallo de Higgsfield al subir una foto, como respuesta para la persona. */
-function uploadFailed(error: unknown): never {
-  if (error instanceof HiggsfieldNotConnectedError || error instanceof HiggsfieldAuthError) throw new HttpError(409, error.message);
-  if (isHiggsfieldError(error)) throw new HttpError(503, error.message);
-  throw error;
-}
-
 /** El `jobId` de la imagen inicial aprobada (un resultado bueno de una imagen de este vídeo), o `null`. */
 async function approvedFrameJobId(video: Video): Promise<string | null> {
   if (video.approvedFrameResultId === null) return null;
@@ -94,7 +84,8 @@ const CLIP_SNAPSHOT = [
 /**
  * La petición del clip. Antes de subir nada: referencia lista, desglose hecho sobre esa misma
  * referencia, imagen aprobada y prompt sin errores. Las fotos se suben al Higgsfield de quien creó
- * el vídeo (una sola vez por archivo: `ensureMedia`).
+ * el vídeo (una sola vez por archivo: `ensureMedia`); si Higgsfield falla al subir, la respuesta la
+ * pone `generations.ts` (la misma que al presupuestar).
  */
 export const buildClipRequest: RequestBuilder = async (user, video, deps) => {
   requireVideoOwner(user, video);
@@ -130,7 +121,7 @@ export const buildClipRequest: RequestBuilder = async (user, video, deps) => {
         contentType: photo.mime,
         type: "image" as const,
       };
-      const mediaId = await ensureMedia(video.createdBy, file, deps).catch(uploadFailed);
+      const mediaId = await ensureMedia(video.createdBy, file, deps);
       medias.push({ role: "image_references", value: mediaId });
     }
   }

@@ -402,3 +402,11 @@ Sustituye lo anterior donde se contradiga.
 - **Clave del presupuesto**: lleva una huella (FNV-1a) del prompt, no su longitud.
 - **«Es este» sin trabajo**: 400 antes de mirar el historial.
 - **Comprobación local**: al reiniciar el trabajo en segundo plano, su simulado vuelve a numerar desde `job-1` y choca con los trabajos ya guardados (el envío se niega a anotarlos: correcto). Para seguir probando se renombraron en la base local los trabajos viejos. Y una compilación (`npm run build`) dejada en `.next` hace que `next dev` recargue la página sin parar: hay que borrar `.next` antes de arrancar en modo desarrollo.
+
+### Arreglos antes de la PUERTA (22/11)
+
+- **Errores de Higgsfield al construir la petición**: construir la petición de la imagen o del clip sube fotogramas y fotos al Higgsfield de la persona. `buildRequest` pasa ahora por el mismo `asHttp` que el presupuesto: sin conexión o con el permiso caducado, 409 con `code: "higgsfield_connect"` (la pantalla ofrece «Ir a Ajustes»); Higgsfield caído, 503; con los mismos mensajes. Antes, en la imagen salía un 500 «Ha ocurrido un error inesperado.» y en el clip un 409 sin código. El `uploadFailed` propio del clip desaparece (la respuesta la pone `generations.ts`).
+- **Resolución del clip**: mientras se guarda, los clics del selector se ignoran. El presupuesto se vuelve a pedir una sola vez, porque cambia su clave (que lleva la resolución guardada); ya no se invalida aparte.
+- **Esqueleto de una imagen que carga**: `role="status"` junto a su `aria-label`.
+- **Detalles técnicos**: los parámetros sueltos de un texto (`nombre=valor`) se ocultan si su nombre es de secreto con la misma expresión que los campos (`SECRET_KEY`: `token`, `client_secret`, `api_key`/`apikey`, `password`, `credential`, `signature`…) o si es `sig`, `key` o `code` (el código de OAuth).
+- **«Es este» sin trabajo**: primero se comprueba el vídeo y quién lo creó (404/403) y después el 400; siempre antes de reconciliar o hablar con Higgsfield.

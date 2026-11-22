@@ -29,7 +29,7 @@ function Fallbacks({ list, className }: { list: string[]; className?: string }) 
   }
   return (
     <>
-      {loaded ? null : <Skeleton className="absolute inset-0 rounded-none" aria-label="Cargando la imagen" />}
+      {loaded ? null : <Skeleton className="absolute inset-0 rounded-none" role="status" aria-label="Cargando la imagen" />}
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img
         key={src}

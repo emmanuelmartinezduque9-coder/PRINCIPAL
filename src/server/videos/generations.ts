@@ -176,10 +176,14 @@ export function registerRequestBuilder(kind: GenerationKind, build: RequestBuild
   builders.set(kind, build);
 }
 
+/**
+ * La petición de ese tipo. Construirla sube fotos y fotogramas al Higgsfield de la persona: sus
+ * errores (sin conexión, permiso caducado, Higgsfield caído) se responden igual que al presupuestar.
+ */
 async function buildRequest(user: AuthUser, video: Video, kind: GenerationKind, deps: GenDeps) {
   const build = builders.get(kind);
   if (!build) throw new HttpError(503, NO_BUILDER);
-  return build(user, video, deps);
+  return build(user, video, deps).catch(asHttp);
 }
 
 // ───────────────────────── Utilidades ─────────────────────────
@@ -219,7 +223,7 @@ function trimRaw(raw: unknown): unknown {
   return json.length <= RAW_LIMIT ? raw : { recortado: json.slice(0, RAW_LIMIT) };
 }
 
-/** Errores de Higgsfield al presupuestar, como respuesta para la persona. */
+/** Errores de Higgsfield al construir la petición o presupuestar, como respuesta para la persona. */
 function asHttp(error: unknown): never {
   if (error instanceof HiggsfieldNotConnectedError || error instanceof HiggsfieldAuthError) {
     throw new HttpError(409, error.message, HIGGSFIELD_CONNECT);
@@ -982,15 +986,20 @@ const PROVED_ABSENT = "Higgsfield confirma que la petición no llegó. Puedes vo
 const NOT_A_CANDIDATE = "Ese trabajo no es uno de los posibles.";
 export const DISMISSED = "Revisado en Higgsfield: la petición no llegó.";
 
-/**
- * Lo común a las dos salidas de una duda atascada: solo quien creó el vídeo, solo pasados
- * `RECONCILE_GIVE_UP_MS` desde el envío y solo tras una reconciliación fresca en esta misma
- * petición que no adopta nada. Devuelve la fila tal como queda, o el vídeo si la reconciliación ya
- * probó que no llegó.
- */
-async function freshStuck(user: AuthUser, videoId: number, kind: GenerationKind, deps: GenDeps) {
+/** El vídeo de una duda atascada, solo para quien lo creó (404 si no lo ve, 403 si no es suyo). */
+async function ownVideo(user: AuthUser, videoId: number): Promise<Video> {
   const video = await getVideoFor(user, videoId);
   requireVideoOwner(user, video);
+  return video;
+}
+
+/**
+ * Lo común a las dos salidas de una duda atascada (con el vídeo ya comprobado por `ownVideo`): solo
+ * pasados `RECONCILE_GIVE_UP_MS` desde el envío y solo tras una reconciliación fresca en esta misma
+ * petición que no adopta nada. Devuelve la fila tal como queda, o si la reconciliación ya probó que
+ * no llegó.
+ */
+async function freshStuck(video: Video, kind: GenerationKind, deps: GenDeps) {
   const [row] = await getDb()
     .select()
     .from(generations)
@@ -1000,7 +1009,7 @@ async function freshStuck(user: AuthUser, videoId: number, kind: GenerationKind,
   const outcome = await reconcileRow(row, deps, { force: true });
   if (outcome === "unreadable") throw new HttpError(503, new HiggsfieldUnavailableError().message);
   if (outcome === "adopted") throw new HttpError(409, FOUND_NOW);
-  return { video, row, provedAbsent: outcome === "not_sent" };
+  return { row, provedAbsent: outcome === "not_sent" };
 }
 
 /**
@@ -1015,9 +1024,10 @@ export async function adoptCandidate(
   jobId: string,
   deps: GenDeps = {},
 ): Promise<{ risk: string }> {
-  // Sin trabajo no hay nada que adoptar: ni se mira el historial.
+  const video = await ownVideo(user, videoId);
+  // Sin trabajo no hay nada que adoptar: ni se mira el historial (pero quien no ve el vídeo recibe antes su 404/403).
   if (typeof jobId !== "string" || jobId.trim() === "") throw new HttpError(400, NOT_A_CANDIDATE);
-  const { video, row, provedAbsent } = await freshStuck(user, videoId, kind, deps);
+  const { row, provedAbsent } = await freshStuck(video, kind, deps);
   if (provedAbsent) throw new HttpError(409, PROVED_ABSENT);
   const now = clock(deps);
   await getDb().transaction(async (tx) => {
@@ -1055,7 +1065,8 @@ export async function adoptCandidate(
  * anotando quién y cuándo. Si sí estaba, Higgsfield cobrará las dos (`risk`).
  */
 export async function dismissUnknown(user: AuthUser, videoId: number, kind: GenerationKind, deps: GenDeps = {}): Promise<{ risk: string }> {
-  const { video, row, provedAbsent } = await freshStuck(user, videoId, kind, deps);
+  const video = await ownVideo(user, videoId);
+  const { row, provedAbsent } = await freshStuck(video, kind, deps);
   if (provedAbsent) return { risk: STUCK_RISK };
   const now = clock(deps);
   await getDb().transaction(async (tx) => {

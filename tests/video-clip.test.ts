@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { HiggsfieldAuthError, HiggsfieldNotConnectedError, HiggsfieldUnavailableError } from "@/connectors/higgsfield";
 import { createFakeHiggsfield, SAMPLE_VIDEO_URL, type FakeHiggsfield } from "@/connectors/higgsfield/fake";
 import { getPool } from "@/db/client";
 import { stopWorker } from "@/jobs/boss";
@@ -320,6 +321,52 @@ describe("petición del clip", () => {
     const { rows } = await getPool().query("select count(*)::int as n from generations where kind = 'clip'");
     expect(rows[0].n).toBe(0);
     expect(fake.calls.some((c) => c.method === "submitVideo")).toBe(false);
+  });
+});
+
+describe("Higgsfield falla al subir las fotos del clip", () => {
+  const CONNECT = "higgsfield_connect";
+  const clips = async () => (await getPool().query("select count(*)::int as n from generations where kind = 'clip'")).rows[0].n;
+
+  it("con la conexión caducada o sin conectar, 409 con el código para ir a Ajustes; nada presupuestado ni apuntado", async () => {
+    await readyForClip();
+    fake.failNext("uploadMedia", new HiggsfieldAuthError());
+    await expect(quoteGeneration(ana, v.id, "clip", deps)).rejects.toMatchObject({
+      status: 409,
+      code: CONNECT,
+      message: "Tu conexión con Higgsfield ha caducado. Vuelve a conectarla en Ajustes.",
+    });
+    fake.failNext("uploadMedia", new HiggsfieldNotConnectedError());
+    await expect(requestGeneration(ana, v.id, "clip", { expectedCredits: 18 }, deps)).rejects.toMatchObject({
+      status: 409,
+      code: CONNECT,
+      message: "Conecta tu Higgsfield en Ajustes.",
+    });
+    expect(uploads()).toHaveLength(2);
+    expect(fake.calls.some((c) => c.method === "quoteVideo")).toBe(false);
+    expect(await clips()).toBe(0);
+  });
+
+  it("con Higgsfield caído al subir, 503 con su mensaje", async () => {
+    await readyForClip();
+    fake.failNext("uploadMedia", new HiggsfieldUnavailableError());
+    await expect(quoteGeneration(ana, v.id, "clip", deps)).rejects.toMatchObject({
+      status: 503,
+      message: "Higgsfield no responde. Inténtalo dentro de unos minutos.",
+    });
+    expect(fake.calls.some((c) => c.method === "quoteVideo")).toBe(false);
+  });
+
+  it("por la API, sin Higgsfield conectado la primera subida da 409 con el código, nunca 500", async () => {
+    await readyForClip();
+    // Sin `deps` ni modo simulado: el conector real ve que no hay conexión antes de salir a la red.
+    await as(ana);
+    for (const route of [presupuestoRoute, generarRoute]) {
+      const response = await route(post({ expectedCredits: 18 }), params(v.id));
+      expect(response.status).toBe(409);
+      expect(await response.json()).toEqual({ error: "Conecta tu Higgsfield en Ajustes.", code: CONNECT });
+    }
+    expect(await clips()).toBe(0);
   });
 });
 

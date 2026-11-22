@@ -1291,12 +1291,21 @@ describe("rutas", () => {
       expect(await rowOf(id)).toMatchObject({ status: "submitted", jobIds: ["j-cand"] });
     });
 
-    it("«Es este» sin trabajo da 400 antes de mirar el historial", async () => {
+    it("«Es este» sin trabajo: primero el vídeo y quién lo creó (404/403), después 400, y nunca mira el historial", async () => {
       const { id, local } = await stuckLocal();
       local.calls.length = 0;
-      await expect(adoptCandidate(ana, v.id, "frame", "  ", { higgsfield: local.port })).rejects.toMatchObject({ status: 400 });
-      expect(local.calls.filter((c) => c.method === "history")).toHaveLength(0);
+      const blank = { higgsfield: local.port };
+      await expect(adoptCandidate(luis, v.id, "frame", "  ", blank)).rejects.toMatchObject({ status: 404 });
+      await expect(adoptCandidate(ana, Number.NaN, "frame", "", blank)).rejects.toMatchObject({ status: 404 });
+      await expect(adoptCandidate(dueno, v.id, "frame", "", blank)).rejects.toMatchObject({ status: 403 });
+      await expect(adoptCandidate(ana, v.id, "frame", "  ", blank)).rejects.toMatchObject({ status: 400 });
+      expect(local.calls).toHaveLength(0);
       expect(await statusOf(id)).toBe("unknown");
+      await as(luis);
+      expect((await adoptFrameRoute(post({}), params(String(v.id)))).status).toBe(404);
+      await as(dueno);
+      expect((await adoptFrameRoute(post({}), params(String(v.id)))).status).toBe(403);
+      expect(local.calls).toHaveLength(0);
     });
 
     it("POST …/imagen/no-esta la deja «no enviada»", async () => {

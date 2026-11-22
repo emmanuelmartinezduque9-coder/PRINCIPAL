@@ -20,8 +20,14 @@ const JWT = /eyJ[\w-]{6,}\.[\w-]{6,}\.[\w-]{6,}/g;
 const BEARER = /\b(Bearer)\s+[^\s"',;]+/gi;
 /** Direcciones dentro de cualquier texto. */
 const URL_IN_TEXT = /https?:\/\/[^\s"'<>]+/gi;
-/** Parámetros de firma sueltos (en un registro, una ruta sin dominio…): `sig=`, `signature=`, `token=` y parecidos. */
-const SECRET_PARAM = /(\b(?:sig|signature|x-amz-signature|token|access_token|refresh_token|id_token)=)[^&\s"';,]+/gi;
+/**
+ * Parámetros sueltos (en un registro, una ruta sin dominio…) que llevan un secreto: los de nombre de
+ * secreto (`SECRET_KEY`: `token=`, `client_secret=`, `api_key=`, `password=`…) y, además, la firma
+ * corta `sig=`, `key=` y el `code=` de OAuth.
+ */
+const LOOSE_PARAM = /\b([\w-]+)=([^&\s"';,]+)/g;
+const SECRET_PARAM_NAMES = new Set(["sig", "key", "code"]);
+const isSecretParam = (name: string) => SECRET_KEY.test(name) || SECRET_PARAM_NAMES.has(name.toLowerCase());
 /** Un `data:` largo (las muestras del modo simulado) se resume: no aporta nada y ocupa mucho. */
 const MAX_DATA_URL = 100;
 
@@ -32,7 +38,7 @@ function redactString(value: string): string {
   }
   return value
     .replace(URL_IN_TEXT, hideQuery)
-    .replace(SECRET_PARAM, (_match, name: string) => `${name}${HIDDEN}`)
+    .replace(LOOSE_PARAM, (found, name: string) => (isSecretParam(name) ? `${name}=${HIDDEN}` : found))
     .replace(JWT, HIDDEN)
     .replace(BEARER, (_match, scheme: string) => `${scheme} ${HIDDEN}`);
 }

@@ -116,6 +116,18 @@ describe("redactTokens", () => {
       plain: "https://cdn.test/a.png",
     });
   });
+
+  it("los parámetros sueltos con nombre de secreto también: api_key, apikey, key, password, client_secret y code", () => {
+    expect(
+      redactTokens({
+        log: "POST /oauth/token code=abc123&client_secret=s3cr3t&state=xy; reintento api_key=k1, apikey=k2 key=k3 password=hunter2 exp=1",
+        cli: "--x-amz-credential=AKIA/2026 --refresh_token=r1 --client_id=principal",
+      }),
+    ).toEqual({
+      log: "POST /oauth/token code=[oculto]&client_secret=[oculto]&state=xy; reintento api_key=[oculto], apikey=[oculto] key=[oculto] password=[oculto] exp=1",
+      cli: "--x-amz-credential=[oculto] --refresh_token=[oculto] --client_id=principal",
+    });
+  });
 });
 
 describe("detalles técnicos", () => {
