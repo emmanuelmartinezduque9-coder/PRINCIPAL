@@ -36,10 +36,11 @@ import { getVideoFor, setVideoSong, referenceOutdated, REFERENCE_OUTDATED, stale
  *    falla, el lote queda `pausado` con el motivo y no se envía nada más hasta «Continuar».
  * 5. «Revisar imágenes» sigue siendo el paso humano; un rechazo se regenera solo (dentro de sus
  *    rondas y del presupuesto).
- * 6. Con todos los clips hechos, `listo` (y `onBatchReady`, el enganche para la edición).
+ * 6. Con todos los clips hechos, `listo` (y `onBatchReady`: el montaje en el Mac, `edits.ts`); con
+ *    todos los montajes terminados (o fallidos con su motivo), `montado`.
  */
 
-export const BATCH_STATUSES = ["borrador", "preguntas", "imagenes", "revision_imagenes", "clips", "listo", "pausado"] as const;
+export const BATCH_STATUSES = ["borrador", "preguntas", "imagenes", "revision_imagenes", "clips", "listo", "montado", "pausado"] as const;
 export type BatchStatus = (typeof BATCH_STATUSES)[number];
 /** Estados en los que el lote avanza solo. */
 const RUNNING: BatchStatus[] = ["preguntas", "imagenes", "revision_imagenes", "clips"];
@@ -678,7 +679,7 @@ async function committedCredits(batch: Batch): Promise<number> {
 const readyHooks: Array<(batchId: number) => Promise<void>> = [];
 
 /**
- * Enganche para cuando un lote queda `listo`: aquí se conectará la edición. Cada uno corre en su
+ * Enganche para cuando un lote queda `listo` (lo usa el montaje, `edits.ts`). Cada uno corre en su
  * propio `try`: un fallo no deshace el `listo`.
  */
 export function onBatchReady(hook: (batchId: number) => Promise<void>): void {
@@ -929,7 +930,7 @@ export interface AutoView {
   /** Vídeos que lleva el envío (sin los saltados). */
   total: number;
   skipped: number;
-  steps: { preguntas: number; imagenes: number; revision: number; clips: number };
+  steps: { preguntas: number; imagenes: number; revision: number; clips: number; montaje: number };
   /** Preguntas abiertas (solo en «Preguntas»). */
   questions: number;
   /** Todo respondido y desglosado: falta confirmar el presupuesto. */
@@ -957,6 +958,7 @@ export async function autoView(user: AuthUser, batch: Batch): Promise<AutoView> 
       imagenes: countIf((row) => ["done", "approved"].includes(frameStage(row, batch))),
       revision: countIf((row) => row.video.approvedFrameResultId !== null),
       clips: countIf((row) => clipStage(row, batch) === "done"),
+      montaje: countIf((row) => row.video.editStatus === "hecho"),
     },
     questions: asked.reduce((n, a) => n + (a.state === "questions" ? a.questions.length : 0), 0),
     readyToConfirm: batch.status === "preguntas" && rows.length > 0 && asked.every((a) => a.state === "ready"),

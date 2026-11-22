@@ -32,6 +32,7 @@ from pathlib import Path
 HOME = Path.home()
 FFMPEG, FFPROBE = str(HOME / '.local/bin/ffmpeg'), str(HOME / '.local/bin/ffprobe')
 TOOL = Path(__file__).resolve().parent
+CACHE = TOOL                                     # analisis_clips/ y beatmaps/ (montar_auto.py puede cambiarla)
 FONT = '/Volumes/AutomatizacionProyecto/AUTOMATIZACION IA VIDEOS/EDITOR/fonts/TikTok-Display-Medium.ttf'
 LABEL_FONT = '/System/Library/Fonts/Helvetica.ttc'
 W, H, FPS = 1080, 1920, 24
@@ -358,17 +359,18 @@ def plan_auto_shots(clips, analyses, P, vetos):
     return shots
 
 
-def snap_ends_to_beats(shots, beats, P, t0):
+def snap_ends_to_beats(shots, beats, P, t0, fixed_until=0):
     """Ajusta la duración de cada plano auto (dentro de su tramo usable y de mín/máx de su sección) para que el corte
     caiga en un beat a ≤ beat_tolerance (y nunca más de medio beat). Para acortar recorta primero el INICIO (quita
     preparación y conserva el final de la acción); para alargar usa primero el final si queda acción usable y si no
-    adelanta el inicio. Nunca cambia la velocidad. Devuelve el registro."""
+    adelanta el inicio. Nunca cambia la velocidad. Los planos anteriores a `fixed_until` no se tocan (el drop
+    cae al empezar ese plano). Devuelve el registro."""
     log, t = [], t0
     gaps = sorted(b - a for a, b in zip(beats, beats[1:]) if b > a)
     period = gaps[len(gaps) // 2] if gaps else 0.5          # periodo típico del beat (mediana)
     tol = min(P['beat_tolerance'], 0.5 * period + 0.5 / FPS)
     for k, s in enumerate(shots):
-        if s['section'] in ('hook', 'fijo') or k == len(shots) - 1:
+        if s['section'] in ('hook', 'fijo') or k == len(shots) - 1 or k < fixed_until:
             n_src = s.get('out_frame', video_frames(s['path'])) - s.get('in_frame', 0)
             t += (s.get('out_frames') or round(n_src / float(s.get('speed', 1.0)))) / FPS
             continue
@@ -410,6 +412,12 @@ def snap_ends_to_beats(shots, beats, P, t0):
                             motivo='sin beat alcanzable sin salir del tramo usable ni de la duración del patrón'))
         t += n / FPS
     return log
+
+
+def shot_frames(s):
+    """Fotogramas de salida de un plano antes de ajustarlo al beat."""
+    n_src = s.get('out_frame', video_frames(s['path'])) - s.get('in_frame', 0)
+    return int(s.get('out_frames') or round(n_src / float(s.get('speed', 1.0))))
 
 
 # ---------------------------------------------------------------- beats
@@ -809,6 +817,11 @@ def render(segs, cues, zooms, z, au, plan, work, out, dur, t_prod):
                      '-c:a', EXPORT['acodec'], '-b:a', EXPORT['abitrate'], '-ar', str(EXPORT['ar'])]
             info = dict(mode='original_continuo', desde_s=r4(a0), fundido_final_s=0.15,
                         note='audio original continuo (sin saltos) bajo los cortes; nivel sin tocar')
+    elif au['mode'] == 'silencio':
+        # Sin canción y sin audio en los clips (los de Seedance salen mudos): pista de silencio.
+        inputs += ['-f', 'lavfi', '-i', f"anullsrc=r={EXPORT['ar']}:cl=stereo"]
+        aargs = ['-map', f'{aidx}:a', '-c:a', EXPORT['acodec'], '-b:a', EXPORT['abitrate'], '-ar', str(EXPORT['ar'])]
+        info = dict(mode='silencio', note='sin canción ni audio en los clips: pista de silencio')
     elif au['mode'] == 'externo':
         src_a, off = au['path'], float(au.get('offset', 0))
         inputs += ['-i', src_a]
@@ -872,7 +885,7 @@ def main():
         sys.exit('Zoom en réplica: hay que activarlo expresamente con zoom.allow_on_replica=true')
     avisos = list(plan.get('avisos', []))
     v1 = any(c.get('auto') for c in plan['clips'])
-    analyses = {i: analyze_clip(c['path'], TOOL / 'analisis_clips') for i, c in enumerate(plan['clips'])
+    analyses = {i: analyze_clip(c['path'], CACHE / 'analisis_clips') for i, c in enumerate(plan['clips'])
                 if c.get('auto') or c['role'] == 'hook'} if v1 else {}
 
     vetos, intentos, historial = {}, 0, []
@@ -885,21 +898,31 @@ def main():
                 break
             n = s.get('out_frames') or round((s['out_frame'] - s.get('in_frame', 0)) / float(s.get('speed', 1)))
             hook_out += n / FPS
+        fixed_until = 0
         if au['mode'] == 'cancion':
             p = au.get('product_shown', {})
-            t_prod = float(p['t']) if 't' in p else hook_out
-            bm = beat_map(au['song'], work, TOOL / 'beatmaps', anchor=float(au['drop']))
+            if 'plano' in p and v1:
+                # El drop al empezar el plano `plano` (p. ej. el 2º de una réplica): los anteriores no se mueven.
+                fixed_until = max(0, min(int(p['plano']), len(shots) - 1))
+                t_prod = sum(shot_frames(s) for s in shots[:fixed_until]) / FPS
+            else:
+                t_prod = float(p['t']) if 't' in p else hook_out
+            bm = beat_map(au['song'], work, CACHE / 'beatmaps', anchor=float(au['drop']))
             offset = float(au['drop']) - t_prod
             beats_all = [r4(b - offset) for b in bm['beats'] if b - offset >= 0]
             downs_all = [r4(b - offset) for b in bm['downbeats'] if b - offset >= 0]
+        elif au['mode'] == 'silencio':
+            t_prod = None
+            bm = dict(beats=[], downbeats=[], tempo_bpm=None, file=None)
+            beats_all, downs_all = [], []
         else:
             t_prod = None
             src = au['path'] if au['mode'] == 'externo' else plan['clips'][0]['path']
-            bm = beat_map(src, work, TOOL / 'beatmaps')
+            bm = beat_map(src, work, CACHE / 'beatmaps')
             a0 = shots[0].get('in_frame', 0) / FPS if au['mode'] == 'original' else 0.0
             beats_all = [r4(b - a0) for b in bm['beats'] if b >= a0]
             downs_all = [r4(b - a0) for b in bm['downbeats'] if b >= a0]
-        snaps = snap_ends_to_beats(shots, beats_all, P, 0.0) if v1 else []
+        snaps = snap_ends_to_beats(shots, beats_all, P, 0.0, fixed_until) if v1 else []
         segs, total = build_timeline(shots)
         dur = total / FPS
         beats = [b for b in beats_all if b <= dur]

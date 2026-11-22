@@ -1,5 +1,6 @@
-import { and, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import { getDb, schema } from "@/db/client";
+import { getActiveUser } from "@/server/auth";
 
 /**
  * Lo poco de las tareas del Mac que necesita la capa de vídeos (`src/server/videos/`): cancelar
@@ -17,6 +18,10 @@ export const TASK_TOO_OLD = "La tarea superó el tiempo máximo.";
 
 const agentTasks = schema.agentTasks;
 const ACTIVE = ["queued", "leased"];
+/** Tipo (en la base de datos) de la tarea que trae el enlace de referencia de un vídeo. */
+export const LINK_TASK = "link_download";
+/** Tipo de la tarea que monta un vídeo en el Mac. */
+export const MONTAJE_TASK = "montaje";
 
 type Db = ReturnType<typeof getDb>;
 
@@ -26,15 +31,15 @@ export function linkFailureMessage(error: string | null): string {
 }
 
 /**
- * Cierra las tareas vivas (en cola o reservadas) de un vídeo porque otra cosa las sustituye: otro
- * enlace o un archivo subido. El Mac que tuviera una se entera en su siguiente paso (409). Quien
+ * Cierra los enlaces vivos (en cola o reservados) de un vídeo porque otra cosa los sustituye: otro
+ * enlace o un archivo subido. Un montaje del vídeo no se toca. El Mac que tuviera una se entera en su siguiente paso (409). Quien
  * llama tiene el vídeo bloqueado (cerrojos: el vídeo, después la tarea).
  */
 export async function cancelLinkTasks(executor: Pick<Db, "update">, videoId: number, reason: string, now: Date = new Date()): Promise<void> {
   await executor
     .update(agentTasks)
     .set({ status: "failed", error: reason, leaseExpiresAt: null, updatedAt: now })
-    .where(and(eq(agentTasks.videoId, videoId), inArray(agentTasks.status, ACTIVE)));
+    .where(and(eq(agentTasks.videoId, videoId), eq(agentTasks.kind, LINK_TASK), inArray(agentTasks.status, ACTIVE)));
 }
 
 /** El enlace de un vídeo tal como lo enseña su pantalla. */
@@ -78,4 +83,53 @@ export async function linkStateOf(taskId: number | null): Promise<LinkState | nu
 export async function linkUrlOfTask(taskId: number): Promise<string | null> {
   const [task] = await getDb().select({ url: agentTasks.url }).from(agentTasks).where(eq(agentTasks.id, taskId));
   return task?.url ?? null;
+}
+
+// ───────────────────────── Montaje ─────────────────────────
+
+/**
+ * El dueño cuyo Mac monta: un dueño activo con al menos un Mac con ficha en vigor (el que dio
+ * señales más recientemente). `null` si no hay ninguno. No hace falta que esté conectado ahora: la
+ * tarea espera en su cola.
+ */
+export async function macOwnerId(): Promise<number | null> {
+  const rows = await getDb()
+    .select({ createdBy: schema.agents.createdBy })
+    .from(schema.agents)
+    .where(isNull(schema.agents.revokedAt))
+    .orderBy(desc(schema.agents.lastSeenAt), desc(schema.agents.id));
+  for (const { createdBy } of rows) {
+    if ((await getActiveUser(createdBy))?.role === "dueno") return createdBy;
+  }
+  return null;
+}
+
+/**
+ * Pone en cola el montaje de un vídeo para el Mac de `ownerId`, dentro de la transacción de quien
+ * llama (que tiene el vídeo bloqueado). La ficha se hace con el número de la tarea (`payload`).
+ * Devuelve el número, o `null` si el vídeo ya tiene un montaje vivo (índice único parcial).
+ */
+export async function queueMontajeTask(
+  tx: Pick<Db, "insert" | "update" | "select">,
+  input: { videoId: number; ownerId: number; url: string; payload: (taskId: number) => unknown },
+  now: Date = new Date(),
+): Promise<number | null> {
+  const [active] = await tx
+    .select({ id: agentTasks.id })
+    .from(agentTasks)
+    .where(and(eq(agentTasks.videoId, input.videoId), eq(agentTasks.kind, MONTAJE_TASK), inArray(agentTasks.status, ACTIVE)));
+  if (active) return null;
+  const [task] = await tx
+    .insert(agentTasks)
+    .values({ kind: MONTAJE_TASK, videoId: input.videoId, url: input.url, createdBy: input.ownerId, createdAt: now, updatedAt: now })
+    .returning({ id: agentTasks.id });
+  await tx.update(agentTasks).set({ payload: input.payload(task.id) }).where(eq(agentTasks.id, task.id));
+  return task.id;
+}
+
+/** En qué punto están varias tareas de montaje: `queued`, `leased`, `done` o `failed`, por número de tarea. */
+export async function taskStatusesOf(taskIds: number[]): Promise<Map<number, string>> {
+  if (taskIds.length === 0) return new Map();
+  const rows = await getDb().select({ id: agentTasks.id, status: agentTasks.status }).from(agentTasks).where(inArray(agentTasks.id, taskIds));
+  return new Map(rows.map((row) => [row.id, row.status]));
 }

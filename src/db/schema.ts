@@ -399,7 +399,8 @@ export const batches = pgTable(
     autoAnalyze: boolean("auto_analyze").notNull().default(true),
     /**
      * «Enviar lote» (`src/server/videos/lote.ts`): `borrador` → `preguntas` → `imagenes` →
-     * `revision_imagenes` → `clips` → `listo`, o `pausado` (con `pause`) por saldo, precio o un fallo.
+     * `revision_imagenes` → `clips` → `listo` (clips hechos; se montan en el Mac) → `montado` (cada
+     * montaje terminado o fallido con su motivo), o `pausado` (con `pause`) por saldo, precio o un fallo.
      */
     status: text("status").notNull().default("borrador"),
     /** El total que autorizó quien envió el lote (imágenes + estimación de los clips), en créditos. */
@@ -432,7 +433,7 @@ export const batches = pgTable(
     index("batches_status").on(t.status),
     check(
       "batches_status_valid",
-      sql`${t.status} in ('borrador', 'preguntas', 'imagenes', 'revision_imagenes', 'clips', 'listo', 'pausado')`,
+      sql`${t.status} in ('borrador', 'preguntas', 'imagenes', 'revision_imagenes', 'clips', 'listo', 'montado', 'pausado')`,
     ),
     check("batches_budget_valid", sql`${t.budgetCredits} is null or ${t.budgetCredits} >= 0`),
   ],
@@ -468,6 +469,10 @@ export const batchProducts = pgTable(
  */
 /** Tope de una canción guardada (la mayor de la biblioteca real pesa 13 MB). */
 export const MAX_SONG_BYTES = 25 * 1024 * 1024;
+/** Lo más que pesa un vídeo montado (`edits.data`). */
+export const MAX_EDIT_BYTES = 200 * 1024 * 1024;
+/** Lo más largo de cada rótulo del montaje. */
+export const MAX_EDIT_TEXT = 200;
 
 /**
  * Biblioteca de canciones, común a todas las personas: todos las ven y las eligen; solo el dueño
@@ -621,6 +626,18 @@ export const videos = pgTable(
      * quiere imitar. Solo se guarda; lo usará el montador. `null` si no hay.
      */
     editReferenceUrl: text("edit_reference_url"),
+    /**
+     * Montaje automático en el Mac (`src/server/videos/edits.ts`): `null` (nunca se pidió),
+     * `en_marcha` (su tarea `edit_task_id` espera o la tiene un Mac), `hecho` (la última versión está
+     * en `edits`) o `fallido` (con `edit_error`, apto para la persona: p. ej. «Montaje: necesita el Mac»).
+     */
+    editStatus: text("edit_status"),
+    editError: text("edit_error"),
+    /** La tarea del Mac del último montaje pedido. */
+    editTaskId: bigint("edit_task_id", { mode: "number" }).references((): AnyPgColumn => agentTasks.id, { onDelete: "set null" }),
+    /** Rótulos del montaje (el principal y el CTA). Los propone el desglose; quien creó el vídeo o el dueño los cambia. */
+    editMainText: text("edit_main_text"),
+    editCtaText: text("edit_cta_text"),
     createdAt: instant("created_at").notNull().defaultNow(),
     updatedAt: instant("updated_at").notNull().defaultNow(),
   },
@@ -633,6 +650,11 @@ export const videos = pgTable(
     index("videos_batch").on(t.batchId),
     index("videos_link_task").on(t.linkTaskId),
     check("videos_note_length", sql`${t.note} is null or char_length(${t.note}) <= 6000`),
+    check("videos_edit_status_valid", sql`${t.editStatus} is null or ${t.editStatus} in ('en_marcha', 'hecho', 'fallido')`),
+    check(
+      "videos_edit_texts_length",
+      sql`(${t.editMainText} is null or char_length(${t.editMainText}) <= ${sql.raw(String(MAX_EDIT_TEXT))}) and (${t.editCtaText} is null or char_length(${t.editCtaText}) <= ${sql.raw(String(MAX_EDIT_TEXT))})`,
+    ),
     check(
       "videos_edit_reference_url_valid",
       sql`${t.editReferenceUrl} is null or (char_length(${t.editReferenceUrl}) <= 2000 and ${t.editReferenceUrl} like 'https://%')`,
@@ -951,7 +973,9 @@ export const agents = pgTable(
  * descargar el audio (MP3) de un enlace pegado en «Canciones» (sin vídeo) y entregarlo por la
  * subida propia de la tarea (`uploadId`, `uploadReceived`); al terminar crea la canción (`songId`). `queued` → `leased` (un Mac la tiene reservada y
  * la mantiene con latidos) → `done` | `failed`; una reserva sin latido vuelve a `queued` hasta
- * agotar los intentos. Como mucho una tarea viva por vídeo. `error` es el detalle técnico, solo
+ * agotar los intentos. `montaje`: montar el vídeo `videoId` en el Mac con la «ficha de montaje»
+ * (`payload`, hecha en el servidor) y entregar el MP4 por la subida propia de la tarea, como una
+ * canción; al terminar queda en `edits`. Como mucho una tarea viva de cada tipo por vídeo. `error` es el detalle técnico, solo
  * para el dueño: a la persona se le enseña un texto fijo en el vídeo. La escribe
  * `src/server/agent.ts`; la capa de vídeos solo cancela la tarea viva de un vídeo y lee su enlace,
  * por `src/server/agent-tasks.ts`.
@@ -961,7 +985,7 @@ export const agentTasks = pgTable(
   {
     id: bigserial("id", { mode: "number" }).primaryKey(),
     kind: text("kind").notNull().default("link_download"),
-    /** El vídeo cuya referencia trae (`link_download`); `null` en una canción. */
+    /** El vídeo cuya referencia trae (`link_download`) o que monta (`montaje`); `null` en una canción. */
     videoId: bigint("video_id", { mode: "number" }).references(() => videos.id, { onDelete: "cascade" }),
     /** La canción que creó (`song_download` terminada); `null` mientras tanto o si se borró. */
     songId: bigint("song_id", { mode: "number" }).references((): AnyPgColumn => songs.id, { onDelete: "set null" }),
@@ -971,6 +995,8 @@ export const agentTasks = pgTable(
      */
     uploadId: text("upload_id"),
     uploadReceived: integer("upload_received").notNull().default(0),
+    /** La ficha de montaje (`EditSpec` en `src/server/videos/edits.ts`) de una tarea `montaje`. */
+    payload: jsonb("payload"),
     url: text("url").notNull(),
     status: text("status").notNull().default("queued"),
     /** Quien pegó el enlace (quien creó el vídeo): la atiende un Mac suyo. */
@@ -990,15 +1016,49 @@ export const agentTasks = pgTable(
     index("agent_tasks_queue").on(t.status, t.createdBy, t.id),
     uniqueIndex("agent_tasks_one_active_per_video")
       .on(t.videoId)
-      .where(sql`${t.status} in ('queued', 'leased')`),
+      .where(sql`${t.kind} = 'link_download' and ${t.status} in ('queued', 'leased')`),
+    uniqueIndex("agent_tasks_one_active_montaje")
+      .on(t.videoId)
+      .where(sql`${t.kind} = 'montaje' and ${t.status} in ('queued', 'leased')`),
     uniqueIndex("agent_tasks_one_active_song_link")
       .on(t.createdBy, t.url)
       .where(sql`${t.kind} = 'song_download' and ${t.status} in ('queued', 'leased')`),
-    check("agent_tasks_kind_valid", sql`${t.kind} in ('link_download', 'song_download')`),
-    // Una referencia es siempre de un vídeo; una canción, de ninguno.
-    check("agent_tasks_target_valid", sql`(${t.kind} = 'link_download') = (${t.videoId} is not null)`),
+    check("agent_tasks_kind_valid", sql`${t.kind} in ('link_download', 'song_download', 'montaje')`),
+    // Una referencia y un montaje son siempre de un vídeo; una canción, de ninguno.
+    check("agent_tasks_target_valid", sql`(${t.kind} in ('link_download', 'montaje')) = (${t.videoId} is not null)`),
     check("agent_tasks_status_valid", sql`${t.status} in ('queued', 'leased', 'done', 'failed')`),
     // Una tarea reservada siempre dice quién la tiene y hasta cuándo.
     check("agent_tasks_lease_complete", sql`${t.status} <> 'leased' or (${t.agentId} is not null and ${t.leaseExpiresAt} is not null)`),
+  ],
+);
+
+/**
+ * Vídeos montados en el Mac (`src/server/videos/edits.ts`): una versión por montaje terminado
+ * («Volver a montar» añade otra). El MP4 va en la propia base de datos (máx. 200 MB), con su
+ * duración (medida aquí con ffprobe) y la autocomprobación del montador. Solo `src/server/videos/`
+ * toca esta tabla.
+ */
+export const edits = pgTable(
+  "edits",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    videoId: bigint("video_id", { mode: "number" })
+      .notNull()
+      .references(() => videos.id, { onDelete: "cascade" }),
+    version: integer("version").notNull(),
+    size: integer("size").notNull(),
+    data: bytea("data").notNull(),
+    durationMs: integer("duration_ms").notNull(),
+    /** Resumen de la autocomprobación del montador (planos, cortes en beat, avisos). */
+    selfCheck: jsonb("self_check"),
+    /** La tarea del Mac que lo entregó (sin clave ajena: es un apunte). */
+    taskId: bigint("task_id", { mode: "number" }),
+    createdAt: instant("created_at").notNull().defaultNow(),
+  },
+  (t) => [
+    unique("edits_video_version").on(t.videoId, t.version),
+    check("edits_size_valid", sql`${t.size} > 0 and ${t.size} <= ${sql.raw(String(MAX_EDIT_BYTES))}`),
+    check("edits_version_valid", sql`${t.version} >= 1`),
+    check("edits_duration_valid", sql`${t.durationMs} > 0`),
   ],
 );

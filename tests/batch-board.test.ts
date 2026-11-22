@@ -60,6 +60,7 @@ const row = (over: Partial<BatchRowJson> = {}): BatchRowJson => ({
   clip: gen(null),
   costs: { higgsfieldCredits: 0, claudeMicros: 0 },
   clipReady: false,
+  edit: { status: "none", error: null, latest: null, canStart: false },
   ...over,
 });
 

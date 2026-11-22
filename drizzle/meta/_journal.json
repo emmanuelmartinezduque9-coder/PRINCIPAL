@@ -169,6 +169,13 @@
       "when": 1795381047563,
       "tag": "0023_cancion_enlace",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1795385700336,
+      "tag": "0024_montaje",
+      "breakpoints": true
     }
   ]
 }

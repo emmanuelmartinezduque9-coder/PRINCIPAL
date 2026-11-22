@@ -51,7 +51,7 @@ export const frameUrl = (videoId: number, index: number, version: string) =>
   `/api/videos/${videoId}/fotogramas/${index}?v=${encodeURIComponent(version)}`;
 
 /** Pasos del flujo, en orden; el elegido va en la dirección (`?paso=desglose`). */
-export const FLOW_STEPS = ["referencia", "desglose", "imagen", "clip"] as const;
+export const FLOW_STEPS = ["referencia", "desglose", "imagen", "clip", "montaje"] as const;
 export type FlowStep = (typeof FLOW_STEPS)[number];
 export const isFlowStep = (value: unknown): value is FlowStep => FLOW_STEPS.includes(value as FlowStep);
 

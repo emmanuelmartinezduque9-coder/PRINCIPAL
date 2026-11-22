@@ -22,8 +22,6 @@ import { CHUNK_BYTES, uploadPath } from "@/server/videos/upload";
  */
 
 export const SONG_TASK = "song_download";
-/** Trozos que caben en el máximo de una canción. */
-const MAX_SONG_CHUNKS = Math.ceil(MAX_SONG_BYTES / CHUNK_BYTES);
 /** Lo que se sigue enseñando de un enlace ya terminado (fallido o hecho). */
 const SHOWN_MS = 24 * 60 * 60_000;
 const MAX_ERROR = 500;
@@ -55,7 +53,7 @@ async function fileSize(file: string): Promise<number | null> {
   }
 }
 
-/** Borra el archivo de una sesión de canción (si el identificador tiene la forma de una). */
+/** Borra el archivo de la subida propia de una tarea (canción o montaje), si el identificador tiene la forma de una. */
 export async function removeSongFile(uploadId: string | null): Promise<void> {
   if (!uploadId) return;
   let file: string;
@@ -68,7 +66,7 @@ export async function removeSongFile(uploadId: string | null): Promise<void> {
 }
 
 /**
- * Abre la sesión de subida de una reserva, dentro de la transacción que reserva la tarea (ya
+ * Abre la sesión de subida propia de una reserva (canción o montaje), dentro de la transacción que reserva la tarea (ya
  * bloqueada): un identificador nuevo y cero trozos. Devuelve el nuevo y el de la reserva anterior,
  * cuyo archivo hay que borrar al confirmar.
  */
@@ -79,29 +77,56 @@ export async function openSongUpload(tx: Tx, taskId: number): Promise<{ uploadId
   return { uploadId, previous: task?.uploadId ?? null };
 }
 
+/** Lo que se exige al archivo que entrega una tarea por su subida propia. */
+export interface TaskFileRules {
+  /** Tamaño máximo del archivo entero. */
+  maxBytes: number;
+  /** Si los primeros bytes son del tipo que se espera. */
+  accepts: (head: Buffer) => boolean;
+  /** Mensajes (400) si no lo son o si pasa del máximo. */
+  badType: string;
+  tooBig: string;
+}
+
+const SONG_RULES: TaskFileRules = {
+  maxBytes: MAX_SONG_BYTES,
+  accepts: (head) => detectAudioType(head) === "audio/mpeg",
+  badType: NOT_MP3,
+  tooBig: TOO_BIG,
+};
+
 /**
- * Añade el trozo `index` a la canción de la tarea, con la sesión `uploadId` de su reserva en curso
- * (quien llama ya comprobó quién la tiene y prolongó la reserva). Con la tarea bloqueada: el trozo
- * que toca se escribe; uno ya recibido responde sin escribir; uno adelantado, 409. El primero tiene
- * que ser un MP3; ninguno pasa del máximo de una canción.
+ * Añade el trozo `index` al archivo de una tarea con subida propia (canción o montaje), con la
+ * sesión `uploadId` de su reserva en curso (quien llama ya comprobó quién la tiene y prolongó la
+ * reserva). Con la tarea bloqueada: el trozo que toca se escribe; uno ya recibido responde sin
+ * escribir; uno adelantado, 409. El primero tiene que ser del tipo esperado (`rules.accepts`);
+ * ninguno pasa del máximo.
  */
-export async function appendSongChunk(taskId: number, uploadId: string, index: number, bytes: Buffer): Promise<{ received: number }> {
-  const result = await getDb().transaction(async (tx) => {
+export async function appendTaskFileChunk(
+  taskId: number,
+  kind: string,
+  uploadId: string,
+  index: number,
+  bytes: Buffer,
+  rules: TaskFileRules,
+): Promise<{ received: number }> {
+  const maxChunks = Math.ceil(rules.maxBytes / CHUNK_BYTES);
+  return getDb().transaction(async (tx) => {
     const [task] = await tx
       .select({ received: agentTasks.uploadReceived })
       .from(agentTasks)
-      .where(and(eq(agentTasks.id, taskId), eq(agentTasks.kind, SONG_TASK), eq(agentTasks.status, "leased"), eq(agentTasks.uploadId, uploadId)))
+      .where(and(eq(agentTasks.id, taskId), eq(agentTasks.kind, kind), eq(agentTasks.status, "leased"), eq(agentTasks.uploadId, uploadId)))
       .for("update");
     if (!task) throw taskLost();
     if (!Number.isSafeInteger(index) || index < 0) throw new HttpError(400, BAD_CHUNK);
-    if (index >= MAX_SONG_CHUNKS) throw new HttpError(400, TOO_BIG);
+    if (index >= maxChunks) throw new HttpError(400, rules.tooBig);
     if (index < task.received) return { received: task.received };
     if (index > task.received) throw new HttpError(409, MISSING_CHUNKS);
     if (bytes.length === 0 || bytes.length > CHUNK_BYTES) throw new HttpError(400, BAD_CHUNK);
 
     const file = uploadPath(uploadId);
     if (index === 0) {
-      if (detectAudioType(bytes.subarray(0, 16)) !== "audio/mpeg") throw new HttpError(400, NOT_MP3);
+      if (!rules.accepts(bytes.subarray(0, 16))) throw new HttpError(400, rules.badType);
       await fs.mkdir(path.dirname(file), { recursive: true, mode: 0o700 });
       await fs.writeFile(file, bytes, { mode: 0o600 });
     } else {
@@ -116,7 +141,22 @@ export async function appendSongChunk(taskId: number, uploadId: string, index: n
     await tx.update(agentTasks).set({ uploadReceived: index + 1 }).where(eq(agentTasks.id, taskId));
     return { received: index + 1 };
   });
-  return result;
+}
+
+/** Un trozo de la canción de una tarea (`appendTaskFileChunk` con las reglas de una canción: MP3, 25 MB). */
+export function appendSongChunk(taskId: number, uploadId: string, index: number, bytes: Buffer): Promise<{ received: number }> {
+  return appendTaskFileChunk(taskId, SONG_TASK, uploadId, index, bytes, SONG_RULES);
+}
+
+/**
+ * Si el archivo de la sesión `uploadId` llegó entero: `expected` bytes (entre 1 y `maxBytes`), en
+ * los trozos que tocan, y con ese tamaño en disco. Devuelve la ruta del archivo o `null`.
+ */
+export async function completeTaskFile(uploadId: string, received: number, expected: unknown, maxBytes: number): Promise<string | null> {
+  if (typeof expected !== "number" || !Number.isSafeInteger(expected) || expected <= 0 || expected > maxBytes) return null;
+  const file = uploadPath(uploadId);
+  if (received < Math.ceil(expected / CHUNK_BYTES) || (await fileSize(file)) !== expected) return null;
+  return file;
 }
 
 /** Lo que el Mac dice al terminar una canción. */
@@ -148,10 +188,8 @@ export async function finishSongTask(agentId: number, taskId: number, result: So
       return { file: task.uploadId };
     }
 
-    const expected = result.totalBytes;
-    if (!Number.isSafeInteger(expected) || expected <= 0 || expected > MAX_SONG_BYTES) throw new HttpError(400, INCOMPLETE);
-    const file = uploadPath(result.uploadId);
-    if (task.uploadReceived < Math.ceil(expected / CHUNK_BYTES) || (await fileSize(file)) !== expected) throw new HttpError(400, INCOMPLETE);
+    const file = await completeTaskFile(result.uploadId, task.uploadReceived, result.totalBytes, MAX_SONG_BYTES);
+    if (file === null) throw new HttpError(400, INCOMPLETE);
     const owner = await getActiveUser(task.createdBy);
     if (owner?.role !== "dueno") throw taskLost();
     let song: SongInfo;

@@ -8,6 +8,16 @@ no se queda en el Mac.
 En **Canciones → Pegar enlace** pasa lo mismo con una canción (también de SoundCloud): el Mac saca
 el audio como MP3 y la canción entra en la biblioteca, lista para marcarle el drop.
 
+Desde la versión 1.3.0 también **monta los vídeos de los lotes**: cuando un lote tiene todos sus
+clips, cada vídeo se monta en este Mac con el montador (`~/.principal-tools/montador/montar_auto.py`:
+clips, canción con su drop, rótulos y, si hay, la referencia de edición analizada con rea-video) y
+el vídeo editado vuelve a la web («Descargar editados»). Solo pide montajes si encuentra
+`montar_auto.py` y `uv` (en el registro dice «Montaje automático activado/desactivado»). El
+instalador copia `montador.py`, `montar_auto.py` y `texto06b.swift` a `~/.principal-tools/montador/`
+(si allí había otra versión, la guarda al lado con la fecha). Necesita además el disco con la
+fuente de los rótulos conectado y rea-video en `~/.principal-tools/rea-video` (si falta, monta sin
+la referencia y lo avisa).
+
 Usa la sesión de Instagram que tengas abierta en **Brave** en este Mac. Para vídeos privados hace
 falta que esa sesión esté abierta en Brave.
 

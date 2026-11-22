@@ -3,7 +3,8 @@ import { StepFailedError } from "@/jobs/steps";
 import { probeConnections } from "@/server/higgsfield";
 import { ANALYSIS_JOB, runAnalysis } from "@/server/videos/analysis";
 import { FINALIZE_JOB, finalizeGeneration, SUBMIT_JOB, submitGeneration } from "@/server/videos/generations";
-import { ADVANCE_JOB, advanceBatch, kickBatchOfGeneration } from "@/server/videos/lote";
+import { startBatchEdits } from "@/server/videos/edits";
+import { ADVANCE_JOB, advanceBatch, kickBatchOfGeneration, onBatchReady } from "@/server/videos/lote";
 import { processReference } from "@/server/videos/intake";
 import { videoSweep } from "@/server/videos/sweep";
 import { REFERENCE_JOB } from "@/server/videos/upload";
@@ -12,6 +13,9 @@ import { REFERENCE_JOB } from "@/server/videos/upload";
  * Trabajos y tareas programadas de la producción de vídeo. Se importa en `src/worker/main.ts`
  * antes de arrancar la cola, y en las rutas que encolan (para que el trabajo esté definido).
  */
+
+/** Con todos los clips del lote hechos, cada vídeo se monta en el Mac del dueño (`edits.ts`). */
+onBatchReady((batchId) => startBatchEdits(batchId));
 
 /** Cada 6 horas, una lectura de saldo por persona conectada (mide la duración del permiso; no gasta). */
 defineSchedule("higgsfield.sonda", "0 */6 * * *", () => probeConnections());

@@ -4,6 +4,20 @@ Programa pequeño que monta los vídeos del dueño a partir de un **plan de mont
 Se escribió para el piloto del pedido 54: v0 en `docs/piloto-pedido-54/montaje-v0.md`; **v1 (ritmo de los virales)
 en `docs/piloto-pedido-54/montaje-v1.md`**, con el patrón medido en `docs/casos/referencias-edicion/patron-viral-eiswerk.md`.
 
+## Montaje automático desde la web (`montar_auto.py`, 22/11)
+
+Lo lanza el agente del Mac (1.3.0) para cada vídeo de un lote con los clips hechos:
+`uv run --no-project --with librosa --with soundfile --with numpy --with pillow python montar_auto.py <ficha.json> <carpeta>`.
+La ficha la hace la web (`src/server/videos/edits.ts`) y el agente le añade las rutas locales de los clips, la canción
+y el `breakdown.json` de rea-video de la referencia de edición. Sin preguntar nada: normaliza los clips (1080×1920,
+24 fps), gancho con in/out automáticos hasta `hookMs` (sin cola IA), cuerpos y réplicas con las ventanas de v1, drop
+al empezar el cuerpo (réplica: al empezar el 2º plano, `product_shown: {"plano": 1}`), sin canción el audio del clip
+o silencio (`audio.mode: "silencio"`), rótulos de la ficha, y de la referencia saca el ritmo (`ritmo.body`,
+`ritmo.final`) y si el CTA entra en el último o el penúltimo corte. Deja `salida.mp4`, `resultado.json` (con el resumen
+de la autocomprobación), `plan.json`, `montador.log` y `revision/`. Pruebas: `python3 -I test_montar_auto.py`.
+`montador.py` ganó `CACHE` (dónde guarda `analisis_clips/` y `beatmaps/`; `MONTADOR_CACHE`), el modo de audio
+`silencio` y `product_shown.plano`.
+
 ## Qué cambia en v1 (22/11)
 
 Los planes con clips `"auto": true` usan el montaje nuevo; los planes v0 (in/out fijos) siguen montándose igual.
