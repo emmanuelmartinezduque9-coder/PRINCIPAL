@@ -1,14 +1,17 @@
 import crypto from "node:crypto";
-import { and, asc, eq, gte, isNull, lt, max, notExists, sql, type SQL } from "drizzle-orm";
+import { and, asc, eq, gte, inArray, isNull, lt, max, notExists, sql, type SQL } from "drizzle-orm";
 import { getDb, schema } from "@/db/client";
 import { cancelLinkTasks, LINK_FAILED, linkFailureMessage, TASK_TOO_OLD } from "@/server/agent-tasks";
 import { getActiveUser, type AuthUser } from "@/server/auth";
 import { HttpError } from "@/server/http";
 import { getProductFor } from "@/server/products";
-import { LINK_HOSTS, linkOf } from "@/lib/links";
+import { LINK_HOSTS, linkOf, songLinkOf } from "@/lib/links";
+import { appendSongChunk, finishSongTask, openSongUpload, removeSongFile, SONG_TASK } from "@/server/song-downloads";
+import { MAX_SONG_BYTES } from "@/server/songs";
 import {
   agentUploadId,
   appendChunk,
+  CHUNK_BYTES,
   expectLinkReference,
   failLinkReference,
   finishUpload,
@@ -74,7 +77,9 @@ const OWNER_ONLY = "Solo el dueño puede hacer esto.";
 const NO_UPLOAD = "Falta la sesión de la reserva (`subida`).";
 const BAD_TOKEN = "Ficha del Mac no válida.";
 const BAD_LINK = "Solo se admiten enlaces de Instagram, TikTok, YouTube o Facebook.";
+const BAD_SONG_LINK = "Solo se admiten enlaces de YouTube, TikTok, Instagram, Facebook o SoundCloud.";
 const MAC_OFFLINE = "El Mac no está conectado ahora mismo. Sube el archivo del vídeo.";
+const SONG_MAC_OFFLINE = "El Mac no está conectado ahora mismo. Importa el archivo de la canción.";
 const TASK_LOST = "Esta tarea ya no es tuya.";
 // Motivos que se apuntan en la tarea (solo los ve el dueño).
 const SUPERSEDED = "Sustituida por otro enlace.";
@@ -277,10 +282,41 @@ export async function createVideoFromLink(user: AuthUser, productId: number, url
   return getVideoFor(user, video.id);
 }
 
+/**
+ * «Pegar enlace» en Canciones: pide al Mac del dueño el audio de `url` (los sitios de los vídeos y
+ * SoundCloud) como MP3. Solo el dueño (403), con un enlace admitido (400) y un Mac suyo conectado
+ * (409). El mismo enlace pegado dos veces mientras el primero sigue en marcha no crea otra tarea:
+ * devuelve la que ya hay (`created: false`). La canción se crea al llegar el archivo, sin drop.
+ */
+export async function requestSongDownload(user: AuthUser, url: unknown, now: Date = new Date()): Promise<{ taskId: number; created: boolean }> {
+  requireOwner(user);
+  const link = songLinkOf(url);
+  if (!link) throw new HttpError(400, BAD_SONG_LINK);
+  if (!(await agentStatus(user, now)).online) throw new HttpError(409, SONG_MAC_OFFLINE);
+  const db = getDb();
+  for (let round = 0; round < CLAIM_ROUNDS; round++) {
+    const [task] = await db
+      .insert(agentTasks)
+      .values({ kind: SONG_TASK, url: link, createdBy: user.id, createdAt: now, updatedAt: now })
+      .onConflictDoNothing()
+      .returning({ id: agentTasks.id });
+    if (task) return { taskId: task.id, created: true };
+    const [active] = await db
+      .select({ id: agentTasks.id })
+      .from(agentTasks)
+      .where(and(eq(agentTasks.kind, SONG_TASK), eq(agentTasks.createdBy, user.id), eq(agentTasks.url, link), inArray(agentTasks.status, ["queued", "leased"])));
+    // Si entretanto terminó, se vuelve a intentar crearla.
+    if (active) return { taskId: active.id, created: false };
+  }
+  throw new HttpError(409, "Inténtalo de nuevo.");
+}
+
 // ───────────────────────── Tareas: reserva y latido ─────────────────────────
 
 export interface ClaimedTask {
   taskId: number;
+  /** `referencia`: el vídeo de referencia (MP4); `cancion`: el audio de una canción (MP3). */
+  kind: "referencia" | "cancion";
   url: string;
   /** La sesión de subida de esta reserva: hay que mandarla con cada trozo y al terminar. */
   uploadId: string;
@@ -302,8 +338,15 @@ export async function claimTask(agentId: number, now: Date = new Date()): Promis
   for (let round = 0; round < CLAIM_ROUNDS; round++) {
     const [candidate] = await db.select({ id: agentTasks.id, videoId: agentTasks.videoId }).from(agentTasks).where(queued).orderBy(asc(agentTasks.id)).limit(1);
     if (!candidate) return null;
+    if (candidate.videoId === null) {
+      // Una canción: sin vídeo que bloquear.
+      const song = await claimSongTask(agentId, candidate.id, queued, now);
+      if (song) return song;
+      continue;
+    }
+    const videoId = candidate.videoId;
     const claimed = await db.transaction(async (tx): Promise<ClaimedTask | null> => {
-      await lockVideoReference(tx, candidate.videoId);
+      await lockVideoReference(tx, videoId);
       const [task] = await tx
         .select({ id: agentTasks.id, videoId: agentTasks.videoId, url: agentTasks.url })
         .from(agentTasks)
@@ -311,27 +354,49 @@ export async function claimTask(agentId: number, now: Date = new Date()): Promis
         .for("update", { skipLocked: true });
       // Otro Mac se la llevó o se canceló mientras tanto: a por la siguiente.
       if (!task) return null;
-      const upload = await startAgentUpload(task.id, task.videoId, tx);
+      const upload = await startAgentUpload(task.id, videoId, tx);
       if (!upload) {
         await tx.update(agentTasks).set({ status: "failed", error: NOT_EXPECTED, updatedAt: now }).where(eq(agentTasks.id, task.id));
         return null;
       }
-      await tx
-        .update(agentTasks)
-        .set({
-          status: "leased",
-          agentId,
-          leasedAt: now,
-          leaseExpiresAt: new Date(now.getTime() + LEASE_MS),
-          attempts: sql`${agentTasks.attempts} + 1`,
-          updatedAt: now,
-        })
-        .where(eq(agentTasks.id, task.id));
-      return { taskId: task.id, url: task.url, ...upload, maxBytes: MAX_REFERENCE_BYTES };
+      await tx.update(agentTasks).set(leaseValues(agentId, now)).where(eq(agentTasks.id, task.id));
+      return { taskId: task.id, kind: "referencia", url: task.url, ...upload, maxBytes: MAX_REFERENCE_BYTES };
     });
     if (claimed) return claimed;
   }
   return null;
+}
+
+/** Lo que se apunta en una tarea al reservarla. */
+const leaseValues = (agentId: number, now: Date) => ({
+  status: "leased",
+  agentId,
+  leasedAt: now,
+  leaseExpiresAt: new Date(now.getTime() + LEASE_MS),
+  attempts: sql`${agentTasks.attempts} + 1`,
+  updatedAt: now,
+});
+
+/**
+ * Reserva la tarea de canción `taskId` si sigue en cola, con una sesión de subida nueva (la de una
+ * reserva anterior deja de valer y su archivo se borra); `null` si otro Mac se la llevó.
+ */
+async function claimSongTask(agentId: number, taskId: number, queued: SQL | undefined, now: Date): Promise<ClaimedTask | null> {
+  const claimed = await getDb().transaction(async (tx) => {
+    const [task] = await tx
+      .select({ id: agentTasks.id, url: agentTasks.url })
+      .from(agentTasks)
+      .where(and(eq(agentTasks.id, taskId), queued))
+      .for("update", { skipLocked: true });
+    if (!task) return null;
+    const { uploadId, previous } = await openSongUpload(tx, task.id);
+    await tx.update(agentTasks).set(leaseValues(agentId, now)).where(eq(agentTasks.id, task.id));
+    const claimedTask: ClaimedTask = { taskId: task.id, kind: "cancion", url: task.url, uploadId, chunkBytes: CHUNK_BYTES, maxBytes: MAX_SONG_BYTES };
+    return { task: claimedTask, previous };
+  });
+  if (!claimed) return null;
+  await removeSongFile(claimed.previous);
+  return claimed.task;
 }
 
 /** Latido de la tarea (cada 60 s mientras descarga): la reserva dura 5 minutos más. Si ya no la tiene, 409. */
@@ -363,7 +428,13 @@ export async function appendTaskChunk(
   if (typeof uploadId !== "string" || uploadId === "") throw new HttpError(400, NO_UPLOAD);
   // Primero, que la reserva y su sesión sean las de quien llama; solo entonces se prolonga.
   if (!isId(taskId)) throw taskLost();
-  const [held] = await getDb().select({ id: agentTasks.id }).from(agentTasks).where(leasedBy(agentId, taskId));
+  const [held] = await getDb().select({ kind: agentTasks.kind, uploadId: agentTasks.uploadId }).from(agentTasks).where(leasedBy(agentId, taskId));
+  if (held?.kind === SONG_TASK) {
+    // Una canción: su sesión es la de la propia tarea.
+    if (held.uploadId !== uploadId) throw taskLost();
+    await extendLease(agentId, taskId, now);
+    return appendSongChunk(taskId, uploadId, index, bytes);
+  }
   if (!held || (await agentUploadId(taskId)) !== uploadId) throw taskLost();
   await extendLease(agentId, taskId, now);
   try {
@@ -375,8 +446,11 @@ export async function appendTaskChunk(
   }
 }
 
-/** Lo que el Mac dice al terminar; `uploadId` es la sesión que recibió al reservar la tarea. */
-export type TaskResult = { ok: true; uploadId: string; totalBytes: number } | { ok: false; uploadId: string; error: string };
+/**
+ * Lo que el Mac dice al terminar; `uploadId` es la sesión que recibió al reservar la tarea. Con
+ * una canción, `title` es el título que dio yt-dlp.
+ */
+export type TaskResult = { ok: true; uploadId: string; totalBytes: number; title?: string } | { ok: false; uploadId: string; error: string };
 
 /**
  * El Mac termina la tarea. Si fue bien, dice cuánto pesa lo que entregó y el vídeo entra en el
@@ -389,11 +463,14 @@ export async function finishTask(agentId: number, taskId: number, result: TaskRe
   if (typeof result.uploadId !== "string" || result.uploadId === "") throw new HttpError(400, NO_UPLOAD);
   if (!isId(taskId)) throw taskLost();
   const db = getDb();
-  const [task] = await db
+  const [found] = await db
     .select({ id: agentTasks.id, videoId: agentTasks.videoId, status: agentTasks.status, agentId: agentTasks.agentId })
     .from(agentTasks)
     .where(eq(agentTasks.id, taskId));
-  if (!task || task.agentId !== agentId) throw taskLost();
+  if (!found || found.agentId !== agentId) throw taskLost();
+  // Una canción se cierra (y se guarda) en `song-downloads`.
+  if (found.videoId === null) return finishSongTask(agentId, taskId, result, now);
+  const task = { ...found, videoId: found.videoId };
   if (task.status === "done" && result.ok) return;
   if (task.status !== "leased") throw taskLost();
 
@@ -421,17 +498,31 @@ export async function finishTask(agentId: number, taskId: number, result: TaskRe
   await db.update(agentTasks).set({ status: "done", leaseExpiresAt: null, updatedAt: now }).where(leasedBy(agentId, task.id));
 }
 
-/** Cierra como fallida una tarea que sigue cumpliendo `condition` y lo refleja en su vídeo. */
-async function failTask(task: { id: number; videoId: number }, condition: SQL | undefined, reason: string, now: Date): Promise<void> {
+/**
+ * Cierra como fallida una tarea que sigue cumpliendo `condition` y lo refleja en su vídeo. La de
+ * una canción no tiene vídeo: se borra lo que hubiera llegado.
+ */
+async function failTask(task: { id: number; videoId: number | null }, condition: SQL | undefined, reason: string, now: Date): Promise<void> {
+  const { videoId } = task;
+  if (videoId === null) {
+    const [before] = await getDb().select({ uploadId: agentTasks.uploadId }).from(agentTasks).where(eq(agentTasks.id, task.id));
+    const [closed] = await getDb()
+      .update(agentTasks)
+      .set({ status: "failed", error: reason, leaseExpiresAt: null, uploadId: null, updatedAt: now })
+      .where(and(eq(agentTasks.id, task.id), condition))
+      .returning({ id: agentTasks.id });
+    if (closed) await removeSongFile(before?.uploadId ?? null);
+    return;
+  }
   await getDb().transaction(async (tx) => {
-    await lockVideoReference(tx, task.videoId);
+    await lockVideoReference(tx, videoId);
     const closed = await tx
       .update(agentTasks)
       .set({ status: "failed", error: reason, leaseExpiresAt: null, updatedAt: now })
       .where(and(eq(agentTasks.id, task.id), condition))
       .returning({ id: agentTasks.id });
     // Si entretanto cambió (llegó un latido, alguien la reservó), se queda como está.
-    if (closed.length > 0) await failLinkReference(tx, task.videoId, task.id, linkFailureMessage(reason));
+    if (closed.length > 0) await failLinkReference(tx, videoId, task.id, linkFailureMessage(reason));
   });
 }
 

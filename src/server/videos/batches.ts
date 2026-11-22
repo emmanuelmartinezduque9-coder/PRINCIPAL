@@ -17,6 +17,7 @@ import { avatarSummaries, isChoosableAvatar } from "@/server/avatars";
 import {
   audioColumns,
   canChooseSong,
+  checkEditReferenceUrl,
   checkSongChoice,
   checkVariantChoice,
   createVideo,
@@ -217,12 +218,15 @@ export async function addVideoToBatch(
     linkUrl?: unknown;
     /** «Música»: una canción de la biblioteca o `null` / sin enviar («Audio original»). */
     songId?: unknown;
+    /** «Referencia de edición»: un enlace admitido, o `null` / sin enviar. */
+    editReferenceUrl?: unknown;
   },
 ): Promise<Video> {
   const batch = await ownBatch(user, batchId, NOT_CREATOR);
   requireOpen(batch);
 
   const note = cleanNote(input.note);
+  const editReferenceUrl = checkEditReferenceUrl(input.editReferenceUrl) ?? null;
   const { kind, adaptation, hookSeconds } = checkKindInput(input);
   if (!isAvatarMode(input.avatarMode)) throw new HttpError(400, "Valor no válido.");
   const avatarMode = input.avatarMode;
@@ -257,6 +261,7 @@ export async function addVideoToBatch(
     ...(hookSeconds === undefined ? {} : { hookSeconds }),
     ...(bodyClipIds === undefined ? {} : { bodyClipIds }),
     ...audioColumns(songId),
+    editReferenceUrl,
   };
   return input.linkUrl == null ? createVideo(user, input.productId, extras) : createVideoFromLink(user, input.productId, input.linkUrl, extras);
 }
@@ -268,6 +273,8 @@ export interface BatchRow {
   productName: string;
   /** «Cambios específicos». */
   note: string | null;
+  /** «Referencia de edición»: el enlace cuyo montaje se quiere imitar, o `null`. */
+  editReferenceUrl: string | null;
   kind: VideoKind;
   /** Duración del gancho (solo cuenta con «Solo gancho»). */
   hookSeconds: number;
@@ -409,6 +416,7 @@ export async function batchView(user: AuthUser, batchId: number): Promise<BatchV
         productId: video.productId,
         productName: products.get(video.productId) ?? "",
         note: video.note,
+        editReferenceUrl: video.editReferenceUrl,
         kind: video.kind as VideoKind,
         hookSeconds: video.hookSeconds,
         bodies: bodiesOf.get(video.id)?.length ?? 0,
@@ -490,6 +498,7 @@ export async function duplicateBatchVideo(user: AuthUser, batchId: number, video
     const copy = await insertVideo(tx, user, video.productId, {
       batchId: batch.id,
       note: video.note,
+      editReferenceUrl: video.editReferenceUrl,
       avatarPhotoId: video.avatarPhotoId,
       avatarLibraryId: video.avatarLibraryId,
       avatarMode: video.avatarMode,

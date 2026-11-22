@@ -5,6 +5,9 @@ Instagram, TikTok, YouTube o Facebook, la web no puede descargarlo (Instagram no
 servidores). Tu Mac sí: este programa lo descarga con `yt-dlp` y se lo entrega a la web. El vídeo
 no se queda en el Mac.
 
+En **Canciones → Pegar enlace** pasa lo mismo con una canción (también de SoundCloud): el Mac saca
+el audio como MP3 y la canción entra en la biblioteca, lista para marcarle el drop.
+
 Usa la sesión de Instagram que tengas abierta en **Brave** en este Mac. Para vídeos privados hace
 falta que esa sesión esté abierta en Brave.
 

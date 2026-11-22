@@ -6,6 +6,8 @@
 
 /** Sitios de los que se admite un enlace, con sus subdominios. */
 export const LINK_HOSTS = ["instagram.com", "tiktok.com", "youtube.com", "youtu.be", "facebook.com", "fb.watch"] as const;
+/** Sitios de los que se admite el enlace de una canción («Canciones»): los mismos y SoundCloud. */
+export const SONG_LINK_HOSTS = [...LINK_HOSTS, "soundcloud.com"] as const;
 
 const MAX_LINK_LENGTH = 2000;
 
@@ -25,6 +27,15 @@ function isRedirector(url: URL): boolean {
  * de sus direcciones de salto.
  */
 export function linkOf(value: unknown): string | null {
+  return linkFrom(value, LINK_HOSTS);
+}
+
+/** Como `linkOf`, para el enlace de una canción: admite además SoundCloud (`SONG_LINK_HOSTS`). */
+export function songLinkOf(value: unknown): string | null {
+  return linkFrom(value, SONG_LINK_HOSTS);
+}
+
+function linkFrom(value: unknown, hosts: readonly string[]): string | null {
   if (typeof value !== "string") return null;
   const text = value.trim();
   if (!text || text.length > MAX_LINK_LENGTH) return null;
@@ -36,7 +47,7 @@ export function linkOf(value: unknown): string | null {
   }
   if (url.protocol !== "https:" || url.username || url.password || url.port) return null;
   const host = url.hostname.toLowerCase();
-  if (!LINK_HOSTS.some((allowed) => host === allowed || host.endsWith(`.${allowed}`))) return null;
+  if (!hosts.some((allowed) => host === allowed || host.endsWith(`.${allowed}`))) return null;
   if (isRedirector(url)) return null;
   return url.href.length <= MAX_LINK_LENGTH ? url.href : null;
 }

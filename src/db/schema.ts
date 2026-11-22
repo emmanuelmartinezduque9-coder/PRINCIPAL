@@ -616,6 +616,11 @@ export const videos = pgTable(
     songId: bigint("song_id", { mode: "number" }).references((): AnyPgColumn => songs.id, { onDelete: "set null" }),
     /** `original` (por defecto) o `cancion`. La canción elegida manda: con canción, siempre `cancion`. */
     audioMode: text("audio_mode").notNull().default("original"),
+    /**
+     * «Referencia de edición»: un enlace (de los sitios admitidos) a un vídeo cuyo montaje se
+     * quiere imitar. Solo se guarda; lo usará el montador. `null` si no hay.
+     */
+    editReferenceUrl: text("edit_reference_url"),
     createdAt: instant("created_at").notNull().defaultNow(),
     updatedAt: instant("updated_at").notNull().defaultNow(),
   },
@@ -628,6 +633,10 @@ export const videos = pgTable(
     index("videos_batch").on(t.batchId),
     index("videos_link_task").on(t.linkTaskId),
     check("videos_note_length", sql`${t.note} is null or char_length(${t.note}) <= 6000`),
+    check(
+      "videos_edit_reference_url_valid",
+      sql`${t.editReferenceUrl} is null or (char_length(${t.editReferenceUrl}) <= 2000 and ${t.editReferenceUrl} like 'https://%')`,
+    ),
     check("videos_kind_valid", sql`${t.kind} in ('replicar', 'adaptacion_concepto', 'solo_gancho')`),
     check("videos_hook_seconds_valid", sql`${t.hookSeconds} between 2 and 8`),
     check("videos_adaptation_length", sql`${t.adaptation} is null or char_length(${t.adaptation}) <= 12000`),
@@ -937,8 +946,10 @@ export const agents = pgTable(
 );
 
 /**
- * Tareas para el programa del Mac. Hoy solo `link_download`: descargar el enlace pegado como
- * referencia de un vídeo y entregar el archivo. `queued` → `leased` (un Mac la tiene reservada y
+ * Tareas para el programa del Mac. `link_download`: descargar el enlace pegado como referencia de
+ * un vídeo (`videoId`) y entregar el archivo por una sesión de `upload_sessions`. `song_download`:
+ * descargar el audio (MP3) de un enlace pegado en «Canciones» (sin vídeo) y entregarlo por la
+ * subida propia de la tarea (`uploadId`, `uploadReceived`); al terminar crea la canción (`songId`). `queued` → `leased` (un Mac la tiene reservada y
  * la mantiene con latidos) → `done` | `failed`; una reserva sin latido vuelve a `queued` hasta
  * agotar los intentos. Como mucho una tarea viva por vídeo. `error` es el detalle técnico, solo
  * para el dueño: a la persona se le enseña un texto fijo en el vídeo. La escribe
@@ -950,9 +961,16 @@ export const agentTasks = pgTable(
   {
     id: bigserial("id", { mode: "number" }).primaryKey(),
     kind: text("kind").notNull().default("link_download"),
-    videoId: bigint("video_id", { mode: "number" })
-      .notNull()
-      .references(() => videos.id, { onDelete: "cascade" }),
+    /** El vídeo cuya referencia trae (`link_download`); `null` en una canción. */
+    videoId: bigint("video_id", { mode: "number" }).references(() => videos.id, { onDelete: "cascade" }),
+    /** La canción que creó (`song_download` terminada); `null` mientras tanto o si se borró. */
+    songId: bigint("song_id", { mode: "number" }).references((): AnyPgColumn => songs.id, { onDelete: "set null" }),
+    /**
+     * La sesión de subida de la reserva en curso de una canción (cada reserva abre una nueva) y
+     * cuántos trozos han llegado. El archivo vive en la carpeta temporal de subidas.
+     */
+    uploadId: text("upload_id"),
+    uploadReceived: integer("upload_received").notNull().default(0),
     url: text("url").notNull(),
     status: text("status").notNull().default("queued"),
     /** Quien pegó el enlace (quien creó el vídeo): la atiende un Mac suyo. */
@@ -973,7 +991,12 @@ export const agentTasks = pgTable(
     uniqueIndex("agent_tasks_one_active_per_video")
       .on(t.videoId)
       .where(sql`${t.status} in ('queued', 'leased')`),
-    check("agent_tasks_kind_valid", sql`${t.kind} in ('link_download')`),
+    uniqueIndex("agent_tasks_one_active_song_link")
+      .on(t.createdBy, t.url)
+      .where(sql`${t.kind} = 'song_download' and ${t.status} in ('queued', 'leased')`),
+    check("agent_tasks_kind_valid", sql`${t.kind} in ('link_download', 'song_download')`),
+    // Una referencia es siempre de un vídeo; una canción, de ninguno.
+    check("agent_tasks_target_valid", sql`(${t.kind} = 'link_download') = (${t.videoId} is not null)`),
     check("agent_tasks_status_valid", sql`${t.status} in ('queued', 'leased', 'done', 'failed')`),
     // Una tarea reservada siempre dice quién la tiene y hasta cuándo.
     check("agent_tasks_lease_complete", sql`${t.status} <> 'leased' or (${t.agentId} is not null and ${t.leaseExpiresAt} is not null)`),

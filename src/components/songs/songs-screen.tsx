@@ -13,6 +13,7 @@ import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import type { AuthUser } from "@/server/auth";
 import { ImportSongs } from "./import-songs";
+import { SongLinkField, SongLinkRows, useSongLinks } from "./song-links";
 import { formatTime, groupSongs, searchSongs, SONGS_KEY, type SongJson } from "./labels";
 import { MiniTimeline, SongTimeline } from "./song-timeline";
 import { useSongPlayer, type SongPlayer } from "./use-song-player";
@@ -158,6 +159,12 @@ export function SongsScreen() {
   const [query, setQuery] = useState("");
   const [section, setSection] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<number | null>(null);
+  // Una canción que llega de un enlace se abre en el editor del drop (aunque la búsqueda o la sección la escondan).
+  const links = useSongLinks(owner, (songId) => {
+    setQuery("");
+    setSection(null);
+    setSelectedId(songId);
+  });
 
   const all = useMemo(() => songs.data?.songs ?? [], [songs.data]);
   const groups = useMemo(() => groupSongs(searchSongs(all, query)), [all, query]);
@@ -168,7 +175,17 @@ export function SongsScreen() {
 
   return (
     <div className="flex flex-col gap-5">
-      <PageHeader title="Canciones" actions={owner ? <ImportSongs /> : null}>
+      <PageHeader
+        title="Canciones"
+        actions={
+          owner ? (
+            <div className="flex flex-wrap items-center gap-2">
+              <SongLinkField />
+              <ImportSongs />
+            </div>
+          ) : null
+        }
+      >
         {all.length > 0 ? (
           <p className="flex flex-wrap items-center gap-x-3 text-sm text-muted-foreground tabular-nums">
             <span>{all.length} canciones</span>
@@ -180,6 +197,8 @@ export function SongsScreen() {
           </p>
         ) : null}
       </PageHeader>
+
+      {owner ? <SongLinkRows links={links} /> : null}
 
       {songs.isLoading ? (
         <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]" aria-label="Cargando las canciones">

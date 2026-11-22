@@ -33,6 +33,7 @@ const row = (over: Partial<BatchRowJson> = {}): BatchRowJson => ({
   productId: 1,
   productName: "P",
   note: null,
+  editReferenceUrl: null,
   kind: "replicar",
   hookSeconds: 4,
   bodies: 0,

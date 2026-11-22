@@ -26,7 +26,8 @@ const isPhotoChoice = (value: unknown) => value === undefined || value === null 
  * Cambia `title`, `avatarPhotoId`, `avatarLibraryId` (un avatar de la biblioteca: pasa a `biblioteca`),
  * `environmentPhotoId` (id o `null`), `avatarMode`, `variantId` (una variante del producto o `null`), `clipResolution`,
  * `kind`, `adaptation`, `hookSeconds`, `bodyClipIds`, `note`, `imagePrompt`, `videoPrompt`, `frameUse` o
- * `songId` (la «Música»: id de una canción o `null` para el audio original). Solo quien creó el vídeo. Con algún prompt o `frameUse`, la
+ * `songId` (la «Música»: id de una canción o `null` para el audio original) o `editReferenceUrl` (la
+ * «Referencia de edición»: un enlace admitido, o `null` para quitarla; solo se guarda). Solo quien creó el vídeo. Con algún prompt o `frameUse`, la
  * respuesta lleva también los avisos de los prompts (`imageIssues`, `videoIssues`).
  */
 export async function PUT(request: Request, { params }: { params: Promise<{ videoId: string }> }) {
@@ -34,7 +35,7 @@ export async function PUT(request: Request, { params }: { params: Promise<{ vide
     const { videoId } = await params;
     const body = (await request.json().catch(() => null)) as Record<string, unknown> | null;
     const input = body && typeof body === "object" && !Array.isArray(body) ? body : {};
-    const { title, avatarPhotoId, avatarLibraryId, environmentPhotoId, avatarMode, variantId, clipResolution, kind, adaptation, hookSeconds, bodyClipIds, note, imagePrompt, videoPrompt, frameUse, songId } =
+    const { title, avatarPhotoId, avatarLibraryId, environmentPhotoId, avatarMode, variantId, clipResolution, kind, adaptation, hookSeconds, bodyClipIds, note, imagePrompt, videoPrompt, frameUse, songId, editReferenceUrl } =
       input;
     if (title !== undefined && typeof title !== "string") return badRequest("Escribe el título del vídeo.");
     if (!isPhotoChoice(avatarPhotoId)) return badRequest("Elige una foto con papel «Avatar» de este producto.");
@@ -62,6 +63,7 @@ export async function PUT(request: Request, { params }: { params: Promise<{ vide
       hookSeconds,
       bodyClipIds,
       note,
+      editReferenceUrl,
     });
     if (songId !== undefined) video = await setVideoSong(user!, id, songId);
     if (imagePrompt === undefined && videoPrompt === undefined && frameUse === undefined) return Response.json({ video });

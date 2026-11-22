@@ -7,6 +7,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   acquireLock,
+  allowedSongUrl,
   allowedUrl,
   BAD_TOKEN_MESSAGE,
   checkConfig,
@@ -22,11 +23,16 @@ import {
   readConfig,
   releaseLock,
   runOnce,
+  SONG_LINK_HOSTS,
   TOOLS_RETRY_MS,
+  VERSION,
   YT_DLP_EXTRACTORS,
+  YT_DLP_SONG_EXTRACTORS,
   YT_DLP_TIMEOUT_MS,
   ytDlpArgs,
+  ytDlpAudioArgs,
 } from "../agente-mac/lib.mjs";
+import { SONG_LINK_HOSTS as SERVER_SONG_HOSTS, songLinkOf } from "@/lib/links";
 import { LINK_HOSTS as SERVER_HOSTS, linkOf } from "@/server/agent";
 
 /** El programa del Mac, sin red ni yt-dlp: `fetch`, `spawn` y el reloj son de mentira; el disco, de verdad. */
@@ -470,6 +476,144 @@ describe("una vuelta", () => {
     expect(logs.join("\n")).not.toContain("pra_");
     const reported = calls.filter((call) => call.path.endsWith("/terminar")).map((call) => JSON.stringify(call.body));
     expect(reported.join("\n")).not.toContain(TOKEN);
+  });
+});
+
+describe("canciones", () => {
+  const SONG = "https://soundcloud.com/artista/cancion";
+  const SONG_TASK = { taskId: 9, kind: "cancion", url: SONG, uploadId: "s".repeat(32), chunkBytes: CHUNK, maxBytes: 25 * 1024 * 1024 };
+  /** Una trama MP3 (sincronía MPEG-1 capa III) y relleno. */
+  const mp3 = (size: number) => Buffer.concat([Buffer.from([0xff, 0xfb, 0x90, 0x64]), Buffer.alloc(size - 4, 9)]);
+
+  /** Un yt-dlp de mentira para el audio: deja `cancion.mp3` y, si se da, el título en su archivo. */
+  function audioSpawn(options: { write?: Buffer; title?: string; code?: number; stderr?: string } = {}) {
+    return {
+      sleep: async (ms: number) => {
+        sleeps.push(ms);
+      },
+      spawn: (command: string, args: string[], spawnOptions?: { detached?: boolean }) => {
+        const child = new EventEmitter() as EventEmitter & { stderr: EventEmitter; kill: (signal: string) => void };
+        child.stderr = new EventEmitter();
+        const record = { command, args, options: spawnOptions, killed: null as string | null };
+        spawned.push(record);
+        child.kill = (signal: string) => {
+          record.killed = signal;
+        };
+        queueMicrotask(() => {
+          const out = args[args.indexOf("-o") + 1];
+          if (options.write) fsSync.writeFileSync(out.replace("%(ext)s", "mp3"), options.write);
+          if (options.title !== undefined) fsSync.writeFileSync(args[args.indexOf("--print-to-file") + 2], options.title);
+          if (options.stderr) child.stderr.emit("data", options.stderr);
+          child.emit("close", options.code ?? 0);
+        });
+        return child;
+      },
+    };
+  }
+
+  it("el Mac es de la versión 1.2.0 (la que sabe traer canciones)", () => {
+    expect(VERSION).toBe("1.2.0");
+  });
+
+  it("saca el audio como MP3 con una lista de argumentos fija y el enlace detrás de `--`", () => {
+    expect(ytDlpAudioArgs(SONG, "/tmp/d")).toEqual([
+      "--ignore-config", "--use-extractors", "Instagram,TikTok,vm.tiktok,youtube,facebook,facebook:reel,soundcloud",
+      "--cookies-from-browser", "brave", "--no-playlist", "--playlist-items", "1", "--max-filesize", "25M",
+      "-f", "ba/b", "-x", "--audio-format", "mp3", "--audio-quality", "0",
+      "--print-to-file", "after_move:%(title)s", "/tmp/d/titulo.txt",
+      "-o", "/tmp/d/cancion.%(ext)s", "--", SONG]);
+  });
+
+  it("para canciones solo añade el extractor de una pista de SoundCloud: ni el genérico ni listas", () => {
+    const allowed = YT_DLP_SONG_EXTRACTORS.split(",");
+    expect(allowed).toEqual([...YT_DLP_EXTRACTORS.split(","), "soundcloud"]);
+    for (const banned of ["generic", "default", "all", "soundcloud:set", "soundcloud:user", "soundcloud:playlist", "youtube:tab", "youtube:music:search_url"]) {
+      expect(allowed.map((name) => name.toLowerCase())).not.toContain(banned.toLowerCase());
+    }
+    const args = ytDlpAudioArgs("--exec=x", "/tmp/d");
+    expect(args[0]).toBe("--ignore-config");
+    expect(args.slice(-2)).toEqual(["--", "--exec=x"]);
+  });
+
+  it("SoundCloud vale para una canción y no para un vídeo; la lista es la misma que la del servidor", () => {
+    expect(SONG_LINK_HOSTS).toEqual([...SERVER_SONG_HOSTS]);
+    expect(allowedSongUrl(SONG)).toBe(true);
+    expect(allowedUrl(SONG)).toBe(false);
+    expect(linkOf(SONG)).toBeNull();
+    for (const url of [
+      SONG,
+      "https://m.soundcloud.com/a/b",
+      "https://music.youtube.com/watch?v=abc",
+      REEL,
+      "http://soundcloud.com/a/b",
+      "https://soundcloud.com.evil.test/a",
+      "https://user:pw@soundcloud.com/a",
+      "https://evil.test/?u=soundcloud.com",
+      "https://www.facebook.com/flx/warn/?u=https%3A%2F%2Fevil.test",
+    ]) {
+      expect(allowedSongUrl(url), url).toBe(songLinkOf(url) !== null);
+    }
+  });
+
+  it("descarga el audio en su carpeta temporal, lo sube por trozos y manda el título", async () => {
+    const file = mp3(CHUNK + 1000);
+    const child = audioSpawn({ write: file, title: "  Mi   canción (remix)\nsegunda línea" });
+    const outcome = await runOnce(config(), depsWith(fakeFetch(claimed(SONG_TASK)), child as unknown as ReturnType<typeof fakeSpawn>));
+    expect(outcome).toBe("done");
+    expect(spawned).toHaveLength(1);
+    const dir = path.dirname(spawned[0].args[spawned[0].args.indexOf("-o") + 1]);
+    expect(path.dirname(dir)).toBe(tmp);
+    expect(spawned[0].args).toEqual(ytDlpAudioArgs(SONG, dir));
+    expect(spawned[0].options).toMatchObject({ detached: true });
+    const sub = `subida=${SONG_TASK.uploadId}`;
+    expect(paths()).toEqual([
+      "POST /api/agente/tareas/reclamar",
+      `PUT /api/agente/tareas/9/trozo?indice=0&${sub}`,
+      `PUT /api/agente/tareas/9/trozo?indice=1&${sub}`,
+      "POST /api/agente/tareas/9/terminar",
+    ]);
+    expect(Buffer.concat(calls.filter((call) => call.method === "PUT").map((call) => call.body as Buffer)).equals(file)).toBe(true);
+    expect(calls.at(-1)!.body).toEqual({ ok: true, uploadId: SONG_TASK.uploadId, totalBytes: file.length, title: "Mi canción (remix)" });
+    expect(leftovers()).toEqual([]);
+  });
+
+  it("sin título termina igual (la web pone uno); con más de 25 MB no sube nada", async () => {
+    await runOnce(config(), depsWith(fakeFetch(claimed(SONG_TASK)), audioSpawn({ write: mp3(100) }) as unknown as ReturnType<typeof fakeSpawn>));
+    expect(calls.at(-1)!.body).toEqual({ ok: true, uploadId: SONG_TASK.uploadId, totalBytes: 100 });
+
+    calls = [];
+    const outcome = await runOnce(
+      config(),
+      depsWith(fakeFetch(claimed({ ...SONG_TASK, maxBytes: 50 })), audioSpawn({ write: mp3(100), title: "x" }) as unknown as ReturnType<typeof fakeSpawn>),
+    );
+    expect(outcome).toBe("failed");
+    expect(paths().some((p) => p.startsWith("PUT "))).toBe(false);
+    expect(calls.at(-1)!.body).toEqual({ ok: false, uploadId: SONG_TASK.uploadId, error: "La canción descargada pesa más de 25 MB" });
+    expect(leftovers()).toEqual([]);
+  });
+
+  it("una canción con un enlace fuera de su lista se rechaza sin lanzar yt-dlp", async () => {
+    for (const url of ["https://evil.test/x", "--exec=rm -rf ~", "http://soundcloud.com/a/b", "https://soundcloud.com.evil.test/a"]) {
+      calls = [];
+      const outcome = await runOnce(config(), depsWith(fakeFetch(claimed({ ...SONG_TASK, url })), fakeSpawn()));
+      expect(outcome).toBe("failed");
+      expect(calls.at(-1)!.body).toEqual({ ok: false, uploadId: SONG_TASK.uploadId, error: "El enlace no es de un sitio admitido" });
+    }
+    expect(spawned).toEqual([]);
+  });
+
+  it("un vídeo (sin `kind` o `referencia`) no admite SoundCloud", async () => {
+    const outcome = await runOnce(config(), depsWith(fakeFetch(claimed({ ...TASK, kind: "referencia", url: SONG })), fakeSpawn()));
+    expect(outcome).toBe("failed");
+    expect(spawned).toEqual([]);
+  });
+
+  it("la ficha no aparece en lo que se escribe ni se envía aunque yt-dlp la repita", async () => {
+    const child = audioSpawn({ code: 1, stderr: `ERROR: algo con ${TOKEN}\n` });
+    const outcome = await runOnce(config(), depsWith(fakeFetch(claimed(SONG_TASK)), child as unknown as ReturnType<typeof fakeSpawn>));
+    expect(outcome).toBe("failed");
+    expect(logs.join("\n")).not.toContain(TOKEN);
+    expect(calls.at(-1)!.body).toEqual({ ok: false, uploadId: SONG_TASK.uploadId, error: "yt-dlp no pudo descargar el enlace: ERROR: algo con ***" });
   });
 });
 

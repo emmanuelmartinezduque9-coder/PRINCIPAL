@@ -168,14 +168,7 @@ export async function uploadSong(user: AuthUser, bytes: Buffer, input: SongMetaI
     return { song: song ?? existing, created: false };
   }
 
-  let probed: Awaited<ReturnType<typeof probeAudio>>;
-  try {
-    probed = await probeAudio(bytes);
-  } catch (error) {
-    if (error instanceof MediaError && error.name !== "FfmpegMissingError") throw new HttpError(400, error.message);
-    if (error instanceof MediaError) throw new HttpError(503, error.message);
-    throw error;
-  }
+  const probed = await probe(bytes);
   const meta = checkMeta(input, probed.durationMs);
   const values = {
     title: meta.title ?? "Canción",
@@ -198,6 +191,49 @@ export async function uploadSong(user: AuthUser, bytes: Buffer, input: SongMetaI
     .returning({ ...INFO, created: sql<boolean>`(xmax = 0)` });
   const { created, ...song } = row;
   return { song, created };
+}
+
+/** Tipo y duración del audio por ffprobe; lo que no es audio, 400; sin ffmpeg, 503. */
+async function probe(bytes: Buffer): Promise<Awaited<ReturnType<typeof probeAudio>>> {
+  try {
+    return await probeAudio(bytes);
+  } catch (error) {
+    if (error instanceof MediaError && error.name !== "FfmpegMissingError") throw new HttpError(400, error.message);
+    if (error instanceof MediaError) throw new HttpError(503, error.message);
+    throw error;
+  }
+}
+
+type Executor = Pick<ReturnType<typeof getDb>, "select" | "insert">;
+
+/**
+ * Guarda la canción que trajo el Mac de un enlace pegado (solo para el dueño): título el que dio
+ * yt-dlp (recortado; «Canción» si no dio ninguno), sin drop, y duración y tipo por ffprobe. Si
+ * esa misma canción ya estaba (mismo sha256), no se toca: ni su título ni su drop. Con `executor`,
+ * dentro de la transacción de quien cierra la tarea.
+ */
+export async function saveSongFromLink(
+  user: AuthUser,
+  bytes: Buffer,
+  title: unknown,
+  executor: Executor = getDb(),
+): Promise<{ song: SongInfo; created: boolean }> {
+  requireOwner(user);
+  if (bytes.length === 0) throw new HttpError(400, "La canción está vacía.");
+  if (bytes.length > MAX_SONG_BYTES) throw new HttpError(413, "La canción pesa demasiado (máximo 25 MB).");
+  const sha256 = createHash("sha256").update(bytes).digest("hex");
+  const find = async () => (await executor.select(INFO).from(schema.songs).where(eq(schema.songs.sha256, sha256)))[0];
+  const existing = await find();
+  if (existing) return { song: existing, created: false };
+  const probed = await probe(bytes);
+  const clean = typeof title === "string" ? title.replace(/\s+/g, " ").trim().slice(0, MAX_SONG_TITLE).trim() : "";
+  const [row] = await executor
+    .insert(schema.songs)
+    .values({ title: clean || "Canción", durationMs: probed.durationMs, mime: probed.mime, size: bytes.length, sha256, data: bytes, createdBy: user.id })
+    .onConflictDoNothing({ target: schema.songs.sha256 })
+    .returning(INFO);
+  // Otra subida de la misma canción se adelantó: es esa.
+  return row ? { song: row, created: true } : { song: (await find())!, created: false };
 }
 
 /** Cambia título, número, secciones, drop o inicio (solo el dueño). */

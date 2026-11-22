@@ -747,7 +747,7 @@ describe("reserva y latido", () => {
     expect(await claimTask(agentId, T0)).toBeNull();
     const { taskId } = await requestLinkDownload(dueno, v.id, REEL, T0);
     const claimed = await claimTask(agentId, T0);
-    expect(claimed).toEqual({ taskId, url: REEL, uploadId: expect.stringMatching(/^[A-Za-z0-9_-]{32}$/), chunkBytes: CHUNK_BYTES, maxBytes: 100 * 1024 * 1024 });
+    expect(claimed).toEqual({ taskId, kind: "referencia", url: REEL, uploadId: expect.stringMatching(/^[A-Za-z0-9_-]{32}$/), chunkBytes: CHUNK_BYTES, maxBytes: 100 * 1024 * 1024 });
     expect(await tasks()).toMatchObject([{ id: taskId, status: "leased", agentId, attempts: 1, leaseExpiresAt: later(LEASE_MS) }]);
     expect(await sessionRows()).toMatchObject([{ id: claimed!.uploadId, videoId: v.id, userId: dueno.id, agentTaskId: taskId, totalBytes: null, received: 0 }]);
     // Ya reservada, no se vuelve a entregar.
@@ -1381,7 +1381,7 @@ describe("rutas", () => {
     const claimed = await claimRoute(agentRequest(token));
     expect(claimed.status).toBe(200);
     const task = await claimed.json();
-    expect(task).toEqual({ taskId, url: REEL, uploadId: expect.any(String), chunkBytes: CHUNK_BYTES, maxBytes: 100 * 1024 * 1024 });
+    expect(task).toEqual({ taskId, kind: "referencia", url: REEL, uploadId: expect.any(String), chunkBytes: CHUNK_BYTES, maxBytes: 100 * 1024 * 1024 });
     const chunk = (query: string) => chunkRoute(agentRequest(token, { method: "PUT", body: new Uint8Array(mp4(100)) }, query), taskParams(taskId));
     const finish = (body: unknown) => finishRoute(agentRequest(token, { body: typeof body === "string" ? body : JSON.stringify(body) }), taskParams(taskId));
 

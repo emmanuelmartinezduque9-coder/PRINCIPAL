@@ -5,10 +5,12 @@
 import os from "node:os";
 import path from "node:path";
 
-export const VERSION = "1.1.0";
+export const VERSION = "1.2.0";
 
 /** Sitios de los que se descarga, con sus subdominios. La misma lista que el servidor. */
 export const LINK_HOSTS = ["instagram.com", "tiktok.com", "youtube.com", "youtu.be", "facebook.com", "fb.watch"];
+/** Sitios de los que se descarga una canción: los mismos y SoundCloud. La misma lista que el servidor. */
+export const SONG_LINK_HOSTS = [...LINK_HOSTS, "soundcloud.com"];
 
 /**
  * Los únicos extractores de yt-dlp que se usan: el vídeo suelto de cada sitio (un reel o una
@@ -20,6 +22,12 @@ export const LINK_HOSTS = ["instagram.com", "tiktok.com", "youtube.com", "youtu.
  * Los nombres están comprobados con yt-dlp 2026.10.26 (`yt-dlp --list-extractors`).
  */
 export const YT_DLP_EXTRACTORS = "Instagram,TikTok,vm.tiktok,youtube,facebook,facebook:reel";
+/**
+ * Los extractores para una canción: los mismos y el de una pista suelta de SoundCloud (`soundcloud`;
+ * no sus listas, usuarios ni búsquedas). YouTube Music (`music.youtube.com/watch?v=…`) ya lo lleva
+ * `youtube`. Comprobados con yt-dlp 2026.10.26.
+ */
+export const YT_DLP_SONG_EXTRACTORS = `${YT_DLP_EXTRACTORS},soundcloud`;
 
 /** Cada cuánto dice el programa «sigo vivo». */
 export const HEARTBEAT_MS = 30_000;
@@ -31,6 +39,11 @@ export const MAX_BACKOFF_MS = 60_000;
 export const TOOLS_RETRY_MS = 60_000;
 /** Cada cuánto renueva la reserva de la tarea mientras yt-dlp descarga. */
 export const LEASE_BEAT_MS = 60_000;
+/** Nombres de los archivos de una canción dentro de su carpeta temporal. */
+export const SONG_FILE = "cancion.mp3";
+export const TITLE_FILE = "titulo.txt";
+/** Lo más largo que se manda del título de una canción. */
+const MAX_TITLE = 200;
 /** Lo más que se deja trabajar a yt-dlp con un enlace antes de cortarlo. */
 export const YT_DLP_TIMEOUT_MS = 4 * 60_000;
 /** Una carpeta temporal de otra ejecución solo se borra si lleva este tiempo sin tocarse. */
@@ -57,10 +70,11 @@ function isRedirector(url) {
 }
 
 /**
- * Si el enlace es de uno de los sitios admitidos: solo `https`, sin usuario ni puerto, y que no
- * sea una de sus direcciones de salto (`/flx/warn`, `/l.php`, `l.facebook.com`, `l.instagram.com`…).
+ * Si el enlace es de uno de los sitios admitidos (`hosts`, por defecto los de los vídeos): solo
+ * `https`, sin usuario ni puerto, y que no sea una de sus direcciones de salto (`/flx/warn`,
+ * `/l.php`, `l.facebook.com`, `l.instagram.com`…).
  */
-export function allowedUrl(url) {
+export function allowedUrl(url, hosts = LINK_HOSTS) {
   if (typeof url !== "string" || url.length > 2000) return false;
   let parsed;
   try {
@@ -70,8 +84,13 @@ export function allowedUrl(url) {
   }
   if (parsed.protocol !== "https:" || parsed.username || parsed.password || parsed.port) return false;
   const host = parsed.hostname.toLowerCase();
-  if (!LINK_HOSTS.some((allowed) => host === allowed || host.endsWith(`.${allowed}`))) return false;
+  if (!hosts.some((allowed) => host === allowed || host.endsWith(`.${allowed}`))) return false;
   return !isRedirector(parsed);
+}
+
+/** Como `allowedUrl`, para el enlace de una canción (admite además SoundCloud). */
+export function allowedSongUrl(url) {
+  return allowedUrl(url, SONG_LINK_HOSTS);
 }
 
 /**
@@ -86,6 +105,22 @@ export function ytDlpArgs(url, outPath) {
     "--cookies-from-browser", "brave", "--no-playlist", "--playlist-items", "1", "--max-filesize", "100M",
     "-f", "bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]/b", "--merge-output-format", "mp4",
     "-o", outPath, "--", url,
+  ];
+}
+
+/**
+ * Argumentos de yt-dlp para sacar el audio de `url` como MP3 (la mejor calidad) en la carpeta
+ * `dir`: el archivo queda en `dir/cancion.mp3` y el título en `dir/titulo.txt`. Las mismas
+ * garantías que `ytDlpArgs`: lista de argumentos, `--` delante del enlace, sin configuración, solo
+ * los extractores de `YT_DLP_SONG_EXTRACTORS` y una sola pista, como mucho 25 MB.
+ */
+export function ytDlpAudioArgs(url, dir) {
+  return [
+    "--ignore-config", "--use-extractors", YT_DLP_SONG_EXTRACTORS,
+    "--cookies-from-browser", "brave", "--no-playlist", "--playlist-items", "1", "--max-filesize", "25M",
+    "-f", "ba/b", "-x", "--audio-format", "mp3", "--audio-quality", "0",
+    "--print-to-file", "after_move:%(title)s", path.join(dir, TITLE_FILE),
+    "-o", path.join(dir, "cancion.%(ext)s"), "--", url,
   ];
 }
 
@@ -287,11 +322,11 @@ function killGroup(child) {
  * (a él y a sus hijos). Devuelve `{ ok: true }`, `{ ok: false, error }`, `{ lost: true }` (la web
  * retiró la tarea) o `{ local: true, error }` (no se pudo ni lanzar: es cosa de este Mac).
  */
-async function download(config, deps, task, file) {
+async function download(config, deps, task, args) {
   let child;
   try {
     // En su propio grupo de procesos, para poder cortarlo con todo lo que lance.
-    child = deps.spawn(config.ytDlp ?? "yt-dlp", ytDlpArgs(new URL(task.url).href, file), { stdio: ["ignore", "ignore", "pipe"], detached: true });
+    child = deps.spawn(config.ytDlp ?? "yt-dlp", args, { stdio: ["ignore", "ignore", "pipe"], detached: true });
   } catch (error) {
     return { local: true, error: messageOf(error) };
   }
@@ -327,6 +362,13 @@ async function download(config, deps, task, file) {
       return { lost: true };
     }
   }
+}
+
+/** El título que dejó yt-dlp: la primera línea, sin espacios de más y recortada; `null` si no hay. */
+export async function readTitle(fs, file) {
+  const text = await fs.readFile(file, "utf8").catch(() => "");
+  const title = text.split("\n")[0].replace(/\s+/g, " ").trim().slice(0, MAX_TITLE).trim();
+  return title || null;
 }
 
 async function sizeOf(fs, file) {
@@ -418,14 +460,19 @@ export async function runOnce(config, deps) {
     return "failed";
   };
 
+  // Una canción trae el audio (MP3); cualquier otra cosa, el vídeo de referencia.
+  const song = task.kind === "cancion";
   // Aunque la web ya lo comprobó, este Mac no lanza yt-dlp con un enlace de fuera de la lista.
-  if (!allowedUrl(task.url)) return giveUp("El enlace no es de un sitio admitido");
+  if (!(song ? allowedSongUrl(task.url) : allowedUrl(task.url))) return giveUp("El enlace no es de un sitio admitido");
 
+  // Carpeta temporal propia (solo la puede leer este usuario: `mkdtemp` la crea con 700).
   const dir = await deps.fs.mkdtemp(path.join(config.tmpDir ?? os.tmpdir(), TMP_PREFIX));
-  const file = path.join(dir, "video.mp4");
+  const file = path.join(dir, song ? SONG_FILE : "video.mp4");
+  const url = new URL(task.url).href;
+  const maxMb = song ? 25 : 100;
   try {
     log(`Descargando ${task.url}`);
-    const downloaded = await download(config, deps, task, file);
+    const downloaded = await download(config, deps, task, song ? ytDlpAudioArgs(url, dir) : ytDlpArgs(url, file));
     if (downloaded.lost) return lost();
     if (downloaded.local) {
       // Cosa de este Mac, no del enlace: no se da por fallido.
@@ -435,14 +482,16 @@ export async function runOnce(config, deps) {
     if (!downloaded.ok) return await giveUp(downloaded.error);
 
     const size = await sizeOf(deps.fs, file);
-    if (!size) return await giveUp("yt-dlp no dejó ningún archivo (puede que el vídeo pese más de 100 MB)");
-    if (task.maxBytes > 0 && size > task.maxBytes) return await giveUp("El vídeo descargado pesa más de 100 MB");
+    const what = song ? "La canción" : "El vídeo";
+    if (!size) return await giveUp(`yt-dlp no dejó ningún archivo (puede que ${what.toLowerCase()} pese más de ${maxMb} MB)`);
+    if (task.maxBytes > 0 && size > task.maxBytes) return await giveUp(`${what} descargad${song ? "a" : "o"} pesa más de ${maxMb} MB`);
 
     const sent = await upload(config, deps, task, file, size);
     if (sent === "lost") return lost();
     if (sent !== "ok") return await giveUp(sent.error);
 
-    const done = await finish({ ok: true, totalBytes: size }).catch(() => null);
+    const title = song ? await readTitle(deps.fs, path.join(dir, TITLE_FILE)) : null;
+    const done = await finish(title ? { ok: true, totalBytes: size, title } : { ok: true, totalBytes: size }).catch(() => null);
     if (done?.status === 409) return lost();
     if (!done?.ok) return await giveUp(`La web no dio por entregado el archivo (${done?.status ?? "sin respuesta"})`);
     log("Entregado.");

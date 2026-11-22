@@ -10,6 +10,7 @@ import { getProductFor } from "@/server/products";
 import { songSummaries, type SongSummary } from "@/server/songs";
 import type { Analysis, AnalysisQuestion } from "@/server/videos/analysis";
 import { startingAvatar } from "@/lib/default-avatar";
+import { linkOf } from "@/lib/links";
 import { analysisStaleness, answersText, checkKindInput, cleanNote, isAvatarMode, type AvatarMode, type VideoKind } from "@/server/videos/brief";
 import { bodiesOfVideo, checkVideoBodies, type VideoBody } from "@/server/videos/bodies";
 import { analysisCostMicros, costsOfVideo, type VideoCosts } from "@/server/videos/costs";
@@ -110,6 +111,23 @@ export interface NewVideoExtras {
   /** Ya comprobada (`checkSongChoice`), con su modo (`audioColumns`). */
   songId?: number | null;
   audioMode?: "cancion" | "original";
+  /** Ya comprobada (`checkEditReferenceUrl`). */
+  editReferenceUrl?: string | null;
+}
+
+const BAD_EDIT_REFERENCE = "La referencia de edición tiene que ser un enlace de Instagram, TikTok, YouTube o Facebook.";
+
+/**
+ * «Referencia de edición» tal como llega: `undefined` (no se toca), `null` o vacía (se quita) o un
+ * enlace de los sitios admitidos (`linkOf`: https, como mucho 2.000 caracteres), que se guarda
+ * normalizado. Cualquier otra cosa, 400. Solo se guarda: lo usará el montador.
+ */
+export function checkEditReferenceUrl(value: unknown): string | null | undefined {
+  if (value === undefined) return undefined;
+  if (value === null || (typeof value === "string" && value.trim() === "")) return null;
+  const link = linkOf(value);
+  if (link === null) throw new HttpError(400, BAD_EDIT_REFERENCE);
+  return link;
 }
 
 /**
@@ -302,6 +320,8 @@ export interface VideoChoicesInput {
   /** Lista ordenada de cuerpos (`product_bodies.id`) de este producto. */
   bodyClipIds?: unknown;
   note?: unknown;
+  /** «Referencia de edición»: un enlace admitido, o `null` / vacío para quitarla. */
+  editReferenceUrl?: unknown;
 }
 
 /**
@@ -341,12 +361,16 @@ export async function updateVideoChoices(user: AuthUser, videoId: number, input:
     changes.environmentPhotoId = checkPhoto(await listProductPhotos(user, video.productId), input.environmentPhotoId, "entorno");
   }
   if (input.variantId !== undefined) changes.variantId = await checkVariantChoice(user, video.productId, input.variantId);
+  // La referencia de edición no llega al desglose: cambiarla sola no despierta el desglose automático.
+  const briefChanged = Object.keys(changes).length > 0;
+  const editReferenceUrl = checkEditReferenceUrl(input.editReferenceUrl);
+  if (editReferenceUrl !== undefined) changes.editReferenceUrl = editReferenceUrl;
 
   if (Object.keys(changes).length === 0) return video;
   const [updated] = await getDb()
     .update(schema.videos)
     // Un duplicado que esperaba a que lo cambiaran ya puede tener su desglose automático.
-    .set({ ...changes, skipAutoAnalysis: false, updatedAt: new Date() })
+    .set({ ...changes, ...(briefChanged ? { skipAutoAnalysis: false } : {}), updatedAt: new Date() })
     .where(and(eq(schema.videos.id, video.id), eq(schema.videos.createdBy, user.id)))
     .returning();
   if (!updated) throw new HttpError(404, NOT_FOUND);
