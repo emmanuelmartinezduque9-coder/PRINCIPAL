@@ -317,16 +317,7 @@ async function askRow(user: AuthUser, row: Row, photos: PhotoInfo[], linkFailed:
       href: `/productos/${video.productId}`,
     });
   }
-  if (video.songId === null && !(video.ownerAnswers ?? []).some((a) => a.key === "sys:cancion") && context.songs.length > 0) {
-    questions.push({
-      key: "sys:cancion",
-      kind: "cancion",
-      text: "¿Qué canción?",
-      options: [...context.songs.map((song) => ({ value: `${SONG_PREFIX}${song.id}`, label: song.label })), { value: ORIGINAL_AUDIO, label: "Audio original" }],
-      freeText: false,
-      href: null,
-    });
-  }
+  // La música no se pregunta: «Audio original» en la tarjeta es una elección (el audio de la referencia).
   if (video.kind === "adaptacion_concepto" && !video.adaptation?.trim()) {
     questions.push({ key: "sys:adaptacion", kind: "adaptacion", text: "¿Qué adaptación quieres?", options: [], freeText: true, href: null });
   }
