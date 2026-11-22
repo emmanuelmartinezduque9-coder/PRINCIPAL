@@ -323,14 +323,18 @@ function dateOf(value: unknown): Date | null {
   return null;
 }
 
-/** Identificadores de las entradas que deja ver una generación del historial. */
-function mediaIdsOf(params: Record<string, unknown>): string[] {
-  const ids: string[] = [];
+/** Las entradas que deja ver una generación del historial, con su identificador y su dirección si constan. */
+function mediaOf(params: Record<string, unknown>): HfHistoryItem["media"] {
+  const media: HfHistoryItem["media"] = [];
   const add = (value: unknown) => {
     if (isObject(value)) {
       const id = text(value.id) ?? text(value.media_id) ?? text(value.value);
-      if (id) ids.push(id);
-    } else if (typeof value === "string" && value.trim()) ids.push(value.trim());
+      const url = text(value.url) ?? text(value.rawUrl);
+      if (id || url) media.push({ id, url });
+    } else if (typeof value === "string" && value.trim()) {
+      const item = value.trim();
+      media.push(/^https?:/.test(item) ? { id: null, url: item } : { id: item, url: null });
+    }
   };
   for (const key of ["input_images", "input_videos", "medias", "media_inputs"]) {
     const value = params[key];
@@ -339,7 +343,14 @@ function mediaIdsOf(params: Record<string, unknown>): string[] {
   for (const key of ["input_image", "input_video", "start_image", "end_image"]) {
     if (params[key] !== null && params[key] !== undefined) add(params[key]);
   }
-  return [...new Set(ids)];
+  return media;
+}
+
+/** La miniatura del resultado de una generación del historial (`results.minUrl`, o `rawUrl`). */
+function thumbOf(entry: Record<string, unknown>): string | null {
+  const results = isObject(entry.results) ? entry.results : {};
+  const url = text(results.minUrl) ?? text(results.rawUrl);
+  return url && /^https:/.test(url) ? url : null;
 }
 
 /**
@@ -363,8 +374,9 @@ export function readHistory(data: unknown, type: "image" | "video"): HfHistoryPa
       model: text(entry.model) ?? text(params.model) ?? "",
       prompt: typeof params.prompt === "string" ? params.prompt : null,
       createdAt: dateOf(entry.createdAt ?? entry.created_at),
-      mediaIds: mediaIdsOf(params),
+      media: mediaOf(params),
       resolution: text(params.resolution),
+      thumbUrl: thumbOf(entry),
     });
   }
   const cursor = isObject(data) ? num(data.next_cursor) : null;

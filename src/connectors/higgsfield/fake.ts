@@ -80,8 +80,9 @@ export function createFakeHiggsfield(
         model: request.model,
         prompt: request.prompt,
         createdAt: new Date(),
-        mediaIds: request.medias.map((media) => media.value),
+        media: request.medias.map((media) => ({ id: media.value, url: null })),
         resolution: request.resolution,
+        thumbUrl: null,
       });
     }
     state.credits -= unitCost * accepted;

@@ -456,6 +456,15 @@ export const generations = pgTable(
      * Higgsfield no encontraba sus trabajos: si terminan tarde, no se pierden.
      */
     recheckUntil: instant("recheck_until"),
+    /**
+     * En duda: trabajos del historial que se parecen pero no se pueden adoptar con seguridad
+     * (`{ jobId, createdAt, model, thumbUrl }`), para que la persona elija si es uno de ellos.
+     */
+    candidates: jsonb("candidates").$type<Array<{ jobId: string; createdAt: string | null; model: string; thumbUrl: string | null }>>(),
+    /** Quién y cuándo resolvió a mano una duda, y cómo (`adoptado` o `no_esta`). */
+    resolvedBy: bigint("resolved_by", { mode: "number" }),
+    resolvedAt: instant("resolved_at"),
+    resolvedAs: text("resolved_as"),
   },
   (t) => [
     uniqueIndex("generations_video_kind_round")
@@ -475,6 +484,7 @@ export const generations = pgTable(
     ),
     check("generations_count_valid", sql`${t.count} between 1 and 12`),
     check("generations_round_valid", sql`${t.round} >= 1`),
+    check("generations_resolved_as_valid", sql`${t.resolvedAs} is null or ${t.resolvedAs} in ('adoptado', 'no_esta')`),
     check("generations_credits_valid", sql`${t.quotedCredits} >= 0 and (${t.creditsSpent} is null or ${t.creditsSpent} >= 0)`),
   ],
 );

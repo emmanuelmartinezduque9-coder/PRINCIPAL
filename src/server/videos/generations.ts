@@ -60,6 +60,17 @@ export const FINALIZE_LEASE_MS = 10 * 60 * 1000;
 /** Cuánto se sigue mirando una generación fallida por tope o porque Higgsfield no encontraba sus trabajos. */
 export const LATE_RECHECK_MS = 6 * 60 * 60 * 1000;
 const LATE_POLL_INTERVAL_MS = 5 * 60 * 1000;
+/** Un trabajo que Higgsfield no encuentra cuenta como pendiente hasta que pasa esto desde el envío. */
+export const NOT_FOUND_GRACE_MS = 15 * 60 * 1000;
+/** Una duda que no se puede confirmar se vuelve a mirar cada tanto, no cada minuto. */
+const RECONCILE_BACKOFF_MS = 15 * 60 * 1000;
+/**
+ * Cuánto se sigue esperando la respuesta de un envío que no respondió a tiempo. Tiene que terminar
+ * antes de que la reconciliación pueda rendirse (`RECONCILE_GIVE_UP_MS` desde el sello del envío),
+ * para que una respuesta tardía nunca encuentre la fila ya «no enviada».
+ */
+const LATE_REPLY_WAIT_MS = RECONCILE_GIVE_UP_MS - SUBMIT_DEADLINE_MS - 60 * 1000;
+if (LATE_REPLY_WAIT_MS <= 0) throw new Error("LATE_REPLY_WAIT_MS debe ser positivo: revisa RECONCILE_GIVE_UP_MS y SUBMIT_DEADLINE_MS.");
 /** Margen al buscar en el historial: lo enviado no puede ser anterior a esto antes del envío. */
 const HISTORY_SLACK_MS = 60 * 1000;
 const HISTORY_PAGE_SIZE = 50;
@@ -109,6 +120,15 @@ export interface GenerationView {
     quotedCredits: number;
     rejectReason: string | null;
     results: Array<{ id: number; ok: boolean; url: string | null; hasThumb: boolean }>;
+    /**
+     * Solo en una duda (`unknown`): los trabajos parecidos del historial que la persona puede
+     * reconocer («Es este»), si ya puede resolverla a mano y el aviso de riesgo para la pantalla.
+     */
+    stuck: {
+      candidates: Array<{ jobId: string; createdAt: string | null; model: string; thumbUrl: string | null }>;
+      canResolve: boolean;
+      risk: string;
+    } | null;
   } | null;
 }
 
@@ -395,27 +415,61 @@ async function settleNotSent(id: number, values: GenerationChanges): Promise<voi
 }
 
 /**
- * Anota un envío ya hecho (y ya cobrado): desde `submitting` o, si el seguimiento ya la dio por
- * dudosa, desde `unknown`. Si la fila ya no está en ninguno de los dos, lo dice bien alto con los
- * trabajos (para buscarlos a mano) y devuelve `false`.
+ * Anota un envío ya hecho (y ya cobrado), con el cerrojo de adopción (el mismo que la
+ * reconciliación) y sin quedarse trabajos que ya tenga otra generación:
+ * - desde `submitting` o, si el seguimiento ya la dio por dudosa, desde `unknown`;
+ * - si la reconciliación ya adoptó parte del historial y la fila aún no se está finalizando,
+ *   añade los que falten;
+ * - si no, lo dice bien alto con los trabajos (para buscarlos a mano).
+ * Devuelve si la fila quedó `submitted` con estos trabajos.
  */
 async function recordSubmitted(row: Generation, sent: HfSubmitResult, deps: GenDeps): Promise<boolean> {
-  const jobIds = sent.jobIds.slice(0, row.count);
-  const values: GenerationChanges = {
-    status: "submitted",
-    jobIds,
-    submittedAt: clock(deps),
-    creditsSpent: Math.ceil((row.quotedCredits * jobIds.length) / row.count),
-    raw: trimRaw(sent.raw),
-    error: null,
-  };
-  if (await retryWrite(() => moveFrom(row.id, "submitting", values))) return true;
-  if (await retryWrite(() => moveFrom(row.id, "unknown", values))) return true;
-  // La reconciliación pudo adoptarlos ya del historial: entonces no se ha perdido nada.
-  const [current] = await getDb().select({ jobIds: generations.jobIds }).from(generations).where(eq(generations.id, row.id));
-  if (current && jobIds.every((jobId) => current.jobIds.includes(jobId))) return false;
-  console.error(`[generaciones] Envío ${row.id} hecho pero sin fila donde anotarlo. Trabajos de Higgsfield: ${jobIds.join(", ")}`);
-  return false;
+  const ids = sent.jobIds.slice(0, row.count);
+  const recorded = await retryWrite(() =>
+    getDb().transaction(async (tx) => {
+      await generationLock(tx, 0);
+      const taken = await takenJobIds(tx, row.id, ids);
+      const free = ids.filter((jobId) => !taken.has(jobId));
+      if (free.length < ids.length) {
+        console.error(`[generaciones] Envío ${row.id}: trabajos que ya tenía otra generación: ${ids.filter((id) => taken.has(id)).join(", ")}`);
+      }
+      if (free.length === 0) return "lost" as const;
+      const values: GenerationChanges = {
+        status: "submitted",
+        jobIds: free,
+        submittedAt: clock(deps),
+        creditsSpent: Math.ceil((row.quotedCredits * free.length) / row.count),
+        raw: trimRaw(sent.raw),
+        error: null,
+      };
+      for (const from of ["submitting", "unknown"] as const) {
+        const moved = await tx
+          .update(generations)
+          .set(values)
+          .where(and(eq(generations.id, row.id), eq(generations.status, from)))
+          .returning({ id: generations.id });
+        if (moved.length > 0) return "recorded" as const;
+      }
+      const [current] = await tx.select().from(generations).where(eq(generations.id, row.id)).for("update");
+      if (current?.status === "submitted" && current.finalizingAt === null) {
+        const merged = [...new Set([...current.jobIds, ...free])].slice(0, row.count);
+        if (merged.length > current.jobIds.length) {
+          await tx
+            .update(generations)
+            .set({ jobIds: merged, creditsSpent: Math.ceil((row.quotedCredits * merged.length) / row.count) })
+            .where(eq(generations.id, row.id));
+        }
+        return "recorded" as const;
+      }
+      // La reconciliación pudo adoptarlos ya del historial: entonces no se ha perdido nada.
+      if (current && free.every((jobId) => current.jobIds.includes(jobId))) return "known" as const;
+      return "lost" as const;
+    }),
+  );
+  if (recorded === "lost") {
+    console.error(`[generaciones] Envío ${row.id} hecho pero sin fila donde anotarlo. Trabajos de Higgsfield: ${ids.join(", ")}`);
+  }
+  return recorded === "recorded";
 }
 
 /** Lo que pasó con la llamada que gasta, una vez se sabe (aunque llegue tarde). */
@@ -493,7 +547,7 @@ export async function submitGeneration(generationId: number, deps: GenDeps = {})
   if (outcome === "timeout") {
     await retryWrite(() => moveFrom(row.id, "submitting", { status: "unknown", error: UNKNOWN_OUTCOME }));
     // La respuesta, si llega, se anota igual.
-    void within(sending, 10 * 60 * 1000)
+    void within(sending, LATE_REPLY_WAIT_MS)
       .then((late) => (late === "timeout" ? false : settleSend(row, late, deps)))
       .catch((error: unknown) => console.error(`[generaciones] No se pudo anotar la respuesta tardía del envío ${row.id}:`, error));
     return;
@@ -508,8 +562,18 @@ export async function submitGeneration(generationId: number, deps: GenDeps = {})
 
 // ───────────────────────── Seguimiento (barato) ─────────────────────────
 
-/** Un trabajo que aún no ha terminado de verdad: pendiente, o «terminado» sin dirección de resultado. */
-const stillRunning = (job: HfJob) => job.status === "pending" || (job.status === "done" && job.urls.length === 0);
+/**
+ * Un trabajo que aún no ha terminado de verdad: pendiente, «terminado» sin dirección de resultado,
+ * o que Higgsfield aún no encuentra pero se envió hace menos de `NOT_FOUND_GRACE_MS` (una sola vez
+ * sin encontrarlo no hace fallar un trabajo pagado).
+ */
+function stillRunning(row: Generation, now: Date): (job: HfJob) => boolean {
+  const recent = row.submittedAt !== null && row.submittedAt.getTime() > now.getTime() - NOT_FOUND_GRACE_MS;
+  return (job) => job.status === "pending" || (job.status === "done" && job.urls.length === 0) || (job.failure === "not_found" && recent);
+}
+
+/** Estados en los que una generación ya terminada se sigue mirando (`recheck_until`). */
+const RECHECKED: GenerationStatus[] = ["failed", "done"];
 
 /** Encola el trabajo que descarga los resultados (sin producto: no gasta y no debe pararse por acceso). */
 async function enqueueFinalize(row: Generation): Promise<void> {
@@ -518,8 +582,9 @@ async function enqueueFinalize(row: Generation): Promise<void> {
 
 /**
  * Pregunta a Higgsfield por los trabajos de una generación enviada, como mucho una vez cada 8 s (y
- * cada 5 min una fallida que aún se vuelve a mirar). No descarga nada: cuando todos han terminado,
- * encola `video.finalizar`. Se salta las que tienen una finalización en curso.
+ * cada 5 min una terminada que aún se vuelve a mirar porque algún trabajo no aparecía). No descarga
+ * nada: cuando todos han terminado, encola `video.finalizar`. Se salta las que tienen una
+ * finalización en curso.
  */
 export async function pollGeneration(generationId: number, deps: GenDeps = {}): Promise<void> {
   const now = clock(deps);
@@ -538,7 +603,7 @@ export async function pollGeneration(generationId: number, deps: GenDeps = {}): 
             or(isNull(generations.lastPolledAt), lt(generations.lastPolledAt, ago(POLL_MIN_INTERVAL_MS))),
           ),
           and(
-            eq(generations.status, "failed"),
+            inArray(generations.status, RECHECKED),
             gt(generations.recheckUntil, now),
             or(isNull(generations.lastPolledAt), lt(generations.lastPolledAt, ago(LATE_POLL_INTERVAL_MS))),
           ),
@@ -555,9 +620,13 @@ export async function pollGeneration(generationId: number, deps: GenDeps = {}): 
     console.warn(`[generaciones] No se pudo consultar la generación ${row.id}: ${nameOf(error)}`);
     return;
   }
-  if (jobs.length < row.jobIds.length || jobs.some(stillRunning)) return;
-  // Una fallida que se vuelve a mirar solo cambia si algo ha terminado de verdad.
-  if (row.status === "failed" && jobs.every((job) => job.failure === "not_found")) return;
+  if (jobs.length < row.jobIds.length || jobs.some(stillRunning(row, now))) return;
+  if (row.status !== "submitted") {
+    // Una terminada que se vuelve a mirar solo cambia si lo que no aparecía ya ha aparecido.
+    const stillMissing = jobs.some((job) => job.failure === "not_found");
+    const newlyDone = row.status === "failed" && jobs.some((job) => job.status === "done");
+    if (stillMissing && !newlyDone) return;
+  }
   await enqueueFinalize(row);
 }
 
@@ -638,7 +707,7 @@ export async function finalizeGeneration(generationId: number, deps: GenDeps = {
     .where(
       and(
         eq(generations.id, generationId),
-        or(eq(generations.status, "submitted"), and(eq(generations.status, "failed"), gt(generations.recheckUntil, now))),
+        or(eq(generations.status, "submitted"), and(inArray(generations.status, RECHECKED), gt(generations.recheckUntil, now))),
         or(isNull(generations.finalizingAt), lt(generations.finalizingAt, new Date(now.getTime() - FINALIZE_LEASE_MS))),
       ),
     )
@@ -656,7 +725,7 @@ export async function finalizeGeneration(generationId: number, deps: GenDeps = {
       await release();
       return;
     }
-    if (jobs.length < row.jobIds.length || jobs.some(stillRunning)) {
+    if (jobs.length < row.jobIds.length || jobs.some(stillRunning(row, now))) {
       await release();
       return;
     }
@@ -667,17 +736,26 @@ export async function finalizeGeneration(generationId: number, deps: GenDeps = {
       return;
     }
 
+    // Lo que ya está guardado y bien (al volver a mirar una terminada) no se descarga otra vez.
+    const savedOk = new Set(
+      (await getDb().select({ index: results.index }).from(results).where(and(eq(results.generationId, row.id), eq(results.ok, true)))).map(
+        (saved) => saved.index,
+      ),
+    );
     const found = await Promise.all(
       jobs.map(async (job, index) => {
+        if (savedOk.has(index)) return null;
         const ok = job.status === "done";
         const thumb = ok ? await thumbnailOf(job.urls[0], row.kind, deps) : null;
         return { generationId: row.id, index, jobId: job.jobId, ok, url: job.urls[0] ?? null, error: jobError(job), thumbMime: thumb ? "image/jpeg" : null, thumb };
       }),
     );
+    // Si algún trabajo sigue sin aparecer, se vuelve a mirar unas horas (también si otro salió bien).
+    const recheckUntil = notFound ? (row.recheckUntil ?? new Date(now.getTime() + LATE_RECHECK_MS)) : null;
     const outcome: GenerationChanges = anyOk
-      ? { status: "done", error: null, recheckUntil: null }
+      ? { status: "done", error: null, recheckUntil }
       : notFound
-        ? { status: "failed", error: JOB_NOT_FOUND, recheckUntil: row.recheckUntil ?? new Date(now.getTime() + LATE_RECHECK_MS) }
+        ? { status: "failed", error: JOB_NOT_FOUND, recheckUntil }
         : { status: "failed", error: jobs.some(isBlocked) ? BLOCKED : JOB_FAILED, recheckUntil: null };
 
     await getDb().transaction(async (tx) => {
@@ -688,6 +766,7 @@ export async function finalizeGeneration(generationId: number, deps: GenDeps = {
         .returning({ id: generations.id });
       if (!finished) return; // otra finalización se hizo con la fila (reserva caducada)
       for (const result of found) {
+        if (!result) continue;
         await tx
           .insert(results)
           .values(result)
@@ -717,47 +796,52 @@ async function takenJobIds(db: Db | Tx, exceptId: number, candidates: string[]):
     .select({ jobIds: generations.jobIds })
     .from(generations)
     .where(and(ne(generations.id, exceptId), sql`${generations.jobIds} ?| ${sql.param(candidates)}::text[]`));
-  const inResults = await db.select({ jobId: results.jobId }).from(results).where(inArray(results.jobId, candidates));
+  const inResults = await db
+    .select({ jobId: results.jobId })
+    .from(results)
+    .where(and(inArray(results.jobId, candidates), ne(results.generationId, exceptId)));
   return new Set([...rows.flatMap((row) => row.jobIds), ...inResults.map((row) => row.jobId)]);
 }
 
+type ReconcileOutcome = "unreadable" | "adopted" | "not_sent" | "unknown" | "skipped";
+
 /**
- * Una generación en duda (`unknown`). Lee el historial de Higgsfield (todas las páginas que hagan
- * falta para cubrir desde el envío, con un tope) y:
+ * Una pasada de reconciliación sobre una fila en duda. Lee el historial de Higgsfield (por páginas,
+ * con un tope, hasta llegar a antes del envío) y:
  *
  * - adopta (→ `submitted`) los trabajos con el mismo prompt, con fecha desde el envío (con un
- *   minuto de margen), de la misma familia de modelo, con la misma resolución y las mismas entradas
- *   (si el historial las deja ver) y que no tenga ya otra generación. Nunca uno sin fecha.
- * - si hay algo parecido que no se puede adoptar con seguridad (sin fecha, otro modelo…), sigue en duda.
- * - solo pasa a `not_sent` cuando, pasados 10 minutos, el historial es creíble (cada entrada trae
- *   prompt y modelo), cubre todo el tiempo desde el envío y no hay nada parecido.
- * - si no se puede probar ni lo uno ni lo otro, sigue en duda y se pide a la persona que mire su cuenta.
+ *   minuto de margen), de la misma familia de modelo, con la misma resolución y con entradas que
+ *   sean nuestras (por identificador o porque su dirección lleva uno de nuestros identificadores), y
+ *   que no tenga ya otra generación. Nunca uno sin fecha.
+ * - si hay algo parecido que no se puede adoptar con seguridad, lo guarda como candidato
+ *   (`candidates`) para que la persona decida, y sigue en duda.
+ * - solo pasa a `not_sent` cuando, pasados 10 minutos, se ha llegado al final del historial o a
+ *   antes del envío (no basta una página corta), las entradas de esa ventana traen prompt y modelo,
+ *   y no hay nada con ese prompt.
+ * - si no se puede probar ni lo uno ni lo otro, sigue en duda (y se vuelve a mirar cada 15 minutos).
  * Si el historial no se puede leer, no cambia nada.
  */
-export async function reconcileGeneration(generationId: number, deps: GenDeps = {}): Promise<void> {
+async function reconcileRow(row: Generation, deps: GenDeps, options: { force?: boolean } = {}): Promise<ReconcileOutcome> {
   const now = clock(deps);
-  const [row] = await getDb()
-    .select()
-    .from(generations)
-    .where(and(eq(generations.id, generationId), eq(generations.status, "unknown")));
-  if (!row) return;
+  if (
+    !options.force &&
+    row.error === CANNOT_CONFIRM &&
+    row.lastPolledAt !== null &&
+    row.lastPolledAt.getTime() > now.getTime() - RECONCILE_BACKOFF_MS
+  ) {
+    return "skipped";
+  }
   const startedAt = (row.submitStartedAt ?? row.intentAt).getTime();
   const since = startedAt - HISTORY_SLACK_MS;
 
   const items: HfHistoryItem[] = [];
-  let credible = true;
   let covered = false;
   let cursor: number | null = null;
   try {
     for (let page = 0; page < HISTORY_MAX_PAGES; page += 1) {
       const result = await higgsfieldOf(deps).history(row.userId, historyType(row.kind), HISTORY_PAGE_SIZE, cursor);
       items.push(...result.items);
-      if (result.items.some((item) => item.prompt === null || !item.model)) credible = false;
-      if (result.items.length < HISTORY_PAGE_SIZE || result.nextCursor === null) {
-        covered = true;
-        break;
-      }
-      if (result.items.some((item) => item.createdAt !== null && item.createdAt.getTime() <= since)) {
+      if (result.nextCursor === null || result.items.some((item) => item.createdAt !== null && item.createdAt.getTime() <= since)) {
         covered = true;
         break;
       }
@@ -765,54 +849,173 @@ export async function reconcileGeneration(generationId: number, deps: GenDeps = 
     }
   } catch (error) {
     console.warn(`[generaciones] Sin historial para reconciliar la generación ${row.id}: ${nameOf(error)}`);
-    return;
+    return "unreadable";
   }
 
   const request = row.request as { model: string; prompt: string; resolution?: string; medias?: Array<{ value: string }> };
-  const ourMedia = new Set((request.medias ?? []).map((media) => media.value));
-  const samePrompt = (item: HfHistoryItem) => item.prompt !== null && item.prompt.trim() === request.prompt.trim();
+  const ours = (request.medias ?? []).map((media) => media.value);
+  const isOurs = (media: HfHistoryItem["media"][number]) =>
+    (media.id !== null && ours.includes(media.id)) || (media.url !== null && ours.some((value) => media.url!.includes(value)));
   const inWindow = (item: HfHistoryItem) => item.createdAt === null || item.createdAt.getTime() >= since;
+  // Solo cuenta para la credibilidad lo que cae en la ventana (y lo que no trae fecha).
+  const credible = items.filter(inWindow).every((item) => item.prompt !== null && item.model !== "");
+  const samePrompt = (item: HfHistoryItem) => item.prompt !== null && item.prompt.trim() === request.prompt.trim();
   const candidates = items.filter((item) => samePrompt(item) && inWindow(item));
   const taken = await takenJobIds(getDb(), row.id, candidates.map((item) => item.jobId));
   const similar = candidates.filter((item) => !taken.has(item.jobId));
+  const isSafe = (item: HfHistoryItem) =>
+    item.createdAt !== null &&
+    (!item.model || sameModelFamily(request.model, item.model)) &&
+    (item.resolution === null || request.resolution === undefined || item.resolution === request.resolution) &&
+    item.media.every(isOurs);
   const safe = similar
-    .filter(
-      (item) =>
-        item.createdAt !== null &&
-        (!item.model || sameModelFamily(request.model, item.model)) &&
-        (item.resolution === null || request.resolution === undefined || item.resolution === request.resolution) &&
-        item.mediaIds.every((id) => ourMedia.has(id)),
-    )
+    .filter(isSafe)
     .sort((a, b) => a.createdAt!.getTime() - b.createdAt!.getTime())
     .slice(0, row.count);
 
   if (safe.length > 0) {
-    await getDb().transaction(async (tx) => {
-      await generationLock(tx, 0); // dos reconciliaciones no adoptan el mismo trabajo
+    const adopted = await getDb().transaction(async (tx) => {
+      await generationLock(tx, 0); // dos reconciliaciones (o un envío tardío) no se quedan el mismo trabajo
       const stillTaken = await takenJobIds(tx, row.id, safe.map((item) => item.jobId));
       const adopt = safe.filter((item) => !stillTaken.has(item.jobId));
-      if (adopt.length === 0) return;
-      await tx
+      if (adopt.length === 0) return false;
+      const moved = await tx
         .update(generations)
         .set({
           status: "submitted",
           jobIds: adopt.map((item) => item.jobId),
           submittedAt: now,
+          lastPolledAt: null,
           creditsSpent: Math.ceil((row.quotedCredits * adopt.length) / row.count),
           error: null,
+          candidates: null,
           raw: trimRaw({ adoptadosDelHistorial: adopt }),
         })
-        .where(and(eq(generations.id, row.id), eq(generations.status, "unknown")));
+        .where(and(eq(generations.id, row.id), eq(generations.status, "unknown")))
+        .returning({ id: generations.id });
+      return moved.length > 0;
     });
-    return;
+    if (adopted) return "adopted";
   }
 
-  if (startedAt >= now.getTime() - RECONCILE_GIVE_UP_MS) return;
-  if (similar.length === 0 && credible && covered) {
-    await moveFrom(row.id, "unknown", { status: "not_sent", error: NEVER_ARRIVED, finishedAt: now });
-  } else if (row.error !== CANNOT_CONFIRM) {
-    await moveFrom(row.id, "unknown", { error: CANNOT_CONFIRM });
+  const stored = similar
+    .filter((item) => !safe.includes(item))
+    .map((item) => ({ jobId: item.jobId, createdAt: item.createdAt?.toISOString() ?? null, model: item.model, thumbUrl: item.thumbUrl }));
+  if (startedAt >= now.getTime() - RECONCILE_GIVE_UP_MS) {
+    await moveFrom(row.id, "unknown", { candidates: stored.length > 0 ? stored : null });
+    return "unknown";
   }
+  if (similar.length === 0 && credible && covered) {
+    await moveFrom(row.id, "unknown", { status: "not_sent", error: NEVER_ARRIVED, finishedAt: now, candidates: null });
+    return "not_sent";
+  }
+  await moveFrom(row.id, "unknown", { error: CANNOT_CONFIRM, lastPolledAt: now, candidates: stored.length > 0 ? stored : null });
+  return "unknown";
+}
+
+/** Reconciliación de una generación en duda (para el seguimiento); ver `reconcileRow`. */
+export async function reconcileGeneration(generationId: number, deps: GenDeps = {}): Promise<void> {
+  const [row] = await getDb()
+    .select()
+    .from(generations)
+    .where(and(eq(generations.id, generationId), eq(generations.status, "unknown")));
+  if (row) await reconcileRow(row, deps);
+}
+
+// ───────────────────────── Resolver a mano una duda ─────────────────────────
+
+export const STUCK_RISK = "Si sí estaba, Higgsfield te cobrará las dos.";
+const NOTHING_STUCK = "No hay ninguna petición pendiente de comprobar.";
+const TOO_SOON = "Aún lo estamos comprobando con Higgsfield. Espera unos minutos.";
+const FOUND_NOW = "Higgsfield acaba de encontrarlo: la generación sigue su curso.";
+const PROVED_ABSENT = "Higgsfield confirma que la petición no llegó. Puedes volver a generarla.";
+const NOT_A_CANDIDATE = "Ese trabajo no es uno de los posibles.";
+export const DISMISSED = "Revisado en Higgsfield: la petición no llegó.";
+
+/**
+ * Lo común a las dos salidas de una duda atascada: solo quien creó el vídeo, solo pasados
+ * `RECONCILE_GIVE_UP_MS` desde el envío y solo tras una reconciliación fresca en esta misma
+ * petición que no adopta nada. Devuelve la fila tal como queda, o el vídeo si la reconciliación ya
+ * probó que no llegó.
+ */
+async function freshStuck(user: AuthUser, videoId: number, kind: GenerationKind, deps: GenDeps) {
+  const video = await getVideoFor(user, videoId);
+  requireVideoOwner(user, video);
+  const [row] = await getDb()
+    .select()
+    .from(generations)
+    .where(and(eq(generations.videoId, video.id), eq(generations.kind, kind), eq(generations.status, "unknown")));
+  if (!row) throw new HttpError(409, NOTHING_STUCK);
+  if ((row.submitStartedAt ?? row.intentAt).getTime() >= clock(deps).getTime() - RECONCILE_GIVE_UP_MS) throw new HttpError(409, TOO_SOON);
+  const outcome = await reconcileRow(row, deps, { force: true });
+  if (outcome === "unreadable") throw new HttpError(503, new HiggsfieldUnavailableError().message);
+  if (outcome === "adopted") throw new HttpError(409, FOUND_NOW);
+  return { video, row, provedAbsent: outcome === "not_sent" };
+}
+
+/**
+ * «Es este»: la persona reconoce en su Higgsfield uno de los candidatos parecidos y la generación lo
+ * adopta (→ `submitted`), anotando quién y cuándo. Solo un candidato de la reconciliación fresca y
+ * que no tenga ya otra generación.
+ */
+export async function adoptCandidate(
+  user: AuthUser,
+  videoId: number,
+  kind: GenerationKind,
+  jobId: string,
+  deps: GenDeps = {},
+): Promise<{ risk: string }> {
+  const { video, row, provedAbsent } = await freshStuck(user, videoId, kind, deps);
+  if (provedAbsent) throw new HttpError(409, PROVED_ABSENT);
+  const now = clock(deps);
+  await getDb().transaction(async (tx) => {
+    await generationLock(tx, video.id);
+    await generationLock(tx, 0);
+    const [current] = await tx
+      .select()
+      .from(generations)
+      .where(and(eq(generations.id, row.id), eq(generations.status, "unknown")))
+      .for("update");
+    if (!current) throw new HttpError(409, NOTHING_STUCK);
+    if (!(current.candidates ?? []).some((candidate) => candidate.jobId === jobId)) throw new HttpError(400, NOT_A_CANDIDATE);
+    if ((await takenJobIds(tx, current.id, [jobId])).size > 0) throw new HttpError(409, NOT_A_CANDIDATE);
+    await tx
+      .update(generations)
+      .set({
+        status: "submitted",
+        jobIds: [jobId],
+        submittedAt: now,
+        lastPolledAt: null,
+        creditsSpent: Math.ceil(current.quotedCredits / current.count),
+        error: null,
+        candidates: null,
+        resolvedBy: user.id,
+        resolvedAt: now,
+        resolvedAs: "adoptado",
+      })
+      .where(eq(generations.id, current.id));
+  });
+  return { risk: STUCK_RISK };
+}
+
+/**
+ * «Ya lo revisé en Higgsfield: no está»: la duda pasa a `not_sent` (se puede volver a generar),
+ * anotando quién y cuándo. Si sí estaba, Higgsfield cobrará las dos (`risk`).
+ */
+export async function dismissUnknown(user: AuthUser, videoId: number, kind: GenerationKind, deps: GenDeps = {}): Promise<{ risk: string }> {
+  const { video, row, provedAbsent } = await freshStuck(user, videoId, kind, deps);
+  if (provedAbsent) return { risk: STUCK_RISK };
+  const now = clock(deps);
+  await getDb().transaction(async (tx) => {
+    await generationLock(tx, video.id);
+    const moved = await tx
+      .update(generations)
+      .set({ status: "not_sent", error: DISMISSED, finishedAt: now, candidates: null, resolvedBy: user.id, resolvedAt: now, resolvedAs: "no_esta" })
+      .where(and(eq(generations.id, row.id), eq(generations.status, "unknown")))
+      .returning({ id: generations.id });
+    if (moved.length === 0) throw new HttpError(409, NOTHING_STUCK);
+  });
+  return { risk: STUCK_RISK };
 }
 
 // ───────────────────────── Barrido ─────────────────────────
@@ -883,7 +1086,7 @@ export async function sweepGenerations(deps: GenDeps = {}): Promise<void> {
       );
   });
   await each(
-    await ids(and(eq(generations.status, "failed"), gt(generations.recheckUntil, now))),
+    await ids(and(inArray(generations.status, RECHECKED), gt(generations.recheckUntil, now))),
     "No se pudo volver a mirar la generación",
     (id) => pollGeneration(id, deps),
   );
@@ -1015,6 +1218,14 @@ export async function generationView(video: Video, kind: GenerationKind): Promis
           quotedCredits: current.quotedCredits,
           rejectReason: current.rejectReason,
           results: list,
+          stuck:
+            current.status === "unknown"
+              ? {
+                  candidates: current.candidates ?? [],
+                  canResolve: (current.submitStartedAt ?? current.intentAt).getTime() < Date.now() - RECONCILE_GIVE_UP_MS,
+                  risk: STUCK_RISK,
+                }
+              : null,
         }
       : null,
   };

@@ -34,10 +34,15 @@ CREATE TABLE "generations" (
 	"last_polled_at" timestamp with time zone,
 	"finalizing_at" timestamp with time zone,
 	"recheck_until" timestamp with time zone,
+	"candidates" jsonb,
+	"resolved_by" bigint,
+	"resolved_at" timestamp with time zone,
+	"resolved_as" text,
 	CONSTRAINT "generations_kind_valid" CHECK ("generations"."kind" in ('frame', 'clip')),
 	CONSTRAINT "generations_status_valid" CHECK ("generations"."status" in ('intent', 'submitting', 'submitted', 'done', 'failed', 'not_sent', 'unknown')),
 	CONSTRAINT "generations_count_valid" CHECK ("generations"."count" between 1 and 12),
 	CONSTRAINT "generations_round_valid" CHECK ("generations"."round" >= 1),
+	CONSTRAINT "generations_resolved_as_valid" CHECK ("generations"."resolved_as" is null or "generations"."resolved_as" in ('adoptado', 'no_esta')),
 	CONSTRAINT "generations_credits_valid" CHECK ("generations"."quoted_credits" >= 0 and ("generations"."credits_spent" is null or "generations"."credits_spent" >= 0))
 );
 --> statement-breakpoint

@@ -73,9 +73,14 @@ export interface HfHistoryItem {
   /** El prompt tal cual se envió; `null` si la entrada no lo trae (entonces no sirve para descartar nada). */
   prompt: string | null;
   createdAt: Date | null;
-  /** Identificadores de las entradas que la entrada deja ver (`params.input_images[].id`…); vacío si no deja ver ninguno. */
-  mediaIds: string[];
+  /**
+   * Las entradas que la generación deja ver (`params.input_images[]`…), con su identificador y su
+   * dirección si constan; vacío si no deja ver ninguna.
+   */
+  media: Array<{ id: string | null; url: string | null }>;
   resolution: string | null;
+  /** Miniatura del resultado (`results.minUrl`, o `rawUrl`), para que la persona lo reconozca. */
+  thumbUrl: string | null;
 }
 
 /** Una página del historial; `nextCursor` sirve para pedir la siguiente (más antigua), o `null` si no hay más. */

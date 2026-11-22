@@ -489,8 +489,9 @@ describe("generaciones en el adaptador", () => {
           model: "nano_banana_2",
           prompt: "Square 1:1 premium colour-variant image. ...(verbatim prompt as sent, not enhanced)...",
           createdAt: new Date(1795304165.949377 * 1000),
-          mediaIds: ["eafdd350-..."],
+          media: [{ id: "eafdd350-...", url: "https://d2ol7oe51mr4n9.cloudfront.net/user_XXXX/eafdd350-....png" }],
           resolution: "2k",
+          thumbUrl: "https://.../..._min.webp",
         },
       ],
       nextCursor: 1795304064.437977,
@@ -594,7 +595,7 @@ describe("generaciones en el adaptador", () => {
     expect(readSubmit(generateBatchFixture.structuredContent)).toEqual({ jobIds: ["540c3252-e858-49ee-998d-adceebf077de"], rejected: [] });
     expect(readSubmit({})).toBeNull();
     expect(readHistory({ items: [{ id: "z", model: "m", params: { prompt: "" }, createdAt: "2026-11-22T08:00:00Z" }] }, "video")).toEqual({
-      items: [{ jobId: "z", type: "video", model: "m", prompt: "", createdAt: new Date("2026-11-22T08:00:00Z"), mediaIds: [], resolution: null }],
+      items: [{ jobId: "z", type: "video", model: "m", prompt: "", createdAt: new Date("2026-11-22T08:00:00Z"), media: [], resolution: null, thumbUrl: null }],
       nextCursor: null,
     });
     // Sin prompt en la entrada: `null` (no sirve para descartar nada).

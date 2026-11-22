@@ -1,3 +1,4 @@
+import "@/jobs/video-jobs"; // define `video.finalizar`, que encola la consulta de las generaciones
 import { badRequest, handle } from "@/server/http";
 import { checkPromptInput, updatePrompts } from "@/server/videos/analysis";
 import { pollVideoGenerations } from "@/server/videos/generations";

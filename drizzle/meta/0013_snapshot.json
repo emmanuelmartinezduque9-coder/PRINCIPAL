@@ -1,5 +1,5 @@
 {
-  "id": "ab743862-8c88-4c3e-a84b-e56a43fd5852",
+  "id": "95efe1eb-8676-427b-a521-af5b710e3ee9",
   "prevId": "6f5f836a-5c88-4004-b388-28f21d99458a",
   "version": "7",
   "dialect": "postgresql",
@@ -300,6 +300,30 @@
           "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": false
+        },
+        "candidates": {
+          "name": "candidates",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "resolved_by": {
+          "name": "resolved_by",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "resolved_at": {
+          "name": "resolved_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "resolved_as": {
+          "name": "resolved_as",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
         }
       },
       "indexes": {
@@ -445,6 +469,10 @@
         "generations_round_valid": {
           "name": "generations_round_valid",
           "value": "\"generations\".\"round\" >= 1"
+        },
+        "generations_resolved_as_valid": {
+          "name": "generations_resolved_as_valid",
+          "value": "\"generations\".\"resolved_as\" is null or \"generations\".\"resolved_as\" in ('adoptado', 'no_esta')"
         },
         "generations_credits_valid": {
           "name": "generations_credits_valid",
