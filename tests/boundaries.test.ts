@@ -120,7 +120,7 @@ describe("límites del código", () => {
 
   it("solo las tablas de vídeo se tocan desde src/server/videos", () => {
     const VIDEO_TABLES = [
-      /schema\.(videos|videoFrames|uploadSessions|videoAnalyses|generations|generationResults)\b/,
+      /schema\.(videos|videoFrames|uploadSessions|videoAnalyses|generations|generationResults|batches)\b/,
       /\b(video_frames|upload_sessions|video_analyses|generation_results)\b/,
     ];
     expect(VIDEO_TABLES.some((p) => p.test("getDb().update(schema.generations)"))).toBe(true);

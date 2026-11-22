@@ -11,20 +11,32 @@ const MAX_REASON = 300;
 
 /**
  * Botón que abre «¿Por qué no valen?» con una sola línea para el motivo (hace falta para
- * regenerar). Intro envía; el diálogo se cierra solo si el rechazo se guarda.
+ * regenerar). Intro envía; el diálogo se cierra solo si el rechazo se guarda. Con `open` y
+ * `onOpenChange` lo abre también quien lo usa (p. ej. con la tecla R en la revisión de un lote).
  */
 export function RejectDialog({
   label,
   title,
   pending,
   onReject,
+  open: controlledOpen,
+  onOpenChange,
+  className,
 }: {
   label: string;
   title: string;
   pending: boolean;
   onReject: (reason: string) => Promise<unknown>;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+  className?: string;
 }) {
-  const [open, setOpen] = useState(false);
+  const [ownOpen, setOwnOpen] = useState(false);
+  const open = controlledOpen ?? ownOpen;
+  const setOpen = (next: boolean) => {
+    setOwnOpen(next);
+    onOpenChange?.(next);
+  };
   const [reason, setReason] = useState("");
   const id = useId();
   const text = reason.trim();
@@ -49,7 +61,7 @@ export function RejectDialog({
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
-        <Button variant="outline" className="h-10 gap-2 px-4">
+        <Button variant="outline" className={className ?? "h-10 gap-2 px-4"}>
           <ThumbsDown data-icon="inline-start" />
           {label}
         </Button>

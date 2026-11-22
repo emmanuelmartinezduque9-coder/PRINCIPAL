@@ -37,15 +37,26 @@ const NOT_OWNER = "Solo quien creó este vídeo puede continuarlo: se paga con s
 /** Cerrojo de aviso por producto para numerar los vídeos («Vídeo N») sin repetir número. */
 const titleLock = (productId: number) => sql`select pg_advisory_xact_lock(hashtextextended(${`principal.videos.title:${productId}`}, 0))`;
 
-/** Crea un vídeo vacío en un producto visible, titulado «Vídeo N» (N = los que ya tiene + 1). */
-export async function createVideo(user: AuthUser, productId: number): Promise<Video> {
+/** Lo que un lote fija al crear el vídeo (ya comprobado por `addVideoToBatch`). */
+export interface NewVideoExtras {
+  batchId?: number;
+  note?: string | null;
+  avatarPhotoId?: number | null;
+  noPerson?: boolean;
+}
+
+/**
+ * Crea un vídeo vacío en un producto visible, titulado «Vídeo N» (N = los que ya tiene + 1). Desde
+ * un lote llega además su lote, su indicación y su avatar (o «sin persona»), ya comprobados.
+ */
+export async function createVideo(user: AuthUser, productId: number, extras: NewVideoExtras = {}): Promise<Video> {
   const product = await getProductFor(user, productId);
   return getDb().transaction(async (tx) => {
     await tx.execute(titleLock(product.id));
     const [{ n }] = await tx.select({ n: count() }).from(schema.videos).where(eq(schema.videos.productId, product.id));
     const [video] = await tx
       .insert(schema.videos)
-      .values({ productId: product.id, createdBy: user.id, title: `Vídeo ${n + 1}` })
+      .values({ productId: product.id, createdBy: user.id, title: `Vídeo ${n + 1}`, ...extras })
       .returning();
     return video;
   });

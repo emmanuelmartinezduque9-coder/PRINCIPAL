@@ -1,0 +1,320 @@
+"use client";
+
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { format } from "date-fns";
+import { es } from "date-fns/locale";
+import { ChevronRight, CircleAlert, Download, Eye, ImageIcon, Loader2, ScanSearch, SearchX, UserX } from "lucide-react";
+import Link from "next/link";
+import { useState } from "react";
+import { toast } from "sonner";
+import { PageHeader } from "@/components/shell/page-header";
+import { Button, buttonVariants } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { creditsLabel } from "@/components/videos/labels";
+import { useReferenceUploads } from "@/components/videos/upload-provider";
+import { api, ApiError } from "@/lib/api";
+import { formatUsd } from "@/lib/money";
+import { cn } from "@/lib/utils";
+import { BulkGenerate } from "./bulk-generate";
+import {
+  analysisState,
+  generationState,
+  pollEvery,
+  ready,
+  referenceState,
+  videoHref,
+  type BatchRowJson,
+  type BatchViewJson,
+  type LocalUpload,
+  type StepState,
+  type Tone,
+} from "./labels";
+import { RowThumb } from "./row-thumb";
+import { runPool } from "./run-pool";
+
+const TONE: Record<Tone, { chip: string; dot: string }> = {
+  off: { chip: "text-muted-foreground", dot: "bg-foreground/25" },
+  busy: { chip: "bg-amber-500/12 text-foreground", dot: "bg-amber-500" },
+  review: { chip: "bg-sky-500/12 text-foreground", dot: "bg-sky-500" },
+  ok: { chip: "bg-emerald-500/12 text-foreground", dot: "bg-emerald-500" },
+  error: { chip: "bg-destructive/10 text-foreground", dot: "bg-destructive" },
+};
+
+/** Estado de un paso: punto de color + palabra; el error, en el título. */
+function StepChip({ state }: { state: StepState }) {
+  return (
+    <span
+      title={state.detail ?? undefined}
+      className={cn("inline-flex h-6 items-center gap-1.5 rounded-full px-2 text-xs font-medium whitespace-nowrap", TONE[state.tone].chip)}
+    >
+      {state.tone === "busy" ? (
+        <Loader2 className="size-3 animate-spin text-amber-600" aria-hidden />
+      ) : state.tone === "off" ? null : (
+        <span aria-hidden className={cn("size-1.5 rounded-full", TONE[state.tone].dot)} />
+      )}
+      {state.label}
+    </span>
+  );
+}
+
+function AvatarCell({ row }: { row: BatchRowJson }) {
+  if (row.noPerson) {
+    return (
+      <span className="grid size-8 place-items-center rounded-full bg-muted text-muted-foreground" title="No aparece nadie">
+        <UserX className="size-4" aria-label="No aparece nadie" />
+      </span>
+    );
+  }
+  if (row.avatarPhotoId === null) return <span className="text-muted-foreground">—</span>;
+  // eslint-disable-next-line @next/next/no-img-element
+  return <img src={`/api/fotos/${row.avatarPhotoId}`} alt="Avatar" className="size-8 rounded-full object-cover ring-1 ring-foreground/10" />;
+}
+
+function CostCell({ row }: { row: BatchRowJson }) {
+  const { higgsfieldCredits, claudeMicros } = row.costs;
+  if (higgsfieldCredits === 0 && claudeMicros === 0) return <span className="text-muted-foreground">—</span>;
+  return (
+    <div className="flex flex-col items-end leading-tight tabular-nums">
+      <span>{creditsLabel(higgsfieldCredits)}</span>
+      {claudeMicros > 0 ? <span className="text-xs text-muted-foreground">{formatUsd(claudeMicros)}</span> : null}
+    </div>
+  );
+}
+
+/** Nombre del archivo que manda el servidor (`<producto>-video-<id>.mp4`). */
+function filenameOf(response: Response, fallback: string): string {
+  const header = response.headers.get("Content-Disposition") ?? "";
+  const star = /filename\*=UTF-8''([^;]+)/i.exec(header);
+  if (star) return decodeURIComponent(star[1]);
+  return /filename="([^"]+)"/i.exec(header)?.[1] ?? fallback;
+}
+
+async function downloadClip(videoId: number): Promise<void> {
+  const response = await fetch(`/api/videos/${videoId}/clip/descargar`);
+  if (!response.ok) {
+    const body = await response.json().catch(() => null);
+    throw new ApiError(body?.error ?? "No se pudo descargar el clip.", response.status);
+  }
+  const url = URL.createObjectURL(await response.blob());
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filenameOf(response, `video-${videoId}.mp4`);
+  document.body.append(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 60_000);
+}
+
+const message = (error: unknown, fallback: string) => (error instanceof Error ? error.message : fallback);
+
+/** `/lotes/[id]`: una fila por vídeo con el estado de cada paso y, arriba, las acciones en bloque. */
+export function BatchBoard({ batchId }: { batchId: number }) {
+  const client = useQueryClient();
+  const { uploads } = useReferenceUploads();
+  const uploading = Object.values(uploads).some((upload) => upload.kind === "uploading");
+  const query = useQuery({
+    queryKey: ["batch", batchId],
+    queryFn: () => api<BatchViewJson>(`/api/lotes/${batchId}`),
+    retry: (count, error) => !(error instanceof ApiError && error.status === 404) && count < 1,
+    refetchInterval: (q) => pollEvery(q.state.data, uploading),
+  });
+  /** El último error de una acción en bloque en cada fila (se borra cuando la fila vuelve a ir bien). */
+  const [notices, setNotices] = useState<Record<number, string | null>>({});
+  const [running, setRunning] = useState<null | "breakdown" | "download">(null);
+  const [downloaded, setDownloaded] = useState(0);
+  const note = (results: Record<number, string | null>) => setNotices((all) => ({ ...all, ...results }));
+
+  const back = { href: "/lotes", label: "Lotes" };
+  if (query.isLoading) {
+    return (
+      <div className="flex flex-col gap-6" aria-label="Cargando el lote">
+        <Skeleton className="h-16 w-64" />
+        <Skeleton className="h-10 w-full" />
+        <Skeleton className="h-80 w-full rounded-xl" />
+      </div>
+    );
+  }
+  const data = query.data;
+  if (query.isError || !data) {
+    const notFound = query.error instanceof ApiError && query.error.status === 404;
+    return (
+      <div className="flex flex-col gap-6">
+        <PageHeader back={back} title={notFound ? "Lote no encontrado" : "No se pudo abrir el lote"} />
+        <div className="flex flex-col items-center gap-4 rounded-xl border border-dashed px-6 py-16 text-center">
+          <span className="grid size-12 place-items-center rounded-full bg-muted text-muted-foreground">
+            <SearchX className="size-5" aria-hidden />
+          </span>
+          <Link href="/lotes" className={cn(buttonVariants({ variant: "outline" }), "h-10 px-4")}>
+            Ver los lotes
+          </Link>
+        </div>
+      </div>
+    );
+  }
+
+  const rows = data.rows;
+  const uploadOf = (row: BatchRowJson): LocalUpload => uploads[row.id] ?? { kind: "idle" };
+  const forBreakdown = rows.filter(ready.breakdown);
+  const forFrame = rows.filter(ready.frame);
+  const forReview = rows.filter(ready.review);
+  const forClip = rows.filter(ready.clip);
+  const forDownload = rows.filter(ready.download);
+  const credits = rows.reduce((sum, row) => sum + row.costs.higgsfieldCredits, 0);
+  const done = rows.filter((row) => row.clipReady).length;
+
+  async function breakdownAll() {
+    setRunning("breakdown");
+    const results = await runPool(forBreakdown, 2, (row) => api(`/api/videos/${row.id}/desglose`, { method: "POST" }));
+    note(Object.fromEntries(forBreakdown.map((row, i) => [row.id, results[i].ok ? null : message((results[i] as { error: unknown }).error, "No se pudo desglosar.")])));
+    const failed = results.filter((r) => !r.ok).length;
+    if (failed > 0) toast.error(failed === 1 ? "1 vídeo no se ha podido desglosar." : `${failed} vídeos no se han podido desglosar.`);
+    setRunning(null);
+    void client.invalidateQueries({ queryKey: ["batch", batchId] });
+  }
+
+  async function downloadAll() {
+    setRunning("download");
+    setDownloaded(0);
+    const report: Record<number, string | null> = {};
+    // De uno en uno: cada clip se guarda antes de pedir el siguiente.
+    for (const row of forDownload) {
+      try {
+        await downloadClip(row.id);
+        report[row.id] = null;
+      } catch (error) {
+        report[row.id] = message(error, "No se pudo descargar el clip.");
+      }
+      setDownloaded((n) => n + 1);
+    }
+    note(report);
+    setRunning(null);
+  }
+
+  return (
+    <div className="flex flex-col gap-5">
+      <PageHeader back={back} title={data.batch.name}>
+        <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted-foreground tabular-nums">
+          <span>{rows.length === 1 ? "1 vídeo" : `${rows.length} vídeos`}</span>
+          <span aria-hidden>·</span>
+          <span>
+            {done}/{rows.length} clips
+          </span>
+          {credits > 0 ? (
+            <>
+              <span aria-hidden>·</span>
+              <span>{creditsLabel(credits)}</span>
+            </>
+          ) : null}
+          <span aria-hidden>·</span>
+          <time dateTime={data.batch.createdAt}>{format(new Date(data.batch.createdAt), "d MMM yyyy", { locale: es })}</time>
+        </p>
+      </PageHeader>
+
+      {!data.batch.mine ? (
+        <p role="status" className="flex items-center gap-2.5 rounded-xl bg-sky-500/10 px-4 py-3 text-sm ring-1 ring-sky-500/20">
+          <Eye className="size-4 shrink-0 text-sky-700 dark:text-sky-400" aria-hidden />
+          Solo lectura: cada vídeo lo continúa quien lo creó.
+        </p>
+      ) : null}
+
+      {/* Siempre montada: un envío en bloque sigue enseñando sus resultados aunque ya no quede ninguna fila lista. */}
+      {rows.length > 0 ? (
+        <div role="toolbar" aria-label="Acciones del lote" className="flex flex-wrap items-center gap-2 empty:hidden">
+          {forBreakdown.length > 0 ? (
+            <Button variant="outline" className="h-9 gap-1.5 px-3" disabled={running !== null} onClick={() => void breakdownAll()}>
+              {running === "breakdown" ? <Loader2 className="animate-spin" data-icon="inline-start" /> : <ScanSearch data-icon="inline-start" />}
+              Desglosar ({forBreakdown.length})
+            </Button>
+          ) : null}
+          <BulkGenerate kind="frame" rows={forFrame} onResults={note} />
+          {forReview.length > 0 ? (
+            <Link href={`/lotes/${batchId}/revisar`} className={cn(buttonVariants({ variant: "outline" }), "h-9 gap-1.5 px-3")}>
+              <ImageIcon className="size-4" aria-hidden />
+              Revisar imágenes ({forReview.length})
+            </Link>
+          ) : null}
+          <BulkGenerate kind="clip" rows={forClip} onResults={note} />
+          {forDownload.length > 0 ? (
+            <Button variant="outline" className="h-9 gap-1.5 px-3 sm:ml-auto" disabled={running !== null} onClick={() => void downloadAll()}>
+              {running === "download" ? <Loader2 className="animate-spin" data-icon="inline-start" /> : <Download data-icon="inline-start" />}
+              {running === "download" ? `Descargando ${Math.min(downloaded + 1, forDownload.length)}/${forDownload.length}` : `Descargar clips (${forDownload.length})`}
+            </Button>
+          ) : null}
+        </div>
+      ) : null}
+
+      {rows.length === 0 ? (
+        <div className="rounded-xl border border-dashed px-6 py-16 text-center text-sm text-muted-foreground">Este lote no tiene vídeos que puedas ver.</div>
+      ) : (
+        <div className="overflow-hidden rounded-xl bg-card ring-1 ring-foreground/10">
+          <Table>
+            <TableHeader>
+              <TableRow className="hover:bg-transparent">
+                <TableHead className="w-14 pl-4" />
+                <TableHead>Vídeo</TableHead>
+                <TableHead>Avatar</TableHead>
+                <TableHead>Referencia</TableHead>
+                <TableHead>Desglose</TableHead>
+                <TableHead>Imagen</TableHead>
+                <TableHead>Clip</TableHead>
+                <TableHead className="text-right">Coste</TableHead>
+                <TableHead className="w-10 pr-4" />
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {rows.map((row) => {
+                const upload = uploadOf(row);
+                const states = [referenceState(row, upload), analysisState(row), generationState(row.frame, "frame"), generationState(row.clip, "clip")];
+                // El error de la última acción en bloque y, si no hay, el del paso que falló.
+                const problem = notices[row.id] ?? states.find((state) => state.tone === "error" && state.detail && !state.quiet)?.detail ?? null;
+                return (
+                  <TableRow key={row.id}>
+                    <TableCell className="pl-4">
+                      <Link href={videoHref(row)} tabIndex={-1} aria-hidden>
+                        <RowThumb row={row} busy={upload.kind === "uploading"} className="h-16 w-9" />
+                      </Link>
+                    </TableCell>
+                    <TableCell className="max-w-72 min-w-48 whitespace-normal">
+                      <Link href={videoHref(row)} className="rounded font-medium outline-none hover:underline focus-visible:ring-3 focus-visible:ring-ring/50">
+                        {row.title}
+                      </Link>
+                      <div className="truncate text-xs text-muted-foreground">{row.productName}</div>
+                      {row.note ? <div className="mt-0.5 line-clamp-2 text-xs text-foreground/80">{row.note}</div> : null}
+                      {problem ? (
+                        <p role="alert" className="mt-1 flex items-start gap-1 text-xs text-destructive">
+                          <CircleAlert className="mt-px size-3.5 shrink-0" aria-hidden />
+                          {problem}
+                        </p>
+                      ) : null}
+                    </TableCell>
+                    <TableCell>
+                      <AvatarCell row={row} />
+                    </TableCell>
+                    {states.map((state, index) => (
+                      <TableCell key={index}>
+                        <StepChip state={state} />
+                      </TableCell>
+                    ))}
+                    <TableCell className="text-right">
+                      <CostCell row={row} />
+                    </TableCell>
+                    <TableCell className="pr-4">
+                      <Link
+                        href={videoHref(row)}
+                        aria-label={`Abrir ${row.title}`}
+                        className="grid size-8 place-items-center rounded-md text-muted-foreground outline-none hover:bg-muted hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50"
+                      >
+                        <ChevronRight className="size-4" aria-hidden />
+                      </Link>
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
+            </TableBody>
+          </Table>
+        </div>
+      )}
+    </div>
+  );
+}

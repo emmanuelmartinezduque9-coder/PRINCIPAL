@@ -293,6 +293,22 @@ export const higgsfieldMedia = pgTable(
 );
 
 /**
+ * Lotes: una lista de vídeos (de uno o varios productos) que se trabajan a la vez. Lo ve quien lo
+ * creó y el dueño; dentro, cada persona solo ve los vídeos de los productos que ve. Solo
+ * `src/server/videos/` toca esta tabla. `created_by` sin clave ajena, igual que en `videos`.
+ */
+export const batches = pgTable(
+  "batches",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    name: text("name").notNull(),
+    createdBy: bigint("created_by", { mode: "number" }).notNull(),
+    createdAt: instant("created_at").notNull().defaultNow(),
+  },
+  (t) => [index("batches_created_by").on(t.createdBy, t.createdAt)],
+);
+
+/**
  * Vídeos de un producto: cada uno parte de un vídeo de referencia y lo continúa (y lo paga, con
  * su Higgsfield) solo quien lo creó. Solo `src/server/videos/` toca esta tabla y las dos
  * siguientes, y siempre después de comprobar el producto con `getProductFor`. `created_by` sin
@@ -347,12 +363,18 @@ export const videos = pgTable(
       (): AnyPgColumn => generationResults.id,
       { onDelete: "set null" },
     ),
+    /** El lote al que pertenece, si se creó desde un lote. */
+    batchId: bigint("batch_id", { mode: "number" }).references(() => batches.id, { onDelete: "set null" }),
+    /** Indicación corta para este vídeo (una línea, máx. 300 caracteres). */
+    note: text("note"),
     createdAt: instant("created_at").notNull().defaultNow(),
     updatedAt: instant("updated_at").notNull().defaultNow(),
   },
   (t) => [
     index("videos_product").on(t.productId, t.createdAt),
     index("videos_reference_status").on(t.referenceStatus),
+    index("videos_batch").on(t.batchId),
+    check("videos_note_length", sql`${t.note} is null or char_length(${t.note}) <= 300`),
     check("videos_reference_status_valid", sql`${t.referenceStatus} in ('none', 'uploading', 'processing', 'ready', 'failed')`),
     check("videos_reference_source_valid", sql`${t.referenceSource} is null or ${t.referenceSource} in ('file', 'link')`),
     check("videos_frame_use_valid", sql`${t.frameUse} in ('start_image', 'contextual_reference')`),

@@ -21,18 +21,23 @@ import type { VideoViewJson } from "./labels";
 
 export type ReferenceUpload =
   | { kind: "idle" }
-  | { kind: "uploading"; file: File; fraction: number }
+  /** `queued`: en la cola de un lote, esperando a que termine otra (como mucho `MAX_PARALLEL` a la vez). */
+  | { kind: "uploading"; file: File; fraction: number; queued?: boolean }
   | { kind: "failed"; file: File; message: string };
 
 interface UploadsContext {
   uploads: Record<number, ReferenceUpload>;
   start(videoId: number, file: File): void;
+  /** Pone en cola la subida (las de un lote): suben como mucho `MAX_PARALLEL` a la vez. */
+  enqueue(videoId: number, file: File): void;
   /** La pantalla del vídeo está abierta (para no repetir con un aviso lo que ya se ve en ella). */
   watch(videoId: number): () => void;
 }
 
 const Context = createContext<UploadsContext | null>(null);
 const IDLE: ReferenceUpload = { kind: "idle" };
+/** Subidas en cola que van a la vez, como mucho. */
+export const MAX_PARALLEL = 2;
 
 // `lastModified` evita mezclar dos archivos distintos con el mismo nombre y tamaño en una sola subida.
 const storageKey = (videoId: number, file: File) =>
@@ -68,6 +73,8 @@ export function ReferenceUploadsProvider({ children }: { children: React.ReactNo
   const [uploads, setUploads] = useState<Record<number, ReferenceUpload>>({});
   const controllers = useRef(new Map<number, AbortController>());
   const watched = useRef(new Map<number, number>());
+  const queue = useRef<Array<{ videoId: number; file: File }>>([]);
+  const running = useRef(0);
 
   const uploading = Object.values(uploads).some((upload) => upload.kind === "uploading");
   useEffect(() => {
@@ -81,6 +88,8 @@ export function ReferenceUploadsProvider({ children }: { children: React.ReactNo
 
   const start = useCallback(
     async (videoId: number, file: File) => {
+      // Elegir a mano otro archivo saca de la cola el que esperaba para este vídeo.
+      queue.current = queue.current.filter((item) => item.videoId !== videoId);
       controllers.current.get(videoId)?.abort();
       const own = new AbortController();
       controllers.current.set(videoId, own);
@@ -120,9 +129,33 @@ export function ReferenceUploadsProvider({ children }: { children: React.ReactNo
         if (controllers.current.get(videoId) === own) controllers.current.delete(videoId);
         void client.invalidateQueries({ queryKey: ["video", videoId] });
         void client.invalidateQueries({ queryKey: ["videos"] });
+        void client.invalidateQueries({ queryKey: ["batch"] });
       }
     },
     [client, set],
+  );
+
+  const pump = useCallback(() => {
+    const next = () => {
+      while (running.current < MAX_PARALLEL && queue.current.length > 0) {
+        const { videoId, file } = queue.current.shift()!;
+        running.current += 1;
+        void start(videoId, file).finally(() => {
+          running.current -= 1;
+          next();
+        });
+      }
+    };
+    next();
+  }, [start]);
+
+  const enqueue = useCallback(
+    (videoId: number, file: File) => {
+      queue.current.push({ videoId, file });
+      set(videoId, { kind: "uploading", file, fraction: 0, queued: true });
+      pump();
+    },
+    [pump, set],
   );
 
   const watch = useCallback((videoId: number) => {
@@ -130,7 +163,10 @@ export function ReferenceUploadsProvider({ children }: { children: React.ReactNo
     return () => watched.current.set(videoId, (watched.current.get(videoId) ?? 1) - 1);
   }, []);
 
-  const value = useMemo<UploadsContext>(() => ({ uploads, start: (id, file) => void start(id, file), watch }), [uploads, start, watch]);
+  const value = useMemo<UploadsContext>(
+    () => ({ uploads, start: (id, file) => void start(id, file), enqueue, watch }),
+    [uploads, start, enqueue, watch],
+  );
   return <Context.Provider value={value}>{children}</Context.Provider>;
 }
 
@@ -141,4 +177,11 @@ export function useReferenceUpload(videoId: number) {
   const { uploads, start, watch } = context;
   useEffect(() => watch(videoId), [watch, videoId]);
   return { state: uploads[videoId] ?? IDLE, start: (file: File) => start(videoId, file) };
+}
+
+/** Todas las subidas de este navegador (para el tablero de un lote) y cómo poner una en cola. */
+export function useReferenceUploads() {
+  const context = useContext(Context);
+  if (!context) throw new Error("useReferenceUploads necesita ReferenceUploadsProvider.");
+  return { uploads: context.uploads, enqueue: context.enqueue };
 }

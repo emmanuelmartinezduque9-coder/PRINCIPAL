@@ -1,0 +1,389 @@
+"use client";
+
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { Check, ImageOff, Loader2, SearchX, ThumbsUp } from "lucide-react";
+import Link from "next/link";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { toast } from "sonner";
+import { PageHeader } from "@/components/shell/page-header";
+import { Badge } from "@/components/ui/badge";
+import { Button, buttonVariants } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
+import { Skeleton } from "@/components/ui/skeleton";
+import { frameUrl, thumbUrl, type GenerationResult } from "@/components/videos/labels";
+import { RejectDialog } from "@/components/videos/reject-dialog";
+import { ResultImage } from "@/components/videos/result-image";
+import { api, ApiError } from "@/lib/api";
+import { cn } from "@/lib/utils";
+import { frameLocked, ready, type BatchRowJson, type BatchViewJson } from "./labels";
+
+const previewsOf = (result: GenerationResult) => [result.hasThumb ? thumbUrl(result.id) : null, result.url];
+const message = (error: unknown, fallback: string) => (error instanceof Error ? error.message : fallback);
+
+function Kbd({ children }: { children: React.ReactNode }) {
+  return <kbd className="rounded border bg-muted px-1.5 font-sans text-[11px] leading-5 text-muted-foreground">{children}</kbd>;
+}
+
+/** Las filas con candidatas que enseñar: las propias con la última ronda de imagen terminada. */
+const reviewable = (row: BatchRowJson) =>
+  row.mine && row.frame.current?.status === "done" && row.frame.current.results.length > 0;
+
+function ReviewItem({
+  row,
+  focused,
+  saving,
+  rejecting,
+  onFocus,
+  onApprove,
+  onReject,
+  onRejectOpen,
+  onZoom,
+}: {
+  row: BatchRowJson;
+  focused: boolean;
+  /** Lo que se está guardando de este vídeo: la candidata que se aprueba o el rechazo. */
+  saving: number | "reject" | undefined;
+  rejecting: boolean;
+  onFocus: () => void;
+  onApprove: (resultId: number) => void;
+  onReject: (reason: string) => Promise<unknown>;
+  onRejectOpen: (open: boolean) => void;
+  onZoom: (result: GenerationResult) => void;
+}) {
+  const ref = useRef<HTMLLIElement>(null);
+  useEffect(() => {
+    if (focused) ref.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }, [focused]);
+  const current = row.frame.current!;
+  const approved = row.frame.approvedResultId;
+  const rejected = current.rejectReason !== null;
+  const canAct = ready.review(row) && saving === undefined;
+  const locked = frameLocked(row);
+
+  return (
+    <li
+      ref={ref}
+      onClick={onFocus}
+      aria-current={focused ? "true" : undefined}
+      className={cn(
+        "grid scroll-my-4 gap-5 rounded-xl bg-card p-4 ring-1 ring-foreground/10 transition-shadow md:grid-cols-[minmax(0,220px)_auto]",
+        focused && "ring-2 ring-foreground/60",
+      )}
+    >
+      <div className="flex min-w-0 flex-col gap-2">
+        <div className="min-w-0">
+          <p className="truncate font-medium">{row.title}</p>
+          <p className="truncate text-sm text-muted-foreground">{row.productName}</p>
+          {row.note ? <p className="mt-1 text-sm text-pretty">{row.note}</p> : null}
+        </div>
+        <div>
+          {approved !== null ? (
+            <Badge className="gap-1 bg-emerald-500 text-white">
+              <Check aria-hidden />
+              Aprobada
+            </Badge>
+          ) : rejected ? (
+            <Badge variant="secondary">Rechazadas</Badge>
+          ) : (
+            <Badge variant="outline">Por revisar</Badge>
+          )}
+        </div>
+        {rejected ? <p className="text-sm text-muted-foreground">{current.rejectReason}</p> : null}
+        {canAct ? (
+          <RejectDialog
+            label="Rechazar"
+            title="¿Por qué no valen?"
+            pending={rejecting}
+            onOpenChange={onRejectOpen}
+            onReject={onReject}
+            className="mt-auto h-9 w-fit gap-2 px-3"
+          />
+        ) : null}
+        {locked ? <p className="text-xs text-muted-foreground">Ya tiene clip.</p> : null}
+      </div>
+
+      <div className="flex gap-3 overflow-x-auto pb-1">
+        <figure className="flex w-48 shrink-0 flex-col gap-1.5">
+          <div className="relative aspect-[9/16] overflow-hidden rounded-lg bg-muted ring-1 ring-foreground/10">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={frameUrl(row.id, 0, row.updatedAt)} alt="" loading="lazy" className="absolute inset-0 size-full object-cover" />
+          </div>
+          <figcaption className="text-xs text-muted-foreground">Referencia</figcaption>
+        </figure>
+        {current.results.map((result, index) => {
+          const isApproved = approved === result.id;
+          return (
+            <div key={result.id} className="flex w-48 shrink-0 flex-col gap-1.5">
+              <div
+                className={cn(
+                  "relative aspect-[9/16] overflow-hidden rounded-lg bg-muted ring-1 ring-foreground/10",
+                  isApproved && "ring-3 ring-emerald-500",
+                  rejected && "opacity-45 grayscale",
+                )}
+              >
+                {result.ok ? (
+                  <button
+                    type="button"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      onZoom(result);
+                    }}
+                    aria-label={`Ampliar la candidata ${index + 1} de ${row.title}`}
+                    className="absolute inset-0 cursor-zoom-in outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
+                  >
+                    <ResultImage sources={previewsOf(result)} />
+                  </button>
+                ) : (
+                  <div className="absolute inset-0 grid place-items-center text-muted-foreground">
+                    <ImageOff className="size-5" role="img" aria-label="Sin imagen" />
+                  </div>
+                )}
+              </div>
+              {canAct && result.ok ? (
+                <Button
+                  variant={focused ? "default" : "outline"}
+                  className="h-9 justify-between gap-2 px-3"
+                  disabled={saving !== undefined}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onApprove(result.id);
+                  }}
+                >
+                  <span className="flex items-center gap-1.5">
+                    {saving === result.id ? <Loader2 className="animate-spin" aria-hidden /> : <ThumbsUp aria-hidden />}
+                    Aprobar
+                  </span>
+                  <span className="text-xs opacity-70" aria-hidden>
+                    {index + 1}
+                  </span>
+                </Button>
+              ) : null}
+            </div>
+          );
+        })}
+      </div>
+    </li>
+  );
+}
+
+/**
+ * `/lotes/[id]/revisar`: las candidatas de cada vídeo del lote junto a su referencia. Con el
+ * teclado: ↑/↓ (o J/K) cambian de vídeo, 1/2 aprueban esa candidata y R abre el rechazo; al aprobar
+ * se pasa al siguiente por revisar.
+ */
+export function ReviewImages({ batchId }: { batchId: number }) {
+  const client = useQueryClient();
+  const query = useQuery({
+    queryKey: ["batch", batchId],
+    queryFn: () => api<BatchViewJson>(`/api/lotes/${batchId}`),
+    retry: (count, error) => !(error instanceof ApiError && error.status === 404) && count < 1,
+  });
+  const rows = (query.data?.rows ?? []).filter(reviewable);
+  const [focusId, setFocusId] = useState<number | null>(null);
+  const [saving, setSaving] = useState<Record<number, number | "reject">>({});
+  const [rejecting, setRejecting] = useState(false);
+  const [rejectFor, setRejectFor] = useState<number | null>(null);
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [zoomed, setZoomed] = useState<GenerationResult | null>(null);
+
+  // Un vídeo que se está guardando ya no cuenta como «por revisar» (aunque el tablero aún no se haya vuelto a pedir).
+  const open = (row: BatchRowJson) => ready.review(row) && saving[row.id] === undefined;
+  const firstPending = rows.find(open)?.id ?? rows[0]?.id ?? null;
+  const focused = rows.some((row) => row.id === focusId) ? focusId : firstPending;
+  const index = rows.findIndex((row) => row.id === focused);
+  const pending = rows.filter(open).length;
+
+  const refresh = useCallback(() => client.invalidateQueries({ queryKey: ["batch", batchId] }), [client, batchId]);
+  const mark = (videoId: number, value: number | "reject" | undefined) =>
+    setSaving((all) => {
+      const next = { ...all };
+      if (value === undefined) delete next[videoId];
+      else next[videoId] = value;
+      return next;
+    });
+  /** Al siguiente por revisar, en cuanto se decide (sin esperar a que se guarde). */
+  const advance = (row: BatchRowJson) => {
+    const at = rows.findIndex((r) => r.id === row.id);
+    const next = [...rows.slice(at + 1), ...rows.slice(0, at)].find((r) => r.id !== row.id && open(r));
+    if (next) setFocusId(next.id);
+  };
+
+  async function approve(row: BatchRowJson, resultId: number) {
+    if (!open(row)) return;
+    mark(row.id, resultId);
+    advance(row);
+    try {
+      await api(`/api/videos/${row.id}/imagen/aprobar`, { method: "POST", body: JSON.stringify({ resultId }) });
+    } catch (error) {
+      toast.error(message(error, "No se pudo aprobar."));
+      setFocusId(row.id);
+    } finally {
+      await refresh();
+      mark(row.id, undefined);
+    }
+  }
+
+  async function reject(row: BatchRowJson, reason: string) {
+    setRejecting(true);
+    try {
+      await api(`/api/videos/${row.id}/imagen/rechazar`, { method: "POST", body: JSON.stringify({ reason }) });
+      mark(row.id, "reject");
+      advance(row);
+    } catch (error) {
+      toast.error(message(error, "No se pudo rechazar."));
+      throw error;
+    } finally {
+      setRejecting(false);
+    }
+    await refresh();
+    mark(row.id, undefined);
+  }
+
+  useEffect(() => {
+    function onKey(event: KeyboardEvent) {
+      if (dialogOpen || rejectFor !== null || zoomed || event.metaKey || event.ctrlKey || event.altKey) return;
+      const target = event.target as HTMLElement | null;
+      if (target && (target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName))) return;
+      const row = rows[index];
+      if (event.key === "ArrowDown" || event.key === "j") {
+        event.preventDefault();
+        if (index < rows.length - 1) setFocusId(rows[index + 1].id);
+      } else if (event.key === "ArrowUp" || event.key === "k") {
+        event.preventDefault();
+        if (index > 0) setFocusId(rows[index - 1].id);
+      } else if (row && open(row) && /^[1-9]$/.test(event.key)) {
+        const result = row.frame.current!.results.filter((r) => r.ok)[Number(event.key) - 1];
+        if (result) {
+          event.preventDefault();
+          void approve(row, result.id);
+        }
+      } else if (row && open(row) && (event.key === "r" || event.key === "R")) {
+        event.preventDefault();
+        setRejectFor(row.id);
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  });
+
+  const back = { href: `/lotes/${batchId}`, label: query.data?.batch.name ?? "Lote" };
+
+  if (query.isLoading) {
+    return (
+      <div className="flex flex-col gap-6" aria-label="Cargando">
+        <Skeleton className="h-16 w-64" />
+        <Skeleton className="h-96 w-full rounded-xl" />
+      </div>
+    );
+  }
+  if (query.isError || !query.data) {
+    return (
+      <div className="flex flex-col gap-6">
+        <PageHeader back={{ href: "/lotes", label: "Lotes" }} title="Lote no encontrado" />
+        <div className="flex flex-col items-center gap-4 rounded-xl border border-dashed px-6 py-16 text-center">
+          <span className="grid size-12 place-items-center rounded-full bg-muted text-muted-foreground">
+            <SearchX className="size-5" aria-hidden />
+          </span>
+          <Link href="/lotes" className={cn(buttonVariants({ variant: "outline" }), "h-10 px-4")}>
+            Ver los lotes
+          </Link>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-5">
+      <PageHeader
+        back={back}
+        title="Revisar imágenes"
+        actions={
+          <p className="flex items-center gap-2 text-xs text-muted-foreground">
+            <Kbd>↑</Kbd>
+            <Kbd>↓</Kbd>
+            <span className="mr-2">vídeo</span>
+            <Kbd>1</Kbd>
+            <Kbd>2</Kbd>
+            <span className="mr-2">aprobar</span>
+            <Kbd>R</Kbd>
+            <span>rechazar</span>
+          </p>
+        }
+      >
+        <p className="text-sm text-muted-foreground tabular-nums">{pending === 0 ? "Todo revisado" : `${pending} por revisar`}</p>
+      </PageHeader>
+
+      {rows.length === 0 ? (
+        <div className="flex flex-col items-center gap-4 rounded-xl border border-dashed px-6 py-16 text-center">
+          <p className="font-medium">No hay imágenes que revisar</p>
+          <Link href={`/lotes/${batchId}`} className={cn(buttonVariants({ variant: "outline" }), "h-10 px-4")}>
+            Volver al lote
+          </Link>
+        </div>
+      ) : (
+        <ul className="flex flex-col gap-4" aria-label="Vídeos con candidatas">
+          {rows.map((row) => (
+            <ReviewItem
+              key={row.id}
+              row={row}
+              focused={row.id === focused}
+              saving={saving[row.id]}
+              rejecting={rejecting}
+              onFocus={() => setFocusId(row.id)}
+              onApprove={(resultId) => void approve(row, resultId)}
+              onReject={(reason) => reject(row, reason)}
+              onRejectOpen={setDialogOpen}
+              onZoom={setZoomed}
+            />
+          ))}
+        </ul>
+      )}
+
+      {/* Rechazo abierto con la tecla R para el vídeo enfocado. */}
+      {rejectFor !== null ? (
+        <RejectDialogFor
+          row={rows.find((row) => row.id === rejectFor)}
+          pending={rejecting}
+          onClose={() => setRejectFor(null)}
+          onReject={(row, reason) => reject(row, reason)}
+        />
+      ) : null}
+
+      <Dialog open={zoomed !== null} onOpenChange={(open) => (open ? null : setZoomed(null))}>
+        <DialogContent className="w-auto max-w-[calc(100%-2rem)] p-2 sm:max-w-fit">
+          <DialogTitle className="sr-only">Candidata ampliada</DialogTitle>
+          {zoomed ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={zoomed.url ?? thumbUrl(zoomed.id)} alt="" className="max-h-[85vh] w-auto max-w-full rounded-lg" />
+          ) : null}
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+function RejectDialogFor({
+  row,
+  pending,
+  onClose,
+  onReject,
+}: {
+  row: BatchRowJson | undefined;
+  pending: boolean;
+  onClose: () => void;
+  onReject: (row: BatchRowJson, reason: string) => Promise<unknown>;
+}) {
+  if (!row) return null;
+  return (
+    <div className="sr-only">
+      <RejectDialog
+        label={`Rechazar ${row.title}`}
+        title={`¿Por qué no valen? · ${row.title}`}
+        pending={pending}
+        open
+        onOpenChange={(open) => (open ? null : onClose())}
+        onReject={(reason) => onReject(row, reason).then(onClose)}
+      />
+    </div>
+  );
+}

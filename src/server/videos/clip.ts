@@ -180,6 +180,16 @@ function slug(text: string): string {
 export async function clipDownload(user: AuthUser, videoId: number): Promise<{ url: string; filename: string }> {
   const video = await getVideoFor(user, videoId);
   const product = await getProductFor(user, video.productId);
+  const url = await downloadableClipUrl(video);
+  if (!url) throw new HttpError(404, NO_CLIP);
+  return { url, filename: `${slug(product.name)}-video-${video.id}.mp4` };
+}
+
+/**
+ * La dirección del clip que se descargaría de un vídeo ya comprobado con `getVideoFor`: el aprobado
+ * o, si no hay (o no se puede servir), el último terminado bien; `null` si no hay ninguno.
+ */
+export async function downloadableClipUrl(video: Video): Promise<string | null> {
   const results = await getDb()
     .select({ id: schema.generationResults.id, url: schema.generationResults.url })
     .from(schema.generationResults)
@@ -195,8 +205,7 @@ export async function clipDownload(user: AuthUser, videoId: number): Promise<{ u
     .orderBy(desc(schema.generations.id), asc(schema.generationResults.index));
   const approved = results.find((result) => result.id === video.approvedClipResultId);
   const chosen = [approved, ...results].find((result) => result && servableClipUrl(result.url));
-  if (!chosen?.url) throw new HttpError(404, NO_CLIP);
-  return { url: chosen.url, filename: `${slug(product.name)}-video-${video.id}.mp4` };
+  return chosen?.url ?? null;
 }
 
 /** Tope para que Higgsfield empiece a responder. */
