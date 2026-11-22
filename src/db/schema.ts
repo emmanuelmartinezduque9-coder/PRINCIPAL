@@ -136,3 +136,34 @@ export const credentials = pgTable(
   },
   (t) => [unique("credentials_user_kind").on(t.userId, t.kind)],
 );
+
+/**
+ * Libro de gasto: cada llamada de pago reserva antes de llamar y luego se liquida con el coste
+ * real (o se libera si no llegó a gastar). Solo `src/server/spend.ts` la toca. Importes en
+ * micro-dólares. Sin claves ajenas: un cargo no debe desaparecer al borrar un producto, y el
+ * dueño local (id 0) no tiene fila en `users`.
+ */
+export const spendEntries = pgTable(
+  "spend_entries",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    createdAt: instant("created_at").notNull().defaultNow(),
+    settledAt: instant("settled_at"),
+    userId: bigint("user_id", { mode: "number" }).notNull(),
+    productId: bigint("product_id", { mode: "number" }),
+    /** `claude` o `datos`. */
+    provider: text("provider").notNull(),
+    model: text("model"),
+    stepKey: text("step_key").notNull(),
+    /** `reserved`, `settled` o `released`. */
+    status: text("status").notNull(),
+    reservedMicros: bigint("reserved_micros", { mode: "number" }).notNull(),
+    costMicros: bigint("cost_micros", { mode: "number" }),
+    inputTokens: integer("input_tokens"),
+    outputTokens: integer("output_tokens"),
+    cacheReadTokens: integer("cache_read_tokens"),
+    cacheWriteTokens: integer("cache_write_tokens"),
+    detail: jsonb("detail"),
+  },
+  (t) => [index("spend_entries_created").on(t.createdAt), index("spend_entries_step").on(t.stepKey)],
+);

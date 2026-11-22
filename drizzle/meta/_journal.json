@@ -36,6 +36,13 @@
       "when": 1795317794621,
       "tag": "0004_white_khan",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1795318421864,
+      "tag": "0005_open_groot",
+      "breakpoints": true
     }
   ]
 }
