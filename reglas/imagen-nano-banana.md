@@ -20,7 +20,8 @@ El prompt lleva las dos listas, concretas y comprobables, escritas en prosa:
 - Separar siempre la variante que se ve en el original de la variante de destino del encargo. El original dice qué ocurre en la toma; la variante de destino dice qué artículo y qué embalaje aparecen.
 - El artículo se reproduce exactamente como en sus fotos de artículo: misma forma, mismas piezas y su número, mismo color y estampado, mismas proporciones, misma orientación (de qué lado queda el asa, hacia dónde mira el botón). No rediseñar, no simplificar, no recolorear una pieza genérica.
 - Si en la toma se ve la caja, manda la foto del embalaje de esa variante; si se ve el aparato, mandan las fotos del artículo; si se ven los dos, cada uno sigue la suya. Una caja de otro color no sirve, ni una caja genérica recoloreada.
-- Si el original ya muestra la misma variante que el destino, decirlo: el producto de image 1 se conserva tal cual y las fotos del artículo solo confirman el detalle.
+- El producto del original NUNCA se conserva tal cual, aunque parezca el mismo modelo o el mismo color: el original suele ser el aparato de otra cuenta. Siempre se sustituye por el artículo del encargo, copiado de sus fotos de artículo, y el prompt lo dice como sustitución («el aparato de image 1 → el artículo exacto de image N»). De image 1 solo se conservan su posición, su tamaño en el encuadre, su orientación y cómo lo sujeta la mano.
+- Las personas que se ven en el original se conservan en número y posición: si hay una segunda persona al lado (unas piernas, un brazo, una mano), sigue estando, porque forma parte del concepto (por ejemplo, una noche en pareja).
 - La escala es la del original en mano: no agrandar el producto para hacerlo protagonista.
 
 ### 4. Papeles de las referencias, con su número real
