@@ -25,3 +25,18 @@ núcleo de dinero (Tarea 8): cada envío sigue siendo el mismo por vídeo, con s
    Los envíos en bloque van de uno en uno o de dos en dos, nunca todos a la vez.
 4. **Menú:** «Lotes» para todos (cada uno ve sus lotes y los del dueño si es dueño).
 5. **Fuera de v1:** montaje con canción (sigue en el Mac con el montador), Topaz, enlaces de Instagram (Tarea 13).
+
+## Lotes v2 (tras leer el lote antiguo: `docs/importacion/lote-antiguo-funciones.md`)
+Orden por uso real (572 tarjetas en 71 pedidos) y por lo que el dueño ha pedido:
+1. **Tipo por fila** (como el lote antiguo, mejorado):
+   - «Replicar vídeo» (lo de v1; motor Seedance 2.5, sin Genjutsu, por decisión del dueño del 22/11);
+   - «Adaptación de concepto»: referencia + «Qué adaptación quieres» (≤ 12.000 caracteres) + imágenes de
+     referencia; el desglose sigue `reglas/adaptacion-de-conceptos.md` con esa indicación;
+   - «Solo gancho + cuerpo existente»: se genera solo el gancho (tramo inicial de la referencia) y se le pega un
+     cuerpo ya generado (biblioteca de clips con vista previa). Necesita la biblioteca de clips.
+2. **«Cambios específicos»** por fila: llega al desglose de Claude y a los dos prompts.
+3. **Avatar**: elegido / «Sin sustitución» (conservar las personas del vídeo) / «No aparece nadie». Automático por
+   referencia más adelante (biblioteca de avatares).
+4. **Música por fila** (canción de la biblioteca con su drop) para el montaje; la canción elegida gana siempre.
+5. Duplicar y quitar fila; filtro «Por revisar».
+Fuera de v2: Genjutsu/Wan, Pinterest, doblaje, versión en francés, edición en la web (sigue el montador en el Mac).
