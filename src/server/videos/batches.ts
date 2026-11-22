@@ -1,10 +1,10 @@
-import { and, asc, count, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, count, desc, eq, inArray } from "drizzle-orm";
 import { getDb, schema } from "@/db/client";
 import type { AuthUser } from "@/server/auth";
 import { HttpError } from "@/server/http";
 import { listProductPhotos } from "@/server/photos";
 import { listProductsFor } from "@/server/products";
-import { downloadableClipUrl } from "@/server/videos/clip";
+import { downloadableClipUrl, servableClipUrl } from "@/server/videos/clip";
 import { costsOfVideo, type VideoCosts } from "@/server/videos/costs";
 import { generationView, pollVideoGenerations, type GenerationView } from "@/server/videos/generations";
 import { createVideo, type Video } from "@/server/videos/videos";
@@ -76,24 +76,36 @@ export async function listBatchesFor(user: AuthUser): Promise<BatchSummary[]> {
   if (rows.length === 0) return [];
 
   const products = [...(await visibleProducts(user)).keys()];
+  const inScope = and(inArray(videos.batchId, rows.map((row) => row.id)), inArray(videos.productId, products));
   const counts =
     products.length === 0
       ? []
+      : await db.select({ batchId: videos.batchId, total: count() }).from(videos).where(inScope).groupBy(videos.batchId);
+  // «Hecho» = tiene un clip que se puede descargar: la misma regla que `clipReady` (`downloadableClipUrl`).
+  const clips =
+    products.length === 0
+      ? []
       : await db
-          .select({
-            batchId: videos.batchId,
-            total: count(),
-            // Con el nombre de la tabla delante: en una consulta de una sola tabla Drizzle escribe `"id"` a secas.
-            done: sql<number>`count(*) filter (where exists (
-              select 1 from generations g
-              join generation_results r on r.generation_id = g.id
-              where g.video_id = "videos"."id" and g.kind = 'clip' and g.status = 'done' and r.ok
-            ))`.mapWith(Number),
-          })
-          .from(videos)
-          .where(and(inArray(videos.batchId, rows.map((row) => row.id)), inArray(videos.productId, products)))
-          .groupBy(videos.batchId);
-  const byBatch = new Map(counts.map((row) => [row.batchId, row]));
+          .select({ batchId: videos.batchId, videoId: videos.id, url: schema.generationResults.url })
+          .from(schema.generationResults)
+          .innerJoin(schema.generations, eq(schema.generations.id, schema.generationResults.generationId))
+          .innerJoin(videos, eq(videos.id, schema.generations.videoId))
+          .where(
+            and(
+              inScope,
+              eq(schema.generations.kind, "clip"),
+              eq(schema.generations.status, "done"),
+              eq(schema.generationResults.ok, true),
+            ),
+          );
+  const doneVideos = new Map<number, Set<number>>();
+  for (const clip of clips) {
+    if (clip.batchId === null || !servableClipUrl(clip.url)) continue;
+    const set = doneVideos.get(clip.batchId) ?? new Set<number>();
+    set.add(clip.videoId);
+    doneVideos.set(clip.batchId, set);
+  }
+  const byBatch = new Map(counts.map((row) => [row.batchId, { total: row.total, done: doneVideos.get(row.batchId ?? 0)?.size ?? 0 }]));
   return rows.map((row) => ({
     ...row,
     mine: row.createdBy === user.id,

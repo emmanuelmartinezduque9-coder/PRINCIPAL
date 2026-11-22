@@ -5,7 +5,7 @@ import { format } from "date-fns";
 import { es } from "date-fns/locale";
 import { ChevronRight, CircleAlert, Download, Eye, ImageIcon, Loader2, ScanSearch, SearchX, UserX } from "lucide-react";
 import Link from "next/link";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/shell/page-header";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -23,6 +23,7 @@ import {
   pollEvery,
   ready,
   referenceState,
+  rowState,
   videoHref,
   type BatchRowJson,
   type BatchViewJson,
@@ -120,10 +121,12 @@ export function BatchBoard({ batchId }: { batchId: number }) {
     refetchInterval: (q) => pollEvery(q.state.data, uploading),
   });
   /** El último error de una acción en bloque en cada fila (se borra cuando la fila vuelve a ir bien). */
-  const [notices, setNotices] = useState<Record<number, string | null>>({});
-  const [running, setRunning] = useState<null | "breakdown" | "download">(null);
+  // Con el estado de la fila en ese momento (`rowState`): en cuanto la fila cambia, el aviso ya no se enseña.
+  const [notices, setNotices] = useState<Record<number, { message: string; at: string }>>({});
+  /** La acción en bloque en marcha: solo una a la vez, así nunca hay más de 2 peticiones en vuelo. */
+  const [running, setRunning] = useState<null | "breakdown" | "download" | "generate">(null);
+  const inFlight = useRef(false);
   const [downloaded, setDownloaded] = useState(0);
-  const note = (results: Record<number, string | null>) => setNotices((all) => ({ ...all, ...results }));
 
   const back = { href: "/lotes", label: "Lotes" };
   if (query.isLoading) {
@@ -161,19 +164,34 @@ export function BatchBoard({ batchId }: { batchId: number }) {
   const forClip = rows.filter(ready.clip);
   const forDownload = rows.filter(ready.download);
   const credits = rows.reduce((sum, row) => sum + row.costs.higgsfieldCredits, 0);
+  const note = (results: Record<number, string | null>) =>
+    setNotices((all) => {
+      const next = { ...all };
+      for (const [key, message] of Object.entries(results)) {
+        const row = rows.find((r) => r.id === Number(key));
+        if (message === null || !row) delete next[Number(key)];
+        else next[Number(key)] = { message, at: rowState(row) };
+      }
+      return next;
+    });
   const done = rows.filter((row) => row.clipReady).length;
 
   async function breakdownAll() {
+    if (inFlight.current) return;
+    inFlight.current = true;
     setRunning("breakdown");
     const results = await runPool(forBreakdown, 2, (row) => api(`/api/videos/${row.id}/desglose`, { method: "POST" }));
     note(Object.fromEntries(forBreakdown.map((row, i) => [row.id, results[i].ok ? null : message((results[i] as { error: unknown }).error, "No se pudo desglosar.")])));
     const failed = results.filter((r) => !r.ok).length;
     if (failed > 0) toast.error(failed === 1 ? "1 vídeo no se ha podido desglosar." : `${failed} vídeos no se han podido desglosar.`);
     setRunning(null);
+    inFlight.current = false;
     void client.invalidateQueries({ queryKey: ["batch", batchId] });
   }
 
   async function downloadAll() {
+    if (inFlight.current) return;
+    inFlight.current = true;
     setRunning("download");
     setDownloaded(0);
     const report: Record<number, string | null> = {};
@@ -189,7 +207,13 @@ export function BatchBoard({ batchId }: { batchId: number }) {
     }
     note(report);
     setRunning(null);
+    inFlight.current = false;
   }
+
+  const generating = (on: boolean) => {
+    inFlight.current = on;
+    setRunning(on ? "generate" : null);
+  };
 
   return (
     <div className="flex flex-col gap-5">
@@ -227,14 +251,14 @@ export function BatchBoard({ batchId }: { batchId: number }) {
               Desglosar ({forBreakdown.length})
             </Button>
           ) : null}
-          <BulkGenerate kind="frame" rows={forFrame} onResults={note} />
+          <BulkGenerate kind="frame" rows={forFrame} disabled={running !== null} onRunning={generating} onResults={note} />
           {forReview.length > 0 ? (
             <Link href={`/lotes/${batchId}/revisar`} className={cn(buttonVariants({ variant: "outline" }), "h-9 gap-1.5 px-3")}>
               <ImageIcon className="size-4" aria-hidden />
               Revisar imágenes ({forReview.length})
             </Link>
           ) : null}
-          <BulkGenerate kind="clip" rows={forClip} onResults={note} />
+          <BulkGenerate kind="clip" rows={forClip} disabled={running !== null} onRunning={generating} onResults={note} />
           {forDownload.length > 0 ? (
             <Button variant="outline" className="h-9 gap-1.5 px-3 sm:ml-auto" disabled={running !== null} onClick={() => void downloadAll()}>
               {running === "download" ? <Loader2 className="animate-spin" data-icon="inline-start" /> : <Download data-icon="inline-start" />}
@@ -267,7 +291,8 @@ export function BatchBoard({ batchId }: { batchId: number }) {
                 const upload = uploadOf(row);
                 const states = [referenceState(row, upload), analysisState(row), generationState(row.frame, "frame"), generationState(row.clip, "clip")];
                 // El error de la última acción en bloque y, si no hay, el del paso que falló.
-                const problem = notices[row.id] ?? states.find((state) => state.tone === "error" && state.detail && !state.quiet)?.detail ?? null;
+                const notice = notices[row.id];
+                const problem = (notice && notice.at === rowState(row) ? notice.message : null) ?? states.find((state) => state.tone === "error" && state.detail && !state.quiet)?.detail ?? null;
                 return (
                   <TableRow key={row.id}>
                     <TableCell className="pl-4">

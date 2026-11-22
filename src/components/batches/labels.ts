@@ -140,5 +140,11 @@ export function pollEvery(view: BatchViewJson | undefined, uploading: boolean): 
   return slow ? 15_000 : false;
 }
 
+/** Huella del estado de una fila: cambia cuando la fila avanza (o cambia) en cualquier paso. */
+export function rowState(row: BatchRowJson): string {
+  const gen = (g: GenerationJson) => `${g.current?.id ?? 0}:${g.current?.status ?? ""}:${g.current?.rejectReason ?? ""}:${g.approvedResultId ?? 0}`;
+  return [row.updatedAt, row.referenceStatus, row.analysis?.status ?? "", gen(row.frame), gen(row.clip)].join("|");
+}
+
 /** Ruta de la pantalla de un vídeo. */
 export const videoHref = (row: Pick<BatchRowJson, "productId" | "id">) => `/productos/${row.productId}/videos/${row.id}`;

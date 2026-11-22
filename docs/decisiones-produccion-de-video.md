@@ -429,3 +429,13 @@ Diseño: `docs/superpowers/specs/2026-11-22-lotes-design.md`. Un lote es solo un
 - **Sondeo**: el tablero se vuelve a pedir cada 3 s mientras algo se prepara, desglosa, genera o sube en este navegador, cada 15 s si solo hay pausas o dudas, y para cuando no hay nada.
 - **La indicación** (`note`) se ve en el tablero y en la revisión. Todavía no entra en el desglose de Claude (cambiaría el prompt del desglose y sus reglas): queda como recordatorio para la persona.
 - **Comprobación local**: sin `ANTHROPIC_API_KEY`, el desglose en bloque termina en «Falta la clave de Claude» en cada fila (se ve el error bajo la fila); para seguir, los desgloses se marcaron hechos en la base local copiando el del vídeo de ejemplo.
+
+### Lotes v1, revisión 1
+
+- **Precios al abrir, no al cargar**: «Generar imágenes / clips (N)» ya no presupuesta nada al ver el tablero. Al abrir el diálogo se pide el precio de cada fila (una consulta por fila, `["quote", tipo, fila, huella]`, así que cambiar una fila solo vuelve a pedir esa), todas por un mismo turno de 2 (`createLimiter`). Con los precios ya en la caché, el botón añade «· X créditos». Tras enviar, solo las filas enviadas se marcan para volver a presupuestar (al abrir otra vez).
+- **Una acción en bloque a la vez**: mientras corre una (desglosar, generar, descargar), las demás se desactivan, y cada una tiene además un cerrojo (`useRef`) contra el doble clic: nunca hay más de 2 peticiones en vuelo.
+- **Subidas**: toda subida pasa por la cola del proveedor, también la que se elige a mano en la pantalla de un vídeo (va la primera): nunca suben más de 2 a la vez. Elegir otro archivo para un vídeo en cola lo sustituye; para uno que ya sube, corta esa subida y ocupa su hueco.
+- **Avisos por fila**: se guardan con la huella del estado de la fila (`rowState`) y dejan de verse en cuanto la fila cambia.
+- **«Hecho» en la lista** = la misma regla que `clipReady` (un clip terminado en una dirección que se puede servir).
+- **Revisión**: el número de la tecla de cada candidata cuenta solo las candidatas con imagen (como el atajo).
+- El plan y el envío en bloque son funciones puras (`planSend`, `sendPlan` en `src/components/batches/bulk-plan.ts`), con su prueba: cada fila va con su propio `expectedCredits`.

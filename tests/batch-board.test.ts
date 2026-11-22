@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { generationState, pollEvery, ready, referenceState, type BatchRowJson, type BatchViewJson } from "@/components/batches/labels";
-import { runPool } from "@/components/batches/run-pool";
+import { generationState, pollEvery, ready, referenceState, rowState, type BatchRowJson, type BatchViewJson } from "@/components/batches/labels";
+import { planSend, sendPlan } from "@/components/batches/bulk-plan";
+import { createLimiter, runPool } from "@/components/batches/run-pool";
 
 type Gen = BatchRowJson["frame"];
 const gen = (current: Partial<NonNullable<Gen["current"]>> | null, extra: Partial<Gen> = {}): Gen => ({
@@ -98,5 +99,67 @@ describe("runPool", () => {
     });
     expect(peak).toBe(2);
     expect(results.map((r) => (r.ok ? r.value : (r.error as Error).message))).toEqual([10, 20, "tres", 40, 50]);
+  });
+});
+
+describe("envío en bloque", () => {
+  it("cada fila se envía con SU precio; la que no tiene precio se queda con su motivo", async () => {
+    const { send, skipped } = planSend(
+      [{ id: 1 }, { id: 2 }, { id: 3 }, { id: 4 }],
+      {
+        1: { ok: true, value: { credits: 4, balance: 100 } },
+        2: { ok: false, error: new Error("Quita «cinematic»: es una palabra vetada.") },
+        3: { ok: true, value: { credits: 90, balance: 100 } },
+      },
+      "No se pudo calcular el precio.",
+    );
+    expect(send).toEqual([
+      { id: 1, expectedCredits: 4 },
+      { id: 3, expectedCredits: 90 },
+    ]);
+    expect(skipped).toEqual({ 2: "Quita «cinematic»: es una palabra vetada.", 4: "No se pudo calcular el precio." });
+
+    const bodies: Array<[number, number]> = [];
+    const states: string[] = [];
+    const report = await sendPlan(
+      send,
+      async (id, expectedCredits) => {
+        bodies.push([id, expectedCredits]);
+        if (id === 3) throw new Error("El precio ha cambiado: ahora son 120 créditos. Revísalo y confirma de nuevo.");
+      },
+      (id, state) => states.push(`${id}:${state.kind}`),
+    );
+    expect(bodies.sort()).toEqual([
+      [1, 4],
+      [3, 90],
+    ]);
+    expect(report).toEqual({ 1: null, 3: "El precio ha cambiado: ahora son 120 créditos. Revísalo y confirma de nuevo." });
+    expect(states).toEqual(expect.arrayContaining(["1:sending", "3:sending", "1:sent", "3:error"]));
+  });
+
+  it("el aviso de una fila caduca cuando la fila cambia de estado", () => {
+    const before = row({ frame: gen({ status: "failed" }) });
+    expect(rowState(before)).toBe(rowState(row({ frame: gen({ status: "failed" }) })));
+    expect(rowState(before)).not.toBe(rowState(row({ frame: gen({ status: "submitted" }) })));
+    expect(rowState(before)).not.toBe(rowState(row({ frame: gen({ status: "failed" }), updatedAt: "otra" })));
+  });
+});
+
+describe("createLimiter", () => {
+  it("un solo turno de 2 para tareas que llegan de sitios distintos", async () => {
+    const turn = createLimiter(2);
+    let active = 0;
+    let peak = 0;
+    const task = (ms: number) =>
+      turn(async () => {
+        active += 1;
+        peak = Math.max(peak, active);
+        await new Promise((resolve) => setTimeout(resolve, ms));
+        active -= 1;
+        return ms;
+      });
+    const all = await Promise.all([task(10), task(5), task(1), task(3), task(2), task(4)]);
+    expect(all).toEqual([10, 5, 1, 3, 2, 4]);
+    expect(peak).toBe(2);
   });
 });

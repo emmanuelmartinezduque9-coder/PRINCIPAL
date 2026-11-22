@@ -174,8 +174,24 @@ describe("lotes", () => {
       clipReady: true,
     });
     expect((await getVideoFor(ana, v.id)).batchId).toBe(lote.id);
-    // La lista cuenta como hecho el vídeo con un clip terminado.
-    expect((await listBatchesFor(ana))[0]).toMatchObject({ videos: 1, done: 1 });
+    // La lista cuenta como hecho el vídeo con un clip que se puede descargar (la misma regla que `clipReady`):
+    // un clip terminado en una dirección que no se sirve no cuenta.
+    const otro = await addVideoToBatch(ana, lote.id, { productId: deAna.id, avatarPhotoId: null, noPerson: true });
+    const raro = await pool.query(
+      `insert into generations (video_id, kind, round, status, user_id, request, count, quoted_credits, credits_spent)
+       values ($1, 'clip', 1, 'done', $2, '{}', 1, 90, 90) returning id`,
+      [otro.id, ana.id],
+    );
+    await pool.query(
+      "insert into generation_results (generation_id, index, job_id, ok, url) values ($1, 0, 'j3', true, 'https://example.com/a.mp4')",
+      [raro.rows[0].id],
+    );
+    const rows = (await batchView(ana, lote.id)).rows;
+    expect(rows.map((r) => [r.id, r.clipReady])).toEqual([
+      [v.id, true],
+      [otro.id, false],
+    ]);
+    expect((await listBatchesFor(ana))[0]).toMatchObject({ videos: 2, done: 1 });
   });
 
   it("rutas: crear, listar, añadir y ver; el lote ajeno da 404", async () => {

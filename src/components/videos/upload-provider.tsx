@@ -86,10 +86,9 @@ export function ReferenceUploadsProvider({ children }: { children: React.ReactNo
 
   const set = useCallback((videoId: number, upload: ReferenceUpload) => setUploads((all) => ({ ...all, [videoId]: upload })), []);
 
-  const start = useCallback(
+  /** Sube de verdad. Solo la llama `pump`, que lleva la cuenta de las que van a la vez. */
+  const run = useCallback(
     async (videoId: number, file: File) => {
-      // Elegir a mano otro archivo saca de la cola el que esperaba para este vídeo.
-      queue.current = queue.current.filter((item) => item.videoId !== videoId);
       controllers.current.get(videoId)?.abort();
       const own = new AbortController();
       controllers.current.set(videoId, own);
@@ -140,23 +139,33 @@ export function ReferenceUploadsProvider({ children }: { children: React.ReactNo
       while (running.current < MAX_PARALLEL && queue.current.length > 0) {
         const { videoId, file } = queue.current.shift()!;
         running.current += 1;
-        void start(videoId, file).finally(() => {
+        void run(videoId, file).finally(() => {
           running.current -= 1;
           next();
         });
       }
     };
     next();
-  }, [start]);
+  }, [run]);
 
-  const enqueue = useCallback(
-    (videoId: number, file: File) => {
-      queue.current.push({ videoId, file });
+  /**
+   * Toda subida pasa por la cola, también la que se elige a mano en la pantalla del vídeo (esa va la
+   * primera): así nunca suben más de `MAX_PARALLEL` a la vez. Si ese vídeo ya estaba en cola, se
+   * sustituye; si ya estaba subiendo, esa subida se corta y deja su hueco a la nueva.
+   */
+  const schedule = useCallback(
+    (videoId: number, file: File, first: boolean) => {
+      queue.current = queue.current.filter((item) => item.videoId !== videoId);
+      if (first) queue.current.unshift({ videoId, file });
+      else queue.current.push({ videoId, file });
       set(videoId, { kind: "uploading", file, fraction: 0, queued: true });
+      controllers.current.get(videoId)?.abort();
       pump();
     },
     [pump, set],
   );
+  const start = useCallback((videoId: number, file: File) => schedule(videoId, file, true), [schedule]);
+  const enqueue = useCallback((videoId: number, file: File) => schedule(videoId, file, false), [schedule]);
 
   const watch = useCallback((videoId: number) => {
     watched.current.set(videoId, (watched.current.get(videoId) ?? 0) + 1);
@@ -164,7 +173,7 @@ export function ReferenceUploadsProvider({ children }: { children: React.ReactNo
   }, []);
 
   const value = useMemo<UploadsContext>(
-    () => ({ uploads, start: (id, file) => void start(id, file), enqueue, watch }),
+    () => ({ uploads, start, enqueue, watch }),
     [uploads, start, enqueue, watch],
   );
   return <Context.Provider value={value}>{children}</Context.Provider>;

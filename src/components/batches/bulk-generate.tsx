@@ -1,76 +1,79 @@
 "use client";
 
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQueries, useQueryClient } from "@tanstack/react-query";
 import { Check, CircleAlert, Coins, Loader2, RefreshCw, Sparkles } from "lucide-react";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogClose, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { creditsLabel, formatCredits, KIND_PATH, type GenerationKind } from "@/components/videos/labels";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import { errorText, PARALLEL, planSend, sendPlan, type Quote, type QuoteState, type SendState } from "./bulk-plan";
 import type { BatchRowJson } from "./labels";
 import { RowThumb } from "./row-thumb";
-import { runPool } from "./run-pool";
-
-interface Quote {
-  credits: number;
-  balance: number;
-}
-
-type QuoteResult = { ok: true; value: Quote } | { ok: false; error: unknown };
-type SendState = { kind: "pending" } | { kind: "sending" } | { kind: "sent" } | { kind: "error"; message: string };
-
-/** Envíos a la vez, como mucho. */
-const PARALLEL = 2;
-
-const errorText = (error: unknown, fallback: string) => (error instanceof Error ? error.message : fallback);
+import { createLimiter } from "./run-pool";
 
 const TEXT: Record<GenerationKind, { button: string; title: string; quoteFailed: string }> = {
   frame: { button: "Generar imágenes", title: "Generar imágenes", quoteFailed: "No se pudo calcular el precio." },
   clip: { button: "Generar clips", title: "Generar clips", quoteFailed: "No se pudo calcular el precio." },
 };
 
+/** Un solo turno para todos los presupuestos del tablero: como mucho 2 a la vez. */
+const quoteTurn = createLimiter(PARALLEL);
+
+/** Lo que puede cambiar el precio de una fila: el vídeo (prompts, resolución), su ronda o la imagen aprobada. */
+const priceSignature = (kind: GenerationKind, row: BatchRowJson) => {
+  const generation = kind === "frame" ? row.frame : row.clip;
+  return `${row.updatedAt}.${generation.current?.id ?? 0}.${generation.current?.status ?? ""}.${row.frame.approvedResultId ?? 0}`;
+};
+
 /**
- * «Generar imágenes (N) · X créditos» (o clips): presupuesta cada fila lista (de 2 en 2), enseña la
- * suma y el saldo y, con una sola confirmación, envía cada fila con SU precio (`expectedCredits`),
- * de 2 en 2. Lo que falle (precio o vídeo cambiado, sin saldo, cualquier otro error) se queda en su
- * fila con su mensaje y las demás siguen. Los resultados por fila se pasan al tablero (`onResults`).
+ * «Generar imágenes (N)» (o clips): al abrir, presupuesta cada fila lista (una consulta por fila,
+ * todas por el mismo turno de 2), enseña la suma y el saldo y, con una sola confirmación, envía
+ * cada fila con SU precio (`expectedCredits`), de 2 en 2. Lo que falle (precio o vídeo cambiado,
+ * sin saldo, cualquier otro error) se queda en su fila con su mensaje y las demás siguen. Con los
+ * precios ya calculados, el botón añade «· X créditos». Los resultados por fila van al tablero.
  */
 export function BulkGenerate({
   kind,
   rows,
+  disabled,
+  onRunning,
   onResults,
 }: {
   kind: GenerationKind;
   rows: BatchRowJson[];
+  /** Otra acción en bloque en marcha. */
+  disabled: boolean;
+  onRunning: (running: boolean) => void;
   onResults: (results: Record<number, string | null>) => void;
 }) {
   const client = useQueryClient();
   const [open, setOpen] = useState(false);
   /** Lo que se está enviando o se envió: se queda fijo aunque el tablero cambie mientras tanto. */
   const [plan, setPlan] = useState<{ rows: BatchRowJson[]; credits: Record<number, number>; state: Record<number, SendState> } | null>(null);
-  const generation = (row: BatchRowJson) => (kind === "frame" ? row.frame : row.clip);
-  // Cambia cuando cambia algo que puede cambiar el precio: el vídeo (prompts, resolución) o su ronda.
-  const signature = rows
-    .map((row) => `${row.id}.${row.updatedAt}.${generation(row).current?.id ?? 0}.${generation(row).current?.status ?? ""}.${row.frame.approvedResultId ?? 0}`)
-    .join("|");
-  const quotes = useQuery({
-    queryKey: ["batch-quote", kind, signature],
-    queryFn: async () => {
-      const list = await runPool(rows, PARALLEL, (row) =>
-        api<Quote>(`/api/videos/${row.id}/${KIND_PATH[kind]}/presupuesto`, { method: "POST" }),
-      );
-      return Object.fromEntries(rows.map((row, index) => [row.id, list[index]])) as Record<number, QuoteResult>;
-    },
-    enabled: rows.length > 0,
-    staleTime: Infinity,
-    retry: false,
-    refetchOnWindowFocus: false,
+  const inFlight = useRef(false);
+  const queries = useQueries({
+    queries: rows.map((row) => ({
+      queryKey: ["quote", kind, row.id, priceSignature(kind, row)],
+      queryFn: () => quoteTurn(() => api<Quote>(`/api/videos/${row.id}/${KIND_PATH[kind]}/presupuesto`, { method: "POST" })),
+      enabled: open,
+      staleTime: Infinity,
+      retry: false,
+      refetchOnWindowFocus: false,
+    })),
   });
 
   if (rows.length === 0 && !plan) return null;
 
-  const byRow = quotes.data ?? {};
+  const byRow: Record<number, QuoteState> = {};
+  rows.forEach((row, index) => {
+    const query = queries[index];
+    if (query.data) byRow[row.id] = { ok: true, value: query.data };
+    else if (query.error) byRow[row.id] = { ok: false, error: query.error };
+  });
+  const fetching = queries.some((query) => query.isFetching);
+  const settled = rows.every((row) => byRow[row.id] !== undefined);
   const priced = rows.filter((row) => byRow[row.id]?.ok);
   const total = priced.reduce((sum, row) => sum + (byRow[row.id] as { value: Quote }).value.credits, 0);
   const balances = priced.map((row) => (byRow[row.id] as { value: Quote }).value.balance);
@@ -78,46 +81,32 @@ export function BulkGenerate({
   const sending = plan !== null && Object.values(plan.state).some((s) => s.kind === "pending" || s.kind === "sending");
 
   async function send() {
-    if (plan || priced.length === 0) return;
-    const credits = Object.fromEntries(priced.map((row) => [row.id, (byRow[row.id] as { value: Quote }).value.credits]));
-    // Las filas sin precio no se envían y se quedan con su motivo, también en el tablero.
-    const unpriced: Record<number, string> = Object.fromEntries(
-      rows
-        .filter((row) => !(row.id in credits))
-        .map((row) => {
-          const quote = byRow[row.id];
-          return [row.id, quote && !quote.ok ? errorText(quote.error, TEXT[kind].quoteFailed) : TEXT[kind].quoteFailed];
-        }),
-    );
-    const state: Record<number, SendState> = Object.fromEntries(
-      rows.map((row) => [row.id, row.id in unpriced ? { kind: "error", message: unpriced[row.id] } : { kind: "pending" }] as [number, SendState]),
-    );
-    setPlan({ rows, credits, state });
-    const mark = (id: number, value: SendState) => setPlan((p) => (p ? { ...p, state: { ...p.state, [id]: value } } : p));
-    const results = await runPool(priced, PARALLEL, async (row) => {
-      mark(row.id, { kind: "sending" });
-      await api(`/api/videos/${row.id}/${KIND_PATH[kind]}/generar`, {
-        method: "POST",
-        body: JSON.stringify({ expectedCredits: credits[row.id] }),
-      });
-    });
-    const report: Record<number, string | null> = { ...unpriced };
-    priced.forEach((row, index) => {
-      const result = results[index];
-      if (result.ok) {
-        mark(row.id, { kind: "sent" });
-        report[row.id] = null;
-      } else {
-        const message = errorText(result.error, "No se pudo enviar.");
-        mark(row.id, { kind: "error", message });
-        report[row.id] = message;
-      }
-    });
-    onResults(report);
-    // Primero el tablero nuevo (las filas enviadas dejan de estar listas) y después precios nuevos
-    // para las que siguen listas: un 409 de precio no cambia el estado de la fila ni su clave.
-    await client.invalidateQueries({ queryKey: ["batch"] });
-    client.removeQueries({ queryKey: ["batch-quote", kind] });
+    if (inFlight.current || plan || priced.length === 0) return;
+    inFlight.current = true;
+    onRunning(true);
+    try {
+      // Cada fila con SU precio; las que no tienen se quedan sin enviar con su motivo (también en el tablero).
+      const { send: entries, skipped } = planSend(rows, byRow, TEXT[kind].quoteFailed);
+      const credits = Object.fromEntries(entries.map((entry) => [entry.id, entry.expectedCredits]));
+      const state: Record<number, SendState> = Object.fromEntries(
+        rows.map((row) => [row.id, row.id in skipped ? { kind: "error", message: skipped[row.id] } : { kind: "pending" }] as [number, SendState]),
+      );
+      setPlan({ rows, credits, state });
+      const report = await sendPlan(
+        entries,
+        (id, expectedCredits) =>
+          api(`/api/videos/${id}/${KIND_PATH[kind]}/generar`, { method: "POST", body: JSON.stringify({ expectedCredits }) }),
+        (id, value) => setPlan((p) => (p ? { ...p, state: { ...p.state, [id]: value } } : p)),
+      );
+      onResults({ ...skipped, ...report });
+      await client.invalidateQueries({ queryKey: ["batch"] });
+      // Solo las filas enviadas necesitan precio nuevo (un 409 de precio no cambia la fila ni su clave).
+      // Se marcan viejas sin pedirlas ya: se vuelven a pedir al abrir otra vez el diálogo.
+      for (const entry of entries) void client.invalidateQueries({ queryKey: ["quote", kind, entry.id], refetchType: "none" });
+    } finally {
+      inFlight.current = false;
+      onRunning(false);
+    }
   }
 
   function close(next: boolean) {
@@ -131,12 +120,10 @@ export function BulkGenerate({
 
   return (
     <>
-      <Button className="h-9 gap-1.5 px-3" disabled={rows.length === 0} onClick={() => setOpen(true)}>
+      <Button className="h-9 gap-1.5 px-3" disabled={rows.length === 0 || disabled} onClick={() => setOpen(true)}>
         <Sparkles data-icon="inline-start" />
         {label}
-        <span className="font-normal opacity-80 tabular-nums">
-          · {quotes.isFetching && !quotes.data ? "…" : creditsLabel(total)}
-        </span>
+        {settled && rows.length > 0 ? <span className="font-normal opacity-80 tabular-nums">· {creditsLabel(total)}</span> : null}
       </Button>
       <Dialog open={open} onOpenChange={close}>
         <DialogContent className="sm:max-w-xl">
@@ -162,7 +149,7 @@ export function BulkGenerate({
                   </div>
                   <span className="flex shrink-0 items-center gap-2 text-sm tabular-nums">
                     {credits !== null ? <span className={cn(state?.kind === "error" && "text-muted-foreground line-through")}>{formatCredits(credits)}</span> : null}
-                    {!plan && quotes.isFetching && !quote ? <Loader2 className="size-4 animate-spin text-muted-foreground" aria-label="Calculando" /> : null}
+                    {!plan && !quote ? <Loader2 className="size-4 animate-spin text-muted-foreground" aria-label="Calculando" /> : null}
                     {state?.kind === "sending" ? <Loader2 className="size-4 animate-spin text-muted-foreground" aria-label="Enviando" /> : null}
                     {state?.kind === "sent" ? <Check className="size-4 text-emerald-600" aria-label="Enviado" /> : null}
                     {state?.kind === "error" || quoteError ? <CircleAlert className="size-4 text-destructive" aria-label="Error" /> : null}
@@ -201,8 +188,13 @@ export function BulkGenerate({
               </DialogClose>
             ) : (
               <>
-                <Button variant="ghost" className="h-10 gap-1.5 px-3 sm:mr-auto" disabled={quotes.isFetching} onClick={() => void quotes.refetch()}>
-                  <RefreshCw data-icon="inline-start" className={cn(quotes.isFetching && "animate-spin")} />
+                <Button
+                  variant="ghost"
+                  className="h-10 gap-1.5 px-3 sm:mr-auto"
+                  disabled={fetching}
+                  onClick={() => void client.refetchQueries({ queryKey: ["quote", kind], type: "active" })}
+                >
+                  <RefreshCw data-icon="inline-start" className={cn(fetching && "animate-spin")} />
                   Recalcular
                 </Button>
                 <DialogClose asChild>
@@ -210,7 +202,7 @@ export function BulkGenerate({
                     Cancelar
                   </Button>
                 </DialogClose>
-                <Button className="h-10 gap-2 px-4" disabled={priced.length === 0 || quotes.isFetching} onClick={() => void send()}>
+                <Button className="h-10 gap-2 px-4" disabled={priced.length === 0 || fetching || !settled} onClick={() => void send()}>
                   <Sparkles data-icon="inline-start" />
                   Generar {priced.length} · {creditsLabel(total)}
                 </Button>

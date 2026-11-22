@@ -111,6 +111,8 @@ function ReviewItem({
           <figcaption className="text-xs text-muted-foreground">Referencia</figcaption>
         </figure>
         {current.results.map((result, index) => {
+          // La tecla de cada candidata cuenta solo las que tienen imagen (como el atajo 1/2).
+          const key = current.results.filter((r) => r.ok).indexOf(result) + 1;
           const isApproved = approved === result.id;
           return (
             <div key={result.id} className="flex w-48 shrink-0 flex-col gap-1.5">
@@ -154,7 +156,7 @@ function ReviewItem({
                     Aprobar
                   </span>
                   <span className="text-xs opacity-70" aria-hidden>
-                    {index + 1}
+                    {key}
                   </span>
                 </Button>
               ) : null}
