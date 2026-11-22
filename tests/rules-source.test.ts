@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -104,6 +105,26 @@ describe("reglas sembradas: la copia limpia está limpia y conserva el criterio"
     expect(adaptacion).toContain(`«${titles.get("imagen-nano-banana")}»`);
     expect(adaptacion).toContain(`«${titles.get("video-seedance")}»`);
     expect(text("reglas/imagen-nano-banana.md")).toContain(`«${titles.get("video-seedance")}»`);
+  });
+
+  it("la regla de imagen dice el generador que usa el dueño: Nano Banana 2.1 a 2K, no Pro", () => {
+    const imagen = text("reglas/imagen-nano-banana.md");
+    expect(indice.find((e) => e.slug === "imagen-nano-banana")?.title).toBe("Imágenes con Nano Banana");
+    expect(imagen.split("\n")[0]).toBe("# Imágenes con Nano Banana");
+    expect(imagen).toContain("Nano Banana 2.1 a 2K");
+    expect(imagen).not.toContain("cambiar a otro generador por defecto");
+  });
+
+  it("cada corrección de una regla ya sembrada lleva nota y sustituye a otro texto, no al actual", () => {
+    for (const entry of indice as Array<(typeof indice)[number] & { replacesSha256?: string[]; updateNote?: string }>) {
+      if (!entry.replacesSha256) continue;
+      expect(entry.updateNote?.trim(), entry.slug).toBeTruthy();
+      const current = crypto.createHash("sha256").update(text(`reglas/${entry.file}`)).digest("hex");
+      for (const old of entry.replacesSha256) {
+        expect(old, entry.slug).toMatch(/^[0-9a-f]{64}$/);
+        expect(old, entry.slug).not.toBe(current);
+      }
+    }
   });
 
   it("los cuatro ejemplos validados están íntegros en la regla de imagen", () => {

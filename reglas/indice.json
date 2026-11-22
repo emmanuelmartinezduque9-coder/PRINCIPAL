@@ -31,11 +31,16 @@
       "docs/reglas-origen/skills-codex/adaptacion-de-conceptos/references/ejemplos-reales.md",
       "docs/reglas-origen/skills-codex/adaptacion-de-conceptos/references/idea-a-prompt.md",
       "docs/reglas-origen/skills-codex/generacion-de-videos-por-idea/SKILL.md"
-    ]
+    ],
+    "replacesSha256": [
+      "6ad90017761d8b301bbabb22b2578e2fe3341df7b3f1031577098ab46eb54fcc",
+      "dacb474e9476915ebd0c4f7203baa72af14bad7335d26d90bfce09bca2ba273e"
+    ],
+    "updateNote": "La regla de imagen se llama ahora «Imágenes con Nano Banana»."
   },
   {
     "slug": "imagen-nano-banana",
-    "title": "Imágenes con Nano Banana Pro",
+    "title": "Imágenes con Nano Banana",
     "description": "Cómo se escribe y se juzga la imagen inicial: prosa sin lista negra, realismo de móvil, luz del entorno, identidad solo del avatar elegido y ejemplos validados.",
     "file": "imagen-nano-banana.md",
     "source": "docs/reglas-origen/skills-codex/nanobanana-pro-imagenes/SKILL.md",
@@ -49,7 +54,12 @@
       "docs/reglas-origen/cerebro/reglas/como-se-hace-una-imagen-que-vale.md",
       "docs/reglas-origen/cerebro/reglas/no-adelantar-el-reveal.md",
       "docs/reglas-origen/raiz/AGENTS.md"
-    ]
+    ],
+    "replacesSha256": [
+      "4618a8ddecd2f303da03898610dd034371e89cf33f46dd8f60145399ee6eebfc",
+      "bf5f918554eef6817b5a5345c6bd60ab7f1f9163f16742b8c76d3761f0a84dab"
+    ],
+    "updateNote": "Generador: Nano Banana 2.1 a 2K (el que usa Emmanuel), elegible en Ajustes; ya no se dice que sea Pro."
   },
   {
     "slug": "video-seedance",

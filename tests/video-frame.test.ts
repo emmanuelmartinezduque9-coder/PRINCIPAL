@@ -249,14 +249,38 @@ describe("aprobar y rechazar la imagen", () => {
     expect(await approvedOf()).toBe(resultId);
   });
 
-  it("también cuenta un clip apuntado o en duda", async () => {
+  it("también cuenta un clip apuntado, enviándose, en duda o ya generado", async () => {
     const resultId = await frameDone();
     await approveFrame(ana, v.id, resultId);
-    for (const status of ["intent", "unknown"]) {
+    for (const status of ["intent", "submitting", "unknown", "done"]) {
       await getPool().query("delete from generations where kind = 'clip'");
       await insertClip(status);
-      await expect(rejectFrame(ana, v.id, "Otra luz")).rejects.toMatchObject({ status: 409 });
+      await expect(rejectFrame(ana, v.id, "Otra luz"), status).rejects.toMatchObject({ status: 409 });
+      await expect(approveFrame(ana, v.id, resultId), status).rejects.toMatchObject({ status: 409 });
     }
+  });
+
+  it("un clip fallido no ata la imagen: se puede aprobar otra o rechazarla", async () => {
+    const resultId = await frameDone();
+    await approveFrame(ana, v.id, resultId);
+    await insertClip("failed");
+    const { rows } = await getPool().query("select id from generation_results where ok order by id");
+    await approveFrame(ana, v.id, rows[1].id);
+    expect(await approvedOf()).toBe(rows[1].id);
+    await rejectFrame(ana, v.id, "Con esta luz el clip no sale");
+    expect(await approvedOf()).toBeNull();
+  });
+
+  it("solo quien creó el vídeo aprueba o rechaza: el dueño recibe 403 y quien no tiene el producto, 404", async () => {
+    const resultId = await frameDone();
+    const luis = await makeUser("colaborador");
+    for (const call of [(u: AuthUser) => approveFrame(u, v.id, resultId), (u: AuthUser) => rejectFrame(u, v.id, "No me gusta")]) {
+      await expect(call(dueno)).rejects.toMatchObject({ status: 403 });
+      await expect(call(luis)).rejects.toMatchObject({ status: 404, message: "Vídeo no encontrado." });
+    }
+    expect(await approvedOf()).toBeNull();
+    const { rows } = await getPool().query("select reject_reason from generations where kind = 'frame'");
+    expect(rows[0].reject_reason).toBeNull();
   });
 });
 

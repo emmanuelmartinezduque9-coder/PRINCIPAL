@@ -1,4 +1,4 @@
-import { and, eq, ne } from "drizzle-orm";
+import { and, eq, notInArray } from "drizzle-orm";
 import type { HfMediaRef } from "@/connectors/higgsfield";
 import { getDb, getSetting, schema, setSetting } from "@/db/client";
 import type { AuthUser } from "@/server/auth";
@@ -120,14 +120,23 @@ registerRequestBuilder("frame", buildFrameRequest);
 
 // ───────────────────────── Aprobar y rechazar ─────────────────────────
 
-/** Con un clip ya apuntado, enviado, en duda o terminado, la imagen aprobada ya no cambia (409). */
+/** Un clip que no llegó o que falló no ata la imagen: se puede cambiar antes de volver a pedir el clip. */
+const CLIP_RELEASES_FRAME = ["not_sent", "failed"];
+
+/** Con un clip apuntado, enviado, en duda o generado, la imagen aprobada ya no cambia (409). */
 async function requireNoClip(user: AuthUser, videoId: number): Promise<void> {
   const video = await getVideoFor(user, videoId);
   requireVideoOwner(user, video);
   const [clip] = await getDb()
     .select({ id: schema.generations.id })
     .from(schema.generations)
-    .where(and(eq(schema.generations.videoId, video.id), eq(schema.generations.kind, "clip"), ne(schema.generations.status, "not_sent")))
+    .where(
+      and(
+        eq(schema.generations.videoId, video.id),
+        eq(schema.generations.kind, "clip"),
+        notInArray(schema.generations.status, CLIP_RELEASES_FRAME),
+      ),
+    )
     .limit(1);
   if (clip) throw new HttpError(409, CLIP_SENT);
 }

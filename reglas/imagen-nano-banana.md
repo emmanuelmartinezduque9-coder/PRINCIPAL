@@ -1,6 +1,6 @@
-# Imágenes con Nano Banana Pro
+# Imágenes con Nano Banana
 
-Esta es la guía única para generar las imágenes de este proyecto, por orden de Emmanuel del 01/10/2026. No combinar instrucciones creativas de otras guías de imagen ni cambiar a otro generador por defecto. Recoge la receta técnica de realismo del 03/10/2026 y los ejemplos validados por Emmanuel el 07/10/2026.
+Esta es la guía única para generar las imágenes de este proyecto, por orden de Emmanuel del 01/10/2026. No combinar instrucciones creativas de otras guías de imagen. Las imágenes se generan con Nano Banana 2.1 a 2K, el modelo que usa Emmanuel; el modelo lo fija la aplicación y el dueño puede cambiarlo en Ajustes. Recoge la receta técnica de realismo del 03/10/2026 y los ejemplos validados por Emmanuel el 07/10/2026.
 
 ## Identidad y realismo (orden de Emmanuel, 14/11/2026)
 En los frames de testeos y lotes, para la identidad y las facciones se usa exclusivamente el avatar elegido por Emmanuel, o el que se haya seleccionado para ese papel. Las personas que aparecen en las referencias de realismo, estilo, composición o fondo NO son avatares salvo asignación expresa. Está prohibido copiar o mezclar sus ojos, nariz, boca, mandíbula, edad, pelo o parecido. Aplicar textura fotográfica al avatar sin sustituir su identidad; la luz sigue la referencia de entorno. Identificar en el prompt el papel y el índice de cada imagen. No reutilizar como identidad una referencia elegida solo para realismo. Fondo y composición no son identidad salvo asignación expresa.

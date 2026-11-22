@@ -1,4 +1,8 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import crypto from "node:crypto";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { login, type AuthUser } from "@/server/auth";
 import { getRule, getRuleVersion, listRules, loadRules, MAX_RULE_CHARS, RULE_SLUGS, saveRuleVersion, seedRules, VIDEO_RULE_SLUGS } from "@/server/rules";
 import { GET as getReglasRoute } from "@/app/api/reglas/route";
@@ -137,5 +141,57 @@ describe("reglas versionadas", () => {
     await saveRuleVersion(dueno, A, "texto nuevo", "");
     expect((await loadRules([A]))[0]).toEqual({ slug: A, version: 2, body: "texto nuevo" });
     await expect(loadRules(["no-existe"])).rejects.toThrow("Falta la regla «no-existe».");
+  });
+});
+
+describe("correcciones de la aplicación a reglas ya sembradas", () => {
+  const S = "regla-de-prueba";
+  let dir: string;
+  const hash = (body: string) => crypto.createHash("sha256").update(body).digest("hex");
+
+  /** Un `reglas/` de prueba con una sola regla; con `replaces`, el archivo corrige ese texto anterior. */
+  function folder(body: string, replaces?: string): string {
+    const update = replaces ? { replacesSha256: [hash(replaces)], updateNote: "Corregida por la aplicación" } : {};
+    fs.writeFileSync(path.join(dir, "indice.json"), JSON.stringify([{ slug: S, title: "Prueba", description: "Prueba", file: "prueba.md", ...update }]));
+    fs.writeFileSync(path.join(dir, "prueba.md"), body);
+    return dir;
+  }
+  const historyOf = async () => (await getRule(S)).history.map((h) => [h.version, h.note]);
+
+  beforeEach(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), "reglas-"));
+  });
+  afterEach(() => fs.rmSync(dir, { recursive: true, force: true }));
+
+  it("si la vigente es el texto que sembró la aplicación, el corregido entra como versión nueva una sola vez", async () => {
+    await seedRules(folder("texto viejo"));
+    await seedRules(folder("texto nuevo", "texto viejo"));
+    await seedRules(folder("texto nuevo", "texto viejo"));
+    expect((await getRule(S)).current).toMatchObject({ version: 2, body: "texto nuevo" });
+    expect(await historyOf()).toEqual([
+      [2, "Corregida por la aplicación"],
+      [1, "Texto inicial"],
+    ]);
+  });
+
+  it("una instalación nueva siembra directamente el texto corregido como versión 1", async () => {
+    await seedRules(folder("texto nuevo", "texto viejo"));
+    expect(await historyOf()).toEqual([[1, "Texto inicial"]]);
+  });
+
+  it("no pisa lo que editó el dueño, y si recupera el texto anterior tras la corrección, se queda con él", async () => {
+    await seedRules(folder("texto viejo"));
+    await saveRuleVersion(dueno, S, "texto del dueño", "mío");
+    await seedRules(folder("texto nuevo", "texto viejo"));
+    expect((await getRule(S)).current).toMatchObject({ version: 2, body: "texto del dueño" });
+
+    // Vuelve al texto sembrado antes de la corrección: la corrección se aplica (una vez)…
+    await saveRuleVersion(dueno, S, "texto viejo", "Recuperada la versión 1");
+    await seedRules(folder("texto nuevo", "texto viejo"));
+    expect((await getRule(S)).current).toMatchObject({ version: 4, body: "texto nuevo" });
+    // …y si después recupera el viejo, ya no se vuelve a corregir.
+    await saveRuleVersion(dueno, S, "texto viejo", "Recuperada la versión 3");
+    await seedRules(folder("texto nuevo", "texto viejo"));
+    expect((await getRule(S)).current).toMatchObject({ version: 5, body: "texto viejo" });
   });
 });

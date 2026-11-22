@@ -115,7 +115,7 @@ export const analysisSchema: z.ZodType<Analysis> = z.object({
 
 // ───────────────────────── Instrucciones del paso ─────────────────────────
 
-const INSTRUCTIONS = `Desglosa el vídeo de referencia y prepara su adaptación al producto del encargo, aplicando las tres reglas que se entregan arriba («Adaptación de conceptos», «Imágenes con Nano Banana Pro» y «Vídeo con Seedance 2.5»).
+const INSTRUCTIONS = `Desglosa el vídeo de referencia y prepara su adaptación al producto del encargo, aplicando las tres reglas que se entregan arriba («Adaptación de conceptos», «Imágenes con Nano Banana» y «Vídeo con Seedance 2.5»).
 
 Recibes la ficha del producto, la duración del tramo de la referencia y sus cortes de plano detectados, los manifiestos de referencias de la imagen inicial y del clip (con su número y su papel: el orden lo fija la aplicación y no se cambia), los fotogramas de la referencia con su segundo y las fotos del producto, cada una con su número en los dos manifiestos y su papel.
 

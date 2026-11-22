@@ -31,7 +31,7 @@ Antes de prompts, comprobar: **si ocultamos el texto, ¿se entiende el mismo con
 ## Escena, referencias y motor
 Primero producto y propósito de la toma, luego un fondo real coherente con el país y la situación. Una foto de entorno aportada por la persona, o una conservación expresa, prevalece. Cambiar personas, vestuario y entorno conforme a las reglas vigentes, sin perder la composición funcional. No inferir nacionalidad por rasgos físicos.
 
-Desarrollar las nuevas acciones en tomas con la sección «De la idea a las tomas» de esta regla; esta regla aporta el mapa de adaptación, no crea otro ejecutor. Aplicar también las reglas «Imágenes con Nano Banana Pro» y «Vídeo con Seedance 2.5», que se entregan junto a esta, y usar el producto, el embalaje, el avatar y la escala física que la aplicación entrega con su papel.
+Desarrollar las nuevas acciones en tomas con la sección «De la idea a las tomas» de esta regla; esta regla aporta el mapa de adaptación, no crea otro ejecutor. Aplicar también las reglas «Imágenes con Nano Banana» y «Vídeo con Seedance 2.5», que se entregan junto a esta, y usar el producto, el embalaje, el avatar y la escala física que la aplicación entrega con su papel.
 
 El clip se genera dirigido por el prompt, con el vídeo de referencia como guía de estructura (orden de planos, ritmo y tipo de acción), no como copia de su movimiento. Por eso lo que importa es si la acción original sigue siendo válida con el nuevo producto o hay que reconstruirla. Ejemplo: la comodidad de una almohada no contiene las acciones de peinarse; copiar ese movimiento con otro objeto no demuestra un cepillo, así que hay que describir las acciones del cepillo.
 
@@ -111,7 +111,7 @@ Interpretar intención sin inventar una historia: «que se vea enorme» puede re
 Para cada toma describir lo que ve la cámara, no adjetivos abstractos: quién está dónde, qué sostiene cada mano, hacia dónde se desplaza, qué distancia relativa recorre, qué objeto cambia y qué permanece. Conservar simultaneidad y orden. Definir el primer estado ANTES de la acción y el último DESPUÉS; no crear una imagen inicial que ya haya completado lo que debe suceder.
 
 ### Recuperar estructuras que funcionaron
-Los ejemplos validados por Emmanuel están solo en la regla «Imágenes con Nano Banana Pro», que se entrega junto a esta. La plantilla del prompt de la regla «Vídeo con Seedance 2.5» procede de una investigación y todavía no la ha aprobado Emmanuel: tratarla como `inferido útil`. Los ejemplos de imágenes aprobadas NO son una certificación de éxito de vídeos ni de ventas.
+Los ejemplos validados por Emmanuel están solo en la regla «Imágenes con Nano Banana», que se entrega junto a esta. La plantilla del prompt de la regla «Vídeo con Seedance 2.5» procede de una investigación y todavía no la ha aprobado Emmanuel: tratarla como `inferido útil`. Los ejemplos de imágenes aprobadas NO son una certificación de éxito de vídeos ni de ventas.
 
 Seleccionar por semejanza de problema visual: número y papel de personas, apertura/revelado, manipulación, escala en mano, interior/exterior, relación cámara–acción, luz y contacto. No escoger solo por producto o por compartir palabras. Si no hay ejemplo pertinente, usar una estructura propuesta y etiquetarla como no validada; no forzar uno incompatible ni afirmar que una plantilla nueva está probada.
 
@@ -120,7 +120,7 @@ Extraer la arquitectura del prompt, NO copiar su escena: tipo de plano → sujet
 Indicar de qué ejemplo procede cada bloque reutilizado y qué se observó que funcionaba, con su límite de reutilización. `aprobado por Emmanuel`, `observado técnicamente`, `inferido útil` y `éxito comercial` son estados diferentes.
 
 ### Dos prompts distintos
-**Imagen inicial:** composición exacta de apertura, personajes y posiciones iniciales, manos, producto/embalaje/variante, fondo real, perspectiva y escala, luz/sombras de contacto, materiales y piel natural. Adjuntar las referencias requeridas y aplicar la regla «Imágenes con Nano Banana Pro». No describir varias fases temporales como si ocurrieran simultáneamente en una foto.
+**Imagen inicial:** composición exacta de apertura, personajes y posiciones iniciales, manos, producto/embalaje/variante, fondo real, perspectiva y escala, luz/sombras de contacto, materiales y piel natural. Adjuntar las referencias requeridas y aplicar la regla «Imágenes con Nano Banana». No describir varias fases temporales como si ocurrieran simultáneamente en una foto.
 
 **Vídeo:** conservar identidades/escena de la imagen aprobada; expresar trayectoria y progresión temporal de cada sujeto, manipulación física, cambio de estado y resultado final legible. Declarar por separado lo que permanece fijo (p. ej. cámara/fondo) y lo que debe moverse (p. ej. personas/cortina). Nunca traducir «cámara fija» a «personas inmóviles». Respetar el modelo elegido, su duración y la referencia efectiva; no inventar parámetros.
 

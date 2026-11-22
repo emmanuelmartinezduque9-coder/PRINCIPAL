@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
@@ -164,11 +165,22 @@ interface IndexEntry {
   title: string;
   description: string;
   file: string;
+  /** Huellas SHA-256 de textos que la aplicación sembró antes y que el archivo actual sustituye. */
+  replacesSha256?: string[];
+  /** Nota de la versión que trae el texto nuevo cuando sustituye a uno de esos. */
+  updateNote?: string;
 }
+
+const sha256 = (text: string) => crypto.createHash("sha256").update(text).digest("hex");
 
 /**
  * Siembra las reglas de `reglas/indice.json`: crea el documento y su versión 1 solo si ese `slug`
  * no tiene versiones, así que nunca pisa lo que el dueño haya editado.
+ *
+ * Una regla que la aplicación corrige después: si la versión vigente es exactamente un texto que
+ * ella sembró (`replacesSha256`), el archivo entra como versión nueva con `updateNote`, una sola
+ * vez (si ya hay una versión con esa nota, no se repite: el dueño puede recuperar la anterior).
+ * Si el dueño la cambió, no se toca.
  */
 export async function seedRules(dir: string = path.join(process.cwd(), "reglas")): Promise<void> {
   const entries = JSON.parse(await fs.readFile(path.join(dir, "indice.json"), "utf8")) as IndexEntry[];
@@ -183,12 +195,20 @@ export async function seedRules(dir: string = path.join(process.cwd(), "reglas")
           target: schema.ruleDocs.slug,
           set: { title: entry.title, description: entry.description, position },
         });
-      const [existing] = await tx
-        .select({ id: schema.ruleVersions.id })
+      const versions = await tx
+        .select({ version: schema.ruleVersions.version, body: schema.ruleVersions.body, note: schema.ruleVersions.note })
         .from(schema.ruleVersions)
         .where(eq(schema.ruleVersions.slug, entry.slug))
-        .limit(1);
-      if (!existing) await tx.insert(schema.ruleVersions).values({ slug: entry.slug, version: 1, body, note: "Texto inicial" });
+        .orderBy(desc(schema.ruleVersions.version));
+      if (versions.length === 0) {
+        await tx.insert(schema.ruleVersions).values({ slug: entry.slug, version: 1, body, note: "Texto inicial" });
+        return;
+      }
+      const [latest] = versions;
+      const note = entry.updateNote?.trim();
+      if (!note || latest.body === body || !entry.replacesSha256?.includes(sha256(latest.body))) return;
+      if (versions.some((v) => v.note === note)) return;
+      await tx.insert(schema.ruleVersions).values({ slug: entry.slug, version: latest.version + 1, body, note });
     });
   }
 }
