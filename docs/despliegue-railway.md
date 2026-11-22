@@ -1,0 +1,126 @@
+# Publicar PRINCIPAL en Railway (guía paso a paso)
+
+Esta guía la sigues tú, a mano, en el navegador. Tardas unos 20 minutos. Vas a crear dentro de
+tu proyecto de Railway (el mismo donde está Finanzas) **dos servicios nuevos**: una base de datos
+y la web. No se toca nada de Finanzas.
+
+Antes de empezar ten a mano tu gestor de contraseñas y una terminal (en Mac: la app "Terminal").
+
+## 1. Crear la base de datos nueva
+
+1. Entra en <https://railway.com> y abre tu proyecto.
+2. Pulsa **New** (arriba a la derecha) → **Database** → **Add PostgreSQL**.
+3. Cuando aparezca el cuadro nuevo, ábrelo → **Settings** → en **Service Name** escribe
+   `Postgres-principal` y pulsa Enter.
+
+> Tiene que ser una base de datos **nueva**. No uses nunca la de Finanzas: mezclar las dos
+> estropearía los datos de ambas.
+
+## 2. Crear el servicio de la web
+
+1. Pulsa **New** → **GitHub Repo** → elige **PRINCIPAL**. Si no aparece, pulsa
+   **Configure GitHub App** y da permiso a ese repositorio.
+2. Abre el servicio nuevo → **Settings**:
+   - **Service Name**: `principal`.
+   - **Branch** (rama): `main`.
+   - Activa **Wait for CI** (Railway espera a que pasen las pruebas antes de publicar).
+   - **Healthcheck Path**: escribe `/api/health`.
+
+## 3. Variables del servicio `principal`
+
+Abre el servicio `principal` → pestaña **Variables** → **New Variable**. Crea estas, una por una
+(nombre a la izquierda, valor a la derecha):
+
+| Variable | Valor | Para qué sirve |
+| --- | --- | --- |
+| `DATABASE_URL` | `${{Postgres-principal.DATABASE_URL}}` (escríbelo tal cual, con las llaves) | Le dice a la web dónde está su base de datos. |
+| `VAULT_KEY` | una clave nueva, ver más abajo | Protege las conexiones que se guarden (por ejemplo la de Higgsfield). |
+| `PRINCIPAL_CLOUD` | `1` | Avisa a la web de que está en internet y no en tu ordenador. |
+| `TZ` | `Europe/Berlin` | Pone la hora de Alemania en los registros. |
+| `OWNER_EMAIL` | tu correo | Prepara el enlace para crear tu cuenta de dueño. |
+| `ANTHROPIC_API_KEY` | la clave de Claude, ver más abajo | Permite que la web use la IA de Claude. |
+
+**Cómo crear `VAULT_KEY`.** En la terminal escribe:
+
+```
+openssl rand -base64 32
+```
+
+Te imprime una línea de unos 44 caracteres que **termina en `=`**. Cópiala **exactamente** como
+sale, sin espacios ni comillas, y pégala como valor. **Guárdala también en tu gestor de
+contraseñas**: si se pierde, las conexiones guardadas dejarían de poder leerse y habría que
+volver a hacerlas. Y tiene que ser **distinta** de la clave de Finanzas: no copies la de la otra
+app.
+
+**Cómo crear `ANTHROPIC_API_KEY`.**
+
+1. Entra en <https://console.anthropic.com> → **API Keys** → **Create Key**. Ponle de nombre
+   `principal-web`.
+2. Tiene que ser una clave **nueva, creada solo para esta web**. No uses nunca una clave que hayas
+   pegado alguna vez en un chat o en un documento: se considera ya no secreta.
+3. En la misma consola, en los ajustes de límites (**Limits**), pon un **límite mensual de gasto**
+   (el diseño de la web cuenta con 30 USD al mes) para que nunca se pueda gastar más.
+4. Copia la clave (empieza por `sk-ant-`) y pégala como valor de la variable. Solo se muestra una
+   vez.
+
+Al guardar las variables Railway empieza a publicar. Es normal que de momento falle o no responda:
+falta el paso siguiente.
+
+## 4. Darle una dirección a la web
+
+1. En el servicio `principal` → **Settings** → **Networking** → **Generate Domain**.
+2. Copia la dirección que aparece (algo como `principal-production-xxxx.up.railway.app`).
+3. Vuelve a **Variables** y crea `PUBLIC_URL` con esa dirección **empezando por `https://`**,
+   por ejemplo `https://principal-production-xxxx.up.railway.app` (sin barra al final).
+
+| Variable | Valor | Para qué sirve |
+| --- | --- | --- |
+| `PUBLIC_URL` | la dirección de tu web, con `https://` | Para que los enlaces de invitación apunten a la dirección correcta. |
+
+## 5. Esperar y crear tu cuenta
+
+1. Ve a **Deployments**. Espera a que el último despliegue diga **Active** (unos 3 a 5 minutos).
+2. En ese despliegue pulsa **View logs** y busca la línea que dice
+   **`Enlace para crear la cuenta del dueño`**. Al final tiene un enlace largo.
+3. Ábrelo en el navegador y elige tu contraseña. El enlace sirve **una sola vez** y dura 7 días.
+4. Mientras no lo uses, el enlace **se vuelve a escribir en el registro cada vez que la web
+   arranca**, y solo vale el **más reciente**: si hay varios, coge el de las líneas más nuevas
+   (las de más abajo).
+5. Cuando ya hayas entrado, **borra la variable `OWNER_EMAIL`** (pulsa los tres puntos junto a
+   ella → **Delete**).
+
+## 6. Comprobar que todo va bien
+
+- Abre `<tu dirección>/api/health`. Debe mostrar algo como `{"ok":true,"version":"a1b2c3d"}`.
+- Entra con tu correo y contraseña.
+- Abre la pantalla **Productos** desde el móvil: se tiene que ver bien y poder crear un producto.
+
+## Publicar un cambio más adelante
+
+Quien trabaja en el código (Claude) sube los cambios con `git push origin main`. Entonces:
+GitHub pasa las pruebas automáticas (CI) → si salen bien, Railway publica solo la versión nueva
+(gracias a **Wait for CI**) → si la nueva versión no arranca, Railway sigue sirviendo la anterior.
+Tú no tienes que hacer nada.
+
+## Si algo falla
+
+Abre **Deployments** → **View logs**. Las líneas que empiezan por `[nube]` dicen qué falta:
+
+| Mensaje en el registro | Qué hacer |
+| --- | --- |
+| `Falta DATABASE_URL (la base de datos).` | Crea la variable `DATABASE_URL` con el valor `${{Postgres-principal.DATABASE_URL}}`. |
+| `Falta VAULT_KEY (la clave que protege las conexiones guardadas).` | Crea `VAULT_KEY` con el resultado de `openssl rand -base64 32`. |
+| `VAULT_KEY debe ser una clave de 32 bytes en base64.` | Se copió mal (cortada, con espacios o comillas). Genera otra con el mismo comando y pégala entera, tal cual sale. Si ya había conexiones guardadas con la anterior, hay que repetirlas. |
+| `En la nube no se puede desactivar el inicio de sesión (PRINCIPAL_AUTH=off).` | Borra la variable `PRINCIPAL_AUTH`. |
+| `PUBLIC_URL debe empezar por https://.` | Corrige `PUBLIC_URL`: tiene que empezar por `https://`. |
+| `Aviso: Falta ANTHROPIC_API_KEY: la IA no funcionará hasta añadirla.` | No es un error: la web funciona, pero sin IA. Añade `ANTHROPIC_API_KEY` cuando tengas la clave. |
+
+Otros casos:
+
+- **No encuentro el enlace de la cuenta.** Comprueba que `OWNER_EMAIL` existe y que aún no has
+  creado ninguna cuenta. Pulsa **Redeploy** y mira las líneas nuevas del registro.
+- **El enlace dice que no vale.** Se ha usado ya o es uno antiguo: busca el más reciente.
+- **El despliegue se queda esperando (Wait for CI).** Mira la pestaña **Actions** del repositorio
+  en GitHub: si las pruebas fallan, Railway no publica.
+- **`/api/health` no responde.** Mira los registros: casi siempre falta o está mal una variable
+  de la tabla de arriba.

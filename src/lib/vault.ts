@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { isCloud } from "./cloud-env";
 import { dataDir } from "./paths";
+import { parseVaultKey, VAULT_KEY_BYTES } from "./vault-key";
 
 /**
  * Bóveda de credenciales con cifrado en sobre.
@@ -18,30 +19,23 @@ import { dataDir } from "./paths";
  */
 
 const VERSION = "v1";
-const KEY_BYTES = 32;
+const KEY_BYTES = VAULT_KEY_BYTES;
 const IV_BYTES = 12;
 const TAG_BYTES = 16;
 const ALGORITHM = "aes-256-gcm";
 
 const KEY_ERROR = "VAULT_KEY debe ser una clave de 32 bytes en base64";
 
-/** Base64 estricto de 32 bytes: rechaza caracteres ajenos y relleno incorrecto. */
-function parseKey(text: string, error: string): Buffer {
-  const key = Buffer.from(text, "base64");
-  if (key.length !== KEY_BYTES || key.toString("base64") !== text) throw new Error(error);
-  return key;
-}
-
 function loadKey(): Buffer {
   const fromEnv = process.env.VAULT_KEY;
   // Definida (aunque vacía) o inválida: error, nunca se recurre al archivo.
-  if (fromEnv !== undefined) return parseKey(fromEnv.trim(), KEY_ERROR);
+  if (fromEnv !== undefined) return parseVaultKey(fromEnv.trim(), KEY_ERROR);
   if (isCloud()) {
     throw new Error("Falta VAULT_KEY: en la nube la clave de la bóveda debe venir de la variable de entorno (32 bytes en base64)");
   }
   // Solo en local: archivo fuera del proyecto, creado de forma atómica.
   const file = path.join(dataDir(), "vault.key");
-  const readFile = () => parseKey(fs.readFileSync(file, "utf8").trim(), `La clave de ${file} no es válida`);
+  const readFile = () => parseVaultKey(fs.readFileSync(file, "utf8").trim(), `La clave de ${file} no es válida`);
   if (fs.existsSync(file)) return readFile();
   fs.mkdirSync(dataDir(), { recursive: true });
   const key = crypto.randomBytes(KEY_BYTES);

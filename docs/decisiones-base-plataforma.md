@@ -49,3 +49,12 @@
 - **Rotar `VAULT_KEY` invalida lo guardado** (no hay identificador de clave todavía); habría que volver a envolver las claves de datos. Queda fuera de este plan.
 - **`credentials` sin clave ajena a `users`**, como `products.created_by`: el dueño local (id 0) no tiene fila. Único (`user_id`, `kind`); `saveCredential` usa `insert … on conflict do update` (atómico, sin bloqueos de asesoría).
 - **Solo `credentialStatus` es apto para el navegador.** `readCredential` devuelve el secreto y es solo de servidor; el SELECT de `credentialStatus` ni siquiera pide `secret_enc`.
+
+## Tarea 6: publicación en Railway
+
+- **Un solo sitio para "estoy en la nube".** `src/lib/cloud-env.ts` reúne `isCloud(env?)` (la usan `auth.ts` y la bóveda), `checkCloudEnv` y `publicOrigin`. `isCloud` acepta un entorno opcional y sin argumento sigue leyendo `process.env`.
+- **Misma validación de `VAULT_KEY` que la bóveda.** El analizador estricto (base64 canónico de exactamente 32 bytes) vive ahora en `src/lib/vault-key.ts`; lo usan `vault.ts` y `checkCloudEnv`, así que una clave que pasa la comprobación de arranque nunca falla luego al cifrar. Se mantiene fuera de `vault.ts` para que `cloud-env.ts` no dependa de él y no haya importaciones circulares.
+- **Problemas frente a avisos.** Falta de `DATABASE_URL`/`VAULT_KEY`, `PRINCIPAL_AUTH=off` o `PUBLIC_URL` sin `https://` impiden arrancar (salida con código 1 y mensajes `[nube]`). Sin `ANTHROPIC_API_KEY` solo se avisa: se puede entrar y crear productos, la pasarela se negará a llamar.
+- **Una pieza que cae tumba el servicio.** `startCloud` sale con error si la web o el proceso en segundo plano terminan (incluso con código 0), para que Railway reinicie el servicio entero.
+- **Invitación del dueño.** Mientras nadie la use, cada arranque la sustituye y vuelve a escribir el enlace; el válido es el de las líneas más recientes del registro (la guía lo explica).
+- **Guía para el dueño.** `docs/despliegue-railway.md`: la clave de Claude debe ser nueva, solo para esta web y con límite mensual; `VAULT_KEY` nueva (`openssl rand -base64 32`), guardada en su gestor y distinta de la de Finanzas; base de datos nueva, nunca la de Finanzas.
