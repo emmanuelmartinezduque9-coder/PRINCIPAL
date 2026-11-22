@@ -1,3 +1,5 @@
+import crypto from "node:crypto";
+import { and, eq } from "drizzle-orm";
 import { getDb, schema } from "@/db/client";
 import {
   completeAuth,
@@ -12,6 +14,7 @@ import {
   isHiggsfieldError,
   sanitizeOAuthCode,
   startAuth,
+  type HfMediaFile,
   type HiggsfieldPort,
 } from "@/connectors/higgsfield";
 import { oauthOrigin } from "@/lib/cloud-env";
@@ -182,6 +185,28 @@ export async function higgsfieldDiagnostics(
     .insert(schema.higgsfieldProbeLog)
     .values({ userId: user.id, ok, refreshed: false, detail: detail.length > MAX_LOG_CHARS ? `${detail.slice(0, MAX_LOG_CHARS)}…` : detail });
   return clean;
+}
+
+/**
+ * Identificador en Higgsfield de un archivo de esta persona, subiéndolo solo si no se había subido
+ * ya (misma persona y misma huella SHA-256; el nombre del archivo no cuenta). Si la subida falla
+ * no se apunta nada. Si dos llamadas suben a la vez el mismo archivo, se queda el primero que se
+ * apunte y las dos devuelven ese.
+ */
+export async function ensureMedia(userId: number, file: HfMediaFile, deps: { higgsfield?: HiggsfieldPort } = {}): Promise<string> {
+  const sha256 = crypto.createHash("sha256").update(file.bytes).digest("hex");
+  const media = schema.higgsfieldMedia;
+  const known = () =>
+    getDb()
+      .select({ mediaId: media.mediaId })
+      .from(media)
+      .where(and(eq(media.userId, userId), eq(media.sha256, sha256)));
+  const [existing] = await known();
+  if (existing) return existing.mediaId;
+  const { mediaId } = await (deps.higgsfield ?? getHiggsfield()).uploadMedia(userId, file);
+  await getDb().insert(media).values({ userId, sha256, type: file.type, mediaId }).onConflictDoNothing();
+  const [saved] = await known();
+  return saved?.mediaId ?? mediaId;
 }
 
 /**

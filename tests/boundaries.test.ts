@@ -118,6 +118,27 @@ describe("límites del código", () => {
     expect(offenders).toEqual([]);
   });
 
+  it("solo las tablas de vídeo se tocan desde src/server/videos", () => {
+    const VIDEO_TABLES = [/schema\.(videos|videoFrames|uploadSessions)\b/, /\b(video_frames|upload_sessions)\b/];
+    expect(VIDEO_TABLES.some((p) => p.test("getDb().select().from(schema.videoFrames)"))).toBe(true);
+    expect(files.some((f) => f.rel === "src/server/videos/videos.ts" && VIDEO_TABLES.some((p) => p.test(f.text)))).toBe(true);
+    const offenders = files
+      .filter((f) => !f.rel.startsWith("src/server/videos/") && !f.rel.startsWith("src/db/"))
+      .filter((f) => VIDEO_TABLES.some((p) => p.test(f.text)))
+      .map((f) => f.rel);
+    expect(offenders).toEqual([]);
+  });
+
+  it("solo src/server/higgsfield.ts toca la tabla de medios subidos", () => {
+    const MEDIA_TABLE = [/schema\.higgsfieldMedia\b/, /\bhiggsfield_media\b/];
+    expect(files.some((f) => f.rel === "src/server/higgsfield.ts" && MEDIA_TABLE.some((p) => p.test(f.text)))).toBe(true);
+    const offenders = files
+      .filter((f) => f.rel !== "src/server/higgsfield.ts" && !f.rel.startsWith("src/db/"))
+      .filter((f) => MEDIA_TABLE.some((p) => p.test(f.text)))
+      .map((f) => f.rel);
+    expect(offenders).toEqual([]);
+  });
+
   it("dentro del conector, solo mcp.ts importa el SDK de MCP", () => {
     const offenders = files
       .filter((f) => f.rel.startsWith(HIGGSFIELD_LAYER) && f.rel !== "src/connectors/higgsfield/mcp.ts")

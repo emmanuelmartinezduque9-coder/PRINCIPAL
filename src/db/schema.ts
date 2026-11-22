@@ -267,3 +267,114 @@ export const higgsfieldProbeLog = pgTable(
   },
   (t) => [index("higgsfield_probe_log_user").on(t.userId, t.at)],
 );
+
+/**
+ * Archivos ya subidos al Higgsfield de cada persona, por su huella SHA-256: el mismo archivo de
+ * la misma persona no se sube dos veces. Solo `src/server/higgsfield.ts` la toca. Sin clave ajena,
+ * igual que `credentials`.
+ */
+export const higgsfieldMedia = pgTable(
+  "higgsfield_media",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    userId: bigint("user_id", { mode: "number" }).notNull(),
+    sha256: text("sha256").notNull(),
+    /** `image` o `video`. */
+    type: text("type").notNull(),
+    mediaId: text("media_id").notNull(),
+    createdAt: instant("created_at").notNull().defaultNow(),
+  },
+  (t) => [
+    unique("higgsfield_media_user_sha256").on(t.userId, t.sha256),
+    check("higgsfield_media_type_valid", sql`${t.type} in ('image', 'video')`),
+  ],
+);
+
+/**
+ * Vídeos de un producto: cada uno parte de un vídeo de referencia y lo continúa (y lo paga, con
+ * su Higgsfield) solo quien lo creó. Solo `src/server/videos/` toca esta tabla y las dos
+ * siguientes, y siempre después de comprobar el producto con `getProductFor`. `created_by` sin
+ * clave ajena, igual que `products.created_by`.
+ */
+export const videos = pgTable(
+  "videos",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    productId: bigint("product_id", { mode: "number" })
+      .notNull()
+      .references(() => products.id, { onDelete: "cascade" }),
+    createdBy: bigint("created_by", { mode: "number" }).notNull(),
+    title: text("title").notNull(),
+    /** `none`, `uploading`, `processing`, `ready` o `failed`. */
+    referenceStatus: text("reference_status").notNull().default("none"),
+    /** Por qué falló la referencia, en español y apto para la persona. */
+    referenceError: text("reference_error"),
+    /** `file` (subida desde el navegador) o `link` (descargada por el agente del Mac). */
+    referenceSource: text("reference_source"),
+    referenceUrl: text("reference_url"),
+    referenceDurationMs: integer("reference_duration_ms"),
+    referenceWidth: integer("reference_width"),
+    referenceHeight: integer("reference_height"),
+    /** El recorte normalizado, ya subido al Higgsfield de quien creó el vídeo. */
+    referenceMediaId: text("reference_media_id"),
+    /** Tramo de la referencia que se usa: su duración, con tope de 30 s. */
+    segmentDurationMs: integer("segment_duration_ms"),
+    /** Cortes de plano dentro del tramo, en milisegundos. */
+    cutsMs: jsonb("cuts_ms").$type<number[]>(),
+    /** Si se borra la foto, la elección se queda vacía. */
+    avatarPhotoId: bigint("avatar_photo_id", { mode: "number" }).references(() => productPhotos.id, { onDelete: "set null" }),
+    environmentPhotoId: bigint("environment_photo_id", { mode: "number" }).references(() => productPhotos.id, {
+      onDelete: "set null",
+    }),
+    noPerson: boolean("no_person").notNull().default(false),
+    createdAt: instant("created_at").notNull().defaultNow(),
+    updatedAt: instant("updated_at").notNull().defaultNow(),
+  },
+  (t) => [
+    index("videos_product").on(t.productId, t.createdAt),
+    index("videos_reference_status").on(t.referenceStatus),
+    check("videos_reference_status_valid", sql`${t.referenceStatus} in ('none', 'uploading', 'processing', 'ready', 'failed')`),
+    check("videos_reference_source_valid", sql`${t.referenceSource} is null or ${t.referenceSource} in ('file', 'link')`),
+  ],
+);
+
+/** Fotogramas de la referencia (JPEG), en la propia base de datos. El vídeo en sí no se guarda. */
+export const videoFrames = pgTable(
+  "video_frames",
+  {
+    videoId: bigint("video_id", { mode: "number" })
+      .notNull()
+      .references(() => videos.id, { onDelete: "cascade" }),
+    index: integer("index").notNull(),
+    timeMs: integer("time_ms").notNull(),
+    mime: text("mime").notNull(),
+    size: integer("size").notNull(),
+    data: bytea("data").notNull(),
+  },
+  (t) => [unique("video_frames_video_index").on(t.videoId, t.index)],
+);
+
+/**
+ * Subidas por trozos de un vídeo de referencia. El identificador es aleatorio y es también el
+ * nombre del archivo temporal; `received` cuenta los trozos ya escritos. La sube la persona
+ * (`user_id`, siempre quien creó el vídeo) o, en su nombre, una tarea del agente del Mac
+ * (`agent_task_id`). Las de más de 24 h se borran con su archivo.
+ */
+export const uploadSessions = pgTable(
+  "upload_sessions",
+  {
+    id: text("id").primaryKey(),
+    videoId: bigint("video_id", { mode: "number" })
+      .notNull()
+      .references(() => videos.id, { onDelete: "cascade" }),
+    userId: bigint("user_id", { mode: "number" }).notNull(),
+    agentTaskId: bigint("agent_task_id", { mode: "number" }),
+    filename: text("filename").notNull(),
+    totalBytes: integer("total_bytes").notNull(),
+    received: integer("received").notNull().default(0),
+    /** Tipo comprobado por el contenido del primer trozo. */
+    mime: text("mime"),
+    createdAt: instant("created_at").notNull().defaultNow(),
+  },
+  (t) => [index("upload_sessions_video").on(t.videoId), index("upload_sessions_created").on(t.createdAt)],
+);

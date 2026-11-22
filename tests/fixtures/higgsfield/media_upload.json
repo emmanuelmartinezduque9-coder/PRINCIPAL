@@ -1,0 +1,10 @@
+{
+  "_origen": "supuesto",
+  "_nota": "Forma supuesta de la respuesta de `media_upload` con `method: \"upload_url\"` (el esquema publica entradas, no respuestas). Se sustituye por la captura real en la PUERTA.",
+  "isError": false,
+  "structuredContent": {
+    "files": [
+      { "media_id": "m1", "filename": "ref.mp4", "content_type": "video/mp4", "upload_url": "https://upload.test/m1" }
+    ]
+  }
+}

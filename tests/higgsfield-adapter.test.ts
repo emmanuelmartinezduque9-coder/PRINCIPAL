@@ -1,8 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
-import { createHiggsfieldPort, DIAGNOSTIC_TOOLS, readBalance } from "@/connectors/higgsfield/adapter";
+import { createHiggsfieldPort, DIAGNOSTIC_TOOLS, readBalance, readUploadTarget } from "@/connectors/higgsfield/adapter";
 import { McpUnauthorizedError, type McpCaller } from "@/connectors/higgsfield/mcp";
 import { HiggsfieldAuthError, HiggsfieldNotConnectedError, HiggsfieldUnavailableError } from "@/connectors/higgsfield/port";
 import balanceFixture from "./fixtures/higgsfield/balance.json";
+import mediaConfirmFixture from "./fixtures/higgsfield/media_confirm.json";
+import mediaUploadFixture from "./fixtures/higgsfield/media_upload.json";
 
 const ANA = 7;
 
@@ -153,6 +155,74 @@ describe("adaptador de Higgsfield", () => {
     const report = await port.diagnostics(ANA);
     expect(report.estimate_video_cost).toEqual({ failed: "Error" });
     expect(calls).toHaveLength(4);
+  });
+});
+
+describe("subir un archivo a Higgsfield", () => {
+  const FILE = { bytes: Buffer.from("hola!"), filename: "ref.mp4", contentType: "video/mp4", type: "video" as const };
+
+  /** Caller con respuestas por herramienta y un `fetch` falso que anota los PUT. */
+  function uploadSetup(opts: { putStatus?: number; uploadReply?: Reply; putThrows?: boolean } = {}) {
+    const mcpCalls: Array<{ name: string; args: unknown }> = [];
+    const putRequests: Array<{ url: string; method: string; bytes: number; contentType: string | null }> = [];
+    const caller: McpCaller = {
+      async callTool(name, args) {
+        mcpCalls.push({ name, args });
+        const reply = name === "media_upload" ? (opts.uploadReply ?? fixtureReply(mediaUploadFixture)) : fixtureReply(mediaConfirmFixture);
+        if (reply instanceof Error) throw reply;
+        return reply;
+      },
+      async listTools() {
+        return [];
+      },
+      async close() {},
+    };
+    const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const body = init?.body as Uint8Array | undefined;
+      putRequests.push({
+        url: String(input),
+        method: init?.method ?? "GET",
+        bytes: body?.byteLength ?? 0,
+        contentType: new Headers(init?.headers).get("content-type"),
+      });
+      if (opts.putThrows) throw new TypeError("fetch failed");
+      return new Response(null, { status: opts.putStatus ?? 200 });
+    }) as typeof fetch;
+    const port = createHiggsfieldPort({ open: async () => caller, refresh: vi.fn(), fetch: fetchImpl });
+    return { port, mcpCalls, putRequests };
+  }
+
+  it("uploadMedia pide la dirección, sube con PUT y confirma", async () => {
+    const { port, mcpCalls, putRequests } = uploadSetup();
+    expect(await port.uploadMedia(ANA, FILE)).toEqual({ mediaId: "m1" });
+    expect(mcpCalls).toEqual([
+      { name: "media_upload", args: { files: [{ filename: "ref.mp4", content_type: "video/mp4" }], method: "upload_url" } },
+      { name: "media_confirm", args: { media_ids: ["m1"], type: "video" } },
+    ]);
+    expect(putRequests).toMatchObject([{ url: "https://upload.test/m1", method: "PUT", bytes: 5, contentType: "video/mp4" }]);
+  });
+
+  it("si el PUT no devuelve 200 no se confirma y lanza HiggsfieldUnavailableError", async () => {
+    for (const opts of [{ putStatus: 403 }, { putStatus: 500 }, { putThrows: true }]) {
+      const { port, mcpCalls } = uploadSetup(opts);
+      await expect(port.uploadMedia(ANA, FILE)).rejects.toBeInstanceOf(HiggsfieldUnavailableError);
+      expect(mcpCalls.map((c) => c.name)).toEqual(["media_upload"]);
+    }
+  });
+
+  it("una respuesta sin identificador o sin dirección https no sube nada", async () => {
+    for (const data of [{}, { files: [{ media_id: "m1" }] }, { files: [{ media_id: "m1", upload_url: "http://upload.test/m1" }] }]) {
+      const { port, putRequests } = uploadSetup({ uploadReply: { isError: false, text: "", data } });
+      await expect(port.uploadMedia(ANA, FILE)).rejects.toBeInstanceOf(HiggsfieldUnavailableError);
+      expect(putRequests).toEqual([]);
+    }
+  });
+
+  it("lee variantes razonables de la respuesta", () => {
+    expect(readUploadTarget({ media_id: "a", upload_url: "https://u.test/a" })).toEqual({ mediaId: "a", uploadUrl: "https://u.test/a" });
+    expect(readUploadTarget({ uploads: [{ id: "b", url: "https://u.test/b" }] })).toEqual({ mediaId: "b", uploadUrl: "https://u.test/b" });
+    expect(readUploadTarget([{ mediaId: "c", uploadUrl: "https://u.test/c" }])).toEqual({ mediaId: "c", uploadUrl: "https://u.test/c" });
+    expect(readUploadTarget(null)).toBeNull();
   });
 });
 

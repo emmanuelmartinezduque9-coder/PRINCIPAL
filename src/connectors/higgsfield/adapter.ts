@@ -90,6 +90,40 @@ export function readBalance(data: unknown): HfBalance | null {
   return credits === null ? null : { credits: Math.floor(credits), plan };
 }
 
+/** Tope para subir un archivo a la dirección firmada (hasta 100 MB). */
+const UPLOAD_TIMEOUT_MS = 10 * 60_000;
+
+const firstString = (layer: Record<string, unknown>, keys: string[]): string | null => {
+  for (const key of keys) {
+    const value = layer[key];
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return null;
+};
+
+/**
+ * Lee de la respuesta de `media_upload` el identificador del medio y la dirección firmada a la
+ * que subirlo. Admite la lista en `files`/`uploads`/`items`/`results`/`data`, una lista suelta o
+ * un objeto solo, y variantes de nombre. La dirección tiene que ser `https`; si falta algo, `null`.
+ */
+export function readUploadTarget(data: unknown): { mediaId: string; uploadUrl: string } | null {
+  if (!data || typeof data !== "object") return null;
+  const root = data as Record<string, unknown>;
+  const list = Array.isArray(data) ? data : ["files", "uploads", "items", "results", "data"].map((k) => root[k]).find(Array.isArray);
+  const entry = (list ? list[0] : root) as unknown;
+  if (!entry || typeof entry !== "object") return null;
+  const layer = entry as Record<string, unknown>;
+  const mediaId = firstString(layer, ["media_id", "mediaId", "id"]);
+  const uploadUrl = firstString(layer, ["upload_url", "uploadUrl", "presigned_url", "url"]);
+  if (!mediaId || !uploadUrl) return null;
+  try {
+    if (new URL(uploadUrl).protocol !== "https:") return null;
+  } catch {
+    return null;
+  }
+  return { mediaId, uploadUrl };
+}
+
 export function createHiggsfieldPort(
   deps: {
     open?: (userId: number) => Promise<McpCaller>;
@@ -140,6 +174,40 @@ export function createHiggsfieldPort(
           throw new HiggsfieldUnavailableError();
         }
         return balance;
+      });
+    },
+    async uploadMedia(userId, file) {
+      return withCaller(userId, async (caller) => {
+        const requested = await caller.callTool("media_upload", {
+          files: [{ filename: file.filename, content_type: file.contentType }],
+          method: "upload_url",
+        });
+        const target = requested.isError ? null : readUploadTarget(requested.data);
+        if (!target) {
+          console.warn("[higgsfield] Respuesta de `media_upload` que no se entiende.");
+          throw new HiggsfieldUnavailableError();
+        }
+        // Solo se confirma lo que de verdad ha llegado: sin un 2xx del PUT, no hay `media_confirm`.
+        const response = await (deps.fetch ?? fetch)(target.uploadUrl, {
+          method: "PUT",
+          body: new Uint8Array(file.bytes),
+          headers: { "Content-Type": file.contentType },
+          redirect: "error",
+          signal: AbortSignal.timeout(UPLOAD_TIMEOUT_MS),
+        }).catch((error: unknown) => {
+          console.warn(`[higgsfield] La subida del archivo falló: ${error instanceof Error ? error.name : "desconocido"}`);
+          return null;
+        });
+        if (!response?.ok) {
+          if (response) console.warn(`[higgsfield] La subida del archivo respondió ${response.status}.`);
+          throw new HiggsfieldUnavailableError();
+        }
+        const confirmed = await caller.callTool("media_confirm", { media_ids: [target.mediaId], type: file.type });
+        if (confirmed.isError) {
+          console.warn("[higgsfield] `media_confirm` respondió con error.");
+          throw new HiggsfieldUnavailableError();
+        }
+        return { mediaId: target.mediaId };
       });
     },
     async diagnostics(userId) {

@@ -11,8 +11,18 @@ export interface HfBalance {
   plan: string | null;
 }
 
+/** Un archivo para subir al Higgsfield de una persona (vídeo de referencia, foto de producto…). */
+export interface HfMediaFile {
+  bytes: Buffer;
+  filename: string;
+  contentType: string;
+  type: "image" | "video";
+}
+
 export interface HiggsfieldPort {
   balance(userId: number): Promise<HfBalance>;
+  /** Sube el archivo y lo confirma; el `mediaId` sirve después como entrada de una generación. */
+  uploadMedia(userId: number, file: HfMediaFile): Promise<{ mediaId: string }>;
   /** Respuestas en crudo de las herramientas gratuitas, para el informe. Sin secretos. */
   diagnostics(userId: number): Promise<Record<string, unknown>>;
 }
