@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
-  detectCuts, extractFrames, ffmpegAvailable, frameTimesMs, makeThumbnail, normalizeClip, probeVideo,
+  detectCuts, extractFrames, FfmpegMissingError, ffmpegAvailable, frameTimesMs, makeThumbnail, MediaError, normalizeClip, probeVideo,
 } from "@/server/media/ffmpeg";
 import { makeSampleVideo } from "./helpers/sample-video";
 
@@ -100,5 +100,110 @@ describe("ffmpeg", () => {
     const fake = path.join(dir, "falso.mp4");
     fs.writeFileSync(fake, "esto no es un vídeo");
     await expect(probeVideo(fake)).rejects.toThrow("No hemos podido leer este vídeo.");
+  });
+
+  it("un archivo que no es vídeo no deja filtrar rutas ni mensajes técnicos", async () => {
+    const fake = path.join(dir, "falso2.mp4");
+    fs.writeFileSync(fake, "esto no es un vídeo");
+    const error = await probeVideo(fake).catch((e) => e);
+    expect(error).toBeInstanceOf(MediaError);
+    expect(error.message).not.toContain(dir);
+  });
+});
+
+describe("endurecimiento", () => {
+  const secretFile = () => {
+    const secret = path.join(dir, "secreto.txt");
+    fs.writeFileSync(secret, "CONTENIDO-SECRETO");
+    return secret;
+  };
+
+  it("una lista de reproducción hostil no se lee como vídeo ni como imagen", async () => {
+    const secret = secretFile();
+    const hostile = [
+      `#EXTM3U\n#EXT-X-VERSION:3\n#EXTINF:1,\n${secret}\n`,
+      `ffconcat version 1.0\nfile '${secret}'\n`,
+      // Cabecera de vídeo válida seguida de texto hostil: el demultiplexor forzado (mov) no interpreta listas.
+      `\0\0\0\x18ftypisom\0\0\0\0#EXTM3U\n${secret}\n`,
+    ];
+    for (const text of hostile) {
+      const file = path.join(dir, "hostil.mp4");
+      fs.writeFileSync(file, text, "latin1");
+      for (const call of [
+        () => probeVideo(file),
+        () => extractFrames(file, [0]),
+        () => detectCuts(file),
+        () => normalizeClip(file, path.join(dir, "hostil-salida.mp4"), 1000),
+        () => makeThumbnail(Buffer.from(text, "latin1"), "video"),
+        () => makeThumbnail(Buffer.from(text, "latin1"), "image"),
+      ]) {
+        const error = await call().then(() => null, (e) => e);
+        expect(error).toBeInstanceOf(MediaError);
+        expect(error.message).not.toContain("SECRETO");
+        expect(error.message).not.toContain(dir);
+      }
+    }
+    expect(fs.existsSync(path.join(dir, "hostil-salida.mp4"))).toBe(false);
+  });
+
+  it("rechaza rutas relativas o que empiezan por guion", async () => {
+    await expect(probeVideo("-i")).rejects.toBeInstanceOf(MediaError);
+    await expect(probeVideo("-foo.mp4")).rejects.toBeInstanceOf(MediaError);
+    await expect(probeVideo("muestra.mp4")).rejects.toBeInstanceOf(MediaError);
+    await expect(normalizeClip(sample, "-salida.mp4", 1000)).rejects.toBeInstanceOf(MediaError);
+  });
+
+  it("rechaza vídeos de dimensiones o duración absurdas", async () => {
+    const big = path.join(dir, "enorme.mp4");
+    const r1 = spawnSync("ffmpeg", ["-v", "error", "-y", "-f", "lavfi", "-i", "color=c=black:s=4096x4096:r=1:d=1", "-c:v", "libx264", "-pix_fmt", "yuv420p", big]);
+    expect(r1.status).toBe(0);
+    await expect(probeVideo(big)).rejects.toThrow("demasiado grande");
+    const long = path.join(dir, "largo.mp4");
+    const r2 = spawnSync("ffmpeg", ["-v", "error", "-y", "-f", "lavfi", "-i", "color=c=black:s=64x64:r=1:d=700", "-c:v", "libx264", "-g", "300", "-pix_fmt", "yuv420p", long]);
+    expect(r2.status).toBe(0);
+    await expect(probeVideo(long)).rejects.toThrow("dura demasiado");
+  });
+
+  it("sin ffmpeg instalado da un error propio, no «no es un vídeo»", async () => {
+    const empty = fs.mkdtempSync(path.join(dir, "vacio-"));
+    const oldPath = process.env.PATH;
+    process.env.PATH = empty;
+    try {
+      expect(await ffmpegAvailable()).toBe(false);
+      const error = await probeVideo(sample).catch((e) => e);
+      expect(error).toBeInstanceOf(FfmpegMissingError);
+      expect(error.message).toBe("El servidor no puede procesar vídeos ahora mismo.");
+      await expect(extractFrames(sample, [0])).rejects.toBeInstanceOf(FfmpegMissingError);
+    } finally {
+      process.env.PATH = oldPath;
+    }
+  });
+
+  it("al fallar el recorte no queda un archivo a medias", async () => {
+    const out = path.join(dir, "parcial.mp4");
+    const broken = path.join(dir, "roto.mp4");
+    fs.writeFileSync(broken, Buffer.concat([fs.readFileSync(sample).subarray(0, 40), Buffer.alloc(100)]));
+    fs.writeFileSync(out, "resto");
+    await expect(normalizeClip(broken, out, 1000)).rejects.toBeInstanceOf(MediaError);
+    expect(fs.existsSync(out)).toBe(false);
+  });
+
+  it("usa la duración del flujo o la decodificada si la cabecera no la trae (WebM del navegador)", async () => {
+    const webm = path.join(dir, "navegador.webm");
+    const r = spawnSync("sh", ["-c", `ffmpeg -v error -y -f lavfi -i testsrc=s=320x240:r=30:d=2 -c:v libvpx -f webm pipe:1 > "${webm}"`]);
+    expect(r.status).toBe(0);
+    const info = await probeVideo(webm);
+    expect(Math.abs(info.durationMs - 2000)).toBeLessThanOrEqual(150);
+    expect(info).toMatchObject({ width: 320, height: 240 });
+  });
+
+  it("informa del tamaño mostrado cuando el vídeo lleva rotación", async () => {
+    const rotated = path.join(dir, "girado.mp4");
+    const r = spawnSync("ffmpeg", ["-v", "error", "-y", "-display_rotation", "90", "-i", sample, "-c", "copy", rotated]);
+    expect(r.status).toBe(0);
+    expect(await probeVideo(rotated)).toMatchObject({ width: 640, height: 360 });
+    const out = path.join(dir, "girado-norm.mp4");
+    await normalizeClip(rotated, out, 1000);
+    expect(await probeVideo(out)).toMatchObject({ width: 640, height: 360 });
   });
 });
