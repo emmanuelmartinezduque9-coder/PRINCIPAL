@@ -1,9 +1,17 @@
 import { handle } from "@/server/http";
+import { coverPhotoIds } from "@/server/photos";
 import { createProduct, listProductsFor } from "@/server/products";
 
 /** Productos que puede ver quien pregunta, los más recientes primero. */
 export async function GET() {
-  return handle(async (user) => Response.json({ products: await listProductsFor(user!) }));
+  return handle(async (user) => {
+    const products = await listProductsFor(user!);
+    const covers = await coverPhotoIds(
+      user!,
+      products.map((p) => p.id),
+    );
+    return Response.json({ products: products.map((p) => ({ ...p, coverPhotoId: covers.get(p.id) ?? null })) });
+  });
 }
 
 /** Crea un producto. Si lo crea un colaborador, queda asignado a él. */

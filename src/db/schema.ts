@@ -1,5 +1,16 @@
 import { sql } from "drizzle-orm";
-import { bigint, bigserial, index, jsonb, pgTable, primaryKey, text, timestamp } from "drizzle-orm/pg-core";
+import {
+  bigint,
+  bigserial,
+  customType,
+  index,
+  integer,
+  jsonb,
+  pgTable,
+  primaryKey,
+  text,
+  timestamp,
+} from "drizzle-orm/pg-core";
 
 const instant = (name: string) => timestamp(name, { withTimezone: true, mode: "date" });
 
@@ -78,4 +89,29 @@ export const productAssignments = pgTable(
     assignedAt: instant("assigned_at").notNull().defaultNow(),
   },
   (t) => [primaryKey({ columns: [t.productId, t.userId] }), index("product_assignments_user").on(t.userId)],
+);
+
+const bytea = customType<{ data: Buffer; driverData: Buffer }>({
+  dataType: () => "bytea",
+});
+
+/**
+ * Fotos de los productos, guardadas en la propia base de datos. Solo `src/server/photos.ts`
+ * las lee o escribe, y siempre después de comprobar el producto con `getProductFor`.
+ */
+export const productPhotos = pgTable(
+  "product_photos",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    productId: bigint("product_id", { mode: "number" })
+      .notNull()
+      .references(() => products.id, { onDelete: "cascade" }),
+    mime: text("mime").notNull(),
+    size: integer("size").notNull(),
+    data: bytea("data").notNull(),
+    /** Sin clave ajena, igual que `products.created_by`: el dueño local (id 0) no tiene fila en `users`. */
+    createdBy: bigint("created_by", { mode: "number" }).notNull(),
+    createdAt: instant("created_at").notNull().defaultNow(),
+  },
+  (t) => [index("product_photos_product").on(t.productId, t.id)],
 );
