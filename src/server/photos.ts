@@ -205,7 +205,7 @@ export async function deleteProductPhoto(user: AuthUser, photoId: number): Promi
  * Los productos sin fotos, o que no son suyos, no aparecen en el resultado.
  */
 export async function coverPhotoIds(user: AuthUser, productIds: number[]): Promise<Map<number, number>> {
-  const visible = new Set((await listProductsFor(user)).map((p) => p.id));
+  const visible = new Set((await listProductsFor(user, "todos")).map((p) => p.id));
   const ids = [...new Set(productIds)].filter((id) => visible.has(id));
   if (ids.length === 0) return new Map();
   const rows = await getDb()

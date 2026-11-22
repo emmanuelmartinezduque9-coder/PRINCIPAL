@@ -7,7 +7,7 @@ import { Bookmark, CircleAlert, Film, Loader2, Plug, RefreshCw } from "lucide-re
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
-import type { ProductView } from "@/components/products/labels";
+import { productLabel, type ProductView } from "@/components/products/labels";
 import { PageHeader } from "@/components/shell/page-header";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -141,7 +141,8 @@ export function LibraryScreen({ initialProductId }: { initialProductId: number |
   }
 
   const openClip = openId === null ? null : (clips.find((clip) => clip.id === openId) ?? null);
-  const filterName = productList.find((product) => product.id === productId)?.name;
+  const filterProduct = productList.find((product) => product.id === productId);
+  const filterName = filterProduct ? productLabel(filterProduct) : undefined;
   const notFound = library.error instanceof ApiError && library.error.status === 404;
 
   return (
@@ -160,7 +161,7 @@ export function LibraryScreen({ initialProductId }: { initialProductId: number |
                   {productList.map((product) => (
                     <SelectItem key={product.id} value={String(product.id)}>
                       <Bookmark className="size-3.5 fill-current text-muted-foreground" aria-hidden />
-                      {product.name}
+                      {productLabel(product)}
                     </SelectItem>
                   ))}
                 </SelectGroup>

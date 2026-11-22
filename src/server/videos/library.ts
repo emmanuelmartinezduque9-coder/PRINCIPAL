@@ -14,7 +14,7 @@ import { HIGGSFIELD_CONNECT } from "@/lib/error-codes";
 import type { AuthUser } from "@/server/auth";
 import { credentialStatus } from "@/server/credentials";
 import { HttpError } from "@/server/http";
-import { getProductFor, listProductsFor } from "@/server/products";
+import { getProductFor, listProductsFor, productDisplayName } from "@/server/products";
 import { servableClipUrl } from "@/server/videos/clip";
 
 /**
@@ -327,7 +327,7 @@ export async function listLibrary(
   const page = rows.slice(0, limit);
   const lastRow = page[page.length - 1];
 
-  const products = new Map((await listProductsFor(user)).map((product) => [product.id, product.name]));
+  const products = new Map((await listProductsFor(user, "todos")).map((product) => [product.id, productDisplayName(product)]));
   const marks =
     page.length === 0
       ? []

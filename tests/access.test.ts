@@ -250,7 +250,7 @@ describe("rutas /api/productos", () => {
   });
 
   it("sin sesión las rutas responden 401 y no enseñan productos", async () => {
-    const list = await getProductsRoute();
+    const list = await getProductsRoute(request());
     expect(list.status).toBe(401);
     expect((await getProductRoute(request(), byId(a.id))).status).toBe(401);
   });
@@ -260,7 +260,7 @@ describe("rutas /api/productos", () => {
     expect((await getProductRoute(request(), byId(a.id))).status).toBe(200);
     await getDb().update(schema.users).set({ disabledAt: new Date() }).where(eq(schema.users.id, ana.id));
     expect((await getProductRoute(request(), byId(a.id))).status).toBe(401);
-    expect((await getProductsRoute()).status).toBe(401);
+    expect((await getProductsRoute(request())).status).toBe(401);
   });
 
   it("al quitar la asignación, la siguiente petición responde 404", async () => {
@@ -290,7 +290,7 @@ describe("rutas /api/productos", () => {
 
   it("GET /api/productos lista solo los productos de quien pregunta", async () => {
     cookie.value = await tokenOf(ana);
-    const response = await getProductsRoute();
+    const response = await getProductsRoute(request());
     expect(response.status).toBe(200);
     expect((await response.json()).products.map((p: Product) => p.id)).toEqual([a.id]);
   });

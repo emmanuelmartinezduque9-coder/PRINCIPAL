@@ -7,7 +7,7 @@ import { listProductsFor } from "@/server/products";
 export async function GET() {
   return handle(
     async (owner) => {
-      const [people, products] = await Promise.all([listPeople(owner!), listProductsFor(owner!)]);
+      const [people, products] = await Promise.all([listPeople(owner!), listProductsFor(owner!, "todos")]);
       return Response.json(
         { ...people, products: products.map((p) => ({ id: p.id, name: p.name })) },
         { headers: { "Cache-Control": "no-store" } },

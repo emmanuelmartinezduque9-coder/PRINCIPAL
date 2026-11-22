@@ -1,7 +1,7 @@
 "use client";
 
 import { Loader2, Package } from "lucide-react";
-import type { ProductView } from "@/components/products/labels";
+import { productLabel, type ProductView } from "@/components/products/labels";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { AVATAR_MODE_LABELS, KIND_LABELS, KINDS } from "@/components/videos/brief-labels";
 import type { ProductPhoto } from "@/components/videos/labels";
@@ -57,7 +57,7 @@ export function ProductSelect({
         <SelectGroup>
           {products.map((product) => (
             <SelectItem key={product.id} value={String(product.id)}>
-              {product.name}
+              {productLabel(product)}
             </SelectItem>
           ))}
         </SelectGroup>

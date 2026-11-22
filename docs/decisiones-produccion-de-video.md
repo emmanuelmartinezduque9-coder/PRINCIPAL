@@ -693,3 +693,10 @@ La nube no llega a Instagram; el Mac del dueño sí. Un programa pequeño en ese
 
 - Cada grupo de producto de «Nuevo lote» tiene, junto al producto y al número de vídeos, un «Tipo» (Replicar, Adaptación de concepto, Solo gancho) que es el tipo con el que nacen las tarjetas que se añaden después en ese grupo, por archivo o por enlace (como «Tipo de los vídeos que vas a añadir» del panel antiguo). Con «Solo gancho» se ve también la duración del gancho, que heredan las tarjetas nuevas. Cambiarlo no toca las tarjetas que ya están: cada una conserva su propio selector. Es solo de la pantalla: no se guarda en el servidor.
 - El cuadro de «Indicaciones» del grupo enseña su texto de ayuda «Indicaciones para los vídeos de {producto}» mientras está vacío (comprobado con Playwright).
+
+## Emoji y archivo de productos (22/11)
+
+- `products.emoji` (texto, 1–16 caracteres contados como puntos de código, para que quepan 💇‍♀️, banderas o familias) y `products.archived_at` (migración 0020). El servidor acepta solo emoji: sin letras, números ni espacios y con al menos un pictograma o una bandera.
+- El emoji va delante del nombre en toda la web. En el servidor, los nombres que llegan ya hechos (grupos y filas del lote, marcas de la biblioteca) se componen con `productDisplayName`; en la pantalla, con `productLabel`.
+- Archivar no borra nada: el dueño quiere conservar los productos viejos para aprender. `listProductsFor` excluye los archivados por defecto (lista y todos los selectores, que leen `GET /api/productos`); `"solo"` es la vista «Archivados (N)» del dueño (`?archivados=1`, 403 a un colaborador) y `"todos"` lo usan las comprobaciones de visibilidad (lotes, biblioteca, portadas, gasto, personas), así los lotes y vídeos existentes siguen enseñando su producto y la dirección directa sigue abriendo.
+- Solo el dueño archiva o desarchiva (403 a los demás); el emoji lo cambia cualquiera que pueda editar el producto. No se impide crear vídeos nuevos de un producto archivado por la API: simplemente no aparece en los selectores.

@@ -1,7 +1,7 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { ImageOff, Languages, MapPin, Package, Plus, Search, X } from "lucide-react";
+import { Archive, ImageOff, Languages, MapPin, Package, Plus, Search, X } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { buttonVariants } from "@/components/ui/button";
@@ -10,7 +10,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { PageHeader } from "@/components/shell/page-header";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
-import { countryLabels, languageLabel, type ProductView } from "./labels";
+import { countryLabels, languageLabel, productLabel, type ProductView } from "./labels";
 
 export function ProductCover({ photoId, className }: { photoId?: number | null; className?: string }) {
   return (
@@ -40,7 +40,7 @@ function ProductCard({ product }: { product: ProductView }) {
     >
       <ProductCover photoId={product.coverPhotoId} className="aspect-[4/3] w-full border-b" />
       <div className="flex flex-1 flex-col gap-1.5 p-4">
-        <h2 className="truncate text-[15px] font-semibold tracking-tight">{product.name}</h2>
+        <h2 className="truncate text-[15px] font-semibold tracking-tight">{productLabel(product)}</h2>
         <p className="line-clamp-2 min-h-10 text-sm text-muted-foreground">{product.summary}</p>
         <dl className="mt-auto flex flex-col gap-1 pt-2 text-xs text-muted-foreground">
           <div className="flex items-center gap-1.5">
@@ -64,10 +64,13 @@ function ProductCard({ product }: { product: ProductView }) {
 const GRID = "grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4";
 
 export function ProductList() {
+  const [archived, setArchived] = useState(false);
   const query = useQuery({
-    queryKey: ["products"],
-    queryFn: () => api<{ products: ProductView[] }>("/api/productos"),
+    queryKey: archived ? ["products", "archivados"] : ["products"],
+    queryFn: () => api<{ products: ProductView[]; archivedCount?: number }>(archived ? "/api/productos?archivados=1" : "/api/productos"),
   });
+  // Solo el dueño recibe cuántos archivados hay; el botón sale si hay alguno (o si ya los está viendo).
+  const archivedCount = query.data?.archivedCount ?? 0;
   const products = useMemo(() => query.data?.products ?? [], [query.data]);
   const [search, setSearch] = useState("");
   const searchInput = useRef<HTMLInputElement>(null);
@@ -105,7 +108,7 @@ export function ProductList() {
         }
       />
 
-      {hasProducts ? (
+      {hasProducts || archivedCount > 0 ? (
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="relative w-full sm:max-w-sm">
             <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden />
@@ -139,11 +142,28 @@ export function ProductList() {
               </kbd>
             )}
           </div>
-          <p className="text-sm text-muted-foreground tabular-nums" aria-live="polite">
-            {search.trim()
-              ? `${visible.length} de ${products.length} ${products.length === 1 ? "producto" : "productos"}`
-              : `${products.length} ${products.length === 1 ? "producto" : "productos"}`}
-          </p>
+          <div className="flex items-center gap-3">
+            <p className="text-sm text-muted-foreground tabular-nums" aria-live="polite">
+              {search.trim()
+                ? `${visible.length} de ${products.length} ${products.length === 1 ? "producto" : "productos"}`
+                : `${products.length} ${products.length === 1 ? "producto" : "productos"}`}
+            </p>
+            {archivedCount > 0 || archived ? (
+              <button
+                type="button"
+                aria-pressed={archived}
+                onClick={() => setArchived((value) => !value)}
+                className={cn(
+                  buttonVariants({ variant: archived ? "secondary" : "ghost" }),
+                  "h-8 gap-1.5 px-2.5 text-sm",
+                  !archived && "text-muted-foreground",
+                )}
+              >
+                <Archive className="size-3.5" aria-hidden />
+                Archivados ({archivedCount})
+              </button>
+            ) : null}
+          </div>
         </div>
       ) : null}
 

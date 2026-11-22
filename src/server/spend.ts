@@ -371,7 +371,7 @@ export async function spendSummary(user: AuthUser, now: Date = new Date()): Prom
   const productIds = [...new Set(rows.map((row) => row.productId).filter((id): id is number => id !== null))];
   let visibleIds = productIds;
   if (!isOwner) {
-    const visible = new Set((await listProductsFor(user)).map((product) => product.id));
+    const visible = new Set((await listProductsFor(user, "todos")).map((product) => product.id));
     visibleIds = productIds.filter((id) => visible.has(id));
   }
   const names = await productNamesByIds(visibleIds);

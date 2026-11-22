@@ -7,7 +7,7 @@ import { Bookmark, BookmarkPlus, ExternalLink, Loader2, VideoOff, X } from "luci
 import Link from "next/link";
 import { useId, useState } from "react";
 import { toast } from "sonner";
-import type { ProductView } from "@/components/products/labels";
+import { productLabel, type ProductView } from "@/components/products/labels";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -68,7 +68,7 @@ function MarkForm({ clip, products, initialProductId }: { clip: LibraryClipJson;
           <SelectGroup>
             {free.map((product) => (
               <SelectItem key={product.id} value={String(product.id)}>
-                {product.name}
+                {productLabel(product)}
               </SelectItem>
             ))}
           </SelectGroup>

@@ -1,12 +1,13 @@
 "use client";
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Clapperboard, CircleAlert, Images, Languages, Loader2, MapPin, PackageX, Pencil } from "lucide-react";
+import { Archive, ArchiveRestore, Clapperboard, CircleAlert, Ellipsis, Images, Languages, Loader2, MapPin, PackageX, Pencil } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
 import { toast } from "sonner";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { PageHeader } from "@/components/shell/page-header";
@@ -18,6 +19,8 @@ import { PhotoCount, PhotoManager } from "./photo-uploader";
 import { ProductFields, type ProductValues } from "./product-fields";
 import { VideoList } from "@/components/videos/video-list";
 import { DefaultAvatar } from "./default-avatar";
+import { EmojiButton } from "./emoji-picker";
+import type { AuthUser } from "@/server/auth";
 
 const CHIP = "inline-flex h-7 items-center gap-1.5 rounded-md border bg-card px-2.5 text-sm";
 
@@ -115,6 +118,41 @@ function EditProductDialog({ product }: { product: ProductView }) {
   );
 }
 
+/** Menú del dueño: archivar o desarchivar (no se borra nada). */
+function OwnerMenu({ product }: { product: ProductView }) {
+  const client = useQueryClient();
+  const archived = product.archivedAt !== null;
+
+  async function toggle() {
+    try {
+      await api(`/api/productos/${product.id}`, { method: "PATCH", body: JSON.stringify({ archived: !archived }) });
+      await Promise.all([
+        client.invalidateQueries({ queryKey: ["product", String(product.id)] }),
+        client.invalidateQueries({ queryKey: ["products"] }),
+      ]);
+      toast.success(archived ? "Desarchivado." : "Archivado.");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "No se pudo guardar.");
+    }
+  }
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button variant="outline" className="size-10 p-0" aria-label="Más acciones">
+          <Ellipsis className="size-4" aria-hidden />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent>
+        <DropdownMenuItem onSelect={() => void toggle()}>
+          {archived ? <ArchiveRestore aria-hidden /> : <Archive aria-hidden />}
+          {archived ? "Desarchivar" : "Archivar"}
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
 /** La pestaña elegida queda en la dirección (`?pestana=videos`): al volver de un vídeo se abre la misma. */
 function rememberTab(tab: ProductTab) {
   const url = new URL(window.location.href);
@@ -139,6 +177,12 @@ export function ProductDetail({ id, initialTab = "fotos" }: { id: string; initia
     enabled: /^[1-9]\d{0,15}$/.test(id),
   });
   const videoCount = videos.data?.videos.length ?? 0;
+  const me = useQuery({
+    queryKey: ["me"],
+    queryFn: () => api<{ user: AuthUser | null }>("/api/auth/me"),
+    staleTime: 5 * 60_000,
+  });
+  const isOwner = me.data?.user?.role === "dueno";
   const product = query.data?.product;
   const back = { href: "/productos", label: "Productos" };
 
@@ -175,9 +219,29 @@ export function ProductDetail({ id, initialTab = "fotos" }: { id: string; initia
 
   return (
     <div className="flex flex-col gap-6">
-      <PageHeader back={back} title={product.name} actions={<EditProductDialog product={product} />}>
+      <PageHeader
+        back={back}
+        title={
+          <span className="flex items-center gap-2">
+            <EmojiButton product={product} />
+            <span className="min-w-0">{product.name}</span>
+          </span>
+        }
+        actions={
+          <>
+            <EditProductDialog product={product} />
+            {isOwner ? <OwnerMenu product={product} /> : null}
+          </>
+        }
+      >
         <p className="max-w-[70ch] text-[15px] text-pretty text-muted-foreground">{product.summary}</p>
         <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+          {product.archivedAt ? (
+            <span className={cn(CHIP, "text-muted-foreground")}>
+              <Archive className="size-3.5" aria-hidden />
+              Archivado
+            </span>
+          ) : null}
           <MarketChips product={product} />
           <DefaultAvatar product={product} />
         </div>

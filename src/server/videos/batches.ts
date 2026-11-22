@@ -5,7 +5,7 @@ import { linkStatesOf, type LinkState } from "@/server/agent-tasks";
 import type { AuthUser } from "@/server/auth";
 import { HttpError } from "@/server/http";
 import { coverPhotoIds, listProductPhotos } from "@/server/photos";
-import { listProductsFor } from "@/server/products";
+import { listProductsFor, productDisplayName } from "@/server/products";
 import { downloadableClipUrl, servableClipUrl } from "@/server/videos/clip";
 import { bodiesOfVideos, checkVideoBodies } from "@/server/videos/bodies";
 import { costsOfVideo, type VideoCosts } from "@/server/videos/costs";
@@ -50,7 +50,7 @@ const videos = schema.videos;
 
 /** Ids de los productos que ve `user`: el mismo ámbito que el resto de la aplicación. */
 async function visibleProducts(user: AuthUser): Promise<Map<number, string>> {
-  return new Map((await listProductsFor(user)).map((product) => [product.id, product.name]));
+  return new Map((await listProductsFor(user, "todos")).map((product) => [product.id, productDisplayName(product)]));
 }
 
 /**

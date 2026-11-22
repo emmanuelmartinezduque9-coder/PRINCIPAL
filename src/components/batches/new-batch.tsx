@@ -7,7 +7,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { BodyPicker, HookStepper } from "@/components/library/body-picker";
-import type { ProductView } from "@/components/products/labels";
+import { productLabel, type ProductView } from "@/components/products/labels";
 import { PageHeader } from "@/components/shell/page-header";
 import type { SongJson } from "@/components/songs/labels";
 import { MusicPicker } from "@/components/songs/music-picker";
@@ -582,7 +582,7 @@ export function NewBatch() {
         return (
           <section
             key={group.key}
-            aria-label={product ? `Vídeos de ${product.name}` : "Vídeos de un producto"}
+            aria-label={product ? `Vídeos de ${productLabel(product)}` : "Vídeos de un producto"}
             className="flex flex-col overflow-hidden rounded-xl bg-card ring-1 ring-foreground/10"
           >
             <div className="flex flex-col gap-3 border-b px-4 py-3">

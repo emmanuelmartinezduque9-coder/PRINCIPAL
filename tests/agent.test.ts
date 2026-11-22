@@ -261,12 +261,12 @@ describe("fichas del Mac", () => {
   it("una ficha del Mac no abre las rutas de las personas", async () => {
     const { token } = await mac();
     cookie.authorization = `Bearer ${token}`;
-    const response = await productsRoute();
+    const response = await productsRoute(new Request("http://localhost/api/productos"));
     expect(response.status).toBe(401);
     expect(await response.json()).toEqual({ error: "Inicia sesión para continuar." });
     // Y como cookie de sesión tampoco vale.
     cookie.value = token;
-    expect((await productsRoute()).status).toBe(401);
+    expect((await productsRoute(new Request("http://localhost/api/productos"))).status).toBe(401);
   });
 
   it("las rutas del agente piden la ficha: sin ella o con una sesión de persona, 401", async () => {

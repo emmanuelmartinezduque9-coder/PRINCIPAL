@@ -141,6 +141,13 @@
       "when": 1795371972170,
       "tag": "0019_canciones",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1795373571981,
+      "tag": "0020_emoji_archivo",
+      "breakpoints": true
     }
   ]
 }

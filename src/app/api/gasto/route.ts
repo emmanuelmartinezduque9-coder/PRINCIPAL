@@ -19,7 +19,7 @@ export async function GET() {
     const wanted = [...new Set(pausedJobs.map((job) => job.productId).filter((id): id is number => id !== null))];
     const products = isOwner
       ? await productNamesByIds(wanted)
-      : new Map((await listProductsFor(me)).map((product) => [product.id, product.name]));
+      : new Map((await listProductsFor(me, "todos")).map((product) => [product.id, product.name]));
     // Qué tope detuvo el trabajo: el que quedó apuntado al pausarlo (si no consta, el dueño lo
     // deduce del gasto global). Un colaborador no recibe motivo: no debe saber nada del tope global.
     const guessed = summary.spentMicros >= summary.capMicros ? "global" : "persona";

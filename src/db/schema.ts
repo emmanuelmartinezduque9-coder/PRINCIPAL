@@ -86,7 +86,12 @@ export const products = pgTable("products", {
   defaultAvatarPhotoId: bigint("default_avatar_photo_id", { mode: "number" }).references((): AnyPgColumn => productPhotos.id, {
     onDelete: "set null",
   }),
+  /** Emoji que acompaña al nombre en toda la web (1–16 caracteres, para los compuestos). */
+  emoji: text("emoji"),
+  /** Archivado por el dueño: sale de las listas y selectores, pero no se borra nada. */
+  archivedAt: instant("archived_at"),
 }, (t) => [
+  check("products_emoji_length", sql`${t.emoji} is null or char_length(${t.emoji}) between 1 and 16`),
   check("products_default_avatar_mode_valid", sql`${t.defaultAvatarMode} in ('elegido', 'sin_sustitucion', 'nadie')`),
   check("products_default_avatar_only_chosen", sql`${t.defaultAvatarMode} = 'elegido' or ${t.defaultAvatarPhotoId} is null`),
 ]);

@@ -35,3 +35,16 @@ export const isProductTab = (value: unknown): value is ProductTab => PRODUCT_TAB
 
 /** Dirección de una pestaña del producto. */
 export const productTabHref = (productId: number | string, tab: ProductTab) => `/productos/${productId}?pestana=${tab}`;
+
+/** Nombre del producto con su emoji delante, si tiene. */
+export const productLabel = (product: { name: string; emoji?: string | null }) =>
+  product.emoji ? `${product.emoji} ${product.name}` : product.name;
+
+/** Emoji habituales para productos de las tiendas. */
+export const PRODUCT_EMOJIS = [
+  "🍦", "💇‍♀️", "🏷️", "🐶", "🐱", "🎄", "🧣", "☂️",
+  "💅", "✨", "🎀", "🔥", "⭐", "💄", "👗", "👟",
+  "👜", "💍", "🧴", "🧼", "🪥", "🛁", "🕯️", "🌸",
+  "🌿", "☕", "🍫", "🍷", "🧸", "🎁", "🎮", "📱",
+  "🎧", "💡", "🧹", "🍳", "🏋️", "⚽", "🚗", "💤",
+];

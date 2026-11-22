@@ -4,7 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Clapperboard, Eye, Film, ImageIcon, ScanSearch, SearchX } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
-import { productTabHref, type ProductView } from "@/components/products/labels";
+import { productLabel, productTabHref, type ProductView } from "@/components/products/labels";
 import { PageHeader } from "@/components/shell/page-header";
 import { buttonVariants } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -102,7 +102,7 @@ export function VideoFlow({ productId, videoId, initialStep }: { productId: numb
     staleTime: 5 * 60_000,
   });
 
-  const back = { href: productTabHref(productId, "videos"), label: product.data?.product.name ?? "Producto" };
+  const back = { href: productTabHref(productId, "videos"), label: product.data ? productLabel(product.data.product) : "Producto" };
 
   if (view.isLoading) return <Loading />;
   const data = view.data;

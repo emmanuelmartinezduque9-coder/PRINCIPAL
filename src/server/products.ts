@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, isNull } from "drizzle-orm";
 import { getDb, schema } from "@/db/client";
 import { productScope, scopedProducts } from "@/server/access";
 import type { AuthUser } from "@/server/auth";
@@ -27,9 +27,45 @@ export async function getProductFor(user: AuthUser, productId: number): Promise<
   return product;
 }
 
-/** Productos visibles para `user`, los más recientes primero. */
-export async function listProductsFor(user: AuthUser): Promise<Product[]> {
-  return scopedProducts(user).orderBy(desc(schema.products.createdAt), desc(schema.products.id));
+/**
+ * Qué productos archivados entran en una lista: `no` (por defecto: listas y selectores), `solo`
+ * (la vista de archivados del dueño) o `todos` (para saber qué ids ve una persona, p. ej. al
+ * enseñar un lote antiguo con un producto ya archivado).
+ */
+export type ArchivedFilter = "no" | "solo" | "todos";
+
+/** Nombre para enseñar: con el emoji delante si lo tiene. */
+export const productDisplayName = (product: { name: string; emoji: string | null }) =>
+  product.emoji ? `${product.emoji} ${product.name}` : product.name;
+
+/** Productos visibles para `user`, los más recientes primero. Sin archivados salvo que se pidan. */
+export async function listProductsFor(user: AuthUser, archived: ArchivedFilter = "no"): Promise<Product[]> {
+  const where =
+    archived === "no" ? isNull(schema.products.archivedAt) : archived === "solo" ? isNotNull(schema.products.archivedAt) : undefined;
+  return scopedProducts(user, where).orderBy(desc(schema.products.createdAt), desc(schema.products.id));
+}
+
+/** Cuántos productos archivados ve `user`. */
+export async function countArchivedProducts(user: AuthUser): Promise<number> {
+  return (await scopedProducts(user, isNotNull(schema.products.archivedAt))).length;
+}
+
+const MAX_EMOJI = 16;
+
+/**
+ * Emoji del producto: `null` lo quita; si no, uno o varios emoji (los compuestos, como 💇‍♀️ o una
+ * bandera, cuentan como varios caracteres), hasta 16 caracteres y sin letras, números ni espacios.
+ */
+export function validateEmoji(value: unknown): string | null {
+  if (value === null) return null;
+  if (typeof value !== "string") throw new HttpError(400, "Emoji no válido.");
+  const emoji = value.trim();
+  if (!emoji) return null;
+  if ([...emoji].length > MAX_EMOJI) throw new HttpError(400, "Emoji demasiado largo.");
+  if (/[\p{L}\p{N}\s]/u.test(emoji) || !/\p{Extended_Pictographic}|\p{Regional_Indicator}/u.test(emoji)) {
+    throw new HttpError(400, "Emoji no válido.");
+  }
+  return emoji;
 }
 
 /**
@@ -83,6 +119,10 @@ export interface ProductChanges {
   /** Avatar habitual de los vídeos nuevos: `elegido` (con una foto de avatar del producto o `null`), `sin_sustitucion` o `nadie`. */
   defaultAvatarMode?: unknown;
   defaultAvatarPhotoId?: unknown;
+  /** Texto con el emoji, o `null` para quitarlo. */
+  emoji?: unknown;
+  /** Archivar (`true`) o desarchivar (`false`). Solo el dueño. */
+  archived?: unknown;
 }
 
 const AVATAR_MODES = ["elegido", "sin_sustitucion", "nadie"];
@@ -128,6 +168,14 @@ async function checkDefaultAvatar(
  */
 export async function updateProduct(user: AuthUser, productId: number, changes: ProductChanges): Promise<Product> {
   const current = await getProductFor(user, productId);
+  const extra: { emoji?: string | null; archivedAt?: Date | null } = {};
+  if (changes.emoji !== undefined) extra.emoji = validateEmoji(changes.emoji);
+  if (changes.archived !== undefined) {
+    if (typeof changes.archived !== "boolean") throw new HttpError(400, "Valor no válido.");
+    if (user.role !== "dueno") throw new HttpError(403, "Solo el dueño puede archivar productos.");
+    // Archivar de nuevo conserva la fecha de la primera vez.
+    extra.archivedAt = changes.archived ? (current.archivedAt ?? new Date()) : null;
+  }
   const values = validateProductInput({
     name: changes.name ?? current.name,
     summary: changes.summary ?? current.summary,
@@ -137,7 +185,7 @@ export async function updateProduct(user: AuthUser, productId: number, changes: 
   const avatar = await checkDefaultAvatar(current, changes);
   const [product] = await getDb()
     .update(schema.products)
-    .set({ ...values, ...avatar })
+    .set({ ...values, ...avatar, ...extra })
     .where(and(eq(schema.products.id, current.id), productScope(user)))
     .returning();
   if (!product) throw new HttpError(404, NOT_FOUND);
