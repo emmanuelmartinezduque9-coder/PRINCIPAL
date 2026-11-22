@@ -45,3 +45,7 @@ Nota previa: `referentes-dropshipping-organico.md` (notas anteriores).
 - No se abrieron tiendas: precios y especificaciones sin verificar (salvo los datos previos de Trendtrack en kloudwel).
 - Total de cargas de página en el navegador: unas 83. Un primer intento por API de Instagram con las cookies del navegador recibió HTTP 429 en la primera petición y se abandonó; el método final fue solo navegación normal.
 - Dos reels mostraron en la cuadrícula valores ambiguos ('4 0', '102 2', '4127 277'); no se interpretaron.
+
+## Referencias de edición
+- @wearheelit (luces LED para zapatillas, EE. UU.): análisis del montaje de 10 reels con vídeo, audio y texto medidos →
+  `referencias-edicion/wearheelit.md`; parámetros derivados para el montador → `referencias-edicion/parametros-para-el-montador.md`.

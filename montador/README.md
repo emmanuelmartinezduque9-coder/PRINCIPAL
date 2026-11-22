@@ -74,3 +74,21 @@ Nunca crea entornos virtuales en el T7: `uv` guarda su caché en `~/Library/Cach
 - Los beats son automáticos (librosa); el drop sí es el marcador humano guardado.
 - No escucha: las comprobaciones de audio son numéricas (duración, desfase, picos, LUFS de la voz).
 - Sin interfaz; sin descripciones (`Beschreibung`).
+
+## Analizar un vídeo de referencia (`analizar_referencia.py`)
+
+Mide el montaje de un reel/TikTok de referencia para imitar su estilo: cortes (detector de escena de ffmpeg, umbral
+0,20 por defecto), duración de planos, ritmo por tramos, tempo/beats/compases/drop (librosa), distancia de cada corte
+al beat (con el % que saldría por azar; con `--bpm` se mide contra una rejilla fija anclada en el drop, porque
+el tempo de librosa a veces sale mal), zooms y movimiento dentro de cada plano (opencv), y opcionalmente hojas de
+contactos a 4 fps, texto en pantalla (Vision de macOS) y transcripción (mlx_whisper). Escribe `<id>.analisis.json`
+junto al vídeo; si al lado está el `<id>.info.json` de yt-dlp, añade vistas/likes/caption/fecha.
+
+```sh
+export UV_CACHE_DIR=$HOME/Library/Caches/uv-principal COPYFILE_DISABLE=1
+uv run --no-project --with librosa --with soundfile --with numpy --with opencv-python-headless \
+    python analizar_referencia.py /ruta/*.mp4 --hojas --ocr --voz
+```
+
+Los números no bastan: mirar siempre las hojas de contactos (un «corte» puede ser un flash o un barrido de cámara, y el
+beat de librosa puede ir desfasado). Primer uso: ver `docs/casos/referencias-edicion/wearheelit.md`.
