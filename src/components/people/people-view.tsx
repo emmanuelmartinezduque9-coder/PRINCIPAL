@@ -3,6 +3,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { toast } from "sonner";
+import { PageHeader } from "@/components/shell/page-header";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ApiError, api, type Serialized } from "@/lib/api";
@@ -57,15 +58,11 @@ export function PeopleView() {
 
   return (
     <div className="flex flex-col gap-6">
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-        <div className="flex flex-col gap-1">
-          <h1 className="text-2xl font-semibold tracking-tight">Personas</h1>
-          <p className="max-w-xl text-sm text-muted-foreground">
-            Quién entra en la aplicación, qué productos ve y cuánto puede gastar al mes.
-          </p>
-        </div>
-        {forbidden ? null : <InviteDialog />}
-      </div>
+      <PageHeader
+        title="Personas"
+        description="Quién entra en la aplicación, qué productos ve y cuánto puede gastar al mes."
+        actions={forbidden ? null : <InviteDialog />}
+      />
 
       {forbidden ? (
         <p className="rounded-lg bg-muted px-3 py-3 text-sm">Solo el dueño puede ver y cambiar las personas.</p>

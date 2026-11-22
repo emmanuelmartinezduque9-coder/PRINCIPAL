@@ -14,6 +14,8 @@ const eslintConfig = defineConfig([
     "next-env.d.ts",
     // macOS crea un archivo `._nombre` junto a cada archivo en discos exFAT.
     "**/._*",
+    // Copias de trabajo de otros agentes (cada una con su propia salida de `.next`).
+    ".claude/worktrees/**",
   ]),
 ]);
 

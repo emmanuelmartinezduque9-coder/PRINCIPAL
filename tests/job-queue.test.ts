@@ -7,6 +7,7 @@ import { defineJob, defineSchedule } from "@/jobs/registry";
 import { jobKey, listPausedJobs, runStep, type JobContext } from "@/jobs/steps";
 import { setAssignments } from "@/server/access";
 import type { AuthUser } from "@/server/auth";
+import { setPersonDisabled } from "@/server/people";
 import { reserveSpend, settleSpend, setGlobalCap, setUserCap } from "@/server/spend";
 import { makeProduct, makeUser } from "./helpers/fixtures";
 import { truncateAll } from "./helpers/global-setup";
@@ -472,6 +473,50 @@ describe("persona desactivada o producto desasignado con trabajos en cola", () =
     expect(await jobRow({ nota: "en cola" }, ana, product.id)).toMatchObject({ status: "failed", error: "Producto no encontrado." });
     expect(await getDb().select().from(schema.spendEntries)).toHaveLength(0);
     expect(await recoverInterruptedSteps()).toBe(0);
+  });
+
+  it("desactivar a la persona desde Personas detiene su trabajo en cola sin gastar, también si luego se reactiva", async () => {
+    silenceErrors();
+    work = async (data, ctx) => {
+      await pay(ctx, "k-personas");
+    };
+    await stopWorker(); // el trabajo queda encolado y nadie lo empieza todavía
+    try {
+      await enqueueJob<Data>(JOB, forAna(), { nota: "desde personas" });
+      expect(await jobRow({ nota: "desde personas" })).toMatchObject({ status: "queued" });
+      await setPersonDisabled(dueno, ana.id, true);
+    } finally {
+      await start();
+    }
+    await runToIdle();
+
+    expect(runs).toHaveLength(0);
+    expect(await jobRow({ nota: "desde personas" })).toMatchObject({
+      status: "failed",
+      error: "Esta cuenta está desactivada.",
+      payload: null,
+    });
+    expect(await step("k-personas")).toBeUndefined();
+    expect(await getDb().select().from(schema.spendEntries)).toHaveLength(0);
+
+    // Reactivarla no resucita el trabajo detenido: se queda sin datos para reencolar.
+    await setPersonDisabled(dueno, ana.id, false);
+    await age(jobKey(JOB, ana.id, null, { nota: "desde personas" }), 30);
+    expect(await recoverInterruptedSteps()).toBe(0);
+    await runToIdle();
+    expect(runs).toHaveLength(0);
+    expect(await getDb().select().from(schema.spendEntries)).toHaveLength(0);
+  });
+
+  it("desactivar a la persona desde Personas deja su trabajo en pausa sin reanudar", async () => {
+    await insertStep({ key: "k-pausa-personas", status: "paused_cap", attempts: 0, payload: { nota: "x" } });
+    await setPersonDisabled(dueno, ana.id, true);
+    expect(await resumePausedJobs()).toBe(0);
+    expect(await listPausedJobs(dueno)).toEqual([]);
+    await runToIdle();
+    expect(runs).toHaveLength(0);
+    expect((await step("k-pausa-personas")).status).toBe("paused_cap");
+    expect(await getDb().select().from(schema.spendEntries)).toHaveLength(0);
   });
 
   it("un trabajo en pausa de una persona desactivada no se reanuda", async () => {
