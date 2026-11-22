@@ -1,0 +1,39 @@
+{
+ "id": "V09",
+ "tipo": "replica",
+ "pedido": "app-6852a9fdeb44480983cc86d73a67d471-54",
+ "video": 9,
+ "clips": [
+  {
+   "role": "replica",
+   "path": "/Volumes/T7/PRINCIPAL/pedido-54/descargas/V9-topaz-66469331.mp4"
+  }
+ ],
+ "audio": {
+  "mode": "cancion",
+  "song": "/Volumes/AutomatizacionProyecto/AUTOMATIZACION IA VIDEOS/NanoBanana/_EDICIONES/music-library/a081c8089a0db17b330662177577c98e88efb958365758213895fd4a01bd47cf.mp3",
+  "drop": 9.32,
+  "product_shown": {
+   "clip": 0,
+   "frame": 76
+  },
+  "music_gain_db": 0,
+  "peak_limit": 0.94
+ },
+ "texts": [
+  {
+   "start": 0,
+   "end": null,
+   "text": "👱‍♀️: „Schatz, hör auf, dem Hund so einen Scheiß zu kaufen“\nIch:"
+  }
+ ],
+ "notas": [
+  "Decisión del dueño (22/11): si eligió canción, se usa aunque el vídeo sea Genjutsu. Canción nº2 desde el primer fotograma; drop guardado 9,32 s en el corte donde aparece el producto (primer fotograma del plano del collar: fotograma 76 = 3,167 s, medido con el detector de escena).",
+  "Réplica: sin recortes ni cambios de velocidad. Se quita el audio generado (reproduce el sonido de la referencia). No se ha escuchado: si llevara voz, no se conserva en esta versión; compárese con la variante de audio original en revision/.",
+  "Clip: Topaz 66469331 descargado de Higgsfield el 22/11 (sin coste)."
+ ],
+ "avisos": [
+  "DEFECTO VISIBLE en el clip (viene de la generación, no del montaje): entre ~2,7 y 3,16 s, al quitar la tela, aparece un rottweiler con alas de dragón naranjas en lugar del husky con alas de mariposa. Revisar antes de publicar."
+ ],
+ "output": "/Volumes/T7/AUTOMATIZACION SEGA/videos editados/2026-11-22/PRINCIPAL-pedido-54/FalterPfote - DE/09 - FalterPfote - DE.mp4"
+}

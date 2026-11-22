@@ -1,0 +1,37 @@
+{
+ "id": "V03-zoom",
+ "tipo": "replica",
+ "pedido": "app-6852a9fdeb44480983cc86d73a67d471-54",
+ "video": 3,
+ "clips": [
+  {
+   "role": "replica",
+   "path": "/Volumes/T7/AUTOMATIZACION SEGA/Motor/order-preparation/app-6852a9fdeb44480983cc86d73a67d471-54/NanoBanana/_UPSCALE/4bbbe864-d1eb-44dd-b977-d632693f47d4/final_1080p.mp4"
+  }
+ ],
+ "audio": {
+  "mode": "original"
+ },
+ "texts": [
+  {
+   "start": 0,
+   "end": 8.0,
+   "text": "Zeig das bloß nicht deiner Freundin 🍦🎄🤫"
+  },
+  {
+   "start": 8.0,
+   "end": null,
+   "text": "Kommentiere „EisWerk“, wenn du auch eine brauchst 🍦💕"
+  }
+ ],
+ "notas": [
+  "Réplica Genjutsu con audio original (indicación 1 del dueño): clip Topaz 4bbbe864 entero, sin recortar ni acelerar.",
+  "Textos y tiempos: source-overlay-boundaries.json, posición 3.",
+  "Variante para comparar: mini-zooms suaves en cortes y compases del audio original; cortes, velocidad y audio intactos."
+ ],
+ "output": "/Volumes/T7/AUTOMATIZACION SEGA/videos editados/2026-11-22/PRINCIPAL-pedido-54/EisWerk - DE/03 - EisWerk - DE (mini-zooms).mp4",
+ "zoom": {
+  "enabled": true,
+  "allow_on_replica": true
+ }
+}

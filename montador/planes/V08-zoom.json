@@ -1,0 +1,47 @@
+{
+ "id": "V08-zoom",
+ "tipo": "replica",
+ "pedido": "app-6852a9fdeb44480983cc86d73a67d471-54",
+ "video": 8,
+ "clips": [
+  {
+   "role": "replica",
+   "path": "/Volumes/T7/AUTOMATIZACION SEGA/Motor/order-preparation/app-6852a9fdeb44480983cc86d73a67d471-54/NanoBanana/_UPSCALE/1fe3dcd0-f8f3-42b9-a229-0fe6bd62bb3d/final_1080p.mp4"
+  }
+ ],
+ "audio": {
+  "mode": "original"
+ },
+ "texts": [
+  {
+   "start": 0,
+   "end": 3.0,
+   "text": "Als vielbeschäftigte Mama wurde ich zu einer HaarZauber-Vorführung eingeladen."
+  },
+  {
+   "start": 3.0,
+   "end": 5.208333,
+   "text": "Ehrlich gesagt hat mir HaarZauber richtig gut gefallen 👜✨"
+  },
+  {
+   "start": 5.208333,
+   "end": 7.833333,
+   "text": "Was meint ihr? Ich habe sie gekauft!"
+  },
+  {
+   "start": 7.833333,
+   "end": null,
+   "text": "Kommentiere „HaarZauber“, um deine zu bekommen 🛍️💬👇"
+  }
+ ],
+ "notas": [
+  "Réplica Genjutsu con audio original: clip Topaz 1fe3dcd0 entero.",
+  "Textos y tiempos: source-overlay-boundaries.json, posición 8.",
+  "Variante para comparar: mini-zooms suaves en cortes y compases del audio original; cortes, velocidad y audio intactos."
+ ],
+ "output": "/Volumes/T7/AUTOMATIZACION SEGA/videos editados/2026-11-22/PRINCIPAL-pedido-54/HaarZauber - DE/08 - HaarZauber - DE (mini-zooms).mp4",
+ "zoom": {
+  "enabled": true,
+  "allow_on_replica": true
+ }
+}

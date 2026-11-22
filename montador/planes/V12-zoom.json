@@ -1,0 +1,60 @@
+{
+ "id": "V12-zoom",
+ "tipo": "gancho+cuerpo",
+ "pedido": "app-6852a9fdeb44480983cc86d73a67d471-54",
+ "video": 12,
+ "clips": [
+  {
+   "role": "hook",
+   "path": "/Volumes/T7/AUTOMATIZACION SEGA/Motor/order-preparation/app-6852a9fdeb44480983cc86d73a67d471-54/NanoBanana/_UPSCALE/4d20b781-b650-4fd0-aac4-1524044643ce/final_1080p.mp4",
+   "in_frame": 0,
+   "out_frame": 145,
+   "out_frames": 130,
+   "snap_out": false
+  },
+  {
+   "role": "body",
+   "path": "/Volumes/T7/AUTOMATIZACION SEGA/Motor/order-preparation/app-ffe90d4992df4e5585acd1acd93d294b-54/NanoBanana/_UPSCALE/9bcdfe34-e119-4935-af9c-e6eaa4a937bb/final_1080p.mp4"
+  }
+ ],
+ "audio": {
+  "mode": "cancion",
+  "song": "/Volumes/AutomatizacionProyecto/AUTOMATIZACION IA VIDEOS/NanoBanana/_EDICIONES/music-library/a081c8089a0db17b330662177577c98e88efb958365758213895fd4a01bd47cf.mp3",
+  "drop": 9.32,
+  "product_shown": {
+   "clip": 1,
+   "frame": 0
+  },
+  "music_gain_db": 0,
+  "peak_limit": 0.94,
+  "voice": {
+   "path": "/Volumes/T7/AUTOMATIZACION SEGA/Motor/order-preparation/app-6852a9fdeb44480983cc86d73a67d471-54/post-edit/audio-review/separation-v12/v12/voice-demucs.wav",
+   "clip": 0,
+   "from": 0.0,
+   "to": 4.95,
+   "target_lufs": -14
+  }
+ },
+ "texts": [
+  {
+   "start": 0,
+   "end": 11.291667,
+   "text": "LIDL × FALTERPFOTE 😳🦋"
+  },
+  {
+   "start": 11.291667,
+   "end": null,
+   "text": "Kommentiere „FalterPfote“, wenn du auch eins willst! 🤩🦋"
+  }
+ ],
+ "notas": [
+  "«Producto mostrado» = primer fotograma del cuerpo (collar FalterPfote), confirmado por el dueño el 22/11; alternativa no usada: destape de cajas en el gancho (fotograma de salida 109, 4,54 s).",
+  "Gancho acelerado 145→130 fotogramas (1,1154×, por debajo del máximo 1,12×) como la edición antigua: el destape (fotograma fuente 122) queda en el fotograma de salida 109 = 4,54 s (<5 s, nota del dueño) y las cajas se ven 21 fotogramas (<1 s) antes del cuerpo.",
+  "Voz: pista separada con Demucs por el motor antiguo (solo habla del gancho, 0–4,95 s), misma velocidad que el gancho; el cuerpo va sin audio propio. Canción nº2 desde el primer fotograma, continua, nivel constante, sin ducking.",
+  "Variante B: mini-zooms en el drop, cortes y compases de la canción."
+ ],
+ "output": "/Volumes/T7/AUTOMATIZACION SEGA/videos editados/2026-11-22/PRINCIPAL-pedido-54/FalterPfote - DE/12 - FalterPfote - DE (mini-zooms).mp4",
+ "zoom": {
+  "enabled": true
+ }
+}
