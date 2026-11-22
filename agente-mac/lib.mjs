@@ -4,6 +4,19 @@
 
 import os from "node:os";
 import path from "node:path";
+import { existsSync } from "node:fs";
+
+/**
+ * Archivo de cookies exportado de Brave (formato Netscape, modo 600). El programa corre con launchd y
+ * macOS no le deja leer la base de cookies de Brave sin «Acceso total al disco»; si existe este
+ * archivo, se usa en su lugar.
+ */
+export const COOKIES_FILE = path.join(os.homedir(), ".principal-agente-cookies.txt");
+
+/** Cómo le pasa la sesión de Instagram a yt-dlp: el archivo si existe; si no, Brave directamente. */
+export function cookieArgs(file = COOKIES_FILE, exists = existsSync) {
+  return exists(file) ? ["--cookies", file] : ["--cookies-from-browser", "brave"];
+}
 
 export const VERSION = "1.2.0";
 
@@ -99,10 +112,10 @@ export function allowedSongUrl(url) {
  * Sin archivos de configuración (`--ignore-config`), solo con los extractores de
  * `YT_DLP_EXTRACTORS` y un único vídeo. Usa la sesión de Brave de este Mac.
  */
-export function ytDlpArgs(url, outPath) {
+export function ytDlpArgs(url, outPath, cookies = cookieArgs()) {
   return [
     "--ignore-config", "--use-extractors", YT_DLP_EXTRACTORS,
-    "--cookies-from-browser", "brave", "--no-playlist", "--playlist-items", "1", "--max-filesize", "100M",
+    ...cookies, "--no-playlist", "--playlist-items", "1", "--max-filesize", "100M",
     "-f", "bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]/b", "--merge-output-format", "mp4",
     "-o", outPath, "--", url,
   ];
@@ -114,10 +127,10 @@ export function ytDlpArgs(url, outPath) {
  * garantías que `ytDlpArgs`: lista de argumentos, `--` delante del enlace, sin configuración, solo
  * los extractores de `YT_DLP_SONG_EXTRACTORS` y una sola pista, como mucho 25 MB.
  */
-export function ytDlpAudioArgs(url, dir) {
+export function ytDlpAudioArgs(url, dir, cookies = cookieArgs()) {
   return [
     "--ignore-config", "--use-extractors", YT_DLP_SONG_EXTRACTORS,
-    "--cookies-from-browser", "brave", "--no-playlist", "--playlist-items", "1", "--max-filesize", "25M",
+    ...cookies, "--no-playlist", "--playlist-items", "1", "--max-filesize", "25M",
     "-f", "ba/b", "-x", "--audio-format", "mp3", "--audio-quality", "0",
     "--print-to-file", "after_move:%(title)s", path.join(dir, TITLE_FILE),
     "-o", path.join(dir, "cancion.%(ext)s"), "--", url,

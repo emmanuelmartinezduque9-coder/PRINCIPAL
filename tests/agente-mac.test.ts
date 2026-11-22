@@ -130,7 +130,7 @@ const leftovers = () => fsSync.readdirSync(tmp);
 
 describe("enlaces y argumentos", () => {
   it("lanza yt-dlp con una lista de argumentos fija y el enlace detrás de `--`", () => {
-    expect(ytDlpArgs("https://www.instagram.com/reel/abc/", "/tmp/x.mp4")).toEqual([
+    expect(ytDlpArgs("https://www.instagram.com/reel/abc/", "/tmp/x.mp4", ["--cookies-from-browser", "brave"])).toEqual([
       "--ignore-config", "--use-extractors", "Instagram,TikTok,vm.tiktok,youtube,facebook,facebook:reel",
       "--cookies-from-browser", "brave", "--no-playlist", "--playlist-items", "1", "--max-filesize", "100M",
       "-f", "bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]/b", "--merge-output-format", "mp4",
@@ -138,7 +138,7 @@ describe("enlaces y argumentos", () => {
   });
 
   it("yt-dlp solo usa los extractores de vídeo suelto: ni el genérico ni los que siguen redirecciones", () => {
-    const args = ytDlpArgs("https://www.instagram.com/reel/abc/", "/tmp/x.mp4");
+    const args = ytDlpArgs("https://www.instagram.com/reel/abc/", "/tmp/x.mp4", ["--cookies-from-browser", "brave"]);
     expect(args[0]).toBe("--ignore-config");
     expect(args[args.indexOf("--use-extractors") + 1]).toBe(YT_DLP_EXTRACTORS);
     expect(args[args.indexOf("--playlist-items") + 1]).toBe("1");
@@ -516,7 +516,7 @@ describe("canciones", () => {
   });
 
   it("saca el audio como MP3 con una lista de argumentos fija y el enlace detrás de `--`", () => {
-    expect(ytDlpAudioArgs(SONG, "/tmp/d")).toEqual([
+    expect(ytDlpAudioArgs(SONG, "/tmp/d", ["--cookies-from-browser", "brave"])).toEqual([
       "--ignore-config", "--use-extractors", "Instagram,TikTok,vm.tiktok,youtube,facebook,facebook:reel,soundcloud",
       "--cookies-from-browser", "brave", "--no-playlist", "--playlist-items", "1", "--max-filesize", "25M",
       "-f", "ba/b", "-x", "--audio-format", "mp3", "--audio-quality", "0",
@@ -859,5 +859,13 @@ describe("instalar.sh", () => {
     expect(old.status).toBe(1);
     expect(old.stderr).toContain("Node 22");
     expect(fsSync.existsSync(path.join(home, ".principal-tools"))).toBe(false);
+  });
+});
+
+describe("cookies", () => {
+  it("usa el archivo de cookies si existe y si no la sesión de Brave", async () => {
+    const { cookieArgs } = await import("../agente-mac/lib.mjs");
+    expect(cookieArgs("/x/c.txt", () => true)).toEqual(["--cookies", "/x/c.txt"]);
+    expect(cookieArgs("/x/c.txt", () => false)).toEqual(["--cookies-from-browser", "brave"]);
   });
 });
