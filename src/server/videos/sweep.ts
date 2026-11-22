@@ -1,6 +1,6 @@
 import { and, eq, inArray, lt } from "drizzle-orm";
 import { getDb, schema } from "@/db/client";
-import { ANALYSIS_INTERRUPTED, ANALYSIS_STALE_MS } from "@/server/videos/analysis";
+import { ANALYSIS_INTERRUPTED, ANALYSIS_STALE_MS, failOrphanedPausedAnalyses } from "@/server/videos/analysis";
 import { cleanStaleUploads, PREPARE_FAILED } from "@/server/videos/upload";
 
 /**
@@ -58,5 +58,11 @@ export async function videoSweep(now: Date = new Date()): Promise<void> {
     if (stale > 0) console.warn(`[videos] ${stale} desglose(s) llevaban más de una hora sin terminar: quedan en error.`);
   } catch (error) {
     console.error("[videos] No se pudieron revisar los desgloses atascados:", error);
+  }
+  try {
+    const orphaned = await failOrphanedPausedAnalyses();
+    if (orphaned > 0) console.warn(`[videos] ${orphaned} desglose(s) en pausa ya no se podían reanudar: quedan en error.`);
+  } catch (error) {
+    console.error("[videos] No se pudieron revisar los desgloses en pausa:", error);
   }
 }

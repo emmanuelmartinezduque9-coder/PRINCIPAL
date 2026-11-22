@@ -9,11 +9,12 @@ import { JobPausedError, StepFailedError } from "@/jobs/steps";
 import "@/jobs/video-jobs";
 import { createGateway } from "@/llm/gateway";
 import { login, resetLoginAttempts, type AuthUser } from "@/server/auth";
+import { setPersonDisabled } from "@/server/people";
 import { addProductPhoto, type PhotoRole } from "@/server/photos";
 import type { Product } from "@/server/products";
 import { seedRules } from "@/server/rules";
 import { setUserCap, spendSummary } from "@/server/spend";
-import { requestAnalysis, runAnalysis, updatePrompts, type Analysis } from "@/server/videos/analysis";
+import { ACCESS_LOST, requestAnalysis, runAnalysis, updatePrompts, type Analysis } from "@/server/videos/analysis";
 import { videoSweep } from "@/server/videos/sweep";
 import { createVideo, getVideoFor, updateVideoChoices, videoView, type Video } from "@/server/videos/videos";
 import { POST as desgloseRoute } from "@/app/api/videos/[videoId]/desglose/route";
@@ -111,6 +112,29 @@ function blocks(call: FakeCall): Array<{ type: string; text?: string }> {
 }
 const texts = (call: FakeCall) => blocks(call).flatMap((block) => (block.type === "text" ? [block.text!] : []));
 
+/**
+ * La próxima actualización de `video_analyses` a `status` falla una vez (un corte de la base de
+ * datos simulado con un disparador). La secuencia no se deshace con el error, así que solo falla
+ * la primera. Devuelve cómo quitarlo.
+ */
+async function failOnceOnStatus(status: string): Promise<() => Promise<void>> {
+  const pool = getPool();
+  await pool.query("create sequence prueba_fallo_seq");
+  await pool.query(`create function prueba_fallo() returns trigger language plpgsql as $$
+    begin
+      if NEW.status = '${status}' then
+        if nextval('prueba_fallo_seq') = 1 then raise exception 'corte simulado de la base de datos'; end if;
+      end if;
+      return NEW;
+    end $$`);
+  await pool.query("create trigger prueba_fallo before update on video_analyses for each row execute function prueba_fallo()");
+  return async () => {
+    await pool.query("drop trigger if exists prueba_fallo on video_analyses");
+    await pool.query("drop function if exists prueba_fallo()");
+    await pool.query("drop sequence if exists prueba_fallo_seq");
+  };
+}
+
 async function analysisRow(id: number): Promise<{ status: string; error: string | null; version: number; updatedAt: Date }> {
   const { rows } = await getPool().query("select status, error, version, updated_at as \"updatedAt\" from video_analyses where id = $1", [id]);
   return rows[0];
@@ -153,6 +177,7 @@ describe("desglose con Claude", () => {
       expect(systemText(call)).toContain(`<regla nombre="${slug}">`);
     }
     expect(call.output_config?.format).toBeDefined();
+    expect(systemText(call)).toContain("nunca con títulos en mayúsculas");
     expect(blocks(call).filter((b) => b.type === "image")).toHaveLength(12 + 3); // 12 fotogramas + 3 fotos
     expect(texts(call)).toContain("Fotograma 1 — 0,0 s");
     expect(texts(call)).toContain("Fotograma 3 — 1,0 s");
@@ -269,6 +294,76 @@ describe("desglose con Claude", () => {
     expect((await getPool().query("select count(*)::int as n from video_analyses")).rows[0].n).toBe(1);
   });
 
+  it("si anotar el fallo de Claude falla, el paso no se repite: Claude se llama una sola vez", async () => {
+    await readyVideo();
+    const { analysisId } = await requestAnalysis(ana, v.id);
+    const { client, calls } = fakeMessages([{ text: "no es json" }, reply()]);
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    const restore = await failOnceOnStatus("failed");
+    try {
+      await expect(runAnalysis(analysisId, { gateway: createGateway({ client }) })).rejects.toBeInstanceOf(StepFailedError);
+      // El primer intento de anotarlo falló y se dejó estar; el de fuera lo anotó.
+      expect(errors).toHaveBeenCalledTimes(1);
+      expect(await analysisRow(analysisId)).toMatchObject({ status: "failed", error: "La respuesta de Claude no tiene el formato esperado." });
+      // Aunque la cola lo vuelva a lanzar con el desglose aún activo, el paso ya no se ejecuta.
+      await getPool().query("update video_analyses set status = 'running' where id = $1", [analysisId]);
+      await expect(runAnalysis(analysisId, { gateway: createGateway({ client }) })).rejects.toBeInstanceOf(StepFailedError);
+      expect(calls).toHaveLength(1);
+    } finally {
+      await restore();
+      errors.mockRestore();
+    }
+  });
+
+  it("si Claude respondió pero guardar falla, el reintento usa la respuesta guardada sin volver a llamar", async () => {
+    await readyVideo();
+    const { analysisId } = await requestAnalysis(ana, v.id);
+    const { client, calls } = fakeMessages([reply(), reply()]);
+    const restore = await failOnceOnStatus("done");
+    try {
+      await expect(runAnalysis(analysisId, { gateway: createGateway({ client }) })).rejects.toThrow();
+      expect((await analysisRow(analysisId)).status).toBe("running");
+      expect((await getVideoFor(ana, v.id)).imagePrompt).toBeNull();
+      await runAnalysis(analysisId, { gateway: createGateway({ client }) });
+    } finally {
+      await restore();
+    }
+    expect(calls).toHaveLength(1);
+    expect(await analysisRow(analysisId)).toMatchObject({ status: "done" });
+    expect(await getVideoFor(ana, v.id)).toMatchObject({ imagePrompt: REPLY.imagePrompt, frameUse: "contextual_reference" });
+    expect((await spendSummary(ana)).spentMicros).toBe((await videoView(ana, v.id)).analysis!.costMicros);
+  });
+
+  it("si la referencia cambia antes de empezar, no se llama a Claude y el desglose queda en error", async () => {
+    await readyVideo();
+    const { analysisId } = await requestAnalysis(ana, v.id);
+    expect((await videoView(ana, v.id)).analysis).toMatchObject({ referenceMediaId: "media-1", stale: false });
+    await getPool().query("update videos set reference_media_id = 'media-2' where id = $1", [v.id]);
+    const { client, calls } = fakeMessages([reply()]);
+    await expect(runAnalysis(analysisId, { gateway: createGateway({ client }) })).rejects.toBeInstanceOf(StepFailedError);
+    expect(calls).toHaveLength(0);
+    expect(await analysisRow(analysisId)).toMatchObject({ status: "failed", error: "La referencia cambió; vuelve a pedir el desglose." });
+    expect((await videoView(ana, v.id)).analysis).toMatchObject({ referenceMediaId: "media-1", stale: true });
+  });
+
+  it("si la referencia cambia mientras Claude responde, no se guardan los prompts", async () => {
+    await readyVideo();
+    const { analysisId } = await requestAnalysis(ana, v.id);
+    const { client, calls } = fakeMessages([reply()]);
+    const changing = {
+      create: async (params: FakeCall) => {
+        await getPool().query("update videos set reference_media_id = 'media-2' where id = $1", [v.id]);
+        return client.create(params);
+      },
+    } as unknown as typeof client;
+    await runAnalysis(analysisId, { gateway: createGateway({ client: changing }) });
+    expect(calls).toHaveLength(1);
+    expect(await analysisRow(analysisId)).toMatchObject({ status: "failed", error: "La referencia cambió; vuelve a pedir el desglose." });
+    expect(await getVideoFor(ana, v.id)).toMatchObject({ imagePrompt: null, videoPrompt: null, frameUse: "start_image" });
+    // Lo que costó sí consta.
+    expect((await videoView(ana, v.id)).analysis!.costMicros).toBe((await spendSummary(ana)).spentMicros);
+  });
+
   it("con el tope de gasto alcanzado queda en pausa, no en error", async () => {
     await readyVideo();
     await setUserCap(dueno, ana.id, 0);
@@ -277,10 +372,40 @@ describe("desglose con Claude", () => {
     await expect(runAnalysis(analysisId, { gateway: createGateway({ client }) })).rejects.toBeInstanceOf(JobPausedError);
     expect(calls).toHaveLength(0);
     expect(await analysisRow(analysisId)).toMatchObject({ status: "paused", error: "En pausa: se ha alcanzado el tope de gasto." });
+    await expect(requestAnalysis(ana, v.id)).rejects.toMatchObject({ status: 409, message: "El desglose está en pausa (tope de gasto)." });
     // Con saldo, al reanudarse, termina.
     await setUserCap(dueno, ana.id, 10_000_000);
     await runAnalysis(analysisId, { gateway: createGateway({ client }) });
     expect(await analysisRow(analysisId)).toMatchObject({ status: "done", error: null });
+  });
+
+  it("un desglose en pausa que ya no se puede reanudar (persona sin acceso) queda en error y no bloquea el vídeo", async () => {
+    await readyVideo();
+    await setUserCap(dueno, ana.id, 0);
+    const { analysisId } = await requestAnalysis(ana, v.id);
+    const { client, calls } = fakeMessages([reply()]);
+    await expect(runAnalysis(analysisId, { gateway: createGateway({ client }) })).rejects.toBeInstanceOf(JobPausedError);
+
+    // Al reanudarse con la cuenta desactivada: error claro, sin llamar a Claude.
+    await setPersonDisabled(dueno, ana.id, true);
+    await expect(runAnalysis(analysisId, { gateway: createGateway({ client }) })).rejects.toBeInstanceOf(StepFailedError);
+    expect(calls).toHaveLength(0);
+    expect(await analysisRow(analysisId)).toMatchObject({ status: "failed", error: ACCESS_LOST });
+
+    // Si la cola ni llega a lanzarlo, el seguimiento lo deja en error.
+    await setPersonDisabled(dueno, ana.id, false);
+    const again = await requestAnalysis(ana, v.id);
+    await expect(runAnalysis(again.analysisId, { gateway: createGateway({ client }) })).rejects.toBeInstanceOf(JobPausedError);
+    await setPersonDisabled(dueno, ana.id, true);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await videoSweep();
+      expect(warn).toHaveBeenCalledWith("[videos] 1 desglose(s) en pausa ya no se podían reanudar: quedan en error.");
+    } finally {
+      warn.mockRestore();
+    }
+    expect(await analysisRow(again.analysisId)).toMatchObject({ status: "failed", error: ACCESS_LOST });
+    expect(calls).toHaveLength(0);
   });
 
   it("un desglose interrumpido lo reintenta la cola; si a la hora sigue sin terminar, queda en error", async () => {
@@ -298,7 +423,10 @@ describe("desglose con Claude", () => {
 
     const stale = await requestAnalysis(ana, v.id);
     await getPool().query("update video_analyses set status = 'running', updated_at = now() - interval '61 minutes' where id = $1", [stale.analysisId]);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     await videoSweep();
+    expect(warn).toHaveBeenCalledWith("[videos] 1 desglose(s) llevaban más de una hora sin terminar: quedan en error.");
+    warn.mockRestore();
     expect(await analysisRow(stale.analysisId)).toMatchObject({ status: "failed", error: "El desglose se interrumpió. Repítelo." });
 
     const recent = await requestAnalysis(ana, v.id);
@@ -368,6 +496,14 @@ describe("rutas", () => {
     expect(body.video).toMatchObject({ title: "Cocina", imagePrompt: "Image 1 is the composition.", frameUse: "contextual_reference" });
     expect(body.imageIssues).toContainEqual({ level: "aviso", message: "No dices para qué sirve la imagen 2." });
     expect(Array.isArray(body.videoIssues)).toBe(true);
+
+    // Un prompt que no vale no deja guardar nada de la petición.
+    const tooLong = await putVideo(
+      new Request("http://localhost/api/videos/x", { method: "PUT", body: JSON.stringify({ title: "Otro", imagePrompt: "a".repeat(20_001) }) }),
+      vid(v.id),
+    );
+    expect(tooLong.status).toBe(400);
+    expect(await getVideoFor(ana, v.id)).toMatchObject({ title: "Cocina", imagePrompt: "Image 1 is the composition." });
 
     const bad = await putVideo(new Request("http://localhost/api/videos/x", { method: "PUT", body: JSON.stringify({ frameUse: "primero" }) }), vid(v.id));
     expect(bad.status).toBe(400);

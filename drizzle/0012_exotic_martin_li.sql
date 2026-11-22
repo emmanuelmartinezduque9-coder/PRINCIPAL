@@ -5,6 +5,7 @@ CREATE TABLE "video_analyses" (
 	"status" text DEFAULT 'queued' NOT NULL,
 	"error" text,
 	"result" jsonb,
+	"reference_media_id" text,
 	"rule_versions" jsonb,
 	"spend_entry_id" bigint,
 	"created_by" bigint NOT NULL,

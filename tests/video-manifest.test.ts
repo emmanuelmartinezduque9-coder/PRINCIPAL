@@ -92,6 +92,22 @@ describe("orden de las referencias", () => {
     ]);
   });
 
+  it("si el primer fotograma no contara como @Image1, con «start_image» las fotos empiezan en @Image1", () => {
+    const start = videoWith({ avatarPhotoId: 10, frameUse: "start_image" });
+    expect(clipManifest(start, photos, false).map((m) => [m.tag, m.index, m.role])).toEqual([
+      ["@Video1", 1, "video_referencia"],
+      ["start_image", 0, "imagen_aprobada"],
+      ["@Image1", 1, "avatar"],
+      ["@Image2", 2, "articulo"],
+      ["@Image3", 3, "articulo"],
+      ["@Image4", 4, "embalaje"],
+    ]);
+    // Como referencia de contexto sí se numera, igual que con `true`.
+    const contextual = videoWith({ avatarPhotoId: 10, frameUse: "contextual_reference" });
+    expect(clipManifest(contextual, photos, false)).toEqual(clipManifest(contextual, photos, true));
+    expect(clipManifest(start, photos)).toEqual(clipManifest(start, photos, true));
+  });
+
   it("un avatar o un entorno elegidos que ya no existen, o que cambiaron de papel, no entran", () => {
     const changed = [photo(10, "articulo"), photo(40, "otro")];
     const manifest = imageManifest(videoWith({ avatarPhotoId: 10, environmentPhotoId: 99 }), changed);

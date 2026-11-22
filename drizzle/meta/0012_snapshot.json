@@ -1,5 +1,5 @@
 {
-  "id": "1695e7f7-5ff4-40bb-aa1c-259a45327909",
+  "id": "6f5f836a-5c88-4004-b388-28f21d99458a",
   "prevId": "89cacce9-50c1-461d-aadb-761364494180",
   "version": "7",
   "dialect": "postgresql",
@@ -1250,6 +1250,12 @@
         "result": {
           "name": "result",
           "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "reference_media_id": {
+          "name": "reference_media_id",
+          "type": "text",
           "primaryKey": false,
           "notNull": false
         },

@@ -127,8 +127,9 @@ export function checkVideoPrompt(prompt: string, manifest: ManifestItem[]): Prom
     });
   }
   if (malformed) issues.push({ level: "error", message: BAD_TAG });
+  // Solo se citan las etiquetas con `@` (la imagen aprobada sin numerar no se cita).
   for (const item of manifest) {
-    if (!used.has(item.tag)) issues.push({ level: "error", message: `Falta decir para qué sirve ${item.tag}.` });
+    if (item.tag.startsWith("@") && !used.has(item.tag)) issues.push({ level: "error", message: `Falta decir para qué sirve ${item.tag}.` });
   }
   if (URL.test(text) || UUID.test(text)) issues.push({ level: "error", message: ADDRESS });
   if (text.length > VIDEO_MAX_CHARS) issues.push({ level: "aviso", message: VIDEO_TOO_LONG });

@@ -381,6 +381,8 @@ export const videoAnalyses = pgTable(
     /** Por qué falló o está en pausa, en español y apto para la persona. */
     error: text("error"),
     result: jsonb("result"),
+    /** La referencia (recorte subido a Higgsfield) de la que sale el desglose: si el vídeo cambia de referencia, ya no vale. */
+    referenceMediaId: text("reference_media_id"),
     ruleVersions: jsonb("rule_versions").$type<Record<string, number>>(),
     spendEntryId: bigint("spend_entry_id", { mode: "number" }),
     createdBy: bigint("created_by", { mode: "number" }).notNull(),

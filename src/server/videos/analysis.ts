@@ -51,7 +51,10 @@ const NO_REFERENCE = "Sube primero el vídeo de referencia.";
 const NO_AVATAR = "Elige un avatar o marca que en el vídeo no aparece nadie.";
 const NO_ARTICLE = "Añade al menos una foto del artículo.";
 const BUSY = "Ya hay un desglose en marcha.";
+const BUSY_PAUSED = "El desglose está en pausa (tope de gasto).";
 const PAUSED = "En pausa: se ha alcanzado el tope de gasto.";
+const REFERENCE_CHANGED = "La referencia cambió; vuelve a pedir el desglose.";
+export const ACCESS_LOST = "El desglose se detuvo porque se perdió el acceso al producto. Repítelo.";
 const NOT_QUEUED = "No se pudo poner en marcha el desglose. Inténtalo de nuevo.";
 const BAD_PHOTO = "No se pudo preparar una de las fotos del producto. Cámbiala y repite el desglose.";
 const PROMPT_TOO_LONG = "El prompt no puede tener más de 20.000 caracteres.";
@@ -123,7 +126,7 @@ Devuelve, con la forma pedida:
 4. risks: los riesgos de la adaptación. Revisa siempre: una función que el producto no tiene (funcion_inexistente), un reveal adelantado (reveal_adelantado), la falta de una foto con mano para la escala (escala), una identidad que no sea la del avatar elegido (identidad), texto en pantalla de la referencia (texto_en_pantalla) y marcas ajenas (marca_ajena); cualquier otro, otro.
 5. frameUse: según la regla de vídeo: si el clip es de un solo plano, start_image (la imagen aprobada es el primer fotograma); si tiene varios planos, contextual_reference.
 6. imagePrompt: el prompt de la imagen inicial según la regla de imagen, en prosa y en párrafos corridos, sin títulos en mayúsculas, de unos 4.900 caracteres. Cita cada referencia del manifiesto de imagen como «image N» y di para qué sirve según su papel (image 1 aporta solo la composición y la distancia de cámara, nunca la identidad). La imagen muestra la escena inicial del clip.
-7. videoPrompt: el prompt del clip según la plantilla de la regla de vídeo, con menos de 4.000 caracteres. Cita cada referencia del manifiesto del clip exactamente como @Video1 y @ImageN (mayúscula inicial, sin espacio) y ninguna otra. @Video1 aporta solo la cámara, el ritmo y el tipo de acción, nunca la persona, el producto, el espacio ni el texto. @Image1 es la imagen inicial aprobada (la que saldrá del prompt de imagen), descrita según frameUse. La geometría del producto es fija: forma, proporciones y etiqueta no cambian. No pidas texto en pantalla, subtítulos ni rótulos.
+7. videoPrompt: el prompt del clip según la plantilla de la regla de vídeo, con menos de 4.000 caracteres. Escríbelo con párrafos o con las etiquetas entre corchetes de la plantilla, nunca con títulos en mayúsculas. Cita cada referencia con @ del manifiesto del clip exactamente como @Video1 y @ImageN (mayúscula inicial, sin espacio) y ninguna otra. @Video1 aporta solo la cámara, el ritmo y el tipo de acción, nunca la persona, el producto, el espacio ni el texto. La imagen inicial aprobada (la que saldrá del prompt de imagen) es la que el manifiesto del clip marca así, y se describe según frameUse. La geometría del producto es fija: forma, proporciones y etiqueta no cambian. No pidas texto en pantalla, subtítulos ni rótulos.
 
 Ninguno de los dos prompts lleva direcciones, identificadores de archivos ni estas palabras vetadas: ${PROMPT_BLACKLIST.join(", ")}.
 
@@ -231,6 +234,51 @@ async function setStatus(analysisId: number, status: "running" | "paused" | "fai
   return updated.length > 0;
 }
 
+/** Intenta anotar el estado; si la base de datos falla, lo deja estar (quien llama sigue con lo suyo). */
+async function trySetStatus(analysisId: number, status: "paused" | "failed", error: string, spendEntryId?: number): Promise<void> {
+  try {
+    await setStatus(analysisId, status, error, spendEntryId);
+  } catch (failure) {
+    console.error(`[videos] No se pudo anotar el estado del desglose ${analysisId}:`, failure);
+  }
+}
+
+/** ¿Quien pidió el desglose ya no puede seguirlo (cuenta desactivada o producto que ya no ve)? */
+async function accessLost(userId: number, productId: number): Promise<boolean> {
+  const user = await getActiveUser(userId);
+  if (!user) return true;
+  try {
+    await getProductFor(user, productId);
+    return false;
+  } catch (error) {
+    if (error instanceof HttpError && error.status === 404) return true;
+    throw error;
+  }
+}
+
+/**
+ * Desgloses en pausa cuya persona ya no puede seguirlos: la cola no los reanudará nunca, así que
+ * pasan a error (si no, el vídeo quedaría bloqueado). Para el seguimiento. Devuelve cuántos.
+ */
+export async function failOrphanedPausedAnalyses(): Promise<number> {
+  const paused = await getDb()
+    .select({ id: analyses.id, createdBy: schema.videos.createdBy, productId: schema.videos.productId })
+    .from(analyses)
+    .innerJoin(schema.videos, eq(schema.videos.id, analyses.videoId))
+    .where(eq(analyses.status, "paused"));
+  let failed = 0;
+  for (const row of paused) {
+    if (!(await accessLost(row.createdBy, row.productId))) continue;
+    const updated = await getDb()
+      .update(analyses)
+      .set({ status: "failed", error: ACCESS_LOST, updatedAt: new Date() })
+      .where(and(eq(analyses.id, row.id), eq(analyses.status, "paused")))
+      .returning({ id: analyses.id });
+    failed += updated.length;
+  }
+  return failed;
+}
+
 /** Errores de la pasarela que no se arreglan repitiendo sin más (y repetir costaría otra vez). */
 const isGatewayFailure = (error: unknown): error is Error =>
   error instanceof LlmCallError ||
@@ -257,14 +305,14 @@ export async function requestAnalysis(user: AuthUser, videoId: number): Promise<
   const analysisId = await getDb().transaction(async (tx) => {
     await tx.execute(analysisLock(video.id));
     const [active] = await tx
-      .select({ id: analyses.id })
+      .select({ status: analyses.status })
       .from(analyses)
       .where(and(eq(analyses.videoId, video.id), inArray(analyses.status, ACTIVE)));
-    if (active) throw new HttpError(409, BUSY);
+    if (active) throw new HttpError(409, active.status === "paused" ? BUSY_PAUSED : BUSY);
     const [{ last }] = await tx.select({ last: max(analyses.version) }).from(analyses).where(eq(analyses.videoId, video.id));
     const [row] = await tx
       .insert(analyses)
-      .values({ videoId: video.id, version: (last ?? 0) + 1, status: "queued", createdBy: user.id })
+      .values({ videoId: video.id, version: (last ?? 0) + 1, status: "queued", referenceMediaId: video.referenceMediaId, createdBy: user.id })
       .returning({ id: analyses.id });
     return row.id;
   });
@@ -287,17 +335,28 @@ interface StepResult {
 /**
  * Ejecuta el desglose: llama a Claude dentro de un paso (una sola vez por desglose) y guarda el
  * resultado, copiando los dos prompts y el uso de la imagen al vídeo. No hace nada si el desglose
- * ya está hecho o fallido. `deps.gateway` es para las pruebas.
+ * ya está hecho o fallido. Si la persona ya no puede seguirlo, o el vídeo cambió de referencia
+ * (al empezar el paso o al guardar), el desglose queda en error. `deps.gateway` es para las pruebas.
  */
 export async function runAnalysis(analysisId: number, deps: { gateway?: LlmGateway } = {}): Promise<void> {
   const [row] = await getDb()
-    .select({ videoId: analyses.videoId, status: analyses.status, createdBy: schema.videos.createdBy, productId: schema.videos.productId })
+    .select({
+      videoId: analyses.videoId,
+      status: analyses.status,
+      referenceMediaId: analyses.referenceMediaId,
+      createdBy: schema.videos.createdBy,
+      productId: schema.videos.productId,
+    })
     .from(analyses)
     .innerJoin(schema.videos, eq(schema.videos.id, analyses.videoId))
     .where(eq(analyses.id, analysisId));
   if (!row || !ACTIVE.includes(row.status)) return;
   // Al empezar (o al volver a lanzarlo la cola) queda en marcha y renueva su hora.
   if (!(await setStatus(analysisId, "running", null))) return;
+  if (await accessLost(row.createdBy, row.productId)) {
+    await setStatus(analysisId, "failed", ACCESS_LOST);
+    throw new StepFailedError(ACCESS_LOST);
+  }
 
   const ctx: JobContext = { jobName: ANALYSIS_JOB, userId: row.createdBy, productId: row.productId };
   const key = stepKey(ctx, "desglose", { analysisId });
@@ -307,6 +366,10 @@ export async function runAnalysis(analysisId: number, deps: { gateway?: LlmGatew
       const user = await getActiveUser(ctx.userId);
       if (!user) throw new StepFailedError("Esta cuenta está desactivada.");
       const video = await getVideoFor(user, row.videoId);
+      if (video.referenceMediaId !== row.referenceMediaId) {
+        await trySetStatus(analysisId, "failed", REFERENCE_CHANGED);
+        throw new StepFailedError(REFERENCE_CHANGED);
+      }
       const product = await getProductFor(user, video.productId);
       const content = await buildContent(user, video, product, await listProductPhotos(user, video.productId));
       try {
@@ -325,17 +388,32 @@ export async function runAnalysis(analysisId: number, deps: { gateway?: LlmGatew
       } catch (error) {
         if (!isGatewayFailure(error)) throw error;
         const spent = error instanceof LlmTruncatedError ? error.partial?.spendEntryId : undefined;
-        await setStatus(analysisId, "failed", error.message, spent);
+        // Sin esperar a la base de datos: si anotar falla y el paso no lanzara `StepFailedError`,
+        // se reintentaría y Claude cobraría otra vez. El `catch` de fuera vuelve a anotarlo.
+        await trySetStatus(analysisId, "failed", error.message, spent);
         throw new StepFailedError(error.message);
       }
     });
   } catch (error) {
-    if (error instanceof JobPausedError) await setStatus(analysisId, "paused", PAUSED);
-    else if (error instanceof StepFailedError) await setStatus(analysisId, "failed", error.message);
+    // Sin tapar el error del paso: es el que decide si la cola reanuda (pausa) o no repite (fallo definitivo).
+    if (error instanceof JobPausedError) await trySetStatus(analysisId, "paused", PAUSED);
+    else if (error instanceof StepFailedError) await trySetStatus(analysisId, "failed", error.message);
     throw error;
   }
 
   await getDb().transaction(async (tx) => {
+    const [video] = await tx
+      .select({ referenceMediaId: schema.videos.referenceMediaId })
+      .from(schema.videos)
+      .where(eq(schema.videos.id, row.videoId))
+      .for("update");
+    if (video?.referenceMediaId !== row.referenceMediaId) {
+      await tx
+        .update(analyses)
+        .set({ status: "failed", error: REFERENCE_CHANGED, spendEntryId: step.spendEntryId, updatedAt: new Date() })
+        .where(and(eq(analyses.id, analysisId), inArray(analyses.status, ACTIVE)));
+      return;
+    }
     const [saved] = await tx
       .update(analyses)
       .set({ status: "done", error: null, result: step.result, ruleVersions: step.ruleVersions, spendEntryId: step.spendEntryId, updatedAt: new Date() })
@@ -350,6 +428,31 @@ export async function runAnalysis(analysisId: number, deps: { gateway?: LlmGatew
 }
 
 /**
+ * Comprueba lo que se quiere cambiar de los prompts (sin guardar nada) y devuelve los cambios.
+ * Lanza 400 si algo no vale. La ruta lo usa antes de guardar otros campos del vídeo, para que una
+ * petición se guarde entera o no se guarde.
+ */
+export function checkPromptInput(input: { imagePrompt?: unknown; videoPrompt?: unknown; frameUse?: unknown }): {
+  imagePrompt?: string;
+  videoPrompt?: string;
+  frameUse?: FrameUse;
+} {
+  const changes: { imagePrompt?: string; videoPrompt?: string; frameUse?: FrameUse } = {};
+  for (const field of ["imagePrompt", "videoPrompt"] as const) {
+    const value = input[field];
+    if (value === undefined) continue;
+    if (typeof value !== "string") throw new HttpError(400, "Escribe el prompt.");
+    if (value.length > MAX_PROMPT_CHARS) throw new HttpError(400, PROMPT_TOO_LONG);
+    changes[field] = value;
+  }
+  if (input.frameUse !== undefined) {
+    if (!FRAME_USES.includes(input.frameUse as FrameUse)) throw new HttpError(400, BAD_FRAME_USE);
+    changes.frameUse = input.frameUse as FrameUse;
+  }
+  return changes;
+}
+
+/**
  * Cambia los prompts o el uso de la imagen (lo que no se envía se queda igual). Solo quien creó
  * el vídeo. Devuelve los avisos de los prompts tal como quedan.
  */
@@ -360,18 +463,7 @@ export async function updatePrompts(
 ): Promise<{ imageIssues: PromptIssue[]; videoIssues: PromptIssue[] }> {
   let video = await getVideoFor(user, videoId);
   requireVideoOwner(user, video);
-  const changes: Partial<typeof schema.videos.$inferInsert> = {};
-  for (const field of ["imagePrompt", "videoPrompt"] as const) {
-    const value = input[field];
-    if (value === undefined) continue;
-    if (typeof value !== "string") throw new HttpError(400, "Escribe el prompt.");
-    if (value.length > MAX_PROMPT_CHARS) throw new HttpError(400, PROMPT_TOO_LONG);
-    changes[field] = value;
-  }
-  if (input.frameUse !== undefined) {
-    if (!FRAME_USES.includes(input.frameUse)) throw new HttpError(400, BAD_FRAME_USE);
-    changes.frameUse = input.frameUse;
-  }
+  const changes = checkPromptInput(input);
   if (Object.keys(changes).length > 0) {
     const [updated] = await getDb()
       .update(schema.videos)

@@ -126,6 +126,18 @@ describe("prompt del clip", () => {
     expect(checkVideoPrompt(withoutVideo, clip)).toContainEqual({ level: "error", message: "Falta decir para qué sirve @Video1." });
   });
 
+  it("la imagen aprobada sin numerar no se cita", () => {
+    const unnumbered = clipManifest({ ...video, frameUse: "start_image" } as Video, [photo(10, "avatar"), photo(20, "articulo"), photo(30, "embalaje")], false);
+    expect(unnumbered.map((m) => m.tag)).toEqual(["@Video1", "start_image", "@Image1", "@Image2", "@Image3"]);
+    const prompt = GOOD_VIDEO.split("\n")
+      .filter((line) => !line.startsWith("@Image1 "))
+      .join("\n")
+      .replace("@Image2", "@Image1")
+      .replace("@Image3", "@Image2")
+      .replace("@Image4", "@Image3");
+    expect(checkVideoPrompt(prompt, unnumbered)).toEqual([]);
+  });
+
   it("ni direcciones ni identificadores", () => {
     const message = "No pongas direcciones ni identificadores en el prompt.";
     expect(checkVideoPrompt(GOOD_VIDEO + " https://x.test/a.mp4", clip)).toContainEqual({ level: "error", message });

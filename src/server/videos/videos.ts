@@ -163,6 +163,10 @@ export interface VideoView {
     result: Analysis | null;
     /** Lo que costó en Claude, en micro-dólares; `null` si no consta su cargo. */
     costMicros: number | null;
+    /** La referencia de la que salió (recorte subido a Higgsfield). */
+    referenceMediaId: string | null;
+    /** `true` si el vídeo ya tiene otra referencia: el desglose no corresponde a la actual. */
+    stale: boolean;
   } | null;
   imageIssues: PromptIssue[];
   videoIssues: PromptIssue[];
@@ -209,6 +213,8 @@ export async function videoView(user: AuthUser, videoId: number): Promise<VideoV
           error: latest.error,
           result: (latest.result as Analysis | null) ?? null,
           costMicros: latest.spendEntryId === null ? null : await costOfEntries([latest.spendEntryId]),
+          referenceMediaId: latest.referenceMediaId,
+          stale: latest.referenceMediaId !== video.referenceMediaId,
         }
       : null,
     ...promptIssues(video, photos),

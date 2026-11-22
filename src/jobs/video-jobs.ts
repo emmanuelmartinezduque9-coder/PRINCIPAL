@@ -34,5 +34,5 @@ defineJob<{ analysisId: number }>(
   "Desglosar el vídeo de referencia",
 );
 
-/** Cada minuto: subidas abandonadas, referencias atascadas y desgloses que no terminan. */
+/** Cada minuto: subidas abandonadas, referencias atascadas y desgloses que no terminan o ya no se pueden reanudar. */
 defineSchedule("video.seguimiento", "* * * * *", () => videoSweep());

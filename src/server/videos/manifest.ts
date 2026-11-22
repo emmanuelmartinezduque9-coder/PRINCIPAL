@@ -19,14 +19,21 @@ export const MAX_PACKAGING_REFS = 2;
 /**
  * Si `start_image` cuenta como @Image1 al numerar. Supuesto; se confirma en la PUERTA de la
  * Tarea 11. Con `true`, la imagen aprobada es siempre `@Image1`, se use como primer fotograma o
- * como referencia de contexto, y la numeración del clip no depende de `frameUse`.
+ * como referencia de contexto. Con `false`, cuando el vídeo la usa como primer fotograma va sin
+ * etiqueta (`START_IMAGE_TAG`) y las fotos empiezan en `@Image1`.
  */
 export const START_IMAGE_IS_IMAGE1 = true;
 
+/** Etiqueta de la imagen aprobada cuando va como primer fotograma y no se numera: el prompt no la cita. */
+export const START_IMAGE_TAG = "start_image";
+
 export interface ManifestItem {
-  /** Empieza en 1: el número de la etiqueta (`image 3` → 3, `@Image3` → 3, `@Video1` → 1). */
+  /**
+   * El número de la etiqueta (`image 3` → 3, `@Image3` → 3, `@Video1` → 1); empieza en 1. La
+   * imagen aprobada sin numerar (`START_IMAGE_TAG`) lleva 0.
+   */
   index: number;
-  /** Imagen: `"image 1"`…; clip: `"@Video1"`, `"@Image1"`… */
+  /** Imagen: `"image 1"`…; clip: `"@Video1"`, `"@Image1"`… (o `START_IMAGE_TAG`). */
   tag: string;
   source: { kind: "reference_frame" } | { kind: "reference_video" } | { kind: "approved_frame" } | { kind: "photo"; photoId: number };
   role: "composicion" | "video_referencia" | "imagen_aprobada" | PhotoRole;
@@ -71,15 +78,21 @@ export function imageManifest(video: Video, photos: PhotoInfo[]): ManifestItem[]
 
 /**
  * @Video1 = referencia; @Image1 = imagen aprobada; después avatar (si hay), artículo (≤ 4),
- * embalaje (≤ 2). El entorno no va aparte: ya está en la imagen aprobada.
+ * embalaje (≤ 2). El entorno no va aparte: ya está en la imagen aprobada. Si el primer fotograma
+ * no cuenta al numerar (`startImageIsImage1 = false`, solo con `frameUse = "start_image"`), la
+ * imagen aprobada va sin número y las fotos empiezan en `@Image1`.
  */
-export function clipManifest(video: Video, photos: PhotoInfo[]): ManifestItem[] {
+export function clipManifest(video: Video, photos: PhotoInfo[], startImageIsImage1: boolean = START_IMAGE_IS_IMAGE1): ManifestItem[] {
+  const numbered = startImageIsImage1 || video.frameUse !== "start_image";
+  const first = numbered ? 2 : 1;
   return [
     { index: 1, tag: "@Video1", source: { kind: "reference_video" }, role: "video_referencia" },
-    { index: 1, tag: "@Image1", source: { kind: "approved_frame" }, role: "imagen_aprobada" },
+    numbered
+      ? { index: 1, tag: "@Image1", source: { kind: "approved_frame" }, role: "imagen_aprobada" }
+      : { index: 0, tag: START_IMAGE_TAG, source: { kind: "approved_frame" }, role: "imagen_aprobada" },
     ...productRefs(video, photos).map((ref, i): ManifestItem => ({
-      index: i + 2,
-      tag: `@Image${i + 2}`,
+      index: i + first,
+      tag: `@Image${i + first}`,
       source: { kind: "photo", photoId: ref.photoId },
       role: ref.role,
     })),

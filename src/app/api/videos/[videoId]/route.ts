@@ -1,6 +1,5 @@
 import { badRequest, handle } from "@/server/http";
-import { updatePrompts } from "@/server/videos/analysis";
-import { FRAME_USES, type FrameUse } from "@/server/videos/manifest";
+import { checkPromptInput, updatePrompts } from "@/server/videos/analysis";
 import { getVideoFor, updateVideoChoices, videoView } from "@/server/videos/videos";
 
 const parseId = (value: string) => (/^[1-9]\d{0,15}$/.test(value) ? Number(value) : Number.NaN);
@@ -30,9 +29,8 @@ export async function PUT(request: Request, { params }: { params: Promise<{ vide
     if (noPerson !== undefined && typeof noPerson !== "boolean") return badRequest("Valor no válido.");
     if (!isPhotoChoice(avatarPhotoId)) return badRequest("Elige una foto con papel «Avatar» de este producto.");
     if (!isPhotoChoice(environmentPhotoId)) return badRequest("Elige una foto con papel «Entorno» de este producto.");
-    if (imagePrompt !== undefined && typeof imagePrompt !== "string") return badRequest("Escribe el prompt.");
-    if (videoPrompt !== undefined && typeof videoPrompt !== "string") return badRequest("Escribe el prompt.");
-    if (frameUse !== undefined && !FRAME_USES.includes(frameUse as FrameUse)) return badRequest("Uso de la imagen no válido.");
+    // Los prompts se comprueban antes de guardar nada: la petición se guarda entera o no se guarda.
+    const prompts = checkPromptInput({ imagePrompt, videoPrompt, frameUse });
 
     const id = parseId(videoId);
     let video = await updateVideoChoices(user!, id, {
@@ -42,7 +40,7 @@ export async function PUT(request: Request, { params }: { params: Promise<{ vide
       noPerson,
     });
     if (imagePrompt === undefined && videoPrompt === undefined && frameUse === undefined) return Response.json({ video });
-    const issues = await updatePrompts(user!, id, { imagePrompt, videoPrompt, frameUse: frameUse as FrameUse | undefined });
+    const issues = await updatePrompts(user!, id, prompts);
     video = await getVideoFor(user!, id);
     return Response.json({ video, ...issues });
   });

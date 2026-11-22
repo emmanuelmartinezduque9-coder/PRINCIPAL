@@ -119,8 +119,10 @@ describe("límites del código", () => {
   });
 
   it("solo las tablas de vídeo se tocan desde src/server/videos", () => {
-    const VIDEO_TABLES = [/schema\.(videos|videoFrames|uploadSessions)\b/, /\b(video_frames|upload_sessions)\b/];
+    const VIDEO_TABLES = [/schema\.(videos|videoFrames|uploadSessions|videoAnalyses)\b/, /\b(video_frames|upload_sessions|video_analyses)\b/];
     expect(VIDEO_TABLES.some((p) => p.test("getDb().select().from(schema.videoFrames)"))).toBe(true);
+    expect(VIDEO_TABLES.some((p) => p.test("getDb().update(schema.videoAnalyses)"))).toBe(true);
+    expect(VIDEO_TABLES.some((p) => p.test("select * from video_analyses"))).toBe(true);
     expect(files.some((f) => f.rel === "src/server/videos/videos.ts" && VIDEO_TABLES.some((p) => p.test(f.text)))).toBe(true);
     const offenders = files
       .filter((f) => !f.rel.startsWith("src/server/videos/") && !f.rel.startsWith("src/db/"))
