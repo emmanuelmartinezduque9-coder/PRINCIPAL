@@ -48,14 +48,15 @@ export function EditReferenceButton({ value, open, onOpenChange }: { value: stri
     <Tooltip>
       <TooltipTrigger asChild>
         <Button
-          variant="ghost"
-          size="icon"
+          variant="outline"
+          size="sm"
           aria-label={label}
           aria-expanded={open}
           onClick={() => onOpenChange(!open)}
-          className={cn("size-8 text-muted-foreground", value && "bg-brand/10 text-brand-ink hover:bg-brand/15 hover:text-brand-ink")}
+          className={cn("h-8 gap-1.5 px-2.5 text-muted-foreground", value && "border-brand/30 bg-brand/10 text-brand-ink hover:bg-brand/15 hover:text-brand-ink")}
         >
           <Clapperboard aria-hidden />
+          <span>{value ? "Edición ✓" : "Edición"}</span>
         </Button>
       </TooltipTrigger>
       <TooltipContent>{label}</TooltipContent>

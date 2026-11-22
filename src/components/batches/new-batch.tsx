@@ -42,7 +42,7 @@ import {
 import { autoBatchName } from "./labels";
 import { newGroup, nextKey, type Group, type Row, type Source } from "./draft";
 import { useNewBatchDraft } from "./draft-provider";
-import { checkLink, EditReferenceButton, EditReferenceField, useEditReferenceSupport } from "./edit-reference";
+import { checkLink, EditReferenceButton, EditReferenceField } from "./edit-reference";
 import { Indications } from "./indications";
 
 /** Lo mismo que admite el servidor. */
@@ -651,7 +651,7 @@ export function NewBatch() {
   const client = useQueryClient();
   const { enqueue } = useReferenceUploads();
   const mac = useMac();
-  const editReference = useEditReferenceSupport();
+  const editReference = true; // el servidor ya guarda `editReferenceUrl`
   // Todo el formulario vive en el borrador del diseño: salir y volver no pierde nada.
   const { draft, hasDraft, setName, setAutoAnalyze, setGroups, setBatchId, preview, release, clear } = useNewBatchDraft();
   const { name, autoAnalyze, groups, batchId } = draft;
