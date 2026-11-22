@@ -52,6 +52,10 @@ import {
 import { createVideo, getVideoFor, videoView, type Video } from "@/server/videos/videos";
 import { GET as thumbRoute } from "@/app/api/resultados/[resultId]/miniatura/route";
 import { GET as getVideoRoute } from "@/app/api/videos/[videoId]/route";
+import { POST as adoptFrameRoute } from "@/app/api/videos/[videoId]/imagen/es-este/route";
+import { POST as dismissFrameRoute } from "@/app/api/videos/[videoId]/imagen/no-esta/route";
+import { POST as adoptClipRoute } from "@/app/api/videos/[videoId]/clip/es-este/route";
+import { POST as dismissClipRoute } from "@/app/api/videos/[videoId]/clip/no-esta/route";
 import { makeProduct, makeUser, TEST_PASSWORD } from "./helpers/fixtures";
 import { truncateAll } from "./helpers/global-setup";
 
@@ -1169,5 +1173,66 @@ describe("rutas", () => {
     expect(body.frame.current.results[0]).toMatchObject({ ok: true, hasThumb: true });
     expect(body.frame.current.results[0].url).toMatch(/^data:image\/png;base64,/);
     expect(body.clip.current).toBeNull();
+  });
+
+  describe("resolver una duda atascada", () => {
+    const post = (body?: unknown) =>
+      new Request("http://localhost/x", { method: "POST", body: body === undefined ? undefined : JSON.stringify(body) });
+    const params = (value: string) => ({ params: Promise.resolve({ videoId: value }) });
+    /** El simulado del modo local (el que usan las rutas), con un parecido que no se adopta solo. */
+    async function stuckLocal(kind: "frame" | "clip" = "frame"): Promise<{ id: number; local: FakeHiggsfield }> {
+      process.env.PRINCIPAL_HIGGSFIELD_FAKE = "1";
+      getHiggsfield();
+      const local = (globalThis as unknown as { __principalHiggsfieldFake: FakeHiggsfield }).__principalHiggsfieldFake;
+      local.state.history = [hist("j-cand", kind === "frame" ? SAME_PROMPT : "@Video1 sets the pace.", { createdAt: null, type: kind === "frame" ? "image" : "video" })];
+      if (kind === "clip") {
+        const frameId = await sendFrame();
+        await finish(frameId);
+        await approveResult(ana, v.id, "frame", (await videoView(ana, v.id)).frame.current!.results[0].id);
+      }
+      const { generationId: id } = await requestGeneration(ana, v.id, kind, { expectedCredits: kind === "frame" ? 4 : 30 }, deps);
+      await getPool().query("update generations set status = 'unknown' where id = $1", [id]);
+      await setAgo(id, "submit_started_at", 11 * 60_000);
+      return { id, local };
+    }
+
+    it("POST …/imagen/es-este adopta el candidato y devuelve el riesgo; sin jobId, 400", async () => {
+      const { id } = await stuckLocal();
+      await as(ana);
+      expect((await adoptFrameRoute(post({}), params(String(v.id)))).status).toBe(400);
+      const response = await adoptFrameRoute(post({ jobId: "j-cand" }), params(String(v.id)));
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ risk: "Si sí estaba, Higgsfield te cobrará las dos." });
+      expect(await rowOf(id)).toMatchObject({ status: "submitted", jobIds: ["j-cand"] });
+    });
+
+    it("POST …/imagen/no-esta la deja «no enviada»", async () => {
+      const { id } = await stuckLocal();
+      await as(ana);
+      const response = await dismissFrameRoute(post(), params(String(v.id)));
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ risk: "Si sí estaba, Higgsfield te cobrará las dos." });
+      expect(await rowOf(id)).toMatchObject({ status: "not_sent", error: DISMISSED });
+    });
+
+    it("POST …/clip/es-este y …/clip/no-esta resuelven la duda del clip", async () => {
+      const { id } = await stuckLocal("clip");
+      await as(ana);
+      expect((await adoptClipRoute(post({ jobId: "j-cand" }), params(String(v.id)))).status).toBe(200);
+      expect(await rowOf(id)).toMatchObject({ status: "submitted", jobIds: ["j-cand"] });
+      expect((await dismissClipRoute(post(), params(String(v.id)))).status).toBe(409);
+    });
+
+    it("solo quien creó el vídeo: quien solo lo ve recibe 403, quien no lo ve o un id raro, 404", async () => {
+      const { id } = await stuckLocal();
+      await as(dueno);
+      expect((await dismissFrameRoute(post(), params(String(v.id)))).status).toBe(403);
+      expect((await adoptFrameRoute(post({ jobId: "j-cand" }), params(String(v.id)))).status).toBe(403);
+      await as(luis);
+      expect((await dismissFrameRoute(post(), params(String(v.id)))).status).toBe(404);
+      await as(ana);
+      expect((await dismissFrameRoute(post(), params("1e3"))).status).toBe(404);
+      expect(await statusOf(id)).toBe("unknown");
+    });
   });
 });

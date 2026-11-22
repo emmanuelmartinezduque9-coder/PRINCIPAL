@@ -50,7 +50,40 @@ export const MAX_SEGMENT_MS = 30_000;
 export const frameUrl = (videoId: number, index: number, version: string) =>
   `/api/videos/${videoId}/fotogramas/${index}?v=${encodeURIComponent(version)}`;
 
-/** Pasos del flujo que ya se pueden abrir; el elegido va en la dirección (`?paso=desglose`). */
-export const FLOW_STEPS = ["referencia", "desglose"] as const;
+/** Pasos del flujo, en orden; el elegido va en la dirección (`?paso=desglose`). */
+export const FLOW_STEPS = ["referencia", "desglose", "imagen", "clip"] as const;
 export type FlowStep = (typeof FLOW_STEPS)[number];
 export const isFlowStep = (value: unknown): value is FlowStep => FLOW_STEPS.includes(value as FlowStep);
+
+// ───────────────────────── Generaciones ─────────────────────────
+
+export type GenerationKind = "frame" | "clip";
+export type GenerationJson = VideoViewJson["frame"];
+export type CurrentGeneration = NonNullable<GenerationJson["current"]>;
+export type GenerationResult = CurrentGeneration["results"][number];
+
+/** Trozo de la ruta de cada tipo: `/api/videos/[id]/imagen/…` y `/api/videos/[id]/clip/…`. */
+export const KIND_PATH: Record<GenerationKind, string> = { frame: "imagen", clip: "clip" };
+
+/** Estados en los que la generación sigue en marcha (la pantalla se vuelve a pedir sola). */
+export const RUNNING_STATUSES = ["intent", "submitting", "submitted"];
+
+/** `1.234` también con cuatro cifras (en español, por defecto, no se agrupan). */
+export const formatCredits = (n: number) => new Intl.NumberFormat("es-ES", { useGrouping: "always" }).format(n);
+
+/** «1 crédito», «4 créditos». */
+export const creditsLabel = (n: number) => `${formatCredits(n)} ${n === 1 ? "crédito" : "créditos"}`;
+
+/** Miniatura (JPEG) de un resultado, hecha por el servidor al terminar la generación. */
+export const thumbUrl = (resultId: number) => `/api/resultados/${resultId}/miniatura`;
+
+/**
+ * ¿Se puede pedir otra ronda? Sin ninguna, con la última «no enviada», o con la última fallida o
+ * rechazada si quedan regeneraciones. Lo mismo que comprueba el servidor (`nextRound`).
+ */
+export function canRequestRound(generation: GenerationJson): boolean {
+  const current = generation.current;
+  if (!current || current.status === "not_sent") return true;
+  const closed = current.status === "failed" || (current.status === "done" && current.rejectReason !== null);
+  return closed && generation.regenerationsLeft > 0;
+}

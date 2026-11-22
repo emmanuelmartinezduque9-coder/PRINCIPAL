@@ -7,6 +7,7 @@ import { PageHeader } from "@/components/shell/page-header";
 import { api } from "@/lib/api";
 import type { AuthUser } from "@/server/auth";
 import { DiagnosticsPanel, HiggsfieldCard } from "./higgsfield-card";
+import { ImageModelCard } from "./image-model-card";
 
 const RESULT_TOASTS: Record<string, (reason: string | null) => void> = {
   conectado: () => toast.success("Higgsfield conectado."),
@@ -36,7 +37,12 @@ export function SettingsView({ result, reason }: { result: string | null; reason
       <PageHeader title="Ajustes" />
       <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
         <HiggsfieldCard />
-        {me.data?.user?.role === "dueno" ? <DiagnosticsPanel /> : null}
+        {me.data?.user?.role === "dueno" ? (
+          <div className="flex min-w-0 flex-col gap-6">
+            <ImageModelCard />
+            <DiagnosticsPanel />
+          </div>
+        ) : null}
       </div>
     </div>
   );

@@ -1,0 +1,189 @@
+"use client";
+
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { Check, Clapperboard, Download, Loader2, ThumbsUp } from "lucide-react";
+import { toast } from "sonner";
+import { Badge } from "@/components/ui/badge";
+import { Button, buttonVariants } from "@/components/ui/button";
+import { api } from "@/lib/api";
+import { cn } from "@/lib/utils";
+import type { ClipResolution } from "@/server/videos/videos";
+import { GenerationNotice, Generating } from "./generation-status";
+import { canRequestRound, RUNNING_STATUSES, thumbUrl, type VideoJson, type VideoViewJson } from "./labels";
+import { QuoteCard } from "./quote-card";
+import { onRadioKeyDown, radioTabIndex } from "./radio-keys";
+import { RejectDialog } from "./reject-dialog";
+import { RegenerationsLeft } from "./step-frame";
+import { useGenerationActions } from "./use-generation";
+
+const RESOLUTIONS: Array<{ value: ClipResolution; note?: string }> = [
+  { value: "480p", note: "la más barata" },
+  { value: "720p" },
+  { value: "1080p" },
+];
+
+/** Resolución del clip: se guarda al elegir y el precio se vuelve a pedir. */
+function ResolutionPicker({ video }: { video: VideoJson }) {
+  const client = useQueryClient();
+  const save = useMutation({
+    mutationFn: (clipResolution: ClipResolution) =>
+      api<{ video: VideoJson }>(`/api/videos/${video.id}`, { method: "PUT", body: JSON.stringify({ clipResolution }) }),
+    onMutate: (clipResolution) => {
+      client.setQueryData<VideoViewJson>(["video", video.id], (v) => (v ? { ...v, video: { ...v.video, clipResolution } } : v));
+    },
+    onError: (error) => toast.error(error instanceof Error ? error.message : "No se pudo guardar."),
+    onSettled: () => client.invalidateQueries({ queryKey: ["video", video.id] }),
+  });
+  const selected = Math.max(0, RESOLUTIONS.findIndex((r) => r.value === video.clipResolution));
+  const choose = (value: ClipResolution) => {
+    if (value !== video.clipResolution) save.mutate(value);
+  };
+  return (
+    <div role="radiogroup" aria-label="Resolución" className="grid grid-cols-3 gap-1 rounded-lg bg-muted p-1">
+      {RESOLUTIONS.map(({ value, note }, index) => {
+        const on = index === selected;
+        return (
+          <button
+            key={value}
+            type="button"
+            role="radio"
+            aria-checked={on}
+            tabIndex={radioTabIndex(index, selected)}
+            onClick={() => choose(value)}
+            onKeyDown={(event) => onRadioKeyDown(event, (next) => choose(RESOLUTIONS[next].value))}
+            className={cn(
+              "flex min-h-12 flex-col items-center justify-center rounded-md px-2 py-1.5 text-sm transition-colors outline-none focus-visible:ring-3 focus-visible:ring-ring/50",
+              on ? "bg-background font-semibold shadow-sm" : "text-muted-foreground hover:text-foreground",
+            )}
+          >
+            <span className="tabular-nums">{value}</span>
+            {note ? <span className="text-[11px] leading-tight font-normal text-muted-foreground">{note}</span> : null}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+/** El reproductor vertical: el clip, o la imagen aprobada de fondo mientras no lo hay. */
+function Player({ view }: { view: VideoViewJson }) {
+  const current = view.clip.current;
+  const running = current !== null && RUNNING_STATUSES.includes(current.status);
+  const result = current?.status === "done" ? current.results.find((r) => r.ok && r.url) : undefined;
+  const poster = view.frame.approvedResultId !== null ? thumbUrl(view.frame.approvedResultId) : undefined;
+  const rejected = current?.rejectReason ?? null;
+
+  return (
+    <div className="flex flex-col gap-3">
+      {result && rejected ? (
+        <p className="text-sm text-muted-foreground">
+          <span className="font-medium text-foreground">Rechazado:</span> {rejected}
+        </p>
+      ) : null}
+      <div
+        className={cn(
+          "relative aspect-[9/16] w-full max-w-[360px] overflow-hidden rounded-xl bg-neutral-950 ring-1 ring-foreground/10",
+          result && view.clip.approvedResultId === result.id && "ring-3 ring-emerald-500",
+        )}
+      >
+        {result ? (
+          <video
+            key={result.id}
+            src={result.url!}
+            poster={result.hasThumb ? thumbUrl(result.id) : undefined}
+            controls
+            playsInline
+            loop
+            className={cn("absolute inset-0 size-full object-contain", rejected && "opacity-45 grayscale")}
+            aria-label="Clip"
+          />
+        ) : (
+          <>
+            {poster ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={poster} alt="" className="absolute inset-0 size-full object-cover opacity-35" />
+            ) : null}
+            <div className="absolute inset-0 grid place-items-center text-white/80">
+              {running ? (
+                <div className="rounded-xl bg-background/90 px-5 py-4">
+                  <Generating />
+                </div>
+              ) : (
+                <Clapperboard className="size-8" aria-hidden />
+              )}
+            </div>
+          </>
+        )}
+        {result && view.clip.approvedResultId === result.id ? (
+          <Badge className="pointer-events-none absolute top-3 left-3 gap-1 bg-emerald-500 text-white">
+            <Check aria-hidden />
+            Aprobado
+          </Badge>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+/** Paso «Clip»: reproductor vertical y, al lado, resolución y precio, aprobar, rechazar y descargar. */
+export function StepClip({ view, onGoToBreakdown }: { view: VideoViewJson; onGoToBreakdown: () => void }) {
+  const { video, clip, mine } = view;
+  const current = clip.current;
+  const { approve, reject } = useGenerationActions(video.id, "clip");
+  const result = current?.status === "done" ? current.results.find((r) => r.ok && r.url) : undefined;
+  const reviewing = result !== undefined && current!.rejectReason === null;
+  const canRequest = mine && canRequestRound(clip);
+  const closed = current !== null && (current.status === "failed" || current.rejectReason !== null);
+  const approved = result !== undefined && clip.approvedResultId === result.id;
+  const downloadable = clip.approvedResultId !== null || result !== undefined;
+
+  return (
+    <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,360px)_340px] lg:gap-8">
+      <div className="min-w-0">
+        <Player view={view} />
+      </div>
+
+      <aside className="flex flex-col gap-4 lg:sticky lg:top-6" aria-label="Clip">
+        <GenerationNotice videoId={video.id} kind="clip" current={current} />
+
+        {canRequest ? (
+          <QuoteCard
+            videoId={video.id}
+            kind="clip"
+            label={current && current.status !== "not_sent" ? "Volver a generar" : "Generar clip"}
+            refreshKey={`${current?.id ?? 0}-${current?.status ?? ""}-${current?.rejectReason ?? ""}-${video.clipResolution}-${video.videoPrompt?.length ?? 0}`}
+            onGoToBreakdown={onGoToBreakdown}
+          >
+            <ResolutionPicker video={video} />
+          </QuoteCard>
+        ) : null}
+
+        {reviewing && mine ? (
+          <div className="flex flex-col gap-3 rounded-xl bg-card p-5 ring-1 ring-foreground/10">
+            {approved ? null : (
+              <Button className="h-11 gap-2" disabled={approve.isPending} onClick={() => approve.mutate(result.id)}>
+                {approve.isPending ? <Loader2 className="animate-spin" data-icon="inline-start" /> : <ThumbsUp data-icon="inline-start" />}
+                Aprobar
+              </Button>
+            )}
+            <RejectDialog label="Rechazar" title="¿Por qué no vale?" pending={reject.isPending} onReject={(reason) => reject.mutateAsync(reason)} />
+            <RegenerationsLeft left={clip.regenerationsLeft} what="clip" />
+          </div>
+        ) : null}
+
+        {downloadable ? (
+          <a
+            href={`/api/videos/${video.id}/clip/descargar`}
+            download
+            className={cn(buttonVariants({ variant: approved ? "default" : "outline" }), "h-11 gap-2")}
+          >
+            <Download data-icon="inline-start" />
+            Descargar
+          </a>
+        ) : null}
+
+        {mine && closed && !canRequest ? <RegenerationsLeft left={0} what="clip" /> : null}
+      </aside>
+    </div>
+  );
+}
