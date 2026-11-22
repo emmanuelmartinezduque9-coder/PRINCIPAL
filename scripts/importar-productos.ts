@@ -3,13 +3,15 @@
  * exportación (`productos.json` + `fotos/<slug>/…`), a la base de datos de PRINCIPAL.
  *
  *   npx tsx scripts/importar-productos.ts --paquete <carpeta> --dueno <correo del dueño>
- *       [--estados active,active*] [--aplicar --confirmo-base <host de DATABASE_URL>]
+ *       [--estados 'active,active*'] [--aplicar --confirmo-base <host:puerto/base>]
  *
  * Sin `--aplicar` es una prueba: dice qué crearía u omitiría y no cambia nada. Con `--aplicar`
- * escribe, y solo si `--confirmo-base` es el host de `DATABASE_URL` (para no escribir por error en
- * otra base). Se puede repetir: un producto se reconoce por su nombre exacto (sin distinguir
- * mayúsculas) y una foto por el sha256 de su contenido; nunca se crea un duplicado, ni se borra o
- * cambia nada de lo que ya hay (a un producto existente solo se le añaden las fotos que le faltan).
+ * escribe, y solo si `--confirmo-base` es el `host:puerto/base` de `DATABASE_URL` (lo muestra la
+ * prueba). Antes de nada comprueba que la base es la de PRINCIPAL y no la de Finanzas (en Railway
+ * las dos pueden compartir host y llamarse `railway`). Se puede repetir: un producto se reconoce por
+ * su nombre exacto (sin distinguir mayúsculas) y una foto por el sha256 de su contenido; nunca se
+ * crea un duplicado, ni se borra o cambia nada de lo que ya hay (a un producto existente solo se le
+ * añaden las fotos que le faltan).
  *
  * Pasa por los mismos módulos que la web (`createProduct`, `importProductPhotos` y sus reglas), así
  * que valida exactamente igual. Guía: `docs/importacion/importador.md`.
@@ -17,7 +19,10 @@
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { readMigrationFiles } from "drizzle-orm/migrator";
+import { Client } from "pg";
 import { databaseUrl, getPool } from "../src/db/client";
+import { looksLikeFinanzas } from "../src/db/migrate";
 import { getActiveUserByEmail, type AuthUser } from "../src/server/auth";
 import { HttpError } from "../src/server/http";
 import {
@@ -49,7 +54,7 @@ export class ImportAbort extends Error {}
 
 const USAGE =
   "Uso: npx tsx scripts/importar-productos.ts --paquete <carpeta> --dueno <correo> " +
-  "[--estados active,active*] [--aplicar --confirmo-base <host>]";
+  "[--estados 'active,active*'] [--aplicar --confirmo-base <host:puerto/base>]";
 
 export function parseArgs(argv: string[]): ImportOptions {
   const values = new Map<string, string>();
@@ -139,7 +144,7 @@ interface ValidPhoto {
 interface PhotoPlan {
   toAdd: ValidPhoto[];
   rejected: { label: string; reason: string }[];
-  noFile: string[];
+  noFile: { label: string; reason: string }[];
   alreadyThere: number;
   repeated: number;
   overLimit: number;
@@ -187,7 +192,7 @@ async function planPhotos(root: string, photos: PackagePhoto[], existing: Set<st
   let room = Math.max(0, MAX_PHOTOS_PER_PRODUCT - existingCount);
   for (const photo of ordered) {
     if (!photo.file) {
-      plan.noFile.push(photo.label);
+      plan.noFile.push({ label: photo.label, reason: photo.missing || "sin archivo en el paquete" });
       continue;
     }
     const loaded = await loadPhoto(root, photo);
@@ -228,17 +233,78 @@ interface Known {
   photoCount: number; // puede ser mayor que `hashes.size` si ya hay dos fotos iguales
 }
 
-const key = (name: string) => name.trim().toLowerCase();
+const key = (name: string) => name.normalize("NFC").trim().toLowerCase();
 
-/** Host de `DATABASE_URL`, sin el resto (usuario, contraseña, base). */
-export function databaseHost(): string {
+/**
+ * `host:puerto/base` de `DATABASE_URL`, sin usuario ni contraseña. En Railway las bases públicas
+ * comparten host (`*.proxy.rlwy.net`) y suelen llamarse `railway`: lo que las distingue es el puerto.
+ */
+export function databaseTarget(): string {
   try {
-    return new URL(databaseUrl()).hostname.toLowerCase();
+    const url = new URL(databaseUrl());
+    const name = decodeURIComponent(url.pathname.replace(/^\//, ""));
+    return `${url.hostname.toLowerCase()}:${url.port || "5432"}/${name}`;
   } catch (error) {
     if (error instanceof Error && error.message.startsWith("Falta DATABASE_URL")) {
       throw new ImportAbort("Falta DATABASE_URL (la dirección de la base de datos de PRINCIPAL).");
     }
     throw new ImportAbort("DATABASE_URL no es una dirección válida.");
+  }
+}
+
+/** Igual que `databaseTarget`: el host sin distinguir mayúsculas; puerto y base, tal cual. */
+function normalizeTarget(text: string): string {
+  const value = text.trim();
+  const slash = value.indexOf("/");
+  return slash < 0 ? value.toLowerCase() : value.slice(0, slash).toLowerCase() + value.slice(slash);
+}
+
+/** Tablas que solo tiene la base de PRINCIPAL. */
+const PRINCIPAL_TABLES = ["products", "product_photos", "rule_versions", "spend_entries", "videos"];
+
+/**
+ * Se niega (ImportAbort) si la base no es la de PRINCIPAL: tiene tablas de Finanzas, le falta alguna
+ * tabla propia de PRINCIPAL, no tiene el registro de migraciones de Drizzle o no tiene aplicada la
+ * última migración de esta copia del código (mismo instante y misma huella). Abre su propia conexión.
+ */
+export async function checkPrincipalDatabase(
+  url: string,
+  migrationsFolder = path.resolve(process.cwd(), "drizzle"),
+): Promise<void> {
+  const latest = readMigrationFiles({ migrationsFolder }).at(-1);
+  if (!latest) throw new Error(`No hay migraciones en ${migrationsFolder}.`);
+  const client = new Client({ connectionString: url });
+  await client.connect();
+  try {
+    const { rows } = await client.query<{ tablename: string }>(
+      "select tablename from pg_tables where schemaname = 'public'",
+    );
+    const tables = rows.map((row) => row.tablename);
+    if (looksLikeFinanzas(tables)) {
+      throw new ImportAbort("Esta base de datos es la de Finanzas, no la de PRINCIPAL. Nada cambiado.");
+    }
+    const missing = PRINCIPAL_TABLES.filter((table) => !tables.includes(table));
+    if (missing.length) {
+      throw new ImportAbort(`Esta base de datos no es la de PRINCIPAL (le falta: ${missing.join(", ")}). Nada cambiado.`);
+    }
+    const journal = await client.query<{ present: boolean }>(
+      "select to_regclass('drizzle.__drizzle_migrations') is not null as present",
+    );
+    if (!journal.rows[0]?.present) {
+      throw new ImportAbort("Esta base de datos no tiene el registro de migraciones de PRINCIPAL. Nada cambiado.");
+    }
+    const applied = await client.query(
+      "select 1 from drizzle.__drizzle_migrations where hash = $1 and created_at = $2",
+      [latest.hash, latest.folderMillis],
+    );
+    if (applied.rowCount === 0) {
+      throw new ImportAbort(
+        "La base de PRINCIPAL no tiene la última migración de esta copia del código: actualiza la copia " +
+          "(git pull) o espera a que Railway publique la versión nueva. Nada cambiado.",
+      );
+    }
+  } finally {
+    await client.end();
   }
 }
 
@@ -259,21 +325,24 @@ export async function main(argv: string[], io: { out: (line: string) => void } =
   const out = io.out;
   try {
     const options = parseArgs(argv);
-    const host = databaseHost();
+    const target = databaseTarget();
     if (options.aplicar) {
       if (!options.confirmoBase) {
-        throw new ImportAbort("Para escribir hace falta --confirmo-base <host>, el host de DATABASE_URL. Nada cambiado.");
+        throw new ImportAbort(
+          "Para escribir hace falta --confirmo-base <host:puerto/base> (lo muestra la prueba). Nada cambiado.",
+        );
       }
-      if (options.confirmoBase.trim().toLowerCase() !== host) {
-        throw new ImportAbort("--confirmo-base no coincide con el host de DATABASE_URL. Nada cambiado.");
+      if (normalizeTarget(options.confirmoBase) !== target) {
+        throw new ImportAbort("--confirmo-base no coincide con el host:puerto/base de DATABASE_URL. Nada cambiado.");
       }
     }
+    await checkPrincipalDatabase(databaseUrl());
     const root = path.resolve(options.paquete);
     const all = await readPackage(root);
     const owner = await findOwner(options.dueno);
     const apply = options.aplicar;
 
-    out(`Importar productos · ${apply ? "APLICAR (se escribe en la base)" : "PRUEBA (no se cambia nada)"} · base ${host}`);
+    out(`Importar productos · ${apply ? "APLICAR (se escribe en la base)" : "PRUEBA (no se cambia nada)"} · base ${target}`);
     out(`Dueño: ${owner.name} <${owner.email}> · estados: ${[...options.estados].join(", ")}`);
     out(
       "Regla sin fotos: un producto sin ninguna foto válida se crea igual si tiene frase (las fotos se añaden después); " +
@@ -377,7 +446,7 @@ export async function main(argv: string[], io: { out: (line: string) => void } =
         if (isNew && entry.photoCount === 0) notes.push("sin fotos: se añaden después");
         out(`${isNew ? verb.created : verb.exists} ${label} · ${parts.join(", ")}${notes.length ? ` · ${notes.join("; ")}` : ""}`);
         for (const r of plan.rejected) out(`           foto ${r.label}: ${r.reason}`);
-        for (const l of plan.noFile) out(`           foto ${l}: sin archivo en el paquete`);
+        for (const n of plan.noFile) out(`           foto ${n.label}: ${n.reason}`);
       } catch (error) {
         result.outcome = "failed";
         result.reason = describe(error);
@@ -396,7 +465,7 @@ export async function main(argv: string[], io: { out: (line: string) => void } =
         `${totals.repeated} repetidas en el paquete, ${totals.rejected} rechazadas, ${totals.noFile} sin archivo, ` +
         `${totals.overLimit} fuera del máximo.`,
     );
-    if (!apply) out(`Prueba: no se ha cambiado nada. Para escribir: añade --aplicar --confirmo-base ${host}`);
+    if (!apply) out(`Prueba: no se ha cambiado nada. Para escribir: añade --aplicar --confirmo-base ${target}`);
     return by("failed") > 0 ? 1 : 0;
   } catch (error) {
     if (error instanceof ImportAbort) {
@@ -416,7 +485,7 @@ function describe(error: unknown): string {
 }
 
 /** Quita de un texto la dirección completa de la base y su contraseña, por si un error las incluyera. */
-function redact(text: string): string {
+export function redact(text: string): string {
   const url = process.env.DATABASE_URL;
   if (!url) return text;
   let clean = text.split(url).join("<DATABASE_URL>");

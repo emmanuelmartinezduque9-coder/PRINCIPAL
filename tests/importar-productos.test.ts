@@ -6,14 +6,18 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { AuthUser } from "@/server/auth";
 import { addProductPhoto, listProductPhotos, MAX_PHOTOS_PER_PRODUCT, readProductPhoto } from "@/server/photos";
 import { listProductsFor } from "@/server/products";
-import { main, parseArgs } from "../scripts/importar-productos";
+import { checkPrincipalDatabase, main, parseArgs, redact } from "../scripts/importar-productos";
 import { makeProduct, makeUser } from "./helpers/fixtures";
 import { truncateAll } from "./helpers/global-setup";
 
 /** Paquete de importación de prueba: un `productos.json` y unas fotos generadas en una carpeta temporal. */
 
 const OWNER_EMAIL = "dueno.importa@example.com";
-const HOST = "127.0.0.1"; // el de la base embebida de las pruebas
+/** `host:puerto/base` de la base embebida de las pruebas. */
+const TARGET = (() => {
+  const url = new URL(process.env.DATABASE_URL!);
+  return `${url.hostname}:${url.port}${url.pathname}`;
+})();
 
 let seq = 0;
 /** Una imagen distinta cada vez: cabecera real de PNG o JPEG y relleno único (la app detecta por contenido). */
@@ -30,6 +34,8 @@ interface PhotoSpec {
   label: string;
   primary?: boolean;
   bytes?: Buffer; // sin bytes: foto sin archivo local
+  missing?: string;
+  file?: string; // ruta tal cual en productos.json (para probar rutas que salen del paquete)
   shaOverride?: string;
 }
 
@@ -39,7 +45,11 @@ const out: string[] = [];
 
 function photo(slug: string, spec: PhotoSpec) {
   if (!spec.bytes) {
-    return { role: spec.role, label: spec.label, file: null, sha256: null, primary: !!spec.primary, missing: "sin archivo local" };
+    const missing = spec.missing ?? "sin archivo local";
+    return { role: spec.role, label: spec.label, file: null, sha256: null, primary: !!spec.primary, missing };
+  }
+  if (spec.file) {
+    return { role: spec.role, label: spec.label, file: spec.file, sha256: sha(spec.bytes), primary: !!spec.primary };
   }
   const ext = spec.bytes[0] === 0x89 ? "png" : "jpg";
   const file = `fotos/${slug}/${spec.label}.${ext}`;
@@ -99,6 +109,7 @@ function standardPackage() {
         { role: "otro", label: "logo", bytes: alfa.otro },
         { role: "avatar", label: "cara", bytes: alfa.avatar },
         { role: "articulo", label: "articulo_base" }, // sin archivo
+        { role: "avatar", label: "cara_grande", missing: "archivo > 8 MB, omitido" },
         { role: "embalaje", label: "embalaje", primary: true, bytes: alfa.embalaje },
         { role: "articulo", label: "articulo", primary: true, bytes: alfa.articulo },
         { role: "articulo", label: "sha_malo", bytes: image("png"), shaOverride: "0".repeat(64) },
@@ -126,7 +137,7 @@ function standardPackage() {
 
 const run = (...extra: string[]) =>
   main(["--paquete", dir, "--dueno", OWNER_EMAIL, ...extra], { out: (line) => out.push(line) });
-const apply = (...extra: string[]) => run("--aplicar", "--confirmo-base", HOST, ...extra);
+const apply = (...extra: string[]) => run("--aplicar", "--confirmo-base", TARGET, ...extra);
 
 const byName = async () => new Map((await listProductsFor(owner)).map((p) => [p.name, p]));
 const rolesOf = async (productId: number) => (await listProductPhotos(owner, productId)).map((p) => p.role);
@@ -181,7 +192,8 @@ describe("importar productos", () => {
     expect(text).toMatch(/CREARÍA\s+Delta/);
     expect(text).not.toMatch(/Gamma/);
     expect(text).toMatch(/sin fotos/i); // la regla para productos sin fotos se dice en el informe
-    expect(text).toContain(HOST);
+    expect(text).toContain(`base ${TARGET}`);
+    expect(text).toContain(`--confirmo-base ${TARGET}`);
     expect(text).not.toContain(process.env.DATABASE_URL!);
     expect(text).not.toContain("principal:principal");
   });
@@ -227,6 +239,7 @@ describe("importar productos", () => {
     expect(text).toMatch(/sha_malo.*sha256/);
     expect(text).toMatch(/es_pdf.*Formato de foto no admitido/);
     expect(text).toMatch(/articulo_base.*sin archivo/);
+    expect(text).toMatch(/cara_grande: archivo > 8 MB, omitido/);
   });
 
   it("un producto que ya existe (mismo nombre, otras mayúsculas) solo recibe las fotos que le faltan", async () => {
@@ -260,6 +273,14 @@ describe("importar productos", () => {
     out.length = 0;
     expect(await run("--aplicar", "--confirmo-base", "otra-base.example.com")).not.toBe(0);
     expect(out.join("\n")).toMatch(/no coincide/);
+    // Mismo host y misma base, otro puerto (en Railway, otra base): tampoco.
+    const url = new URL(process.env.DATABASE_URL!);
+    out.length = 0;
+    expect(await run("--aplicar", "--confirmo-base", `${url.hostname}:1${url.port}${url.pathname}`)).toBe(2);
+    expect(out.join("\n")).toMatch(/no coincide/);
+    // Solo el host (lo que valía antes): tampoco.
+    out.length = 0;
+    expect(await run("--aplicar", "--confirmo-base", url.hostname)).toBe(2);
     expect(out.join("\n")).not.toContain(process.env.DATABASE_URL!);
     expect(await listProductsFor(owner)).toHaveLength(0);
   });
@@ -292,6 +313,31 @@ describe("importar productos", () => {
     expect(text).toMatch(/OMITIDO\s+Muda.*frase/);
   });
 
+  it("una ruta de foto que sale de la carpeta del paquete se rechaza aunque el archivo exista", async () => {
+    const outside = image("png");
+    const outsideFile = path.join(path.dirname(dir), `fuera-${path.basename(dir)}.png`);
+    fs.writeFileSync(outsideFile, outside);
+    try {
+      writePackage([
+        product({
+          slug: "escapa",
+          name: "Escapa",
+          photos: [
+            { role: "articulo", label: "relativa", bytes: outside, file: `../${path.basename(outsideFile)}` },
+            { role: "otro", label: "absoluta", bytes: outside, file: outsideFile },
+          ],
+        }),
+      ]);
+      expect(await apply()).toBe(0);
+      expect(await rolesOf((await byName()).get("Escapa")!.id)).toEqual([]);
+      const text = out.join("\n");
+      expect(text).toMatch(/relativa: la ruta sale de la carpeta del paquete/);
+      expect(text).toMatch(/absoluta: la ruta sale de la carpeta del paquete/);
+    } finally {
+      fs.rmSync(outsideFile, { force: true });
+    }
+  });
+
   it(`respeta el máximo de ${MAX_PHOTOS_PER_PRODUCT} fotos por producto, con la principal dentro`, async () => {
     const extra: PhotoSpec[] = Array.from({ length: MAX_PHOTOS_PER_PRODUCT + 2 }, (_, i) => ({
       role: "otro",
@@ -309,5 +355,102 @@ describe("importar productos", () => {
     expect(photos[0].role).toBe("articulo");
     expect((await readProductPhoto(owner, photos[0].id)).data.equals(principal)).toBe(true);
     expect(out.join("\n")).toMatch(/3 fuera del máximo/);
+  });
+});
+
+describe("importar productos: la base tiene que ser la de PRINCIPAL", () => {
+  /** Crea (o vacía) una base aparte en el mismo servidor embebido y devuelve su dirección. */
+  async function scratchDatabase(name: string, setup: string[] = []): Promise<string> {
+    const { Client } = await import("pg");
+    const admin = new Client({ connectionString: process.env.DATABASE_URL });
+    await admin.connect();
+    try {
+      await admin.query(`drop database if exists ${name}`);
+      await admin.query(`create database ${name}`);
+    } finally {
+      await admin.end();
+    }
+    const url = process.env.DATABASE_URL!.replace(/\/[^/]+$/, `/${name}`);
+    const client = new Client({ connectionString: url });
+    await client.connect();
+    try {
+      for (const statement of setup) await client.query(statement);
+    } finally {
+      await client.end();
+    }
+    return url;
+  }
+
+  /** Lanza el importador con `DATABASE_URL` apuntando a otra base (solo durante la llamada). */
+  async function runAgainst(url: string, ...extra: string[]) {
+    const saved = process.env.DATABASE_URL;
+    process.env.DATABASE_URL = url;
+    try {
+      const target = new URL(url);
+      return await main(
+        ["--paquete", dir, "--dueno", OWNER_EMAIL, "--aplicar", "--confirmo-base", `${target.hostname}:${target.port}${target.pathname}`, ...extra],
+        { out: (line) => out.push(line) },
+      );
+    } finally {
+      process.env.DATABASE_URL = saved;
+    }
+  }
+
+  it("se niega con una base que parece la de Finanzas, aunque el host:puerto/base coincida", async () => {
+    const url = await scratchDatabase("importar_falsa_finanzas", [
+      "create table stores (id text)",
+      "create table products (id text)",
+    ]);
+    expect(await runAgainst(url)).toBe(2);
+    expect(out.join("\n")).toMatch(/Finanzas/);
+    expect(await listProductsFor(owner)).toHaveLength(0);
+  });
+
+  it("se niega con una base vacía o sin las tablas propias de PRINCIPAL", async () => {
+    const url = await scratchDatabase("importar_vacia", ["create table users (id text)"]);
+    expect(await runAgainst(url)).toBe(2);
+    expect(out.join("\n")).toMatch(/no es la de PRINCIPAL.*product_photos/);
+  });
+
+  it("se niega si faltan el registro de migraciones o la última migración del código", async () => {
+    const { runMigrations } = await import("@/db/migrate");
+    const url = await scratchDatabase("importar_atrasada");
+    await runMigrations(url);
+    await expect(checkPrincipalDatabase(url)).resolves.toBeUndefined();
+
+    const { Client } = await import("pg");
+    const client = new Client({ connectionString: url });
+    await client.connect();
+    try {
+      await client.query("delete from drizzle.__drizzle_migrations where created_at = (select max(created_at) from drizzle.__drizzle_migrations)");
+      await expect(checkPrincipalDatabase(url)).rejects.toThrow(/última migración/);
+      await client.query("drop schema drizzle cascade");
+      await expect(checkPrincipalDatabase(url)).rejects.toThrow(/registro de migraciones/);
+    } finally {
+      await client.end();
+    }
+    expect(await runAgainst(url)).toBe(2);
+    expect(out.join("\n")).toMatch(/registro de migraciones/);
+  });
+
+  it("la base de las pruebas (con sus migraciones) se acepta", async () => {
+    await expect(checkPrincipalDatabase(process.env.DATABASE_URL!)).resolves.toBeUndefined();
+  });
+});
+
+describe("importar productos: nada de secretos en los mensajes", () => {
+  it("redact quita la dirección completa de la base y su contraseña", () => {
+    const saved = process.env.DATABASE_URL;
+    const url = "postgres://usuario:s3cr%40to@ejemplo.proxy.rlwy.net:41234/railway";
+    process.env.DATABASE_URL = url;
+    try {
+      const clean = redact(`no conecta con ${url}; la clave s3cr@to fue rechazada`);
+      expect(clean).not.toContain(url);
+      expect(clean).not.toContain("s3cr@to");
+      expect(clean).toContain("<DATABASE_URL>");
+      expect(clean).toContain("<contraseña>");
+    } finally {
+      process.env.DATABASE_URL = saved;
+    }
   });
 });
