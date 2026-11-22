@@ -3,42 +3,52 @@
 ```json
 {
   "handle": "potterbrella.us",
-  "producto": "paraguas (dicho por el dueño: mismo producto en los 4); modelo exacto no verificado",
-  "mecanismo": "no verificado",
-  "mercado": "no verificado",
-  "audiencia": "no verificado",
-  "angulo": "no verificado",
+  "producto": "Paraguas 'Potter Brella' [visto: nombre y enlace potterbrella.shop]; temática Harry Potter por hashtags y audio",
+  "mecanismo": "[inferido] mismo tipo de paraguas; no se vio el vídeo ni el diseño",
+  "mercado": "[visto] bio en inglés, '#usa' en captions",
+  "audiencia": "[visto] fans de Harry Potter (#harrypotter, 🦉, audio de la saga)",
+  "angulo": "[visto] fandom: caption 'Link in my bio! 🦉🤍 #harrypotter #usa' + banda sonora de las películas",
   "evidencia": [
-    "hipótesis"
+    "señales públicas: 72,7 mil seguidores, 24 publicaciones [visto]",
+    "reels con 548 mil, 123 mil, 43,4 mil, 42,5 mil vistas [visto]",
+    "[inferido] riesgo de propiedad intelectual por usar el nombre y la música de Harry Potter"
   ]
 }
 ```
 
-> Estado: **caso NO analizable con datos propios**. Fecha de intento: 2026-11-22. Ningún dato de esta ficha procede de ver la cuenta.
+> Estado: datos vistos en el perfil público abierto en el navegador del dueño el 2026-11-22 (https://www.instagram.com/potterbrella.us/). Solo lectura. Marcas: [visto] = observado en pantalla; [inferido] = deducción mía.
 
-## Qué se intentó y resultado
-- Trendtrack `lookup` por handle: sin resultados (0)
-- Perfil de Instagram: `www.instagram.com` no resuelve desde la sesión en la nube (bloqueo de red). Tampoco la tienda enlazada ni `/products.json`.
-- yt-dlp en el Mac del dueño (solo metadatos, sin cookies), probado con @mybubblebrella: `ERROR [instagram:user] Unable to extract data` (extractor marcado como roto; Instagram exige sesión). Siguiendo la regla, **no se intentó rodearlo ni se probó con el resto de cuentas**.
-
-## Campos pedidos
+## Perfil
 | Campo | Valor | Marca |
 |---|---|---|
-| Producto / mecanismo | Sin datos | - |
-| URL de tienda | Sin confirmar | - |
-| Precio | Sin datos | - |
-| Mercado/idioma | Sin datos | - |
-| Bio y posicionamiento | Sin datos | - |
-| Audiencia y ángulo (comprador × usuario × momento × motivo × utilidad real) | Sin datos | - |
-| Conceptos de vídeo / hooks / ejemplos top (URL, vistas, fecha) | Sin datos; no se inventa ninguno | - |
-| CTA | Sin datos | - |
+| Nombre | Potter Brella (potterbrella.us) | [visto] |
+| Seguidores / siguiendo / publicaciones | 72,7 mil / 0 / 24 | [visto] |
+| Bio | ☔ Rain won’t wait. Neither should you. 👇 | [visto] |
+| Enlace | potterbrella.shop | [visto] |
 
-## Pistas (solo [inferido], baja fiabilidad)
-- [inferido] 'Potter' + 'umbrella': nicho fandom Harry Potter / magia (hipótesis por el nombre). Ojo: riesgo de propiedad intelectual.
+## Reels recientes (cuadrícula /reels/, ordenados por vistas)
+Vistas = contador que muestra la cuadrícula (Instagram en español: 'mil' = miles, 'M' = millones; cifras redondeadas por Instagram). Fecha, likes, comentarios y texto solo donde se abrió el reel.
 
-## Nivel de evidencia
-- `hipótesis` (el dueño indica que es el mismo producto en cuatro nichos; no hay ventas comunicadas para el grupo B)
-- No hay `señales públicas` (vistas/seguidores) verificadas.
+| Reel | Vistas | Fecha | Likes | Comentarios | Texto (caption) | Marca |
+|---|---|---|---|---|---|---|
+| https://www.instagram.com/reel/Df0n4Dou5tq/ | 548 mil | 2026-11-16 | 9.984 | 43 | Link in my bio! 🦉🤍 #harrypotter #usa (audio: John Newman · Love Me Again) | [visto] |
+| https://www.instagram.com/reel/Df1eDC-OBFC/ | 123 mil | 2026-11-17 | 2.519 | 98 | Link in my bio! 🦉🤍 #harrypotter #usa (audio: Double Trouble, de Harry Potter y el prisionero de Azkaban) | [visto] |
+| https://www.instagram.com/reel/Dfy49-MOk-7/ | 43,4 mil | no abierto | - | - | no leído | [visto] vistas |
+| https://www.instagram.com/reel/Df1iWm6OXgL/ | 42,5 mil | no abierto | - | - | no leído | [visto] vistas |
+| https://www.instagram.com/reel/Df23EHCumHb/ | 24,9 mil | no abierto | - | - | no leído | [visto] vistas |
+| https://www.instagram.com/reel/Df_PUZju77A/ | 21,2 mil | no abierto | - | - | no leído | [visto] vistas |
+| https://www.instagram.com/reel/Df3eymtOD0U/ | 15,4 mil | no abierto | - | - | no leído | [visto] vistas |
+| https://www.instagram.com/reel/Df_KEiuuf-R/ | 8077 | no abierto | - | - | no leído | [visto] vistas |
+| https://www.instagram.com/reel/Df55vm2Odxu/ | 5884 | no abierto | - | - | no leído | [visto] vistas |
+| https://www.instagram.com/reel/DgALElhubUS/ | 4788 | no abierto | - | - | no leído | [visto] vistas |
+| https://www.instagram.com/reel/DgAh5gLuaMN/ | 2703 | no abierto | - | - | no leído | [visto] vistas |
+| https://www.instagram.com/reel/DgAHn7Fur_T/ | 2607 | no abierto | - | - | no leído | [visto] vistas |
 
-## Para completar
-Permitir en red `instagram.com` y el dominio de la tienda, o pegar aquí bio, enlace, 5-10 reels top (URL + vistas) y el `products.json`; o capturas del perfil.
+## Audiencia y ángulo
+- [visto] Es la única con un nicho explícito en caption (hashtag) y en audio; la bio no menciona Harry Potter, es neutra ('Rain won’t wait').
+- [visto] El CTA cambia: 'Link in my bio' en vez de 'Comment X' (en estos 2 reels).
+- [visto] Mayor base de seguidores del grupo (72,7 mil) pero vistas máximas menores que princessbrella.us.
+
+## Límites
+- No se vio el diseño del producto ni la tienda.
+- [inferido] el uso de marca/música ajena puede acarrear reclamaciones; no verificado.
