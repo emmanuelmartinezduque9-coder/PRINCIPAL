@@ -90,7 +90,15 @@ async function startServer(): Promise<void> {
     });
   });
   // La primera vez, un puerto libre cualquiera; después, siempre ese.
-  await new Promise<void>((resolve) => created.listen(port, "127.0.0.1", resolve));
+  await new Promise<void>((resolve, reject) => {
+    const failed = (error: Error) =>
+      reject(new Error(`No se pudo abrir el servidor de prueba en el puerto ${port}: ${error.message}`, { cause: error }));
+    created.once("error", failed);
+    created.listen(port, "127.0.0.1", () => {
+      created.off("error", failed);
+      resolve();
+    });
+  });
   port = (created.address() as AddressInfo).port;
   server = created;
 }
@@ -181,9 +189,9 @@ describe("pasarela a Claude con el cliente real contra un servidor local", () =>
     expect(seen[0].body).not.toHaveProperty("betas");
   });
 
-  it("cada llamada tiene 120 segundos como mucho y ningún reintento automático", async () => {
+  it("cada llamada tiene 10 minutos como mucho y ningún reintento automático", async () => {
     await getGateway().call(req("small"));
-    expect(seen[0].headers["x-stainless-timeout"]).toBe("120");
+    expect(seen[0].headers["x-stainless-timeout"]).toBe("600");
     expect(seen[0].headers["x-stainless-retry-count"]).toBe("0");
   });
 
@@ -259,6 +267,7 @@ describe("pasarela a Claude con el cliente real contra un servidor local", () =>
       const attempt = getGateway().call(req("small"));
       await expect(attempt, contentType).rejects.toBeInstanceOf(LlmCallError);
       await expect(attempt, contentType).rejects.toMatchObject({ charged: "desconocido" });
+      await expect(attempt, contentType).rejects.not.toThrow(/int[eé]ntalo|de nuevo/i);
       expect(seen).toHaveLength(1);
       const row = await onlyEntry();
       expect(row, contentType).toMatchObject({ status: "settled", cost: row.reserved, detail: { outcome: "unknown" } });

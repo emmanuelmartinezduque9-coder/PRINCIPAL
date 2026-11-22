@@ -23,7 +23,11 @@ import { releaseSpend, reserveSpend, settleSpend, SpendCapError } from "@/server
  * de llamar) → llamar → liquidar con el coste real → mirar por qué paró → validar los datos.
  */
 
-/** Máximo de salida por llamada: por encima, el SDK exige respuesta en flujo y la pasarela no la usa. */
+/**
+ * Máximo de salida por llamada. La pasarela no pide la respuesta en flujo: espera la respuesta
+ * entera, y una más larga no cabría en el tiempo máximo de la llamada. Este es el único límite
+ * (con el tiempo máximo fijado, el SDK no pone el suyo).
+ */
 export const MAX_OUTPUT_TOKENS = 16_000;
 
 /** Cabecera beta del modelo de reserva del servidor (`fallbacks`). */
@@ -35,8 +39,12 @@ const IMAGE_CHARS = 5_000 * 3;
 /** Margen por lo que la API añade a la entrada (marcas de mensaje y de sistema). */
 const FRAMING_CHARS = 600;
 
-/** Tiempo máximo de una llamada. Si se agota no se sabe si el proveedor la cobró. */
-const REQUEST_TIMEOUT_MS = 120_000;
+/**
+ * Tiempo máximo de una llamada: 10 minutos, porque una respuesta de `MAX_OUTPUT_TOKENS` en el
+ * nivel mediano puede tardar más de 7. Si se agota no se sabe si el proveedor la cobró. Por eso
+ * las llamadas van en el proceso en segundo plano, no dentro de una petición web.
+ */
+const REQUEST_TIMEOUT_MS = 600_000;
 
 type MessagesClient = Pick<Anthropic["beta"]["messages"], "create">;
 type CreateParams = Anthropic.Beta.Messages.MessageCreateParamsNonStreaming;
@@ -102,26 +110,36 @@ export class LlmCapReachedError extends Error {
 /** Estados que no se arreglan reintentando: la petición está mal hecha o no está permitida. */
 const INVALID_REQUEST_STATUSES = new Set([400, 403, 404, 413, 422]);
 
-function callErrorMessage(status: number | null): string {
+const RETRY_LATER = "Claude no ha respondido. Inténtalo de nuevo dentro de unos minutos.";
+const INVALID_REQUEST = "La petición a Claude no es válida; avisa al dueño.";
+const UNREADABLE_ANSWER = "Claude ha devuelto una respuesta que no se entiende; avisa al dueño.";
+
+/** Mensaje para quien usa la aplicación. Solo invita a reintentar cuando el fallo puede ser pasajero. */
+function failureMessage(error: unknown, status: number | null): string {
   if (status === 401) return "Claude no acepta la clave configurada (ANTHROPIC_API_KEY); avisa al dueño.";
   if (status === 402) return "La cuenta de Claude no tiene saldo; avisa al dueño.";
-  if (status !== null && INVALID_REQUEST_STATUSES.has(status)) return "La petición a Claude no es válida; avisa al dueño.";
-  return "Claude no ha respondido. Inténtalo de nuevo dentro de unos minutos.";
+  if (status !== null) return INVALID_REQUEST_STATUSES.has(status) ? INVALID_REQUEST : RETRY_LATER;
+  // Sin estado HTTP: fallo de conexión, tiempo agotado o petición cancelada.
+  if (error instanceof Anthropic.APIError) return RETRY_LATER;
+  // El propio SDK paró la petición antes de enviarla: está mal hecha.
+  if (error instanceof Anthropic.AnthropicError) return INVALID_REQUEST;
+  return "La llamada a Claude ha fallado de forma inesperada; avisa al dueño.";
 }
 
 /**
  * La llamada no dio una respuesta que sirva. `charged` dice si el proveedor pudo cobrarla: `"no"`
  * (la rechazó sin procesarla o no llegó a salir: la reserva se liberó) o `"desconocido"` (se
  * cortó a medias, falló en el servidor o la respuesta no se entiende: lo reservado queda
- * apuntado como gastado). El mensaje solo invita a reintentar cuando reintentar puede servir.
+ * apuntado como gastado). El mensaje es apto para mostrarse.
  */
 export class LlmCallError extends Error {
   constructor(
     public charged: "no" | "desconocido",
     public status: number | null,
+    message: string,
     cause: unknown,
   ) {
-    super(callErrorMessage(status), { cause });
+    super(message, { cause });
     this.name = "LlmCallError";
   }
 }
@@ -268,9 +286,13 @@ interface TokenCounts {
 }
 
 function attemptOf(type: string, model: string, counts: TokenCounts): Attempt {
+  // Sin la cuenta de entrada y de salida no se sabe qué costó: nunca se da por gratis.
+  if (typeof counts.input_tokens !== "number" || typeof counts.output_tokens !== "number") {
+    throw new TypeError("La respuesta no trae la cuenta de tokens.");
+  }
   const usage: Usage = {
-    inputTokens: counts.input_tokens ?? 0,
-    outputTokens: counts.output_tokens ?? 0,
+    inputTokens: counts.input_tokens,
+    outputTokens: counts.output_tokens,
     cacheReadTokens: counts.cache_read_input_tokens ?? 0,
     cacheWriteTokens: counts.cache_creation_input_tokens ?? 0,
   };
@@ -365,7 +387,8 @@ interface Reading {
 
 /**
  * Saca de la respuesta lo que hace falta para cobrarla y devolverla. Lanza si no tiene la forma
- * de un mensaje (sin `usage`, sin `content`…): entonces no se puede saber cuánto costó.
+ * de un mensaje (sin `content`, sin `usage` o sin su cuenta de tokens de entrada y de salida,
+ * arriba o en alguno de los intentos): entonces no se puede saber cuánto costó.
  */
 function readResponse(requestedModel: string, response: ApiMessage): Reading {
   const shaped =
@@ -492,7 +515,7 @@ export function createGateway(deps: { client?: MessagesClient; now?: () => Date 
           // Si no se puede liberar, la reserva sigue contando: es lo prudente.
           await releaseSpend(entryId).catch(() => undefined);
         }
-        throw new LlmCallError(unknownOutcome ? "desconocido" : "no", status, error);
+        throw new LlmCallError(unknownOutcome ? "desconocido" : "no", status, failureMessage(error, status), error);
       }
 
       // El proveedor respondió, así que pudo cobrar. Si la respuesta no se entiende, no se deja
@@ -502,7 +525,7 @@ export function createGateway(deps: { client?: MessagesClient; now?: () => Date 
         reading = readResponse(model, response);
       } catch (error) {
         await bookUnknown(entryId, reservedMicros, { ...baseDetail, error: { name: "MalformedResponse", status: null } });
-        throw new LlmCallError("desconocido", null, error);
+        throw new LlmCallError("desconocido", null, UNREADABLE_ANSWER, error);
       }
 
       const { attempts, usage, stopReason, refusalCategory } = reading;

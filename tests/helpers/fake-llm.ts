@@ -89,6 +89,11 @@ export function fakeConnectionError(code: string): Error {
   return new Anthropic.APIConnectionError({ cause: new TypeError("fetch failed", { cause: socketError }) });
 }
 
+/** El propio SDK para la petición antes de enviarla (una comprobación suya que no pasa). */
+export function fakeSdkValidationError(): Error {
+  return new Anthropic.AnthropicError("Comprobación simulada del SDK antes de enviar.");
+}
+
 /** La llamada tardó demasiado: el cliente real corta y no se sabe si el proveedor la procesó. */
 export function fakeTimeoutError(): Error {
   return new Anthropic.APIConnectionTimeoutError();
