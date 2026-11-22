@@ -15,34 +15,6 @@ import { countryLabels, languageLabel } from "./product-list";
 
 const formatDate = (iso: string) => new Intl.DateTimeFormat("es-ES", { dateStyle: "long" }).format(new Date(iso));
 
-/** Secciones del producto. Por ahora solo «Datos y fotos»; Vídeos y Ángulos llegarán más adelante. */
-function ProductSections() {
-  const upcoming = ["Vídeos", "Ángulos"];
-  return (
-    <nav aria-label="Secciones del producto" className="border-b">
-      <ul className="-mb-px flex gap-6 overflow-x-auto text-sm">
-        <li>
-          <span aria-current="page" className="inline-flex h-10 items-center border-b-2 border-foreground font-medium">
-            Datos y fotos
-          </span>
-        </li>
-        {upcoming.map((label) => (
-          <li key={label}>
-            <span
-              aria-disabled="true"
-              title="Todavía no está disponible"
-              className="inline-flex h-10 cursor-default items-center gap-2 border-b-2 border-transparent text-muted-foreground"
-            >
-              {label}
-              <span className="rounded-md bg-muted px-1.5 py-0.5 text-[11px] leading-none">Pronto</span>
-            </span>
-          </li>
-        ))}
-      </ul>
-    </nav>
-  );
-}
-
 export function ProductDetail({ id }: { id: string }) {
   const query = useQuery({
     queryKey: ["product", id],
@@ -95,7 +67,6 @@ export function ProductDetail({ id }: { id: string }) {
   return (
     <div className="flex flex-col gap-6">
       <PageHeader back={back} title={product.name} description={product.summary} />
-      <ProductSections />
 
       <div className="grid items-start gap-6 lg:grid-cols-[20rem_minmax(0,1fr)]">
         <Panel title="Datos">

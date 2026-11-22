@@ -1,0 +1,9 @@
+{
+"version": 1,
+"generatedAt": "2026-11-22T06:43:57",
+"counts": {"productos":74,"productosPorEstado":{"unclear":28,"active":36,"retired":2,"hidden":8},"fotos":245,"fotosSinArchivo":46,"canciones":57,"cancionesConDrop":31,"dropsHuerfanos":0,"conceptos":323,"clips":495,"referenciasVirales":10,"textosGanadores":10,"avatares":21,"avataresConArchivo":19,"omitidos":8,"redacciones":0},
+"files": ["productos.json","canciones.json","conceptos.json","textos-ganadores.json","avatares.json","INFORME.md"],
+"dirs": ["fotos/<slug>/","canciones/","avatares/","textos-ganadores/"],
+"sourceRoots": ["/Volumes/AutomatizacionProyecto/AUTOMATIZACION IA VIDEOS/","/Volumes/T7/AUTOMATIZACION SEGA/","/Users/emmanuelmartinezduque/Movies/CapCut/Resources/Biblioteca musical Nano Banana/"],
+"bundleBytes": 825039962
+}
