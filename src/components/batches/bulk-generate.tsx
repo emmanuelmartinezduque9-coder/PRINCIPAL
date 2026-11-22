@@ -40,6 +40,8 @@ export function BulkGenerate({
   disabled,
   onRunning,
   onResults,
+  open: openProp,
+  onOpenChange,
 }: {
   kind: GenerationKind;
   rows: BatchRowJson[];
@@ -47,9 +49,15 @@ export function BulkGenerate({
   disabled: boolean;
   onRunning: (running: boolean) => void;
   onResults: (results: Record<number, string | null>) => void;
+  /** Abierto desde fuera (el menú «…» del tablero): sin botón propio. */
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
 }) {
   const client = useQueryClient();
-  const [open, setOpen] = useState(false);
+  const [ownOpen, setOwnOpen] = useState(false);
+  const controlled = openProp !== undefined;
+  const open = controlled ? openProp : ownOpen;
+  const setOpen = (next: boolean) => (controlled ? onOpenChange?.(next) : setOwnOpen(next));
   /** Lo que se está enviando o se envió: se queda fijo aunque el tablero cambie mientras tanto. */
   const [plan, setPlan] = useState<{ rows: BatchRowJson[]; credits: Record<number, number>; state: Record<number, SendState> } | null>(null);
   const inFlight = useRef(false);
@@ -64,7 +72,7 @@ export function BulkGenerate({
     })),
   });
 
-  if (rows.length === 0 && !plan) return null;
+  if (rows.length === 0 && !plan && !open) return null;
 
   const byRow: Record<number, QuoteState> = {};
   rows.forEach((row, index) => {
@@ -120,11 +128,13 @@ export function BulkGenerate({
 
   return (
     <>
-      <Button className="h-9 gap-1.5 px-3" disabled={rows.length === 0 || disabled} onClick={() => setOpen(true)}>
-        <Sparkles data-icon="inline-start" />
-        {label}
-        {settled && rows.length > 0 ? <span className="font-normal opacity-80 tabular-nums">· {creditsLabel(total)}</span> : null}
-      </Button>
+      {controlled ? null : (
+        <Button className="h-9 gap-1.5 px-3" disabled={rows.length === 0 || disabled} onClick={() => setOpen(true)}>
+          <Sparkles data-icon="inline-start" />
+          {label}
+          {settled && rows.length > 0 ? <span className="font-normal opacity-80 tabular-nums">· {creditsLabel(total)}</span> : null}
+        </Button>
+      )}
       <Dialog open={open} onOpenChange={close}>
         <DialogContent className="sm:max-w-xl">
           <DialogHeader>

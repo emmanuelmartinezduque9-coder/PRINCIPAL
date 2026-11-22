@@ -130,8 +130,13 @@ describe("tablero del lote: qué filas cuenta cada acción", () => {
   });
 
   it("se vuelve a pedir mientras algo está en marcha y para cuando no", () => {
-    const view = (rows: BatchRowJson[]) => ({ batch: { id: 1, name: "", createdAt: "", createdBy: 1, mine: true }, rows }) as BatchViewJson;
+    const view = (rows: BatchRowJson[], status = "borrador") =>
+      ({ batch: { id: 1, name: "", createdAt: "", createdBy: 1, mine: true }, rows, auto: { status } }) as BatchViewJson;
     expect(pollEvery(view([row()]), false)).toBe(false);
+    // «Enviar lote» en marcha: el servidor avanza solo, el tablero se vuelve a pedir.
+    expect(pollEvery(view([row()], "imagenes"), false)).toBe(5000);
+    expect(pollEvery(view([row()], "listo"), false)).toBe(false);
+    expect(pollEvery(view([row()], "pausado"), false)).toBe(false);
     expect(pollEvery(view([row()]), true)).toBe(3000);
     expect(pollEvery(view([row(), row({ frame: gen({ status: "submitted" }) })]), false)).toBe(3000);
     expect(pollEvery(view([row({ analysis: { status: "queued", error: null, stale: false, staleReason: null } })]), false)).toBe(3000);
@@ -283,7 +288,7 @@ describe("lote v2: «Por revisar» y nombre automático", () => {
     // «Por revisar» no cuenta un enlace fallido sobre una referencia lista; el tablero se vuelve a pedir mientras el Mac trabaja.
     expect(needsReview(row({ link: failed }))).toBe(false);
     expect(needsReview(row({ link: downloading }))).toBe(false);
-    const view = (rows: BatchRowJson[]) => ({ rows }) as unknown as BatchViewJson;
+    const view = (rows: BatchRowJson[]) => ({ rows, auto: { status: "borrador" } }) as unknown as BatchViewJson;
     expect(pollEvery(view([row({ link: queued })]), false)).toBe(5000);
     expect(pollEvery(view([row({ link: downloading }), row({ referenceStatus: "processing" })]), false)).toBe(3000);
     expect(pollEvery(view([row({ link: failed })]), false)).toBe(false);

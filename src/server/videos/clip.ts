@@ -1,5 +1,6 @@
 import { and, asc, desc, eq } from "drizzle-orm";
 import {
+  getHiggsfield,
   higgsfieldFakeMode,
   type HfMediaRef,
   type HfVideoRequest,
@@ -12,7 +13,7 @@ import { readAvatarImage } from "@/server/avatars";
 import { readProductPhoto } from "@/server/photos";
 import { getProductFor } from "@/server/products";
 import { fileSlug } from "@/server/videos/filename";
-import { registerRequestBuilder, type RequestBuilder } from "@/server/videos/generations";
+import { asHttp, registerRequestBuilder, type GenDeps, type RequestBuilder } from "@/server/videos/generations";
 import { clipManifest } from "@/server/videos/manifest";
 import { checkVideoPrompt } from "@/server/videos/prompt-check";
 import {
@@ -164,6 +165,32 @@ export const buildClipRequest: RequestBuilder = async (user, video, deps) => {
 };
 
 registerRequestBuilder("clip", buildClipRequest);
+
+/**
+ * Estimación del clip ANTES de tener la imagen aprobada (para el presupuesto de «Enviar lote»):
+ * el presupuesto de Seedance (`estimate_video_cost`) con la duración y la resolución del vídeo, su
+ * prompt y la referencia. Sin la imagen ni las fotos (aún no existe la imagen); el precio depende
+ * del modelo, la duración y la resolución. No gasta nada. Cuando se pida de verdad, el clip se
+ * presupuesta otra vez con la petición completa (`requestGeneration`) y se compara con esto.
+ */
+export async function estimateClipCredits(user: AuthUser, video: Video, deps: GenDeps = {}): Promise<number> {
+  requireVideoOwner(user, video);
+  if (video.referenceStatus !== "ready" || !video.referenceMediaId || !video.segmentDurationMs) throw new HttpError(409, NO_REFERENCE);
+  const request: HfVideoRequest = {
+    model: CLIP_MODEL,
+    mode: "omni_reference",
+    prompt: video.videoPrompt ?? "",
+    aspectRatio: "9:16",
+    duration: clipDurationSeconds(video.segmentDurationMs),
+    resolution: video.clipResolution as HfVideoRequest["resolution"],
+    generateAudio: false,
+    bitrateMode: "high",
+    medias: [{ role: "video_references", value: video.referenceMediaId }],
+  };
+  const port = deps.higgsfield ?? getHiggsfield();
+  const { credits } = await port.quoteVideo(video.createdBy, request).catch(asHttp);
+  return credits;
+}
 
 // ───────────────────────── Descarga ─────────────────────────
 

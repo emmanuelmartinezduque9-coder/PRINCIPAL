@@ -49,6 +49,8 @@ export interface BriefSource {
   hookSeconds: number | null;
   /** «Indicaciones para los vídeos de {producto}» del lote del vídeo. */
   productNotes: string | null;
+  /** Las respuestas del dueño a las «Preguntas del lote» que llegan al desglose (`answersText`). */
+  answers: string | null;
 }
 
 /**
@@ -67,6 +69,7 @@ export interface Brief {
   adaptation: string | null;
   hookSeconds: number | null;
   productNotes: string | null;
+  answers: string | null;
 }
 
 export function briefOf(video: BriefSource): Brief {
@@ -80,6 +83,7 @@ export function briefOf(video: BriefSource): Brief {
     adaptation: video.kind === "adaptacion_concepto" ? video.adaptation : null,
     hookSeconds: video.kind === "solo_gancho" ? video.hookSeconds : null,
     productNotes: video.productNotes,
+    answers: video.answers,
   };
 }
 
@@ -117,8 +121,28 @@ export function analysisStaleness(
     used.note === now.note &&
     used.adaptation === now.adaptation &&
     used.hookSeconds === now.hookSeconds &&
-    used.productNotes === now.productNotes;
+    used.productNotes === now.productNotes &&
+    used.answers === now.answers;
   return same ? null : "brief";
+}
+
+/**
+ * Una respuesta a las «Preguntas del lote» (`videos.owner_answers`). `key` identifica la pregunta
+ * (`c<desglose>:<id>` las de Claude, `sys:…` las de la aplicación). Solo las que llevan `inBrief`
+ * llegan al desglose; las demás (p. ej. «Seguir así» ante un riesgo) solo cierran la pregunta.
+ */
+export interface OwnerAnswer {
+  key: string;
+  question: string;
+  answer: string;
+  inBrief: boolean;
+}
+
+/** Las respuestas que llegan al desglose, como texto («Pregunta: …» / «Respuesta: …»); `null` si no hay. */
+export function answersText(answers: readonly OwnerAnswer[] | null | undefined): string | null {
+  const used = (answers ?? []).filter((item) => item.inBrief);
+  if (used.length === 0) return null;
+  return used.map((item) => `Pregunta: ${item.question}\nRespuesta: ${item.answer}`).join("\n\n");
 }
 
 /** Texto de varias líneas sin espacios de sobra al principio ni al final; vacío es `null`. 400 si es largo o no es texto. */

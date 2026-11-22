@@ -18,6 +18,7 @@ const source = (over: Partial<BriefSource> = {}): BriefSource & { referenceMedia
   adaptation: null,
   hookSeconds: 4,
   productNotes: null,
+  answers: null,
   referenceMediaId: "media-1",
   ...over,
 });

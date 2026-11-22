@@ -1,9 +1,13 @@
 import type { Serialized } from "@/lib/api";
 import type { BatchSummary, BatchView } from "@/server/videos/batches";
+import type { AutoView, BatchQuestion, BatchQuote } from "@/server/videos/lote";
 import { canRequestRound, RUNNING_STATUSES, type GenerationJson } from "@/components/videos/labels";
 
 /** El tablero tal como llega por JSON (`GET /api/lotes/[id]`). */
-export type BatchViewJson = Serialized<BatchView>;
+export type BatchViewJson = Serialized<BatchView & { auto: AutoView }>;
+export type AutoViewJson = BatchViewJson["auto"];
+export type BatchQuestionJson = Serialized<BatchQuestion>;
+export type BatchQuoteJson = Serialized<BatchQuote>;
 export type BatchRowJson = BatchViewJson["rows"][number];
 export type BatchSummaryJson = Serialized<BatchSummary>;
 
@@ -193,6 +197,8 @@ export function pollEvery(view: BatchViewJson | undefined, uploading: boolean): 
   }
   if (uploading) return 3000;
   if (links) return 5000;
+  // «Enviar lote» en marcha: lo que avanza el servidor solo (desgloses, envíos, el paso siguiente).
+  if (["preguntas", "imagenes", "revision_imagenes", "clips"].includes(view.auto.status)) return 5000;
   return slow ? 15_000 : false;
 }
 

@@ -224,7 +224,7 @@ function trimRaw(raw: unknown): unknown {
 }
 
 /** Errores de Higgsfield al construir la petición o presupuestar, como respuesta para la persona. */
-function asHttp(error: unknown): never {
+export function asHttp(error: unknown): never {
   if (error instanceof HiggsfieldNotConnectedError || error instanceof HiggsfieldAuthError) {
     throw new HttpError(409, error.message, HIGGSFIELD_CONNECT);
   }

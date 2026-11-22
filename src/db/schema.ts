@@ -397,8 +397,45 @@ export const batches = pgTable(
     createdAt: instant("created_at").notNull().defaultNow(),
     /** «Desglosar al subir»: pedir el desglose de cada vídeo en cuanto su referencia está lista. */
     autoAnalyze: boolean("auto_analyze").notNull().default(true),
+    /**
+     * «Enviar lote» (`src/server/videos/lote.ts`): `borrador` → `preguntas` → `imagenes` →
+     * `revision_imagenes` → `clips` → `listo`, o `pausado` (con `pause`) por saldo, precio o un fallo.
+     */
+    status: text("status").notNull().default("borrador"),
+    /** El total que autorizó quien envió el lote (imágenes + estimación de los clips), en créditos. */
+    budgetCredits: integer("budget_credits"),
+    /** Lo previsto por vídeo al confirmar: `{ [videoId]: { frame, clip } }`, en créditos. */
+    estimates: jsonb("estimates").$type<Record<string, { frame: number; clip: number }>>(),
+    /** Por qué está en pausa y desde qué estado (`from`); `null` si no lo está. */
+    pause: jsonb("pause").$type<{
+      kind: "saldo" | "precio" | "presupuesto" | "fallo";
+      reason: string;
+      from: string;
+      /** Créditos de más que hay que autorizar para seguir (precio o presupuesto). */
+      extraCredits: number;
+      /** El vídeo que lo causó, si es uno (para «Saltar»). */
+      videoId: number | null;
+      /** Precio nuevo de ese vídeo, si la pausa es por precio. */
+      kindOf: "frame" | "clip" | null;
+      quoted: number | null;
+    }>(),
+    sentAt: instant("sent_at"),
+    /** Cuándo se confirmó el presupuesto: lo que se pide desde entonces cuenta contra él. */
+    confirmedAt: instant("confirmed_at"),
+    /** Último «Continuar»: lo que falló antes se puede volver a pedir. */
+    resumedAt: instant("resumed_at"),
+    /** Reserva de quien está avanzando el lote (un solo avance a la vez). */
+    advancingAt: instant("advancing_at"),
   },
-  (t) => [index("batches_created_by").on(t.createdBy, t.createdAt)],
+  (t) => [
+    index("batches_created_by").on(t.createdBy, t.createdAt),
+    index("batches_status").on(t.status),
+    check(
+      "batches_status_valid",
+      sql`${t.status} in ('borrador', 'preguntas', 'imagenes', 'revision_imagenes', 'clips', 'listo', 'pausado')`,
+    ),
+    check("batches_budget_valid", sql`${t.budgetCredits} is null or ${t.budgetCredits} >= 0`),
+  ],
 );
 
 /**
@@ -563,6 +600,16 @@ export const videos = pgTable(
     /** «Cambios específicos» para este vídeo (máx. 6.000 caracteres, varias líneas); llega al desglose. */
     note: text("note"),
     /**
+     * Respuestas a las «Preguntas del lote» (`OwnerAnswer` en `brief.ts`). Las que llevan `inBrief`
+     * llegan al desglose; cambiarlas deja el desglose por repetir.
+     */
+    ownerAnswers: jsonb("owner_answers")
+      .$type<Array<{ key: string; question: string; answer: string; inBrief: boolean }>>()
+      .notNull()
+      .default([]),
+    /** «Saltar este vídeo»: el envío automático del lote no lo toca. */
+    autoSkipped: boolean("auto_skipped").notNull().default(false),
+    /**
      * La canción elegida para el montaje (no cambia la generación). Si se borra la canción, el
      * vídeo vuelve a «Audio original» (`deleteSong` lo hace antes de borrarla).
      */
@@ -656,6 +703,8 @@ export const videoAnalyses = pgTable(
     hookSeconds: integer("hook_seconds"),
     /** «Indicaciones» del lote para el producto del vídeo, si las había. */
     productNotes: text("product_notes"),
+    /** Las respuestas del dueño a las preguntas del lote que llevaba (texto, como se mandó). */
+    answers: text("answers"),
     spendEntryId: bigint("spend_entry_id", { mode: "number" }),
     createdBy: bigint("created_by", { mode: "number" }).notNull(),
     createdAt: instant("created_at").notNull().defaultNow(),

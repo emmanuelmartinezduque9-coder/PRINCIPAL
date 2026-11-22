@@ -1,6 +1,7 @@
 import "@/jobs/video-jobs"; // define `video.finalizar`, que encola la consulta de las generaciones
 import { handle } from "@/server/http";
-import { batchView, pollBatchGenerations, setBatchAutoAnalyze } from "@/server/videos/batches";
+import { batchView, getBatchFor, pollBatchGenerations, setBatchAutoAnalyze } from "@/server/videos/batches";
+import { autoView } from "@/server/videos/lote";
 
 // Solo dígitos: "1e3" o "12abc" no se convierten en otro id válido.
 const parseId = (value: string) => (/^[1-9]\d{0,15}$/.test(value) ? Number(value) : Number.NaN);
@@ -14,7 +15,10 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
     const { id } = await params;
     const batchId = parseId(id);
     await pollBatchGenerations(user!, batchId);
-    return Response.json(await batchView(user!, batchId), { headers: { "Cache-Control": "no-store" } });
+    const view = await batchView(user!, batchId);
+    // Con el estado del envío automático («Enviar lote»): pasos, pausa y preguntas abiertas.
+    const auto = await autoView(user!, await getBatchFor(user!, batchId));
+    return Response.json({ ...view, auto }, { headers: { "Cache-Control": "no-store" } });
   });
 }
 

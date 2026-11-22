@@ -10,7 +10,7 @@ import { getProductFor } from "@/server/products";
 import { songSummaries, type SongSummary } from "@/server/songs";
 import type { Analysis, AnalysisQuestion } from "@/server/videos/analysis";
 import { startingAvatar } from "@/lib/default-avatar";
-import { analysisStaleness, checkKindInput, cleanNote, isAvatarMode, type AvatarMode, type VideoKind } from "@/server/videos/brief";
+import { analysisStaleness, answersText, checkKindInput, cleanNote, isAvatarMode, type AvatarMode, type VideoKind } from "@/server/videos/brief";
 import { bodiesOfVideo, checkVideoBodies, type VideoBody } from "@/server/videos/bodies";
 import { analysisCostMicros, costsOfVideo, type VideoCosts } from "@/server/videos/costs";
 import { clipManifest, imageManifest, type ManifestItem, type ManifestRefs } from "@/server/videos/manifest";
@@ -544,14 +544,17 @@ export async function productNotesOf(video: Pick<Video, "batchId" | "productId">
   return row?.notes ?? null;
 }
 
-/** El vídeo con las indicaciones de su lote: lo que cuenta para el desglose (`briefOf`). */
-export async function withProductNotes(video: Video): Promise<Video & { productNotes: string | null }> {
-  return { ...video, productNotes: await productNotesOf(video) };
+/**
+ * El vídeo con las indicaciones de su lote y las respuestas del dueño a las preguntas del lote: lo
+ * que cuenta para el desglose (`briefOf`).
+ */
+export async function withProductNotes(video: Video): Promise<Video & { productNotes: string | null; answers: string | null }> {
+  return { ...video, productNotes: await productNotesOf(video), answers: answersText(video.ownerAnswers) };
 }
 
 /** `stale` y su motivo, para la vista del vídeo y el tablero del lote. */
 export function staleness(analysis: Parameters<typeof analysisStaleness>[0], video: Video & { productNotes: string | null }) {
-  const staleReason = analysisStaleness(analysis, video);
+  const staleReason = analysisStaleness(analysis, { ...video, answers: answersText(video.ownerAnswers) });
   return { stale: staleReason !== null, staleReason };
 }
 

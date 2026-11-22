@@ -102,7 +102,7 @@ describe("indicaciones por producto del lote", () => {
     expect(await setBatchProductNotes(ana, lote.id, lampara.id, "  Siempre de noche, luz cálida  ")).toBe("Siempre de noche, luz cálida");
 
     // Lo que se manda a Claude: las del producto, y después las del vídeo.
-    const brief = briefOf({ ...(await getVideoFor(ana, v.id)), productNotes: "Siempre de noche, luz cálida" });
+    const brief = briefOf({ ...(await getVideoFor(ana, v.id)), productNotes: "Siempre de noche, luz cálida", answers: null });
     expect(ownerNotes(brief)).toBe(
       [
         "<indicaciones_del_encargo>",

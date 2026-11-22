@@ -3,24 +3,26 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { format } from "date-fns";
 import { es } from "date-fns/locale";
-import { ChevronRight, CircleAlert, Download, Eye, ImageIcon, Link2, Link2Off, ListFilter, Loader2, RefreshCw, ScanSearch, SearchX, Sparkles } from "lucide-react";
+import { ChevronRight, CircleAlert, Download, Ellipsis, Eye, ImageIcon, Link2, Link2Off, ListFilter, Loader2, RefreshCw, ScanSearch, SearchX, Sparkles } from "lucide-react";
 import Link from "next/link";
 import { useRef, useState } from "react";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/shell/page-header";
 import { MusicPicker } from "@/components/songs/music-picker";
 import { Button, buttonVariants } from "@/components/ui/button";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { avatarImageUrl } from "@/components/avatars/labels";
 import { AVATAR_MODE_LABELS, KIND_LABELS } from "@/components/videos/brief-labels";
-import { creditsLabel } from "@/components/videos/labels";
+import { creditsLabel, formatCredits } from "@/components/videos/labels";
 import { useReferenceUploads } from "@/components/videos/upload-provider";
 import { requestLink } from "@/components/videos/use-mac";
 import { api, ApiError } from "@/lib/api";
 import { linkLabel } from "@/lib/links";
 import { formatUsd } from "@/lib/money";
 import { cn } from "@/lib/utils";
+import { AutoAction, AutoStepper, PauseBanner, SendBatchButton } from "./auto-send";
 import { AutoAnalyzeSwitch, GroupHeader, RiskChip, RowActions } from "./board-parts";
 import { BulkGenerate } from "./bulk-generate";
 import {
@@ -216,6 +218,8 @@ export function BatchBoard({ batchId }: { batchId: number }) {
   const [downloaded, setDownloaded] = useState(0);
   /** «Por revisar»: solo las filas con algo que mirar. */
   const [onlyReview, setOnlyReview] = useState(false);
+  /** «Generar imágenes/clips» abierto desde el menú «…». */
+  const [bulk, setBulk] = useState<null | "frame" | "clip">(null);
 
   const back = { href: "/lotes", label: "Lotes" };
   if (query.isLoading) {
@@ -246,6 +250,7 @@ export function BatchBoard({ batchId }: { batchId: number }) {
   }
 
   const rows = data.rows;
+  const auto = data.auto;
   const uploadOf = (row: BatchRowJson): LocalUpload => uploads[row.id] ?? { kind: "idle" };
   const forBreakdown = rows.filter(ready.breakdown);
   const forFrame = rows.filter(ready.frame);
@@ -322,7 +327,75 @@ export function BatchBoard({ batchId }: { batchId: number }) {
       <PageHeader
         back={back}
         title={data.batch.name}
-        actions={data.batch.mine ? <AutoAnalyzeSwitch batchId={batchId} value={data.batch.autoAnalyze} editable={data.batch.mine} /> : null}
+        actions={
+          data.batch.mine ? (
+            <>
+              {auto.status === "borrador" ? (
+                <>
+                  <AutoAnalyzeSwitch batchId={batchId} value={data.batch.autoAnalyze} editable={data.batch.mine} />
+                  <SendBatchButton batchId={batchId} disabled={rows.length === 0 || uploading} />
+                </>
+              ) : (
+                <AutoAction batchId={batchId} auto={auto} toReview={forReview.length} />
+              )}
+              {auto.status === "listo" && forDownload.length > 0 ? (
+                <Button className="h-9 gap-1.5 px-4" disabled={running !== null} onClick={() => void downloadAll()}>
+                  {running === "download" ? <Loader2 className="animate-spin" data-icon="inline-start" /> : <Download data-icon="inline-start" />}
+                  {running === "download" ? `Descargando ${Math.min(downloaded + 1, forDownload.length)}/${forDownload.length}` : "Descargar todo"}
+                </Button>
+              ) : null}
+              {rows.length > 0 ? (
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button variant="outline" size="icon" className="size-9" aria-label="Más acciones" disabled={running !== null}>
+                      {running !== null ? <Loader2 className="animate-spin" aria-hidden /> : <Ellipsis aria-hidden />}
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent className="min-w-56">
+                    {toReview.length > 0 || onlyReview ? (
+                      <DropdownMenuItem onSelect={() => setOnlyReview((on) => !on)}>
+                        <ListFilter aria-hidden />
+                        {onlyReview ? "Ver todos" : `Por revisar (${toReview.length})`}
+                      </DropdownMenuItem>
+                    ) : null}
+                    {forBreakdown.length > 0 ? (
+                      <DropdownMenuItem onSelect={() => void breakdownAll()}>
+                        <ScanSearch aria-hidden />
+                        Desglosar ({forBreakdown.length})
+                      </DropdownMenuItem>
+                    ) : null}
+                    {forFrame.length > 0 ? (
+                      <DropdownMenuItem onSelect={() => setBulk("frame")}>
+                        <Sparkles aria-hidden />
+                        Generar imágenes ({forFrame.length})
+                      </DropdownMenuItem>
+                    ) : null}
+                    {forReview.length > 0 ? (
+                      <DropdownMenuItem asChild>
+                        <Link href={`/lotes/${batchId}/revisar`}>
+                          <ImageIcon aria-hidden />
+                          Revisar imágenes ({forReview.length})
+                        </Link>
+                      </DropdownMenuItem>
+                    ) : null}
+                    {forClip.length > 0 ? (
+                      <DropdownMenuItem onSelect={() => setBulk("clip")}>
+                        <Sparkles aria-hidden />
+                        Generar clips ({forClip.length})
+                      </DropdownMenuItem>
+                    ) : null}
+                    {forDownload.length > 0 ? (
+                      <DropdownMenuItem onSelect={() => void downloadAll()}>
+                        <Download aria-hidden />
+                        Descargar clips ({forDownload.length})
+                      </DropdownMenuItem>
+                    ) : null}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              ) : null}
+            </>
+          ) : null
+        }
       >
         <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted-foreground tabular-nums">
           <span>{rows.length === 1 ? "1 vídeo" : `${rows.length} vídeos`}</span>
@@ -330,10 +403,18 @@ export function BatchBoard({ batchId }: { batchId: number }) {
           <span>
             {done}/{rows.length} clips
           </span>
-          {credits > 0 ? (
+          {credits > 0 && auto.budgetCredits === null ? (
             <>
               <span aria-hidden>·</span>
               <span>{creditsLabel(credits)}</span>
+            </>
+          ) : null}
+          {auto.budgetCredits !== null ? (
+            <>
+              <span aria-hidden>·</span>
+              <span title="Comprometido / autorizado">
+                {formatCredits(auto.committedCredits)}/{creditsLabel(auto.budgetCredits)}
+              </span>
             </>
           ) : null}
           <span aria-hidden>·</span>
@@ -348,42 +429,12 @@ export function BatchBoard({ batchId }: { batchId: number }) {
         </p>
       ) : null}
 
-      {/* Siempre montada: un envío en bloque sigue enseñando sus resultados aunque ya no quede ninguna fila lista. */}
-      {rows.length > 0 ? (
-        <div role="toolbar" aria-label="Acciones del lote" className="flex flex-wrap items-center gap-2 empty:hidden">
-          {toReview.length > 0 || onlyReview ? (
-            <Button
-              variant={onlyReview ? "secondary" : "ghost"}
-              className={cn("h-9 gap-1.5 px-3", onlyReview && "ring-1 ring-foreground/20")}
-              aria-pressed={onlyReview}
-              onClick={() => setOnlyReview((on) => !on)}
-            >
-              <ListFilter data-icon="inline-start" />
-              Por revisar ({toReview.length})
-            </Button>
-          ) : null}
-          {forBreakdown.length > 0 ? (
-            <Button variant="outline" className="h-9 gap-1.5 px-3" disabled={running !== null} onClick={() => void breakdownAll()}>
-              {running === "breakdown" ? <Loader2 className="animate-spin" data-icon="inline-start" /> : <ScanSearch data-icon="inline-start" />}
-              Desglosar ({forBreakdown.length})
-            </Button>
-          ) : null}
-          <BulkGenerate kind="frame" rows={forFrame} disabled={running !== null} onRunning={generating} onResults={note} />
-          {forReview.length > 0 ? (
-            <Link href={`/lotes/${batchId}/revisar`} className={cn(buttonVariants({ variant: "outline" }), "h-9 gap-1.5 px-3")}>
-              <ImageIcon className="size-4" aria-hidden />
-              Revisar imágenes ({forReview.length})
-            </Link>
-          ) : null}
-          <BulkGenerate kind="clip" rows={forClip} disabled={running !== null} onRunning={generating} onResults={note} />
-          {forDownload.length > 0 ? (
-            <Button variant="outline" className="h-9 gap-1.5 px-3 sm:ml-auto" disabled={running !== null} onClick={() => void downloadAll()}>
-              {running === "download" ? <Loader2 className="animate-spin" data-icon="inline-start" /> : <Download data-icon="inline-start" />}
-              {running === "download" ? `Descargando ${Math.min(downloaded + 1, forDownload.length)}/${forDownload.length}` : `Descargar clips (${forDownload.length})`}
-            </Button>
-          ) : null}
-        </div>
-      ) : null}
+      {rows.length > 0 ? <AutoStepper auto={auto} /> : null}
+      {data.batch.mine ? <PauseBanner batchId={batchId} auto={auto} rows={rows} /> : null}
+
+      {/* Siempre montadas: un envío en bloque sigue enseñando sus resultados aunque ya no quede ninguna fila lista. */}
+      <BulkGenerate kind="frame" rows={forFrame} disabled={running !== null} onRunning={generating} onResults={note} open={bulk === "frame"} onOpenChange={(o) => setBulk(o ? "frame" : null)} />
+      <BulkGenerate kind="clip" rows={forClip} disabled={running !== null} onRunning={generating} onResults={note} open={bulk === "clip"} onOpenChange={(o) => setBulk(o ? "clip" : null)} />
 
       {rows.length === 0 ? (
         <div className="rounded-xl border border-dashed px-6 py-16 text-center text-sm text-muted-foreground">Este lote no tiene vídeos que puedas ver.</div>
@@ -488,6 +539,18 @@ export function BatchBoard({ batchId }: { batchId: number }) {
                         </TableCell>
                         <TableCell className="pr-4">
                           <div className="flex items-center justify-end">
+                            {row.clipReady ? (
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="size-8 text-muted-foreground"
+                                aria-label={`Descargar ${row.title}`}
+                                title="Descargar"
+                                onClick={() => void downloadClip(row.id).catch((error: unknown) => toast.error(message(error, "No se pudo descargar el clip.")))}
+                              >
+                                <Download aria-hidden />
+                              </Button>
+                            ) : null}
                             {data.batch.mine && row.mine ? <RowActions batchId={batchId} row={row} /> : null}
                             <Link
                               href={videoHref(row)}

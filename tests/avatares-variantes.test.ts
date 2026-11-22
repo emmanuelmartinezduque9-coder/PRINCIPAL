@@ -16,6 +16,7 @@ import { addProductPhoto, deleteProductPhoto } from "@/server/photos";
 import type { Product } from "@/server/products";
 import { seedRules } from "@/server/rules";
 import { createVariant, deleteVariant, importVariants, listVariants, updateVariant } from "@/server/variants";
+import { answerQuestion, batchQuestions } from "@/server/videos/lote";
 import { requestAnalysis, runAnalysis, type Analysis } from "@/server/videos/analysis";
 import { addVideoToBatch, batchView, createBatch, duplicateBatchVideo } from "@/server/videos/batches";
 import { buildClipRequest } from "@/server/videos/clip";
@@ -564,5 +565,48 @@ describe("avatar de la biblioteca y automático en los vídeos", () => {
     expect((await updateVideoChoices(luis, suyo.id, { avatarLibraryId: mujer30.id })).avatarMode).toBe("biblioteca");
     // Pero no el vídeo de otra persona.
     await expect(updateVideoChoices(luis, v.id, { avatarLibraryId: mujer30.id })).rejects.toMatchObject({ status: 403 });
+  });
+  it("«Preguntas del lote»: la del avatar y la de la variante salen con sus opciones y responderlas cambia el vídeo", async () => {
+    const rosaFoto = (await addProductPhoto(ana, producto.id, images.h, "articulo")).id;
+    const rosa = await createVariant(ana, producto.id, { name: "rosa", articlePhotoIds: [rosaFoto] });
+    await createVariant(ana, producto.id, { name: "azul", articlePhotoIds: [(await addProductPhoto(ana, producto.id, images.j, "articulo")).id] });
+    await updateAvatar(dueno, mujer70.id, { retired: true });
+    const batch = await createBatch(ana, "Lote", { autoAnalyze: false });
+    const video = await addVideoToBatch(ana, batch.id, { productId: producto.id, avatarPhotoId: null, avatarMode: "automatico", note: "für Omas" });
+    await readyReference(video.id);
+    await analyse(video.id, {
+      personaRef: { present: true, gender: "mujer", approxAge: 30, notes: "" },
+      variantMatch: null,
+      questions: [{ id: "luz", text: "¿Cocina de día o de noche?", options: ["día", "noche"] }],
+    });
+    // Las de Claude se conservan junto a las de la aplicación.
+    expect((await videoView(ana, video.id)).analysis!.questions.map((q) => q.id)).toEqual(["luz", "avatar", "variante"]);
+    await getPool().query("update batches set status = 'preguntas' where id = $1", [batch.id]);
+
+    const asked = await batchQuestions(ana, batch.id);
+    expect(asked.map((q) => q.kind)).toEqual(["claude", "biblioteca", "variante"]);
+    const avatarQuestion = asked[1];
+    // Primero los que sugiere el desglose; con su imagen.
+    expect(avatarQuestion.options[0]).toEqual({ value: `bib:${mujer33Aleman.id}`, label: "mujer 7", avatarId: mujer33Aleman.id });
+    expect(avatarQuestion.options.map((o) => o.label)).not.toContain("mujer 9");
+    expect(asked[2].options.map((o) => o.label)).toEqual(["rosa", "azul", "Fotos de siempre"]);
+
+    await expect(answerQuestion(ana, batch.id, { videoId: video.id, key: avatarQuestion.key, value: "bib:99999" })).rejects.toMatchObject({ status: 400 });
+    await answerQuestion(ana, batch.id, { videoId: video.id, key: avatarQuestion.key, value: `bib:${mujer30.id}` });
+    expect(await getVideoFor(ana, video.id)).toMatchObject({ avatarMode: "biblioteca", avatarLibraryId: mujer30.id });
+    await answerQuestion(ana, batch.id, { videoId: video.id, key: asked[2].key, value: `var:${rosa.id}` });
+    expect((await getVideoFor(ana, video.id)).variantId).toBe(rosa.id);
+    // Solo queda la de Claude; el desglose queda por repetir con el avatar y la variante elegidos.
+    expect((await batchQuestions(ana, batch.id)).map((q) => q.kind)).toEqual(["claude"]);
+    expect((await videoView(ana, video.id)).analysis).toMatchObject({ stale: true, staleReason: "brief" });
+  });
+
+  it("una respuesta escrita del dueño en «Preguntas del lote» cuenta para el avatar automático", async () => {
+    await getPool().query("update videos set avatar_mode = 'automatico', owner_answers = $2::jsonb where id = $1", [
+      v.id,
+      JSON.stringify([{ key: "c1:x", question: "¿Quién lo usa?", answer: "Una abuela con sus nietos", inBrief: true }]),
+    ]);
+    await analyse(v.id, { personaRef: { present: true, gender: "mujer", approxAge: 30, notes: "" } });
+    expect((await videoView(ana, v.id)).analysis!.autoAvatar).toEqual({ id: mujer70.id, name: "mujer 9" });
   });
 });

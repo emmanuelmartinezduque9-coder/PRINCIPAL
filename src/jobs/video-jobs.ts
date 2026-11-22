@@ -3,6 +3,7 @@ import { StepFailedError } from "@/jobs/steps";
 import { probeConnections } from "@/server/higgsfield";
 import { ANALYSIS_JOB, runAnalysis } from "@/server/videos/analysis";
 import { FINALIZE_JOB, finalizeGeneration, SUBMIT_JOB, submitGeneration } from "@/server/videos/generations";
+import { ADVANCE_JOB, advanceBatch, kickBatchOfGeneration } from "@/server/videos/lote";
 import { processReference } from "@/server/videos/intake";
 import { videoSweep } from "@/server/videos/sweep";
 import { REFERENCE_JOB } from "@/server/videos/upload";
@@ -54,8 +55,23 @@ defineJob<{ generationId: number }>(
   async ({ generationId }) => {
     if (typeof generationId !== "number") throw new StepFailedError("Datos del trabajo no válidos.");
     await finalizeGeneration(generationId);
+    // Si el vídeo es de un lote que va solo, sigue sin esperar al seguimiento.
+    await kickBatchOfGeneration(generationId);
   },
   "Guardar los resultados de Higgsfield",
+);
+
+/**
+ * «Enviar lote»: avanza un lote que va solo (desgloses que faltan, imágenes, clips), como mucho 2
+ * generaciones en marcha. Repetirlo no envía dos veces (ver `advanceBatch`).
+ */
+defineJob<{ batchId: number }>(
+  ADVANCE_JOB,
+  async ({ batchId }) => {
+    if (typeof batchId !== "number") throw new StepFailedError("Datos del trabajo no válidos.");
+    await advanceBatch(batchId);
+  },
+  "Avanzar el lote",
 );
 
 /** Cada minuto: subidas abandonadas, referencias atascadas, desgloses que no terminan y generaciones en curso o en duda. */

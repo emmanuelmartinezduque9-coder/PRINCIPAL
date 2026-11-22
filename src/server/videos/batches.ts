@@ -110,6 +110,13 @@ export async function setBatchProductNotes(user: AuthUser, batchId: number, prod
   return clean;
 }
 
+const BUDGET_CONFIRMED = "El presupuesto de este lote ya está confirmado: crea otro lote para más vídeos.";
+
+/** Con el presupuesto ya confirmado («Enviar lote»), el lote no admite vídeos nuevos: no tendrían precio previsto. */
+function requireOpen(batch: Batch): void {
+  if (batch.status !== "borrador" && batch.status !== "preguntas") throw new HttpError(409, BUDGET_CONFIRMED);
+}
+
 /** Un lote que `user` puede ver (suyo, o cualquiera si es el dueño). Si no: 404 «Lote no encontrado.». */
 export async function getBatchFor(user: AuthUser, batchId: number): Promise<Batch> {
   if (!Number.isSafeInteger(batchId) || batchId <= 0) throw new HttpError(404, NOT_FOUND);
@@ -213,6 +220,7 @@ export async function addVideoToBatch(
   },
 ): Promise<Video> {
   const batch = await ownBatch(user, batchId, NOT_CREATOR);
+  requireOpen(batch);
 
   const note = cleanNote(input.note);
   const { kind, adaptation, hookSeconds } = checkKindInput(input);
@@ -353,6 +361,7 @@ export async function batchView(user: AuthUser, batchId: number): Promise<BatchV
             adaptation: analyses.adaptation,
             hookSeconds: analyses.hookSeconds,
             productNotes: analyses.productNotes,
+            answers: analyses.answers,
             risks: sql<Analysis["risks"] | null>`${analyses.result}->'risks'`,
           })
           .from(analyses)
@@ -464,6 +473,7 @@ async function ownBatchVideo(user: AuthUser, batchId: number, videoId: number): 
  */
 export async function duplicateBatchVideo(user: AuthUser, batchId: number, videoId: number): Promise<Video> {
   const { batch, video } = await ownBatchVideo(user, batchId, videoId);
+  requireOpen(batch);
   const ready = video.referenceStatus === "ready";
   const db = getDb();
   const [latest] = ready
@@ -492,6 +502,7 @@ export async function duplicateBatchVideo(user: AuthUser, batchId: number, video
       clipResolution: video.clipResolution,
       songId: video.songId,
       audioMode: video.audioMode,
+      ownerAnswers: video.ownerAnswers,
       ...(ready
         ? {
             referenceStatus: "ready",
@@ -530,6 +541,7 @@ export async function duplicateBatchVideo(user: AuthUser, batchId: number, video
         adaptation: valid.adaptation,
         hookSeconds: valid.hookSeconds,
         productNotes: valid.productNotes,
+        answers: valid.answers,
         // Sin cargo: lo que costó ya cuenta en el original.
         spendEntryId: null,
         createdBy: user.id,
