@@ -4,17 +4,18 @@
  *
  * - `sin_sustitucion` o `nadie`: ese modo, sin foto.
  * - `elegido`: la foto habitual si sigue siendo una foto de avatar del producto; si no, la primera
- *   foto de avatar. Si el producto no tiene ninguna: en una tarjeta del lote, «nadie» (como en
- *   Lotes v1, `withoutAvatars = "nadie"`); en un vídeo suelto, `elegido` sin foto, para que la
- *   persona elija (`withoutAvatars = "elegir"`).
+ *   foto de avatar. Si el producto no tiene ninguna: en una tarjeta del lote, «Automático» (el
+ *   desglose elige de la biblioteca alguien parecido a la persona de la referencia;
+ *   `withoutAvatars = "automatico"`); en un vídeo suelto, `elegido` sin foto, para que la persona
+ *   elija (`withoutAvatars = "elegir"`).
  */
 
-export type DefaultAvatarMode = "elegido" | "sin_sustitucion" | "nadie";
+export type DefaultAvatarMode = "elegido" | "automatico" | "sin_sustitucion" | "nadie";
 
 export function startingAvatar(
   product: { defaultAvatarMode: string; defaultAvatarPhotoId: number | null },
   avatarPhotoIds: number[],
-  withoutAvatars: "nadie" | "elegir" = "nadie",
+  withoutAvatars: "automatico" | "elegir" = "automatico",
 ): { avatarMode: DefaultAvatarMode; avatarPhotoId: number | null } {
   if (product.defaultAvatarMode === "sin_sustitucion" || product.defaultAvatarMode === "nadie") {
     return { avatarMode: product.defaultAvatarMode, avatarPhotoId: null };
@@ -22,5 +23,5 @@ export function startingAvatar(
   const chosen = product.defaultAvatarPhotoId !== null && avatarPhotoIds.includes(product.defaultAvatarPhotoId) ? product.defaultAvatarPhotoId : null;
   const photo = chosen ?? avatarPhotoIds[0] ?? null;
   if (photo !== null) return { avatarMode: "elegido", avatarPhotoId: photo };
-  return { avatarMode: withoutAvatars === "nadie" ? "nadie" : "elegido", avatarPhotoId: null };
+  return { avatarMode: withoutAvatars === "automatico" ? "automatico" : "elegido", avatarPhotoId: null };
 }

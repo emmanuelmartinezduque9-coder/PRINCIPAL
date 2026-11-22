@@ -46,6 +46,10 @@ const row = (over: Partial<BatchRowJson> = {}): BatchRowJson => ({
   link: null,
   avatarPhotoId: 3,
   avatarMode: "elegido",
+  libraryAvatar: null,
+  autoAvatar: null,
+  variantId: null,
+  questions: 0,
   song: null,
   songEditable: true,
   analysis: { status: "done", error: null, stale: false, staleReason: null },
@@ -59,6 +63,12 @@ const row = (over: Partial<BatchRowJson> = {}): BatchRowJson => ({
 });
 
 describe("tablero del lote: qué filas cuenta cada acción", () => {
+  it("desglosar con avatar de la biblioteca hace falta el avatar; con «Automático», no", () => {
+    expect(ready.breakdown(row({ analysis: null, avatarMode: "biblioteca", avatarPhotoId: null, libraryAvatar: null }))).toBe(false);
+    expect(ready.breakdown(row({ analysis: null, avatarMode: "biblioteca", avatarPhotoId: null, libraryAvatar: { id: 1, name: "mujer 1" } }))).toBe(true);
+    expect(ready.breakdown(row({ analysis: null, avatarMode: "automatico", avatarPhotoId: null }))).toBe(true);
+  });
+
   it("desglosar: referencia lista, avatar o nadie, y sin desglose vigente; nunca vídeos ajenos", () => {
     expect(ready.breakdown(row({ analysis: null }))).toBe(true);
     expect(ready.breakdown(row({ analysis: { status: "failed", error: "x", stale: false, staleReason: null } }))).toBe(true);

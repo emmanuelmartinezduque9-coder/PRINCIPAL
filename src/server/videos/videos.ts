@@ -4,15 +4,17 @@ import { linkStateOf, type LinkState } from "@/server/agent-tasks";
 import type { AuthUser } from "@/server/auth";
 import { HttpError } from "@/server/http";
 import { MAX_SEGMENT_MS } from "@/server/media/ffmpeg";
-import { listProductPhotos, type PhotoInfo, type PhotoRole } from "@/server/photos";
+import { avatarSummaries, isChoosableAvatar } from "@/server/avatars";
+import { listProductPhotos, type PhotoRole } from "@/server/photos";
 import { getProductFor } from "@/server/products";
 import { songSummaries, type SongSummary } from "@/server/songs";
-import type { Analysis } from "@/server/videos/analysis";
+import type { Analysis, AnalysisQuestion } from "@/server/videos/analysis";
 import { startingAvatar } from "@/lib/default-avatar";
 import { analysisStaleness, checkKindInput, cleanNote, isAvatarMode, type AvatarMode, type VideoKind } from "@/server/videos/brief";
 import { bodiesOfVideo, checkVideoBodies, type VideoBody } from "@/server/videos/bodies";
 import { analysisCostMicros, costsOfVideo, type VideoCosts } from "@/server/videos/costs";
-import { clipManifest, imageManifest, type ManifestItem } from "@/server/videos/manifest";
+import { clipManifest, imageManifest, type ManifestItem, type ManifestRefs } from "@/server/videos/manifest";
+import { getVariantFor } from "@/server/variants";
 import { checkImagePrompt, checkVideoPrompt, type PromptIssue } from "@/server/videos/prompt-check";
 import { generationView, type GenerationView } from "@/server/videos/generations";
 
@@ -98,7 +100,9 @@ export interface NewVideoExtras {
   batchId?: number;
   note?: string | null;
   avatarPhotoId?: number | null;
+  avatarLibraryId?: number | null;
   avatarMode?: AvatarMode;
+  variantId?: number | null;
   kind?: VideoKind;
   adaptation?: string | null;
   hookSeconds?: number;
@@ -229,12 +233,68 @@ function checkPhoto(photos: Array<{ id: number; role: PhotoRole }>, photoId: num
   return photoId;
 }
 
+const BAD_LIBRARY_AVATAR = "Elige un avatar de la biblioteca.";
+const BAD_VARIANT = "Elige una variante de este producto.";
+const isIdValue = (value: unknown): value is number => Number.isSafeInteger(value) && (value as number) > 0;
+
+/**
+ * Quién sale, tal como llega (`avatarMode`, `avatarPhotoId`, `avatarLibraryId`), en columnas: una
+ * foto del producto pasa a `elegido` y un avatar de la biblioteca (no retirado) a `biblioteca`; los
+ * demás modos quitan la foto y el avatar. Pedir una foto o un avatar con otro modo, o los dos a la
+ * vez, es un 400. Lo que no viene no se toca.
+ */
+export async function checkAvatarInput(
+  user: AuthUser,
+  productId: number,
+  input: { avatarMode?: unknown; avatarPhotoId?: number | null; avatarLibraryId?: unknown },
+): Promise<{ avatarMode?: AvatarMode; avatarPhotoId?: number | null; avatarLibraryId?: number | null }> {
+  const changes: { avatarMode?: AvatarMode; avatarPhotoId?: number | null; avatarLibraryId?: number | null } = {};
+  if (input.avatarMode !== undefined && !isAvatarMode(input.avatarMode)) throw new HttpError(400, "Valor no válido.");
+  const mode = input.avatarMode as AvatarMode | undefined;
+  const photo = typeof input.avatarPhotoId === "number";
+  const library = input.avatarLibraryId !== undefined && input.avatarLibraryId !== null;
+  if (library && !isIdValue(input.avatarLibraryId)) throw new HttpError(400, BAD_LIBRARY_AVATAR);
+  if (photo && library) throw new HttpError(400, "Elige una foto o un avatar de la biblioteca, no los dos.");
+  if (photo && mode !== undefined && mode !== "elegido") throw new HttpError(400, "Con «Sin sustitución» o «No aparece nadie» no se elige avatar.");
+  if (library && mode !== undefined && mode !== "biblioteca") throw new HttpError(400, "Con ese modo no se elige un avatar de la biblioteca.");
+
+  if (input.avatarPhotoId !== undefined) changes.avatarPhotoId = checkPhoto(await listProductPhotos(user, productId), input.avatarPhotoId, "avatar");
+  if (library) {
+    if (!(await isChoosableAvatar(input.avatarLibraryId as number))) throw new HttpError(400, BAD_LIBRARY_AVATAR);
+    changes.avatarLibraryId = input.avatarLibraryId as number;
+  } else if (input.avatarLibraryId === null) {
+    changes.avatarLibraryId = null;
+  }
+  if (mode !== undefined) changes.avatarMode = mode;
+  if (typeof changes.avatarPhotoId === "number") changes.avatarMode = "elegido";
+  if (typeof changes.avatarLibraryId === "number") changes.avatarMode = "biblioteca";
+  if (changes.avatarMode !== undefined && changes.avatarMode !== "elegido") changes.avatarPhotoId = null;
+  if (changes.avatarMode !== undefined && changes.avatarMode !== "biblioteca") changes.avatarLibraryId = null;
+  return changes;
+}
+
+/** `variantId` tal como llega: `undefined` (no se toca), `null` (las fotos de siempre) o una variante de este producto (400 si no). */
+export async function checkVariantChoice(user: AuthUser, productId: number, value: unknown): Promise<number | null> {
+  if (value === null) return null;
+  if (!isIdValue(value)) throw new HttpError(400, BAD_VARIANT);
+  try {
+    return (await getVariantFor(user, productId, value)).id;
+  } catch (error) {
+    if (error instanceof HttpError && error.status === 404 && error.message !== "Producto no encontrado.") throw new HttpError(400, BAD_VARIANT);
+    throw error;
+  }
+}
+
 /** Lo que se puede cambiar de un vídeo con `updateVideoChoices` (sin comprobar aún). */
 export interface VideoChoicesInput {
   title?: string;
   avatarPhotoId?: number | null;
+  /** Un avatar de la biblioteca (pasa a `biblioteca`) o `null`. */
+  avatarLibraryId?: unknown;
   environmentPhotoId?: number | null;
   avatarMode?: unknown;
+  /** Una variante de este producto o `null` (las fotos de siempre). */
+  variantId?: unknown;
   clipResolution?: string;
   kind?: unknown;
   adaptation?: unknown;
@@ -276,20 +336,11 @@ export async function updateVideoChoices(user: AuthUser, videoId: number, input:
   if (input.note !== undefined) changes.note = cleanNote(input.note);
   if (input.bodyClipIds !== undefined) changes.bodyClipIds = await checkVideoBodies(video.productId, input.bodyClipIds);
 
-  if (input.avatarMode !== undefined && !isAvatarMode(input.avatarMode)) throw new HttpError(400, "Valor no válido.");
-  if (input.avatarMode !== undefined && input.avatarMode !== "elegido" && typeof input.avatarPhotoId === "number") {
-    throw new HttpError(400, "Con «Sin sustitución» o «No aparece nadie» no se elige avatar.");
+  Object.assign(changes, await checkAvatarInput(user, video.productId, input));
+  if (input.environmentPhotoId !== undefined) {
+    changes.environmentPhotoId = checkPhoto(await listProductPhotos(user, video.productId), input.environmentPhotoId, "entorno");
   }
-  if (input.avatarPhotoId !== undefined || input.environmentPhotoId !== undefined) {
-    const photos = await listProductPhotos(user, video.productId);
-    if (input.avatarPhotoId !== undefined) changes.avatarPhotoId = checkPhoto(photos, input.avatarPhotoId, "avatar");
-    if (input.environmentPhotoId !== undefined) {
-      changes.environmentPhotoId = checkPhoto(photos, input.environmentPhotoId, "entorno");
-    }
-  }
-  if (input.avatarMode !== undefined) changes.avatarMode = input.avatarMode;
-  if (changes.avatarMode !== undefined && changes.avatarMode !== "elegido") changes.avatarPhotoId = null;
-  if (typeof changes.avatarPhotoId === "number") changes.avatarMode = "elegido";
+  if (input.variantId !== undefined) changes.variantId = await checkVariantChoice(user, video.productId, input.variantId);
 
   if (Object.keys(changes).length === 0) return video;
   const [updated] = await getDb()
@@ -405,11 +456,19 @@ export interface VideoView {
     costMicros: number | null;
     /** La referencia de la que salió (recorte subido a Higgsfield). */
     referenceMediaId: string | null;
+    /** Quién salía cuando se hizo. */
+    avatarMode: string;
+    /** Con «Automático» y hecho: el avatar que eligió («Automático → mujer 7»), o `null` si ninguno encajaba. */
+    autoAvatar: { id: number; name: string } | null;
+    /** Lo que hay que preguntar antes de generar (avatar sin encontrar, variante dudosa). */
+    questions: AnalysisQuestion[];
     /** `true` si el desglose ya no corresponde al vídeo (otra referencia u otras indicaciones). */
     stale: boolean;
     /** Por qué no corresponde: otra referencia (`reference`) u otras indicaciones (`brief`). */
     staleReason: "reference" | "brief" | null;
   } | null;
+  /** El avatar de la biblioteca elegido (con `biblioteca`), con su nombre. */
+  libraryAvatar: { id: number; name: string } | null;
   imageIssues: PromptIssue[];
   videoIssues: PromptIssue[];
   imageManifest: ManifestItem[];
@@ -422,21 +481,57 @@ export interface VideoView {
   costs: VideoCosts;
 }
 
+/** «Automático» sin avatar elegido (ningún avatar encajaba): hay que elegir uno antes de generar. */
+export const NO_AUTO_AVATAR = "Ningún avatar encaja: elige uno antes de generar.";
+
 /** Mensaje cuando el desglose es de otras indicaciones (tipo, adaptación, cambios o quién sale). */
 export const BRIEF_CHANGED = "Las indicaciones del vídeo cambiaron; repite el desglose.";
 
 /**
  * El último desglose terminado del vídeo y, si ya no corresponde, por qué (`reference` o `brief`);
- * `null` si no hay ninguno. La imagen y el clip solo se piden con uno que corresponda.
+ * `null` si no hay ninguno. La imagen y el clip solo se piden con uno que corresponda. Con
+ * «Automático», `autoAvatarId` es el avatar que eligió (o `null` si no encontró ninguno).
  */
-export async function latestDoneAnalysis(video: Video): Promise<{ id: number; staleReason: "reference" | "brief" | null } | null> {
+export async function latestDoneAnalysis(
+  video: Video,
+): Promise<{ id: number; staleReason: "reference" | "brief" | null; avatarMode: string; autoAvatarId: number | null } | null> {
   const [done] = await getDb()
     .select()
     .from(schema.videoAnalyses)
     .where(and(eq(schema.videoAnalyses.videoId, video.id), eq(schema.videoAnalyses.status, "done")))
     .orderBy(desc(schema.videoAnalyses.version))
     .limit(1);
-  return done ? { id: done.id, staleReason: analysisStaleness(done, await withProductNotes(video)) } : null;
+  return done
+    ? { id: done.id, staleReason: analysisStaleness(done, await withProductNotes(video)), avatarMode: done.avatarMode, autoAvatarId: done.autoAvatarId }
+    : null;
+}
+
+/**
+ * Lo que necesitan los manifiestos del vídeo (`ManifestRefs`): las fotos del producto, las fotos
+ * de su variante y el avatar de la biblioteca. Con «Automático», el que eligió el último desglose
+ * hecho si sigue valiendo; si no (o durante el propio desglose, `forAnalysis`), su sitio vacío.
+ */
+export async function manifestRefsFor(user: AuthUser, video: Video, options: { forAnalysis?: boolean } = {}): Promise<ManifestRefs> {
+  const photos = await listProductPhotos(user, video.productId);
+  let variant: ManifestRefs["variant"] = null;
+  if (video.variantId !== null) {
+    try {
+      const found = await getVariantFor(user, video.productId, video.variantId);
+      variant = { articlePhotoIds: found.articlePhotoIds, packagingPhotoId: found.packagingPhotoId };
+    } catch (error) {
+      if (!(error instanceof HttpError && error.status === 404)) throw error;
+    }
+  }
+  let avatar: ManifestRefs["avatar"] = null;
+  if (video.avatarMode === "biblioteca" && video.avatarLibraryId !== null) avatar = { kind: "library", avatarId: video.avatarLibraryId };
+  if (video.avatarMode === "automatico") {
+    avatar = { kind: "pending" };
+    if (!options.forAnalysis) {
+      const done = await latestDoneAnalysis(video);
+      if (done && done.staleReason === null && done.autoAvatarId !== null) avatar = { kind: "library", avatarId: done.autoAvatarId };
+    }
+  }
+  return { photos, variant, avatar };
 }
 
 /** Las «Indicaciones» del lote del vídeo para su producto, o `null` (sin lote o sin indicaciones). */
@@ -461,10 +556,10 @@ export function staleness(analysis: Parameters<typeof analysisStaleness>[0], vid
 }
 
 /** Avisos de los prompts guardados del vídeo frente a sus manifiestos; un prompt que aún no existe no da avisos. */
-export function promptIssues(video: Video, photos: PhotoInfo[]): { imageIssues: PromptIssue[]; videoIssues: PromptIssue[] } {
+export function promptIssues(video: Video, refs: ManifestRefs): { imageIssues: PromptIssue[]; videoIssues: PromptIssue[] } {
   return {
-    imageIssues: video.imagePrompt === null ? [] : checkImagePrompt(video.imagePrompt, imageManifest(video, photos)),
-    videoIssues: video.videoPrompt === null ? [] : checkVideoPrompt(video.videoPrompt, clipManifest(video, photos)),
+    imageIssues: video.imagePrompt === null ? [] : checkImagePrompt(video.imagePrompt, imageManifest(video, refs)),
+    videoIssues: video.videoPrompt === null ? [] : checkVideoPrompt(video.videoPrompt, clipManifest(video, refs)),
   };
 }
 
@@ -486,8 +581,13 @@ export async function videoView(user: AuthUser, videoId: number): Promise<VideoV
     .where(eq(schema.videoAnalyses.videoId, video.id))
     .orderBy(desc(schema.videoAnalyses.version))
     .limit(1);
-  const photos = await listProductPhotos(user, video.productId);
+  const refs = await manifestRefsFor(user, video);
   const productNotes = await productNotesOf(video);
+  const avatarNames = await avatarSummaries([video.avatarLibraryId, latest?.autoAvatarId ?? null]);
+  const named = (id: number | null) => {
+    const found = id === null ? undefined : avatarNames.get(id);
+    return found ? { id: found.id, name: found.name } : null;
+  };
   return {
     video,
     productNotes,
@@ -509,12 +609,16 @@ export async function videoView(user: AuthUser, videoId: number): Promise<VideoV
           result: (latest.result as Analysis | null) ?? null,
           costMicros: await analysisCostMicros(video, latest),
           referenceMediaId: latest.referenceMediaId,
+          avatarMode: latest.avatarMode,
+          autoAvatar: latest.avatarMode === "automatico" && latest.status === "done" ? named(latest.autoAvatarId) : null,
+          questions: ((latest.result as Analysis | null)?.questions ?? []) as AnalysisQuestion[],
           ...staleness(latest, { ...video, productNotes }),
         }
       : null,
-    ...promptIssues(video, photos),
-    imageManifest: imageManifest(video, photos),
-    clipManifest: clipManifest(video, photos),
+    libraryAvatar: named(video.avatarLibraryId),
+    ...promptIssues(video, refs),
+    imageManifest: imageManifest(video, refs),
+    clipManifest: clipManifest(video, refs),
     frame: await generationView(video, "frame", user.id),
     clip: await generationView(video, "clip", user.id),
     costs: await costsOfVideo(video),

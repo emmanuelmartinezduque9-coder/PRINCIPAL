@@ -148,6 +148,13 @@
       "when": 1795373571981,
       "tag": "0020_emoji_archivo",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1795375904449,
+      "tag": "0021_avatares_variantes",
+      "breakpoints": true
     }
   ]
 }

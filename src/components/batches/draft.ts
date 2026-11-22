@@ -11,8 +11,8 @@ import type { VideoKind } from "@/server/videos/brief";
 
 const KINDS: readonly string[] = ["replicar", "adaptacion_concepto", "solo_gancho"];
 
-/** Como `AvatarChoice`: id de foto, «nadie» o «sin_sustitucion». */
-export type DraftAvatar = number | "nadie" | "sin_sustitucion";
+/** Como `AvatarChoice`: id de foto, `bib-<id>` (biblioteca), «automatico», «nadie» o «sin_sustitucion». */
+export type DraftAvatar = number | "nadie" | "sin_sustitucion" | "automatico" | `bib-${number}`;
 
 /**
  * De dónde sale la referencia: un archivo soltado, un enlace que trae el Mac, o un archivo que se
@@ -28,6 +28,8 @@ export interface Row {
   source: Source;
   /** `null`: el avatar habitual del producto. */
   avatar: DraftAvatar | null;
+  /** La variante del producto; `null`: las fotos de siempre. */
+  variant: number | null;
   kind: VideoKind;
   /** «Qué adaptación quieres» (solo con adaptación). */
   adaptation: string;
@@ -126,7 +128,8 @@ function parseSource(value: unknown): Source | null {
 }
 
 function parseAvatar(value: unknown): DraftAvatar | null {
-  if (value === "nadie" || value === "sin_sustitucion" || isId(value)) return value;
+  if (value === "nadie" || value === "sin_sustitucion" || value === "automatico" || isId(value)) return value;
+  if (typeof value === "string" && /^bib-[1-9]\d{0,15}$/.test(value)) return value as `bib-${number}`;
   return null;
 }
 
@@ -142,6 +145,7 @@ function parseRow(value: unknown): Row | null {
     key: typeof value.key === "string" && value.key ? value.key : nextKey("fila"),
     source,
     avatar: parseAvatar(value.avatar),
+    variant: isId(value.variant) ? value.variant : null,
     kind: kindOf(value.kind),
     adaptation: text(value.adaptation),
     hookSeconds: hookOf(value.hookSeconds),

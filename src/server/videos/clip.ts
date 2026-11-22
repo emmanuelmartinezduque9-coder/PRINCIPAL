@@ -8,7 +8,8 @@ import { getDb, schema } from "@/db/client";
 import type { AuthUser } from "@/server/auth";
 import { ensureMedia } from "@/server/higgsfield";
 import { HttpError } from "@/server/http";
-import { listProductPhotos, readProductPhoto } from "@/server/photos";
+import { readAvatarImage } from "@/server/avatars";
+import { readProductPhoto } from "@/server/photos";
 import { getProductFor } from "@/server/products";
 import { fileSlug } from "@/server/videos/filename";
 import { registerRequestBuilder, type RequestBuilder } from "@/server/videos/generations";
@@ -19,6 +20,8 @@ import {
   clipDurationSeconds,
   getVideoFor,
   latestDoneAnalysis,
+  manifestRefsFor,
+  NO_AUTO_AVATAR,
   REFERENCE_OUTDATED,
   referenceOutdated,
   requireVideoOwner,
@@ -85,6 +88,8 @@ const CLIP_SNAPSHOT = [
   "frameUse",
   "clipResolution",
   "avatarPhotoId",
+  "avatarLibraryId",
+  "variantId",
   "avatarMode",
   "kind",
   "adaptation",
@@ -110,7 +115,8 @@ export const buildClipRequest: RequestBuilder = async (user, video, deps) => {
   if (!approvedJobId) throw new HttpError(409, NO_FRAME);
 
   const prompt = video.videoPrompt ?? "";
-  const manifest = clipManifest(video, await listProductPhotos(user, video.productId));
+  const manifest = clipManifest(video, await manifestRefsFor(user, video));
+  if (manifest.some((item) => item.source.kind === "avatar_pending")) throw new HttpError(409, NO_AUTO_AVATAR);
   const error = checkVideoPrompt(prompt, manifest).find((issue) => issue.level === "error");
   if (error) throw new HttpError(400, error.message);
 
@@ -131,6 +137,15 @@ export const buildClipRequest: RequestBuilder = async (user, video, deps) => {
       };
       const mediaId = await ensureMedia(video.createdBy, file, deps);
       medias.push({ role: "image_references", value: mediaId });
+    } else if (item.source.kind === "avatar") {
+      const avatar = await readAvatarImage(item.source.avatarId);
+      const file = {
+        bytes: avatar.data,
+        filename: `avatar-${item.source.avatarId}.${EXTENSIONS[avatar.mime] ?? "jpg"}`,
+        contentType: avatar.mime,
+        type: "image" as const,
+      };
+      medias.push({ role: "image_references", value: await ensureMedia(video.createdBy, file, deps) });
     }
   }
 

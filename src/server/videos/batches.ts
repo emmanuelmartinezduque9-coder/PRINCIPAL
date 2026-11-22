@@ -13,10 +13,12 @@ import { generationLock, generationView, pollVideoGenerations, type GenerationVi
 import { analysisLock, type Analysis } from "@/server/videos/analysis";
 import { checkKindInput, cleanNote, cleanProductNotes, isAvatarMode, type AvatarMode, type VideoKind } from "@/server/videos/brief";
 import { songSummaries, type SongSummary } from "@/server/songs";
+import { avatarSummaries, isChoosableAvatar } from "@/server/avatars";
 import {
   audioColumns,
   canChooseSong,
   checkSongChoice,
+  checkVariantChoice,
   createVideo,
   getVideoFor,
   insertVideo,
@@ -44,6 +46,7 @@ const VIDEO_NOT_IN_BATCH = "Vídeo no encontrado.";
 const HAS_GENERATIONS = "Este vídeo ya tiene imágenes o clips: no se puede quitar.";
 const NEED_AVATAR = "Elige un avatar, «Sin sustitución» o «No aparece nadie».";
 const BAD_AVATAR = "Elige una foto con papel «Avatar» de este producto.";
+const BAD_LIBRARY_AVATAR = "Elige un avatar de la biblioteca.";
 
 const batches = schema.batches;
 const videos = schema.videos;
@@ -194,7 +197,11 @@ export async function addVideoToBatch(
   input: {
     productId: number;
     avatarPhotoId: number | null;
+    /** Con `biblioteca`: el avatar de la biblioteca (no retirado). */
+    avatarLibraryId?: unknown;
     avatarMode: unknown;
+    /** Una variante de este producto o `null` / sin enviar (las fotos de siempre). */
+    variantId?: unknown;
     kind?: unknown;
     adaptation?: unknown;
     hookSeconds?: unknown;
@@ -215,6 +222,12 @@ export async function addVideoToBatch(
     throw new HttpError(400, "Con «Sin sustitución» o «No aparece nadie» no se elige avatar.");
   }
   if (avatarMode === "elegido" && input.avatarPhotoId === null) throw new HttpError(400, NEED_AVATAR);
+  const avatarLibraryId = input.avatarLibraryId ?? null;
+  if (avatarMode === "biblioteca") {
+    if (!(Number.isSafeInteger(avatarLibraryId) && (await isChoosableAvatar(avatarLibraryId as number)))) throw new HttpError(400, BAD_LIBRARY_AVATAR);
+  } else if (avatarLibraryId !== null) {
+    throw new HttpError(400, "Con ese modo no se elige un avatar de la biblioteca.");
+  }
 
   // También comprueba que el producto es visible (404 «Producto no encontrado.» si no).
   const photos = await listProductPhotos(user, input.productId);
@@ -223,11 +236,14 @@ export async function addVideoToBatch(
   }
   const bodyClipIds = input.bodyClipIds === undefined ? undefined : await checkVideoBodies(input.productId, input.bodyClipIds);
   const songId = (await checkSongChoice(input.songId)) ?? null;
+  const variantId = input.variantId === undefined || input.variantId === null ? null : await checkVariantChoice(user, input.productId, input.variantId);
   const extras = {
     batchId: batch.id,
     note,
     avatarPhotoId: input.avatarPhotoId,
+    avatarLibraryId: avatarLibraryId as number | null,
     avatarMode,
+    variantId,
     kind: kind ?? "replicar",
     adaptation: adaptation ?? null,
     ...(hookSeconds === undefined ? {} : { hookSeconds }),
@@ -262,6 +278,14 @@ export interface BatchRow {
   link: LinkState | null;
   avatarPhotoId: number | null;
   avatarMode: AvatarMode;
+  /** Con `biblioteca`, el avatar de la biblioteca (con su nombre). */
+  libraryAvatar: { id: number; name: string } | null;
+  /** Con `automatico` y el desglose hecho y vigente: el avatar que eligió; `null` si aún no hay o no encajó ninguno. */
+  autoAvatar: { id: number; name: string } | null;
+  /** La variante elegida, o `null` (las fotos de siempre). */
+  variantId: number | null;
+  /** Preguntas del último desglose hecho (avatar sin encontrar, variante dudosa). */
+  questions: number;
   /** La canción elegida para el montaje, o `null` («Audio original»). */
   song: SongSummary | null;
   /** Quien mira puede cambiar la música (quien creó el vídeo o el dueño). */
@@ -320,6 +344,11 @@ export async function batchView(user: AuthUser, batchId: number): Promise<BatchV
             referenceMediaId: analyses.referenceMediaId,
             kind: analyses.kind,
             avatarMode: analyses.avatarMode,
+            avatarPhotoId: analyses.avatarPhotoId,
+            avatarLibraryId: analyses.avatarLibraryId,
+            variantId: analyses.variantId,
+            autoAvatarId: analyses.autoAvatarId,
+            questions: sql<number>`coalesce(jsonb_array_length(${analyses.result}->'questions'), 0)::int`,
             note: analyses.note,
             adaptation: analyses.adaptation,
             hookSeconds: analyses.hookSeconds,
@@ -349,10 +378,16 @@ export async function batchView(user: AuthUser, batchId: number): Promise<BatchV
   const bodiesOf = await bodiesOfVideos(list);
   const links = await linkStatesOf(list.flatMap((video) => (video.linkTaskId === null ? [] : [video.linkTaskId])));
   const songsOf = await songSummaries(list.map((video) => video.songId));
+  const avatarsOf = await avatarSummaries([...list.map((video) => video.avatarLibraryId), ...latest.map((row) => row.autoAvatarId)]);
+  const named = (id: number | null) => {
+    const found = id === null ? undefined : avatarsOf.get(id);
+    return found ? { id: found.id, name: found.name } : null;
+  };
 
   const rows = await Promise.all(
     list.map(async (video): Promise<BatchRow> => {
       const analysis = analysisOf.get(video.id);
+      const fresh = analysis ? staleness(analysis, { ...video, productNotes: notesOf.get(video.productId) ?? null }) : null;
       const [frame, clip, costs, clipUrl] = await Promise.all([
         generationView(video, "frame", user.id),
         generationView(video, "clip", user.id),
@@ -378,11 +413,14 @@ export async function batchView(user: AuthUser, batchId: number): Promise<BatchV
         link: video.linkTaskId === null ? null : (links.get(video.linkTaskId) ?? null),
         avatarPhotoId: video.avatarPhotoId,
         avatarMode: video.avatarMode as AvatarMode,
+        libraryAvatar: video.avatarMode === "biblioteca" ? named(video.avatarLibraryId) : null,
+        autoAvatar:
+          video.avatarMode === "automatico" && analysis?.status === "done" && fresh?.stale === false ? named(analysis.autoAvatarId) : null,
+        variantId: video.variantId,
+        questions: analysis?.status === "done" ? analysis.questions : 0,
         song: video.songId === null ? null : (songsOf.get(video.songId) ?? null),
         songEditable: canChooseSong(user, video),
-        analysis: analysis
-          ? { status: analysis.status, error: analysis.error, ...staleness(analysis, { ...video, productNotes: notesOf.get(video.productId) ?? null }) }
-          : null,
+        analysis: analysis && fresh ? { status: analysis.status, error: analysis.error, ...fresh } : null,
         risks: analysis?.status === "done" ? (analysis.risks ?? []) : [],
         removable: !withGenerations.has(video.id),
         frame,
@@ -443,7 +481,9 @@ export async function duplicateBatchVideo(user: AuthUser, batchId: number, video
       batchId: batch.id,
       note: video.note,
       avatarPhotoId: video.avatarPhotoId,
+      avatarLibraryId: video.avatarLibraryId,
       avatarMode: video.avatarMode,
+      variantId: video.variantId,
       kind: video.kind,
       adaptation: video.adaptation,
       hookSeconds: video.hookSeconds,
@@ -482,6 +522,10 @@ export async function duplicateBatchVideo(user: AuthUser, batchId: number, video
         ruleVersions: valid.ruleVersions,
         kind: valid.kind,
         avatarMode: valid.avatarMode,
+        avatarPhotoId: valid.avatarPhotoId,
+        avatarLibraryId: valid.avatarLibraryId,
+        variantId: valid.variantId,
+        autoAvatarId: valid.autoAvatarId,
         note: valid.note,
         adaptation: valid.adaptation,
         hookSeconds: valid.hookSeconds,

@@ -159,7 +159,7 @@ function FlowBody({
   const referenceDone =
     video.referenceStatus === "ready" &&
     !data.referenceOutdated &&
-    (video.avatarMode !== "elegido" || imageManifest.some((item) => item.role === "avatar")) &&
+    (!["elegido", "biblioteca"].includes(video.avatarMode) || imageManifest.some((item) => item.role === "avatar")) &&
     (video.kind !== "adaptacion_concepto" || !!video.adaptation?.trim());
   const breakdownDone = analysis?.status === "done" && !analysis.stale;
   const [chosen, setChosen] = useState<FlowStep>(() => initialStep ?? firstStep(data, referenceDone));

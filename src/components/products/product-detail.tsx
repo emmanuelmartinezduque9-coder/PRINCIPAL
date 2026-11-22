@@ -19,6 +19,7 @@ import { PhotoCount, PhotoManager } from "./photo-uploader";
 import { ProductFields, type ProductValues } from "./product-fields";
 import { VideoList } from "@/components/videos/video-list";
 import { DefaultAvatar } from "./default-avatar";
+import { VariantsPanel } from "./variants-panel";
 import { EmojiButton } from "./emoji-picker";
 import type { AuthUser } from "@/server/auth";
 
@@ -267,10 +268,11 @@ export function ProductDetail({ id, initialTab = "fotos" }: { id: string; initia
             {videoCount ? <span className="text-sm text-muted-foreground tabular-nums">{videoCount}</span> : null}
           </TabsTrigger>
         </TabsList>
-        <TabsContent value="fotos">
+        <TabsContent value="fotos" className="flex flex-col gap-6">
           <Panel>
             <PhotoManager productId={product.id} onCount={setPhotoCount} />
           </Panel>
+          <VariantsPanel productId={product.id} />
         </TabsContent>
         <TabsContent value="videos">
           <VideoList productId={product.id} />

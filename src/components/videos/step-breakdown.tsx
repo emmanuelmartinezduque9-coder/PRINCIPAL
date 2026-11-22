@@ -67,6 +67,9 @@ function useRequestAnalysis(videoId: number) {
                 result: null,
                 costMicros: null,
                 referenceMediaId: view.video.referenceMediaId,
+                avatarMode: view.video.avatarMode,
+                autoAvatar: null,
+                questions: [],
                 stale: false,
                 staleReason: null,
               },
@@ -110,7 +113,7 @@ function StartPanel({ view, onGoToReference }: { view: VideoViewJson; onGoToRefe
   const request = useRequestAnalysis(video.id);
   // Preparada con otro gancho no cuenta: hay que volver a subirla.
   const reference = video.referenceStatus === "ready" && !view.referenceOutdated;
-  const person = video.avatarMode !== "elegido" || imageManifest.some((item) => item.role === "avatar");
+  const person = !["elegido", "biblioteca"].includes(video.avatarMode) || imageManifest.some((item) => item.role === "avatar");
   const article = imageManifest.some((item) => item.role === "articulo");
   const adapting = video.kind === "adaptacion_concepto";
   const adaptation = !adapting || !!video.adaptation?.trim();

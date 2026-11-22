@@ -26,6 +26,7 @@ export const ready = {
   breakdown(row: BatchRowJson): boolean {
     if (!row.mine || row.referenceStatus !== "ready" || row.referenceOutdated || row.needsAdaptation) return false;
     if (row.avatarMode === "elegido" && row.avatarPhotoId === null) return false;
+    if (row.avatarMode === "biblioteca" && row.libraryAvatar === null) return false;
     const analysis = row.analysis;
     if (!analysis) return true;
     if (ANALYSIS_ACTIVE.includes(analysis.status)) return false;

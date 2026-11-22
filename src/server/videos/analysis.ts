@@ -16,16 +16,21 @@ import {
 import { getActiveUser, type AuthUser } from "@/server/auth";
 import { HttpError } from "@/server/http";
 import { makeThumbnail, MAX_FRAMES, MAX_SEGMENT_MS, MediaError } from "@/server/media/ffmpeg";
-import { listProductPhotos, readProductPhoto, type PhotoInfo } from "@/server/photos";
+import { avatarTarget, closestAvatarNames, pickAvatar, type AngleAudience, type AvatarTarget, type PersonaRef } from "@/lib/avatar-choice";
+import { fold } from "@/lib/avatar-groups";
+import { activeAvatarSummaries, readAvatarImage } from "@/server/avatars";
+import { readProductPhoto } from "@/server/photos";
 import { getProductFor, type Product } from "@/server/products";
+import { listVariants, type VariantInfo } from "@/server/variants";
 import { loadRules, RULE_SLUGS, VIDEO_RULE_SLUGS } from "@/server/rules";
 import { analysisStaleness, briefOf, type AvatarMode, type Brief, type VideoKind } from "@/server/videos/brief";
-import { clipManifest, FRAME_USES, imageManifest, type FrameUse, type ManifestItem } from "@/server/videos/manifest";
+import { clipManifest, FRAME_USES, imageManifest, type FrameUse, type ManifestItem, type ManifestRefs } from "@/server/videos/manifest";
 import { PROMPT_BLACKLIST, type PromptIssue } from "@/server/videos/prompt-check";
 import {
   clipDurationSeconds,
   getVideoFor,
   hookTiming,
+  manifestRefsFor,
   productNotesOf,
   promptIssues,
   REFERENCE_OUTDATED,
@@ -96,6 +101,26 @@ export interface Analysis {
   frameUse: FrameUse;
   imagePrompt: string;
   videoPrompt: string;
+  /** La persona principal de los fotogramas de la referencia (para elegir el avatar solo). */
+  personaRef?: PersonaRef;
+  /** El público o ángulo que pide el encargo, si pide uno (manda sobre la referencia). */
+  angleAudience?: AngleAudience | null;
+  /** La variante del producto que se ve claramente en la referencia (su nombre), o `null`. */
+  variantMatch?: string | null;
+  /**
+   * Lo añade la aplicación al guardar (no Claude): con «Automático», a quién buscó y qué avatar
+   * eligió (`null` si ninguno encajaba).
+   */
+  autoAvatar?: { avatarId: number | null; target: AvatarTarget | null };
+  /** Lo añade la aplicación: lo que hay que preguntar antes de generar (contrato compartido). */
+  questions?: AnalysisQuestion[];
+}
+
+/** Una pregunta antes de generar: `avatar` (el automático no encontró ninguno) o `variante` (no está claro cuál). */
+export interface AnalysisQuestion {
+  id: string;
+  text: string;
+  options?: string[];
 }
 
 const seconds = z.number().min(0);
@@ -134,12 +159,41 @@ export const analysisSchema: z.ZodType<Analysis> = z.object({
   frameUse: z.enum(["start_image", "contextual_reference"]),
   imagePrompt: filled.describe("Prompt de la imagen inicial, en inglés."),
   videoPrompt: filled.describe("Prompt del clip, en inglés, con @Video1 y @ImageN."),
-});
+  personaRef: z
+    .object({
+      present: z.boolean().describe("Si en los fotogramas de la referencia sale una persona principal."),
+      gender: z.enum(["mujer", "hombre", "otro", "desconocido"]),
+      approxAge: z.number().int().min(0).max(120).nullable().describe("Edad aproximada en años; null si no sale nadie."),
+      notes: z.string().describe("Rasgos visibles en una frase, en español."),
+    })
+    .optional(),
+  angleAudience: z
+    .object({
+      gender: z.enum(["mujer", "hombre"]).nullable(),
+      approxAge: z.number().int().min(0).max(120).nullable(),
+      label: z.string().describe("El público o ángulo tal como lo nombra el encargo («abuelas»)."),
+    })
+    .nullable()
+    .optional(),
+  variantMatch: z.string().nullable().optional(),
+}) as z.ZodType<Analysis>;
 
 // ───────────────────────── Instrucciones del paso ─────────────────────────
 
 /** Lo que cambia en las instrucciones según quién sale en el vídeo. */
 const IDENTITY: Record<AvatarMode, { risk: string; image1: string; video1: string; rule: string }> = {
+  automatico: {
+    risk: "una identidad que no sea la del avatar (identidad)",
+    image1: "image 1 aporta solo la composición y la distancia de cámara, nunca la identidad",
+    video1: "@Video1 aporta solo la cámara, el ritmo y el tipo de acción, nunca la persona, el producto, el espacio ni el texto.",
+    rule: "Identidad: la persona es la del avatar, cuya foto ocupa el sitio «avatar» de los manifiestos. La aplicación lo elige después de este desglose (alguien parecido a la persona de la referencia, del país del anuncio, o el público que pida el encargo), así que aún no lo ves: no describas su cara, su pelo, su edad ni su ropa; cítalo solo por su número.",
+  },
+  biblioteca: {
+    risk: "una identidad que no sea la del avatar elegido (identidad)",
+    image1: "image 1 aporta solo la composición y la distancia de cámara, nunca la identidad",
+    video1: "@Video1 aporta solo la cámara, el ritmo y el tipo de acción, nunca la persona, el producto, el espacio ni el texto.",
+    rule: "Identidad: la persona es la del avatar elegido (su foto va en los manifiestos), nunca la de la referencia.",
+  },
   elegido: {
     risk: "una identidad que no sea la del avatar elegido (identidad)",
     image1: "image 1 aporta solo la composición y la distancia de cámara, nunca la identidad",
@@ -194,7 +248,7 @@ const OWNER_NOTES = `Las indicaciones de la persona que encarga el vídeo van en
  * Con «Solo gancho», `hook` son sus tiempos reales (`hookTiming` del vídeo); si no se dan, los de
  * la duración pedida.
  */
-export function analysisInstructions(brief: Brief, hook: HookTiming | null = null): string {
+export function analysisInstructions(brief: Brief, hook: HookTiming | null = null, variantNames: string[] = []): string {
   const identity = IDENTITY[brief.avatarMode];
   const sections = [
     `Desglosa el vídeo de referencia y prepara su adaptación al producto del encargo, aplicando las tres reglas que se entregan arriba («Adaptación de conceptos», «Imágenes con Nano Banana» y «Vídeo con Seedance 2.5»).
@@ -211,6 +265,10 @@ Devuelve, con la forma pedida:
 5. frameUse: según la regla de vídeo: si el clip es de un solo plano, start_image (la imagen aprobada es el primer fotograma); si tiene varios planos, contextual_reference.
 6. imagePrompt: el prompt de la imagen inicial según la regla de imagen, en prosa y en párrafos corridos, sin títulos en mayúsculas, de unos 4.900 caracteres. Cita cada referencia del manifiesto de imagen como «image N» y di para qué sirve según su papel (${identity.image1}). La imagen muestra la escena inicial del clip.
 7. videoPrompt: el prompt del clip según la plantilla de la regla de vídeo, con menos de 4.000 caracteres. Escríbelo con párrafos o con las etiquetas entre corchetes de la plantilla, nunca con títulos en mayúsculas. Cita cada referencia con @ del manifiesto del clip exactamente como @Video1 y @ImageN (mayúscula inicial, sin espacio) y ninguna otra. ${identity.video1} La imagen inicial aprobada (la que saldrá del prompt de imagen) es la que el manifiesto del clip marca así, y se describe según frameUse. La geometría del producto es fija: forma, proporciones y etiqueta no cambian. No pidas texto en pantalla, subtítulos ni rótulos.
+
+8. personaRef: la persona principal que sale en los fotogramas de la referencia: si sale alguien (present), su sexo (mujer, hombre, otro o desconocido), su edad aproximada en años y sus rasgos visibles en una frase. Si no sale nadie, present false, gender desconocido y approxAge null.
+9. angleAudience: si el encargo (sus indicaciones, su adaptación o sus cambios) pide un público o un ángulo con una persona concreta (p. ej. «abuelas», «para mamás», «un niño»), su sexo, su edad aproximada y cómo lo nombra; si no pide ninguno, null.${variantNames.length > 0 ? `
+10. variantMatch: de las variantes del producto (${variantNames.map((name) => `«${name}»`).join(", ")}), la que coincide claramente por color o forma con el objeto que se ve en la referencia, escrita igual; si no coincide claramente ninguna, null.` : ""}
 
 Ninguno de los dos prompts lleva direcciones, identificadores de archivos ni estas palabras vetadas: ${PROMPT_BLACKLIST.join(", ")}.
 
@@ -248,11 +306,15 @@ const ROLE_LABEL: Record<ManifestItem["role"], string> = {
   otro: "otro",
 };
 
-/** Con «sin sustitución», el primer fotograma de la referencia aporta también las personas. */
-const roleLabel = (role: ManifestItem["role"], brief: Brief) =>
-  role === "composicion" && brief.avatarMode === "sin_sustitucion"
-    ? "composición y personas (primer fotograma de la referencia: encuadre, distancia de cámara y las personas que se conservan)"
-    : ROLE_LABEL[role];
+const PENDING_AVATAR = "avatar (lo elige la aplicación después de este desglose: no lo describas, cítalo solo por su número)";
+
+/** Con «sin sustitución», el primer fotograma de la referencia aporta también las personas; con «Automático», el avatar aún no está. */
+const roleLabel = (item: Pick<ManifestItem, "role" | "source">, brief: Brief) =>
+  item.source.kind === "avatar_pending"
+    ? PENDING_AVATAR
+    : item.role === "composicion" && brief.avatarMode === "sin_sustitucion"
+      ? "composición y personas (primer fotograma de la referencia: encuadre, distancia de cámara y las personas que se conservan)"
+      : ROLE_LABEL[item.role];
 
 /** El texto de la persona, sin poder cerrar antes de tiempo la etiqueta que lo delimita. */
 const fenced = (text: string) => text.replace(/<\s*\//g, "< /");
@@ -283,9 +345,17 @@ function spread<T>(items: T[], limit: number): T[] {
 const IMAGE_MIMES = new Set(["image/jpeg", "image/png", "image/webp"]);
 const asImageMime = (mime: string) => (IMAGE_MIMES.has(mime) ? mime : "image/jpeg") as "image/jpeg" | "image/png" | "image/webp";
 
-async function buildContent(user: AuthUser, video: Video, brief: Brief, product: Product, photos: PhotoInfo[]): Promise<LlmContent> {
-  const images = imageManifest(video, photos);
-  const clip = clipManifest(video, photos);
+async function buildContent(
+  user: AuthUser,
+  video: Video,
+  brief: Brief,
+  product: Product,
+  refs: ManifestRefs,
+  variants: VariantInfo[],
+): Promise<LlmContent> {
+  const images = imageManifest(video, refs);
+  const clip = clipManifest(video, refs);
+  const chosenVariant = variants.find((variant) => variant.id === video.variantId);
   const cuts = video.cutsMs ?? [];
   const notes = ownerNotes(brief);
 
@@ -296,6 +366,12 @@ async function buildContent(user: AuthUser, video: Video, brief: Brief, product:
         `Qué hace: ${product.summary}`,
         `Idioma del anuncio: ${product.language}`,
         `Países: ${product.countries.join(", ")}`,
+        ...(variants.length > 0
+          ? [
+              `Variantes: ${variants.map((variant) => variant.name).join(", ")}`,
+              `Variante de este vídeo: ${chosenVariant ? chosenVariant.name : "sin elegir (las fotos de siempre del producto)"}`,
+            ]
+          : []),
       ].join("\n"),
     ),
     ...(notes === null ? [] : [textPart(notes)]),
@@ -310,10 +386,10 @@ async function buildContent(user: AuthUser, video: Video, brief: Brief, product:
     textPart(
       [
         "Manifiesto de la imagen inicial (en este orden):",
-        ...images.map((item) => `${item.tag} — ${roleLabel(item.role, brief)}`),
+        ...images.map((item) => `${item.tag} — ${roleLabel(item, brief)}`),
         "",
         "Manifiesto del clip (en este orden):",
-        ...clip.map((item) => `${item.tag} — ${roleLabel(item.role, brief)}`),
+        ...clip.map((item) => `${item.tag} — ${roleLabel(item, brief)}`),
       ].join("\n"),
     ),
   ];
@@ -327,11 +403,11 @@ async function buildContent(user: AuthUser, video: Video, brief: Brief, product:
     content.push(textPart(`Fotograma ${i + 1} — ${secondsText(frame.timeMs)}`), imagePart(Buffer.from(frame.data), asImageMime(frame.mime)));
   });
 
-  const clipTags = new Map(clip.flatMap((item) => (item.source.kind === "photo" ? [[item.source.photoId, item.tag] as const] : [])));
+  const sameSource = (a: ManifestItem["source"], b: ManifestItem["source"]) => JSON.stringify(a) === JSON.stringify(b);
   for (const item of images) {
-    if (item.source.kind !== "photo") continue;
-    const clipTag = clipTags.get(item.source.photoId);
-    const { data } = await readProductPhoto(user, item.source.photoId);
+    if (item.source.kind !== "photo" && item.source.kind !== "avatar") continue;
+    const clipTag = clip.find((other) => sameSource(other.source, item.source))?.tag;
+    const { data } = item.source.kind === "photo" ? await readProductPhoto(user, item.source.photoId) : await readAvatarImage(item.source.avatarId);
     let reduced: Buffer;
     try {
       reduced = await makeThumbnail(data, "image", PHOTO_MAX_SIDE);
@@ -340,7 +416,7 @@ async function buildContent(user: AuthUser, video: Video, brief: Brief, product:
       throw error;
     }
     content.push(
-      textPart(`${item.tag}${clipTag ? ` · ${clipTag}` : ""} — papel: ${roleLabel(item.role, brief)}`),
+      textPart(`${item.tag}${clipTag ? ` · ${clipTag}` : ""} — papel: ${roleLabel(item, brief)}`),
       imagePart(reduced, "image/jpeg"),
     );
   }
@@ -427,8 +503,9 @@ const isGatewayFailure = (error: unknown): error is Error =>
 async function missingForAnalysis(user: AuthUser, video: Video, brief: Brief): Promise<string | null> {
   if (video.referenceStatus !== "ready") return NO_REFERENCE;
   if (referenceOutdated(video)) return REFERENCE_OUTDATED;
-  const manifest = imageManifest(video, await listProductPhotos(user, video.productId));
-  if (video.avatarMode === "elegido" && !manifest.some((item) => item.role === "avatar")) return NO_AVATAR;
+  const manifest = imageManifest(video, await manifestRefsFor(user, video, { forAnalysis: true }));
+  const needsAvatar = video.avatarMode === "elegido" || video.avatarMode === "biblioteca";
+  if (needsAvatar && !manifest.some((item) => item.role === "avatar")) return NO_AVATAR;
   if (!manifest.some((item) => item.role === "articulo")) return NO_ARTICLE;
   if (brief.kind === "adaptacion_concepto" && brief.adaptation === null) return NO_ADAPTATION;
   return null;
@@ -545,6 +622,7 @@ export async function autoAnalyzePending(): Promise<number> {
         // Los requisitos de `missingForAnalysis`, en SQL.
         sql`exists (select 1 from product_photos p where p.product_id = ${schema.videos.productId} and p.role = 'articulo')`,
         sql`(${schema.videos.avatarMode} <> 'elegido' or exists (select 1 from product_photos p where p.id = ${schema.videos.avatarPhotoId} and p.product_id = ${schema.videos.productId} and p.role = 'avatar'))`,
+        sql`(${schema.videos.avatarMode} <> 'biblioteca' or ${schema.videos.avatarLibraryId} is not null)`,
         sql`(${schema.videos.kind} <> 'adaptacion_concepto' or nullif(trim(${schema.videos.adaptation}), '') is not null)`,
         // `referenceOutdated`: la referencia se preparó con el tramo que el vídeo usa ahora.
         sql`${schema.videos.segmentDurationMs} = least(${schema.videos.referenceDurationMs}, case when ${schema.videos.kind} = 'solo_gancho' then ${schema.videos.hookSeconds} * 1000 else ${MAX_SEGMENT_MS} end)`,
@@ -561,6 +639,54 @@ export async function autoAnalyzePending(): Promise<number> {
     }
   }
   return requested;
+}
+
+const GROUP_WORDS: Record<AvatarTarget["group"], string> = { mujer: "mujer", hombre: "hombre", nina: "niña", nino: "niño", otro: "persona" };
+
+/** «mujer, ~70 años (abuela)». */
+function targetWords(target: AvatarTarget): string {
+  const age = target.age === null ? "" : `, ~${target.age} años`;
+  return `${GROUP_WORDS[target.group]}${age}${target.label ? ` (${target.label})` : ""}`;
+}
+
+/**
+ * Lo que la aplicación añade al desglose de Claude, en código: con «Automático», el avatar elegido
+ * (`pickAvatar`) y, si no encaja ninguno, la pregunta `avatar`; con variantes en el producto y
+ * ninguna elegida, la pregunta `variante` si la referencia no coincide claramente con una.
+ */
+export async function analysisExtras(
+  result: Analysis,
+  brief: Brief,
+  product: Pick<Product, "countries">,
+  variants: Array<Pick<VariantInfo, "name">>,
+): Promise<{ extras: Pick<Analysis, "autoAvatar" | "questions">; autoAvatarId: number | null }> {
+  const extras: Pick<Analysis, "autoAvatar" | "questions"> = {};
+  const questions: AnalysisQuestion[] = [];
+  let autoAvatarId: number | null = null;
+  if (brief.avatarMode === "automatico") {
+    const avatars = await activeAvatarSummaries();
+    const target = avatarTarget({
+      texts: [brief.note, brief.adaptation, brief.productNotes],
+      personaRef: result.personaRef,
+      angleAudience: result.angleAudience,
+    });
+    const picked = pickAvatar(target, avatars, product.countries);
+    autoAvatarId = picked?.id ?? null;
+    extras.autoAvatar = { avatarId: autoAvatarId, target };
+    if (!picked) {
+      questions.push({
+        id: "avatar",
+        text: target ? `Ningún avatar encaja (${targetWords(target)}). ¿Cuál sale?` : "¿Qué avatar sale?",
+        options: closestAvatarNames(target, avatars),
+      });
+    }
+  }
+  if (variants.length > 0 && brief.variantId === null) {
+    const match = result.variantMatch ? variants.find((variant) => fold(variant.name) === fold(result.variantMatch!)) : undefined;
+    if (!match) questions.push({ id: "variante", text: "¿Qué variante sale?", options: variants.map((variant) => variant.name) });
+  }
+  if (questions.length > 0) extras.questions = questions;
+  return { extras, autoAvatarId };
 }
 
 interface StepResult {
@@ -611,7 +737,9 @@ export async function runAnalysis(analysisId: number, deps: { gateway?: LlmGatew
       }
       const product = await getProductFor(user, video.productId);
       const brief = briefOf(await withProductNotes(video));
-      const content = await buildContent(user, video, brief, product, await listProductPhotos(user, video.productId));
+      const variants = await listVariants(user, video.productId);
+      const refs = await manifestRefsFor(user, video, { forAnalysis: true });
+      const content = await buildContent(user, video, brief, product, refs, variants);
       try {
         const answer = await (deps.gateway ?? getGateway()).call({
           tier: "medium",
@@ -619,7 +747,7 @@ export async function runAnalysis(analysisId: number, deps: { gateway?: LlmGatew
           userId: ctx.userId,
           productId: ctx.productId,
           rules: await loadRules(analysisRuleSlugs(brief.kind)),
-          instructions: analysisInstructions(brief, hookTiming(video)),
+          instructions: analysisInstructions(brief, hookTiming(video), variants.map((variant) => variant.name)),
           content,
           maxTokens: MAX_TOKENS,
           schema: analysisSchema,
@@ -641,12 +769,23 @@ export async function runAnalysis(analysisId: number, deps: { gateway?: LlmGatew
     throw error;
   }
 
+  // Fuera del paso: si esto falla, la cola lo repite y el paso devuelve lo guardado (Claude no cobra otra vez).
+  const owner = await getActiveUser(row.createdBy);
+  const product = owner ? await getProductFor(owner, row.productId) : null;
+  const variants = owner ? await listVariants(owner, row.productId) : [];
+  const { extras, autoAvatarId } = product
+    ? await analysisExtras(step.result, step.brief, product, variants)
+    : { extras: {}, autoAvatarId: null };
+
   await getDb().transaction(async (tx) => {
     const [video] = await tx
       .select({
         referenceMediaId: schema.videos.referenceMediaId,
         kind: schema.videos.kind,
         avatarMode: schema.videos.avatarMode,
+        avatarPhotoId: schema.videos.avatarPhotoId,
+        avatarLibraryId: schema.videos.avatarLibraryId,
+        variantId: schema.videos.variantId,
         note: schema.videos.note,
         adaptation: schema.videos.adaptation,
         hookSeconds: schema.videos.hookSeconds,
@@ -673,8 +812,9 @@ export async function runAnalysis(analysisId: number, deps: { gateway?: LlmGatew
       .set({
         status: superseded ? "failed" : "done",
         error: superseded ? BRIEF_CHANGED_WHILE_RUNNING : null,
-        result: step.result,
+        result: { ...step.result, ...extras },
         ...step.brief,
+        autoAvatarId,
         ruleVersions: step.ruleVersions,
         spendEntryId: step.spendEntryId,
         updatedAt: new Date(),
@@ -735,5 +875,5 @@ export async function updatePrompts(
     if (!updated) throw new HttpError(404, "Vídeo no encontrado.");
     video = updated;
   }
-  return promptIssues(video, await listProductPhotos(user, video.productId));
+  return promptIssues(video, await manifestRefsFor(user, video));
 }

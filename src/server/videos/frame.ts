@@ -4,7 +4,8 @@ import { getSetting, schema, setSetting } from "@/db/client";
 import type { AuthUser } from "@/server/auth";
 import { ensureMedia } from "@/server/higgsfield";
 import { HttpError } from "@/server/http";
-import { listProductPhotos, readProductPhoto } from "@/server/photos";
+import { readAvatarImage } from "@/server/avatars";
+import { readProductPhoto } from "@/server/photos";
 import {
   approveResult,
   registerRequestBuilder,
@@ -18,6 +19,8 @@ import { checkImagePrompt } from "@/server/videos/prompt-check";
 import {
   BRIEF_CHANGED,
   latestDoneAnalysis,
+  manifestRefsFor,
+  NO_AUTO_AVATAR,
   readVideoFrame,
   REFERENCE_OUTDATED,
   referenceOutdated,
@@ -97,6 +100,11 @@ async function mediaOf(user: AuthUser, video: Video, item: ManifestItem, deps: G
     const filename = `foto-${source.photoId}.${EXTENSIONS[photo.mime] ?? "jpg"}`;
     return ensureMedia(user.id, { bytes: photo.data, filename, contentType: photo.mime, type: "image" }, deps);
   }
+  if (source.kind === "avatar") {
+    const avatar = await readAvatarImage(source.avatarId);
+    const filename = `avatar-${source.avatarId}.${EXTENSIONS[avatar.mime] ?? "jpg"}`;
+    return ensureMedia(user.id, { bytes: avatar.data, filename, contentType: avatar.mime, type: "image" }, deps);
+  }
   throw new Error(`Referencia de la imagen inicial no esperada: ${source.kind}.`);
 }
 
@@ -116,6 +124,8 @@ const FRAME_SNAPSHOT = [
   "referenceMediaId",
   "imagePrompt",
   "avatarPhotoId",
+  "avatarLibraryId",
+  "variantId",
   "environmentPhotoId",
   "avatarMode",
   "kind",
@@ -127,7 +137,8 @@ const FRAME_SNAPSHOT = [
 export const buildFrameRequest: RequestBuilder = async (user, video, deps) => {
   await requireAnalysisDone(video);
   const prompt = video.imagePrompt!;
-  const manifest = imageManifest(video, await listProductPhotos(user, video.productId));
+  const manifest = imageManifest(video, await manifestRefsFor(user, video));
+  if (manifest.some((item) => item.source.kind === "avatar_pending")) throw new HttpError(400, NO_AUTO_AVATAR);
   const errors = checkImagePrompt(prompt, manifest).filter((issue) => issue.level === "error");
   if (errors.length > 0) throw new HttpError(400, errors.map((issue) => issue.message).join(" "));
 

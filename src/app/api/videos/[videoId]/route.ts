@@ -23,7 +23,8 @@ export async function GET(_request: Request, { params }: { params: Promise<{ vid
 const isPhotoChoice = (value: unknown) => value === undefined || value === null || (Number.isSafeInteger(value) && (value as number) > 0);
 
 /**
- * Cambia `title`, `avatarPhotoId`, `environmentPhotoId` (id o `null`), `avatarMode`, `clipResolution`,
+ * Cambia `title`, `avatarPhotoId`, `avatarLibraryId` (un avatar de la biblioteca: pasa a `biblioteca`),
+ * `environmentPhotoId` (id o `null`), `avatarMode`, `variantId` (una variante del producto o `null`), `clipResolution`,
  * `kind`, `adaptation`, `hookSeconds`, `bodyClipIds`, `note`, `imagePrompt`, `videoPrompt`, `frameUse` o
  * `songId` (la «Música»: id de una canción o `null` para el audio original). Solo quien creó el vídeo. Con algún prompt o `frameUse`, la
  * respuesta lleva también los avisos de los prompts (`imageIssues`, `videoIssues`).
@@ -33,7 +34,7 @@ export async function PUT(request: Request, { params }: { params: Promise<{ vide
     const { videoId } = await params;
     const body = (await request.json().catch(() => null)) as Record<string, unknown> | null;
     const input = body && typeof body === "object" && !Array.isArray(body) ? body : {};
-    const { title, avatarPhotoId, environmentPhotoId, avatarMode, clipResolution, kind, adaptation, hookSeconds, bodyClipIds, note, imagePrompt, videoPrompt, frameUse, songId } =
+    const { title, avatarPhotoId, avatarLibraryId, environmentPhotoId, avatarMode, variantId, clipResolution, kind, adaptation, hookSeconds, bodyClipIds, note, imagePrompt, videoPrompt, frameUse, songId } =
       input;
     if (title !== undefined && typeof title !== "string") return badRequest("Escribe el título del vídeo.");
     if (!isPhotoChoice(avatarPhotoId)) return badRequest("Elige una foto con papel «Avatar» de este producto.");
@@ -51,8 +52,10 @@ export async function PUT(request: Request, { params }: { params: Promise<{ vide
     let video = await updateVideoChoices(user!, id, {
       title,
       avatarPhotoId: avatarPhotoId as number | null | undefined,
+      avatarLibraryId,
       environmentPhotoId: environmentPhotoId as number | null | undefined,
       avatarMode,
+      variantId,
       clipResolution: clipResolution as string | undefined,
       kind,
       adaptation,

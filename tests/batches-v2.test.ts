@@ -382,7 +382,8 @@ describe("valores por producto: avatar habitual", () => {
     expect(startingAvatar({ defaultAvatarMode: "elegido", defaultAvatarPhotoId: 7 }, [3, 7])).toEqual({ avatarMode: "elegido", avatarPhotoId: 7 });
     expect(startingAvatar({ defaultAvatarMode: "elegido", defaultAvatarPhotoId: 9 }, [3, 7])).toEqual({ avatarMode: "elegido", avatarPhotoId: 3 });
     // Tarjeta del lote sin avatares: «nadie» (Lotes v1); vídeo suelto: sin elegir.
-    expect(startingAvatar({ defaultAvatarMode: "elegido", defaultAvatarPhotoId: null }, [])).toEqual({ avatarMode: "nadie", avatarPhotoId: null });
+    // Sin fotos de avatar, la tarjeta del lote empieza en «Automático».
+    expect(startingAvatar({ defaultAvatarMode: "elegido", defaultAvatarPhotoId: null }, [])).toEqual({ avatarMode: "automatico", avatarPhotoId: null });
     expect(startingAvatar({ defaultAvatarMode: "elegido", defaultAvatarPhotoId: null }, [], "elegir")).toEqual({ avatarMode: "elegido", avatarPhotoId: null });
     expect(startingAvatar({ defaultAvatarMode: "nadie", defaultAvatarPhotoId: null }, [3])).toEqual({ avatarMode: "nadie", avatarPhotoId: null });
   });

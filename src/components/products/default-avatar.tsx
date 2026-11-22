@@ -2,7 +2,7 @@
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { AvatarSelect, KEEP, NONE, type AvatarChoice } from "@/components/batches/batch-fields";
+import { AUTO, AvatarSelect, KEEP, NONE, type AvatarChoice } from "@/components/batches/batch-fields";
 import type { ProductPhoto } from "@/components/videos/labels";
 import { api } from "@/lib/api";
 import { startingAvatar } from "@/lib/default-avatar";
@@ -10,7 +10,8 @@ import type { ProductView } from "./labels";
 
 /**
  * Avatar habitual del producto: con el que empiezan sus vídeos nuevos y las tarjetas del lote.
- * Una foto de avatar, «Sin sustitución» o «No aparece nadie».
+ * Una foto de avatar, «Sin sustitución» o «No aparece nadie»; sin fotos de avatar, «Automático»
+ * (lo que reciben entonces las tarjetas del lote).
  */
 export function DefaultAvatar({ product }: { product: ProductView }) {
   const client = useQueryClient();
@@ -23,6 +24,8 @@ export function DefaultAvatar({ product }: { product: ProductView }) {
   const value: AvatarChoice = start.avatarMode === "elegido" ? start.avatarPhotoId! : start.avatarMode;
 
   async function choose(choice: AvatarChoice) {
+    // «Automático» es lo que ya hay sin fotos de avatar: no se guarda nada.
+    if (choice === AUTO) return;
     const body = typeof choice === "number" ? { defaultAvatarPhotoId: choice } : { defaultAvatarMode: choice === KEEP ? KEEP : NONE };
     const key = ["product", String(product.id)];
     const before = client.getQueryData<{ product: ProductView }>(key);
@@ -51,7 +54,7 @@ export function DefaultAvatar({ product }: { product: ProductView }) {
 
   return (
     <div className="w-48" title="Avatar habitual">
-      <AvatarSelect avatars={avatars} loading={photos.isLoading} value={value} onChange={(choice) => void choose(choice)} label="Avatar habitual" className="h-8" />
+      <AvatarSelect avatars={avatars} loading={photos.isLoading} value={value} onChange={(choice) => void choose(choice)} label="Avatar habitual" autoOption={value === AUTO} className="h-8" />
     </div>
   );
 }

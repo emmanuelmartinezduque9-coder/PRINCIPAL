@@ -142,6 +142,81 @@ export const productPhotos = pgTable(
   ],
 );
 
+/** Tope de la imagen de un avatar de la biblioteca (el mismo que el de una foto de producto). */
+export const MAX_AVATAR_BYTES = 8 * 1024 * 1024;
+
+/**
+ * Biblioteca global de avatares: las personas que pueden salir en los vídeos de cualquier
+ * producto. Todos los ven; solo el dueño los sube o cambia. Solo `src/server/avatars.ts` lee o
+ * escribe esta tabla. No se borran: se retiran (`retired`), y un avatar retirado ya no se elige
+ * solo ni sale en los selectores, pero los vídeos que ya lo llevan lo conservan.
+ */
+export const avatars = pgTable(
+  "avatars",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    /** El selector de siempre («mujer 7»): único. */
+    name: text("name").notNull(),
+    /** `mujer`, `hombre`, `nina`, `nino` u `otro`. */
+    group: text("group").notNull(),
+    /** El número dentro de su grupo («mujer 7» → 7), si lo tiene. */
+    number: integer("number"),
+    /** Edad aproximada en años; `null` hasta que el dueño la ponga. */
+    ageYears: integer("age_years"),
+    /** Rasgos o región (`aleman`, `nordico`, `latino`…), en minúsculas y sin tildes. */
+    tags: text("tags").array().notNull().default(sql`'{}'::text[]`),
+    description: text("description"),
+    /** `image/jpeg`, `image/png` o `image/webp`, según el contenido. */
+    mime: text("mime").notNull(),
+    size: integer("size").notNull(),
+    sha256: text("sha256").notNull(),
+    data: bytea("data").notNull(),
+    /** El identificador en el Higgsfield del dueño, si ya lo tenía (informativo: cada persona sube el suyo con `ensureMedia`). */
+    higgsfieldMediaId: text("higgsfield_media_id"),
+    retired: boolean("retired").notNull().default(false),
+    /** Sin clave ajena, igual que `products.created_by`. */
+    createdBy: bigint("created_by", { mode: "number" }).notNull(),
+    createdAt: instant("created_at").notNull().defaultNow(),
+    updatedAt: instant("updated_at").notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("avatars_sha256").on(t.sha256),
+    uniqueIndex("avatars_name").on(t.name),
+    check("avatars_group_valid", sql`${t.group} in ('mujer', 'hombre', 'nina', 'nino', 'otro')`),
+    check("avatars_name_length", sql`char_length(${t.name}) between 1 and 60`),
+    check("avatars_age_valid", sql`${t.ageYears} is null or ${t.ageYears} between 0 and 120`),
+    check("avatars_number_valid", sql`${t.number} is null or ${t.number} > 0`),
+    check("avatars_description_length", sql`${t.description} is null or char_length(${t.description}) <= 500`),
+    check("avatars_size_valid", sql`${t.size} > 0 and ${t.size} <= ${sql.raw(String(MAX_AVATAR_BYTES))}`),
+    check("avatars_mime_valid", sql`${t.mime} in ('image/jpeg', 'image/png', 'image/webp')`),
+  ],
+);
+
+/**
+ * Variantes de un producto (colores, modelos): qué fotos de artículo (en orden) y qué foto de
+ * embalaje la representan. Un vídeo con variante usa solo esas fotos. Solo `src/server/variants.ts`
+ * lee o escribe esta tabla, siempre después de comprobar el producto con `getProductFor`. Las fotos
+ * de artículo van en una lista (sin clave ajena): una foto borrada deja de salir sola.
+ */
+export const productVariants = pgTable(
+  "product_variants",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    productId: bigint("product_id", { mode: "number" })
+      .notNull()
+      .references(() => products.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    articlePhotoIds: bigint("article_photo_ids", { mode: "number" }).array().notNull().default(sql`'{}'::bigint[]`),
+    packagingPhotoId: bigint("packaging_photo_id", { mode: "number" }).references(() => productPhotos.id, { onDelete: "set null" }),
+    createdBy: bigint("created_by", { mode: "number" }).notNull(),
+    createdAt: instant("created_at").notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("product_variants_product_name").on(t.productId, t.name),
+    check("product_variants_name_length", sql`char_length(${t.name}) between 1 and 60`),
+  ],
+);
+
 /**
  * Credenciales de terceros por persona (p. ej. Higgsfield). `secret_enc` es cifrado en sobre
  * (`src/lib/vault.ts`) ligado a `user_id:kind`. Solo `src/server/credentials.ts` la toca.
@@ -427,10 +502,16 @@ export const videos = pgTable(
       onDelete: "set null",
     }),
     /**
-     * Quién sale: `elegido` (el avatar de `avatar_photo_id`), `sin_sustitucion` (se conservan las
-     * personas de la referencia) o `nadie`. Solo con `elegido` hay foto de avatar.
+     * Quién sale: `elegido` (el avatar de `avatar_photo_id`), `biblioteca` (el avatar de la
+     * biblioteca `avatar_library_id`), `automatico` (lo elige el desglose, parecido a la persona de
+     * la referencia), `sin_sustitucion` (se conservan las personas de la referencia) o `nadie`.
+     * Solo con `elegido` hay foto de avatar y solo con `biblioteca`, avatar de la biblioteca.
      */
     avatarMode: text("avatar_mode").notNull().default("elegido"),
+    /** El avatar de la biblioteca (con `avatarMode = biblioteca`). */
+    avatarLibraryId: bigint("avatar_library_id", { mode: "number" }).references(() => avatars.id, { onDelete: "set null" }),
+    /** La variante del producto; `null`: las fotos de siempre del producto. */
+    variantId: bigint("variant_id", { mode: "number" }).references(() => productVariants.id, { onDelete: "set null" }),
     /** `replicar` (por defecto), `adaptacion_concepto` o `solo_gancho`. */
     kind: text("kind").notNull().default("replicar"),
     /**
@@ -503,8 +584,10 @@ export const videos = pgTable(
     check("videos_kind_valid", sql`${t.kind} in ('replicar', 'adaptacion_concepto', 'solo_gancho')`),
     check("videos_hook_seconds_valid", sql`${t.hookSeconds} between 2 and 8`),
     check("videos_adaptation_length", sql`${t.adaptation} is null or char_length(${t.adaptation}) <= 12000`),
-    check("videos_avatar_mode_valid", sql`${t.avatarMode} in ('elegido', 'sin_sustitucion', 'nadie')`),
+    check("videos_avatar_mode_valid", sql`${t.avatarMode} in ('elegido', 'biblioteca', 'automatico', 'sin_sustitucion', 'nadie')`),
     check("videos_avatar_only_chosen", sql`${t.avatarMode} = 'elegido' or ${t.avatarPhotoId} is null`),
+    check("videos_avatar_library_only_biblioteca", sql`${t.avatarMode} = 'biblioteca' or ${t.avatarLibraryId} is null`),
+    index("videos_variant").on(t.variantId),
     check("videos_reference_status_valid", sql`${t.referenceStatus} in ('none', 'uploading', 'processing', 'ready', 'failed')`),
     check("videos_reference_source_valid", sql`${t.referenceSource} is null or ${t.referenceSource} in ('file', 'link')`),
     check("videos_frame_use_valid", sql`${t.frameUse} in ('start_image', 'contextual_reference')`),
@@ -556,6 +639,17 @@ export const videoAnalyses = pgTable(
      */
     kind: text("kind").notNull().default("replicar"),
     avatarMode: text("avatar_mode").notNull().default("elegido"),
+    /**
+     * El avatar y la variante con los que se hizo (copia de `videos`, sin clave ajena: es una
+     * instantánea). Cambiarlos deja el desglose por repetir. `avatar_photo_id` solo con `elegido`
+     * (los desgloses de antes de guardarlo lo tienen vacío y no se comparan) y `avatar_library_id`
+     * solo con `biblioteca`.
+     */
+    avatarPhotoId: bigint("avatar_photo_id", { mode: "number" }),
+    avatarLibraryId: bigint("avatar_library_id", { mode: "number" }),
+    variantId: bigint("variant_id", { mode: "number" }),
+    /** Con `automatico`: el avatar que eligió el código a partir del desglose; `null` si ninguno encaja (hay pregunta). */
+    autoAvatarId: bigint("auto_avatar_id", { mode: "number" }).references(() => avatars.id, { onDelete: "set null" }),
     note: text("note"),
     adaptation: text("adaptation"),
     /** Duración del gancho con la que se hizo; solo con `solo_gancho`. */
@@ -575,7 +669,7 @@ export const videoAnalyses = pgTable(
     index("video_analyses_status").on(t.status, t.updatedAt),
     check("video_analyses_status_valid", sql`${t.status} in ('queued', 'running', 'done', 'failed', 'paused')`),
     check("video_analyses_kind_valid", sql`${t.kind} in ('replicar', 'adaptacion_concepto', 'solo_gancho')`),
-    check("video_analyses_avatar_mode_valid", sql`${t.avatarMode} in ('elegido', 'sin_sustitucion', 'nadie')`),
+    check("video_analyses_avatar_mode_valid", sql`${t.avatarMode} in ('elegido', 'biblioteca', 'automatico', 'sin_sustitucion', 'nadie')`),
   ],
 );
 

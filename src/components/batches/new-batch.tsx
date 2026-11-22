@@ -23,14 +23,19 @@ import { useMac } from "@/components/videos/use-mac";
 import { api } from "@/lib/api";
 import { linkLabel, parsePastedLinks } from "@/lib/links";
 import { cn } from "@/lib/utils";
+import { useAvatars } from "@/components/avatars/avatars-screen";
+import type { AvatarJson } from "@/components/avatars/labels";
 import {
   AvatarBadge,
+  avatarBody,
   AvatarSelect,
   defaultAvatarChoice,
   KindSelect,
   ProductCover,
   ProductSelect,
+  VariantSelect,
   type AvatarChoice,
+  type VariantJson,
 } from "./batch-fields";
 import { autoBatchName } from "./labels";
 import { newGroup, nextKey, type Group, type Row, type Source } from "./draft";
@@ -253,6 +258,8 @@ function RowCard({
   avatars,
   loadingAvatars,
   avatar,
+  library,
+  variants,
   busy,
   onChange,
   onDuplicate,
@@ -265,6 +272,8 @@ function RowCard({
   avatars: ProductPhoto[];
   loadingAvatars: boolean;
   avatar: AvatarChoice | null;
+  library: AvatarJson[];
+  variants: VariantJson[];
   busy: boolean;
   onChange: (changes: Partial<Row>) => void;
   onDuplicate: () => void;
@@ -354,10 +363,27 @@ function RowCard({
           <BodyPicker productId={productId} value={row.bodies} onChange={(bodies) => onChange({ bodies })} className="min-w-0 flex-1" />
         </div>
       ) : null}
-      {row.open ? (
-        <div className="flex items-center gap-3 lg:ml-12">
-          <span className="text-sm text-muted-foreground">Avatar</span>
-          <AvatarSelect avatars={avatars} loading={loadingAvatars} value={avatar} onChange={(choice) => onChange({ avatar: choice })} className="w-56" />
+      {row.open || variants.length > 0 ? (
+        <div className="flex flex-wrap items-center gap-x-5 gap-y-2 lg:ml-12">
+          {variants.length > 0 ? (
+            <div className="flex items-center gap-3">
+              <span className="text-sm text-muted-foreground">Variante</span>
+              <VariantSelect variants={variants} value={row.variant} onChange={(variant) => onChange({ variant })} className="w-56" />
+            </div>
+          ) : null}
+          {row.open ? (
+            <div className="flex items-center gap-3">
+              <span className="text-sm text-muted-foreground">Avatar</span>
+              <AvatarSelect
+                avatars={avatars}
+                library={library}
+                loading={loadingAvatars}
+                value={avatar}
+                onChange={(choice) => onChange({ avatar: choice })}
+                className="w-56"
+              />
+            </div>
+          ) : null}
         </div>
       ) : null}
       {row.error ? (
@@ -443,6 +469,18 @@ export function NewBatch() {
       queryFn: () => api<{ photos: ProductPhoto[] }>(`/api/productos/${id}/fotos`),
     })),
   });
+  const variantQueries = useQueries({
+    queries: productIds.map((id) => ({
+      queryKey: ["variants", id],
+      queryFn: () => api<{ variants: VariantJson[] }>(`/api/productos/${id}/variantes`),
+    })),
+  });
+  const variantsOf = (id: number | null): VariantJson[] => {
+    const index = id === null ? -1 : productIds.indexOf(id);
+    return (index >= 0 ? variantQueries[index]?.data?.variants : undefined) ?? [];
+  };
+  const libraryQuery = useAvatars();
+  const library = useMemo(() => (libraryQuery.data?.avatars ?? []).filter((avatar) => !avatar.retired), [libraryQuery.data]);
   const avatarsOf = (id: number | null) => {
     const index = id === null ? -1 : productIds.indexOf(id);
     const query = index >= 0 ? photoQueries[index] : undefined;
@@ -460,6 +498,7 @@ export function NewBatch() {
     key: nextKey("fila"),
     source,
     avatar: null,
+    variant: null,
     kind: group.kind,
     adaptation: "",
     hookSeconds: group.hookSeconds,
@@ -562,8 +601,8 @@ export function NewBatch() {
               method: "POST",
               body: JSON.stringify({
                 productId: group.productId,
-                avatarPhotoId: typeof avatar === "number" ? avatar : null,
-                avatarMode: typeof avatar === "number" ? "elegido" : avatar,
+                ...avatarBody(avatar!),
+                variantId: row.variant,
                 kind: row.kind,
                 adaptation: row.kind === "adaptacion_concepto" ? row.adaptation.trim() : null,
                 ...(row.kind === "solo_gancho" ? { hookSeconds: row.hookSeconds, bodyClipIds: row.bodies } : {}),
@@ -652,7 +691,7 @@ export function NewBatch() {
                   value={group.productId}
                   onChange={(productId) =>
                     // Otro producto: su avatar habitual y sus propios cuerpos.
-                    updateGroup(group.key, (g) => ({ ...g, productId, rows: g.rows.map((row) => ({ ...row, avatar: null, bodies: [] })) }))
+                    updateGroup(group.key, (g) => ({ ...g, productId, rows: g.rows.map((row) => ({ ...row, avatar: null, variant: null, bodies: [] })) }))
                   }
                   className={cn(
                     "max-w-72",
@@ -711,6 +750,8 @@ export function NewBatch() {
                     avatars={avatars}
                     loadingAvatars={group.productId !== null && loading}
                     avatar={group.productId === null ? null : avatarOf(group, row)}
+                    library={library}
+                    variants={variantsOf(group.productId)}
                     busy={busy}
                     onChange={(changes) => updateRow(group.key, row.key, changes)}
                     onDuplicate={() => duplicate(group.key, row)}

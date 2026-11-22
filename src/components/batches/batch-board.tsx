@@ -3,7 +3,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { format } from "date-fns";
 import { es } from "date-fns/locale";
-import { ChevronRight, CircleAlert, Download, Eye, ImageIcon, Link2, Link2Off, ListFilter, Loader2, RefreshCw, ScanSearch, SearchX } from "lucide-react";
+import { ChevronRight, CircleAlert, Download, Eye, ImageIcon, Link2, Link2Off, ListFilter, Loader2, RefreshCw, ScanSearch, SearchX, Sparkles } from "lucide-react";
 import Link from "next/link";
 import { useRef, useState } from "react";
 import { toast } from "sonner";
@@ -12,6 +12,7 @@ import { MusicPicker } from "@/components/songs/music-picker";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { avatarImageUrl } from "@/components/avatars/labels";
 import { AVATAR_MODE_LABELS, KIND_LABELS } from "@/components/videos/brief-labels";
 import { creditsLabel } from "@/components/videos/labels";
 import { useReferenceUploads } from "@/components/videos/upload-provider";
@@ -68,6 +69,22 @@ function StepChip({ state }: { state: StepState }) {
 }
 
 function AvatarCell({ row }: { row: BatchRowJson }) {
+  const library = row.libraryAvatar ?? row.autoAvatar;
+  if (library) {
+    const auto = row.avatarMode === "automatico";
+    const title = auto ? `Automático → ${library.name}` : library.name;
+    return (
+      <span className="relative inline-block size-8" title={title}>
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src={avatarImageUrl(library.id)} alt={title} className="size-8 rounded-full object-cover ring-1 ring-foreground/10" />
+        {auto ? (
+          <span className="absolute -right-1 -bottom-1 grid size-4 place-items-center rounded-full bg-background text-muted-foreground ring-1 ring-foreground/10">
+            <Sparkles className="size-2.5" aria-hidden />
+          </span>
+        ) : null}
+      </span>
+    );
+  }
   if (row.avatarMode !== "elegido") {
     const { label, icon: Icon } = AVATAR_MODE_LABELS[row.avatarMode];
     return (

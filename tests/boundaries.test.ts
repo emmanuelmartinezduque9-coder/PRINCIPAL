@@ -166,6 +166,27 @@ describe("límites del código", () => {
     expect(offenders).toEqual([]);
   });
 
+  it("solo src/server/avatars.ts toca la biblioteca de avatares", () => {
+    const AVATARS_TABLE = [/schema\.avatars\b/, /\b(from|into|update|join)\s+"?avatars\b/i];
+    expect(AVATARS_TABLE.some((p) => p.test("select data from avatars where id = 1"))).toBe(true);
+    expect(files.some((f) => f.rel === "src/server/avatars.ts" && AVATARS_TABLE.some((p) => p.test(f.text)))).toBe(true);
+    const offenders = files
+      .filter((f) => f.rel !== "src/server/avatars.ts" && !f.rel.startsWith("src/db/"))
+      .filter((f) => AVATARS_TABLE.some((p) => p.test(f.text)))
+      .map((f) => f.rel);
+    expect(offenders).toEqual([]);
+  });
+
+  it("solo src/server/variants.ts toca las variantes de producto", () => {
+    const VARIANTS_TABLE = [/schema\.productVariants\b/, /\bproduct_variants\b/];
+    expect(files.some((f) => f.rel === "src/server/variants.ts" && VARIANTS_TABLE.some((p) => p.test(f.text)))).toBe(true);
+    const offenders = files
+      .filter((f) => f.rel !== "src/server/variants.ts" && !f.rel.startsWith("src/db/"))
+      .filter((f) => VARIANTS_TABLE.some((p) => p.test(f.text)))
+      .map((f) => f.rel);
+    expect(offenders).toEqual([]);
+  });
+
   it("dentro del conector, solo mcp.ts importa el SDK de MCP", () => {
     const offenders = files
       .filter((f) => f.rel.startsWith(HIGGSFIELD_LAYER) && f.rel !== "src/connectors/higgsfield/mcp.ts")

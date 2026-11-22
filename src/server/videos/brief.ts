@@ -3,14 +3,15 @@ import { HttpError } from "@/server/http";
 /**
  * Las indicaciones de un vídeo que llegan al desglose de Claude: el tipo (replicar la referencia,
  * adaptar su concepto o hacer solo el gancho, con su duración), «Qué adaptación quieres», «Cambios específicos», las «Indicaciones» del
- * lote para su producto y quién sale (el avatar elegido, las personas de la referencia o nadie). Un desglose guarda las que usó: si cambian
- * después, ya no vale (`analysisStaleness`), igual que si cambia la referencia.
+ * lote para su producto, quién sale (una foto de avatar del producto, un avatar de la biblioteca, uno
+ * elegido solo, las personas de la referencia o nadie) y la variante. Un desglose guarda las que usó:
+ * si cambian después, ya no vale (`analysisStaleness`), igual que si cambia la referencia.
  */
 
 export const VIDEO_KINDS = ["replicar", "adaptacion_concepto", "solo_gancho"] as const;
 export type VideoKind = (typeof VIDEO_KINDS)[number];
 
-export const AVATAR_MODES = ["elegido", "sin_sustitucion", "nadie"] as const;
+export const AVATAR_MODES = ["elegido", "biblioteca", "automatico", "sin_sustitucion", "nadie"] as const;
 export type AvatarMode = (typeof AVATAR_MODES)[number];
 
 export const MAX_ADAPTATION = 12_000;
@@ -38,6 +39,10 @@ const PRODUCT_NOTES_TOO_LONG = `Las indicaciones no pueden tener más de ${thous
 export interface BriefSource {
   kind: string;
   avatarMode: string;
+  /** Sin ellos (un desglose o una prueba de antes), cuentan como vacíos. */
+  avatarPhotoId?: number | null;
+  avatarLibraryId?: number | null;
+  variantId?: number | null;
   note: string | null;
   adaptation: string | null;
   /** Duración del gancho (en un vídeo siempre hay; en un desglose, solo si era «Solo gancho»). */
@@ -53,6 +58,11 @@ export interface BriefSource {
 export interface Brief {
   kind: VideoKind;
   avatarMode: AvatarMode;
+  /** Solo con `elegido`. */
+  avatarPhotoId: number | null;
+  /** Solo con `biblioteca`. */
+  avatarLibraryId: number | null;
+  variantId: number | null;
   note: string | null;
   adaptation: string | null;
   hookSeconds: number | null;
@@ -63,6 +73,9 @@ export function briefOf(video: BriefSource): Brief {
   return {
     kind: video.kind as VideoKind,
     avatarMode: video.avatarMode as AvatarMode,
+    avatarPhotoId: video.avatarMode === "elegido" ? (video.avatarPhotoId ?? null) : null,
+    avatarLibraryId: video.avatarMode === "biblioteca" ? (video.avatarLibraryId ?? null) : null,
+    variantId: video.variantId ?? null,
     note: video.note,
     adaptation: video.kind === "adaptacion_concepto" ? video.adaptation : null,
     hookSeconds: video.kind === "solo_gancho" ? video.hookSeconds : null,
@@ -71,12 +84,27 @@ export function briefOf(video: BriefSource): Brief {
 }
 
 /**
+ * ¿Es el mismo avatar? Con una foto del producto, la misma foto (un desglose de antes de que se
+ * guardara la foto no la tiene y no se compara); con la biblioteca, el mismo avatar. Un desglose
+ * «Automático» sigue valiendo si después se fija justo el avatar que eligió (`autoAvatarId`).
+ */
+function sameAvatar(used: Brief, now: Brief, autoAvatarId: number | null): boolean {
+  if (used.avatarMode === "automatico" && now.avatarMode === "biblioteca") {
+    return autoAvatarId !== null && now.avatarLibraryId === autoAvatarId;
+  }
+  if (used.avatarMode !== now.avatarMode) return false;
+  if (used.avatarMode === "elegido") return used.avatarPhotoId === null || used.avatarPhotoId === now.avatarPhotoId;
+  if (used.avatarMode === "biblioteca") return used.avatarLibraryId === now.avatarLibraryId;
+  return true;
+}
+
+/**
  * Por qué un desglose ya no corresponde al vídeo: `reference` si cambió la referencia, `brief` si
- * cambiaron las indicaciones (tipo, adaptación, duración del gancho, cambios específicos o quién
- * sale); `null` si vale.
+ * cambiaron las indicaciones (tipo, adaptación, duración del gancho, cambios específicos, quién
+ * sale, el avatar o la variante); `null` si vale.
  */
 export function analysisStaleness(
-  analysis: BriefSource & { referenceMediaId: string | null },
+  analysis: BriefSource & { referenceMediaId: string | null; autoAvatarId?: number | null },
   video: BriefSource & { referenceMediaId: string | null },
 ): "reference" | "brief" | null {
   if (analysis.referenceMediaId !== video.referenceMediaId) return "reference";
@@ -84,7 +112,8 @@ export function analysisStaleness(
   const now = briefOf(video);
   const same =
     used.kind === now.kind &&
-    used.avatarMode === now.avatarMode &&
+    sameAvatar(used, now, analysis.autoAvatarId ?? null) &&
+    used.variantId === now.variantId &&
     used.note === now.note &&
     used.adaptation === now.adaptation &&
     used.hookSeconds === now.hookSeconds &&

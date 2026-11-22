@@ -218,3 +218,19 @@ export async function coverPhotoIds(user: AuthUser, productIds: number[]): Promi
     .groupBy(schema.productPhotos.productId);
   return new Map(rows.flatMap((r) => (r.id === null ? [] : [[r.productId, r.id] as const])));
 }
+
+/**
+ * Las fotos del producto por la huella sha256 (hex) de su contenido: la más antigua si hay dos
+ * iguales. La calcula la base de datos. Para importar variantes por sus fotos.
+ */
+export async function photoIdsBySha256(user: AuthUser, productId: number): Promise<Map<string, number>> {
+  const product = await getProductFor(user, productId);
+  const rows = await getDb()
+    .select({ id: schema.productPhotos.id, sha256: sql<string>`encode(sha256(${schema.productPhotos.data}), 'hex')` })
+    .from(schema.productPhotos)
+    .where(eq(schema.productPhotos.productId, product.id))
+    .orderBy(asc(schema.productPhotos.id));
+  const map = new Map<string, number>();
+  for (const row of rows) if (!map.has(row.sha256)) map.set(row.sha256, row.id);
+  return map;
+}

@@ -18,6 +18,8 @@ import { AVATAR_MODE_LABELS, avatarModeOf } from "./brief-labels";
 import { BriefPanel } from "./brief-panel";
 import { clockTime, frameUrl, MAX_SEGMENT_MS, secondsLabel, type ProductPhoto, type VideoJson, type VideoViewJson } from "./labels";
 import { PhotoPick } from "./photo-pick";
+import { LibraryPick } from "./library-pick";
+import { VariantSelect, type VariantJson } from "@/components/batches/batch-fields";
 import type { ReferenceUpload } from "./upload-provider";
 import { requestLink, useMac } from "./use-mac";
 
@@ -269,12 +271,24 @@ function ReferenceFacts({ video }: { video: VideoJson }) {
 }
 
 /**
- * «Sin sustitución» (se conservan las personas de la referencia) y «No aparece nadie»: junto a
- * las fotos de avatar, son las otras dos formas de decir quién sale. Elegir una foto vuelve a
- * «Avatar».
+ * «Automático» (el desglose elige de la biblioteca alguien parecido a la persona de la
+ * referencia), «Sin sustitución» (se conservan las personas de la referencia) y «No aparece
+ * nadie»: junto a las fotos de avatar y la biblioteca, las otras formas de decir quién sale.
+ * Elegir una foto o un avatar de la biblioteca sale de estos modos.
  */
-function AvatarModes({ mode, readOnly, onChange }: { mode: AvatarMode; readOnly: boolean; onChange: (mode: AvatarMode) => void }) {
-  const options = (["sin_sustitucion", "nadie"] as const).filter((option) => !readOnly || option === mode);
+function AvatarModes({
+  mode,
+  readOnly,
+  autoLabel,
+  onChange,
+}: {
+  mode: AvatarMode;
+  readOnly: boolean;
+  /** Con «Automático»: «→ mujer 7» si ya eligió. */
+  autoLabel: string | null;
+  onChange: (mode: AvatarMode) => void;
+}) {
+  const options = (["automatico", "sin_sustitucion", "nadie"] as const).filter((option) => !readOnly || option === mode);
   if (options.length === 0) return null;
   return (
     <div role="radiogroup" aria-label="Sin avatar" className="flex flex-col gap-2">
@@ -303,6 +317,7 @@ function AvatarModes({ mode, readOnly, onChange }: { mode: AvatarMode; readOnly:
             </span>
             <Icon className="size-4 text-muted-foreground" aria-hidden />
             {label}
+            {option === "automatico" && on && autoLabel ? <span className="ml-auto truncate text-muted-foreground">→ {autoLabel}</span> : null}
           </button>
         );
       })}
@@ -493,15 +508,23 @@ export function StepReference({
     }
   }
 
-  async function choose(changes: { avatarPhotoId?: number | null; environmentPhotoId?: number | null; avatarMode?: AvatarMode }) {
+  async function choose(changes: {
+    avatarPhotoId?: number | null;
+    avatarLibraryId?: number | null;
+    environmentPhotoId?: number | null;
+    avatarMode?: AvatarMode;
+    variantId?: number | null;
+  }) {
     const key = ["video", video.id];
     const before = client.getQueryData<VideoViewJson>(key);
     // Se ve al instante; si el servidor no lo acepta, vuelve a como estaba.
     client.setQueryData<VideoViewJson>(key, (v) => {
       if (!v) return v;
       const next = { ...v.video, ...changes };
-      if (changes.avatarMode !== undefined && changes.avatarMode !== "elegido") next.avatarPhotoId = null;
       if (typeof changes.avatarPhotoId === "number") next.avatarMode = "elegido";
+      if (typeof changes.avatarLibraryId === "number") next.avatarMode = "biblioteca";
+      if (next.avatarMode !== "elegido") next.avatarPhotoId = null;
+      if (next.avatarMode !== "biblioteca") next.avatarLibraryId = null;
       return { ...v, video: next };
     });
     try {
@@ -516,6 +539,12 @@ export function StepReference({
 
   const needsConnection = mine && higgsfield.isSuccess && !connected && !busy;
   const avatarMode = avatarModeOf(video.avatarMode);
+  const auto = avatarMode === "automatico" && view.analysis && !view.analysis.stale ? view.analysis.autoAvatar : null;
+  const variants = useQuery({
+    queryKey: ["variants", video.productId],
+    queryFn: () => api<{ variants: VariantJson[] }>(`/api/productos/${video.productId}/variantes`),
+  });
+  const variantList = variants.data?.variants ?? [];
 
   return (
     <div className="flex flex-col gap-6">
@@ -554,8 +583,24 @@ export function StepReference({
               readOnly={!mine}
               dimmed={avatarMode !== "elegido"}
             />
-            <AvatarModes mode={avatarMode} readOnly={!mine} onChange={(mode) => void choose({ avatarMode: mode })} />
+            <LibraryPick
+              selectedId={avatarMode === "biblioteca" ? video.avatarLibraryId : null}
+              autoId={auto?.id ?? null}
+              onSelect={(id) => void choose({ avatarLibraryId: id })}
+              readOnly={!mine}
+              dimmed={avatarMode !== "biblioteca" && avatarMode !== "automatico"}
+            />
+            <AvatarModes mode={avatarMode} readOnly={!mine} autoLabel={auto?.name ?? null} onChange={(mode) => void choose({ avatarMode: mode })} />
           </Panel>
+          {variantList.length > 0 ? (
+            <Panel title="Variante">
+              {mine ? (
+                <VariantSelect variants={variantList} value={video.variantId} onChange={(variantId) => void choose({ variantId })} />
+              ) : (
+                <p className="text-sm">{variantList.find((variant) => variant.id === video.variantId)?.name ?? "Fotos de siempre"}</p>
+              )}
+            </Panel>
+          ) : null}
           <Panel title="Entorno" actions={<span className="text-xs text-muted-foreground">Opcional</span>}>
             <PhotoPick
               productId={video.productId}

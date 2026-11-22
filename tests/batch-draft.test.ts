@@ -5,6 +5,7 @@ const row = (over: Partial<Row>): Row => ({
   key: "fila-1",
   source: { type: "link", url: "https://www.instagram.com/reel/abc/" },
   avatar: null,
+  variant: null,
   kind: "replicar",
   adaptation: "",
   hookSeconds: 4,
