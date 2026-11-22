@@ -167,11 +167,40 @@ ganchos finales. Lo demás es automático.
 - **La prueba de Higgsfield es la primera tarea**, no la última. Entrega: un informe en `docs/` y
   el código mínimo de conexión por persona que reutilizará la entrega 2.
 
-## Pendiente de respuesta del dueño
+## Respuestas del dueño (22/11/2026)
 
-1. Qué ve y qué puede aprobar un colaborador.
-2. Qué plataformas cuentan para decidir si un ángulo está ocupado.
-3. Permiso para gastar unos pocos créditos de Higgsfield en la prueba de conexión.
+1. **Colaboradores:** cada uno ve sus productos. (Propuesta del constructor, sin respuesta
+   expresa: eligen ángulos y ganchos de sus productos; los hechos del expediente y las
+   afirmaciones delicadas las aprueba el dueño.)
+2. **"Ocupado":** los "cupos" son una analogía suya para testear, no una regla exacta. El mapa es
+   una **señal orientativa**, no un veredicto. Se busca en Instagram, TikTok y Facebook, y se
+   muestra por plataforma.
+3. **Prueba de Higgsfield:** autorizada, con gasto de unos pocos créditos.
+4. **Modelo de imagen:** la skill se llama "Nano Banana Pro" pero el dueño dice usar Nano Banana
+   2.1. En las reglas copiadas aparecen `nano_banana_pro` y "Nano Banana 2", no "2.1": el modelo
+   exacto se confirma contra la lista de modelos de su Higgsfield en la entrega 2.
+
+## Aprendizaje con casos validados (pedido del dueño)
+
+Problema que vivió con Codex: le enviaba ejemplos y datos y no notaba que aprendiera. Requisito:
+poder enviar muchos ejemplos de un producto vendido con distintos ángulos y nichos apasionados, y
+**saber** que alimentan de verdad las propuestas nuevas.
+
+- **Biblioteca de casos.** Cada ejemplo se guarda como una ficha estructurada: tipo de producto,
+  mecanismo, ángulo o nicho usado, audiencia, gancho, enlace o captura, y nivel de evidencia
+  (ventas verificadas, comunicado por el dueño, solo visitas). El dueño los envía en cualquier
+  forma (enlace, captura, texto) y la IA rellena la ficha; él la confirma o corrige.
+- **Uso real y visible.** Al proponer ángulos para un producto nuevo, el programa busca los casos
+  más parecidos (por tipo de producto y mecanismo) y los pasa a la IA como ejemplos. Cada ángulo
+  propuesto muestra **"basado en estos casos"** con enlace a las fichas usadas. Si no usó ninguno,
+  lo dice.
+- **Correcciones que se quedan.** Cuando alguien descarta un ángulo, escribe por qué en una frase;
+  ese motivo se guarda como caso negativo o como regla y se aplica en las siguientes propuestas.
+- **Resultados.** Cuando un ángulo pasa a ganador o quemado, la ficha del caso se actualiza sola.
+- No es "entrenar" un modelo: es memoria ordenada que se consulta en cada propuesta. Es
+  comprobable, editable y no se pierde entre sesiones.
+
+Nueva pantalla: **Casos** (biblioteca, alta rápida, búsqueda).
 
 ## Qué decide el dueño después
 
