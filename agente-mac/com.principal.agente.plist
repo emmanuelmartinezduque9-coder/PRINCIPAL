@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Plantilla: `instalar.sh` la copia a ~/Library/LaunchAgents/ poniendo en cada marca la carpeta de
+  la persona y la ruta de node de este Mac. launchd no entiende `~` ni busca en el PATH del
+  terminal: todo va con rutas completas.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.principal.agente</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>__NODE__</string>
+    <string>__HOME__/.principal-tools/agente-mac/agente.mjs</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>__HOME__/.local/bin:__HOME__/.local/node/bin:/opt/homebrew/bin:/usr/bin:/bin</string>
+    <key>HOME</key>
+    <string>__HOME__</string>
+  </dict>
+  <key>WorkingDirectory</key>
+  <string>__HOME__/.principal-tools/agente-mac</string>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ThrottleInterval</key>
+  <integer>30</integer>
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>StandardOutPath</key>
+  <string>__HOME__/Library/Logs/principal-agente.log</string>
+  <key>StandardErrorPath</key>
+  <string>__HOME__/Library/Logs/principal-agente.log</string>
+</dict>
+</plist>
