@@ -4,6 +4,7 @@ import {
   acceptInvite,
   createInvite,
   getActiveUser,
+  getActiveUserByEmail,
   getSessionUser,
   hashPassword,
   login,
@@ -222,6 +223,17 @@ describe("persona activa por su id (trabajos en segundo plano, sin sesión)", ()
     } finally {
       delete process.env.PRINCIPAL_AUTH;
     }
+  });
+});
+
+describe("persona activa por su correo (importador)", () => {
+  it("la encuentra sin distinguir mayúsculas ni espacios; desactivada o desconocida, nadie", async () => {
+    const dueno = await makeUser("dueno", { email: "jefe@example.com" });
+    expect(await getActiveUserByEmail("  JEFE@Example.com ")).toEqual(dueno);
+    expect(await getActiveUserByEmail("otro@example.com")).toBeNull();
+    expect(await getActiveUserByEmail("")).toBeNull();
+    await getDb().update(schema.users).set({ disabledAt: new Date() });
+    expect(await getActiveUserByEmail("jefe@example.com")).toBeNull();
   });
 });
 

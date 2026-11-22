@@ -32,7 +32,11 @@ export async function listProductsFor(user: AuthUser): Promise<Product[]> {
   return scopedProducts(user).orderBy(desc(schema.products.createdAt), desc(schema.products.id));
 }
 
-function validate(input: { name: string; summary: string; language?: string; countries?: string[] }) {
+/**
+ * Las reglas de los datos de un producto (nombre, frase, idioma y países), con los valores por
+ * defecto. Lanza 400 con un mensaje para la persona. La usan crear, cambiar y el importador.
+ */
+export function validateProductInput(input: { name: string; summary: string; language?: string; countries?: string[] }) {
   const name = input.name.trim();
   const summary = input.summary.trim();
   if (!name) throw new HttpError(400, "Escribe el nombre del producto.");
@@ -56,7 +60,7 @@ export async function createProduct(
   user: AuthUser,
   input: { name: string; summary: string; language?: string; countries?: string[] },
 ): Promise<Product> {
-  const values = validate(input);
+  const values = validateProductInput(input);
   return getDb().transaction(async (tx) => {
     const [product] = await tx
       .insert(schema.products)
@@ -85,7 +89,7 @@ export interface ProductChanges {
  */
 export async function updateProduct(user: AuthUser, productId: number, changes: ProductChanges): Promise<Product> {
   const current = await getProductFor(user, productId);
-  const values = validate({
+  const values = validateProductInput({
     name: changes.name ?? current.name,
     summary: changes.summary ?? current.summary,
     language: changes.language ?? current.language,

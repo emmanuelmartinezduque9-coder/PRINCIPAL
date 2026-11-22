@@ -22,6 +22,8 @@ Generado el 22/11/2026 en el Mac del dueño. Solo lectura sobre el sistema antig
 
 ### Formato del paquete (resumen para quien escriba el importador)
 
+El importador de productos ya existe: `scripts/importar-productos.ts`; cómo lanzarlo desde el Mac contra Railway en `docs/importacion/importador.md`.
+
 - `productos.json`: array; cada producto: `slug, origin ('cuenta'|'producto-testeado'), name, status, statusBasis, statusEvidence, language, countries, summary, sharedWith, variants, avatarLibraryIds, photos[], missingRoles, photosAvailableFromShared`. Cada foto: `role (articulo|embalaje|avatar|otro), label, key, higgsfieldId, file (relativo al paquete, o null), sha256, source (ruta original), primary, bytes, missing?, notes?`. No existe ningún asset `entorno` por cuenta en el sistema antiguo (ver 6).
 - `canciones.json`: `songs[]` con `id, title, aliases, numbers, durationS, sha256, suggestedStartS, dropSeconds, drops[] (histórico de revisiones), r2Approved, usedBy[], file`; más `reglaR2` y `notaLicencia`.
 - `conceptos.json` (≈2,0 MB; no copiado aquí entero): `concepts[]` (cuenta, número, nombre, descripción de CONCEPTOS.md, tipo, estructura, motores, enlaces, vídeos fuente, `delivered`, clips con prompt), `viralReferences[]`, `accountSections`. Esquema y 14 ejemplos en `datos/conceptos.sample.json`; resumen por cuenta en `datos/resumen-conceptos.json`.

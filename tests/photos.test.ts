@@ -9,6 +9,7 @@ import {
   MAX_PHOTO_BYTES,
   MAX_PHOTOS_PER_PRODUCT,
   importProductPhotos,
+  listPhotoHashes,
   PHOTO_ROLES,
   readProductPhoto,
   setPhotoRole,
@@ -240,6 +241,15 @@ describe("fotos de producto", () => {
     const roles = (await listProductPhotos(dueno, producto.id)).map((p) => p.role);
     expect(roles).toHaveLength(12);
     expect(roles.slice(10)).toEqual(["articulo", "avatar"]);
+  });
+
+  it("da el sha256 del contenido de cada foto, en orden, solo a quien ve el producto", async () => {
+    const { createHash } = await import("node:crypto");
+    const hex = (b: Buffer) => createHash("sha256").update(b).digest("hex");
+    await addProductPhoto(ana, producto.id, PNG, "avatar");
+    await addProductPhoto(ana, producto.id, JPEG);
+    expect(await listPhotoHashes(dueno, producto.id)).toEqual([hex(PNG), hex(JPEG)]);
+    await expect(listPhotoHashes(luis, producto.id)).rejects.toMatchObject({ status: 404 });
   });
 
   it("la base rechaza un papel que no existe aunque se salte el servidor", async () => {

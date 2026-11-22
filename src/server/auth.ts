@@ -258,6 +258,17 @@ export async function getActiveUser(userId: number): Promise<AuthUser | null> {
   return row ? asAuthUser(row) : null;
 }
 
+/** Persona activa por su correo (sin distinguir mayúsculas), para el importador. `null` si no existe o está desactivada. */
+export async function getActiveUserByEmail(email: string): Promise<AuthUser | null> {
+  const normalized = normalizeEmail(email);
+  if (!normalized || normalized.length > MAX_EMAIL) return null;
+  const [row] = await getDb()
+    .select(userColumns)
+    .from(schema.users)
+    .where(and(eq(schema.users.email, normalized), isNull(schema.users.disabledAt)));
+  return row ? asAuthUser(row) : null;
+}
+
 export async function logout(token: string): Promise<void> {
   if (!token) return;
   await getDb().delete(schema.sessions).where(eq(schema.sessions.tokenHash, sha256(token)));

@@ -60,6 +60,23 @@ function toInfo(row: { id: number; mime: string; size: number; role: string }): 
 }
 
 /**
+ * Las reglas del contenido de una foto: no vacía, máximo 8 MB y JPG, PNG o WebP según sus
+ * primeros bytes. Devuelve el tipo o lanza 400. La usan la subida y el importador.
+ */
+export function checkPhotoBytes(bytes: Buffer): PhotoMime {
+  if (bytes.length === 0) throw new HttpError(400, "La foto está vacía.");
+  if (bytes.length > MAX_PHOTO_BYTES) throw new HttpError(400, "La foto pesa demasiado (máximo 8 MB).");
+  const mime = detectImageType(bytes);
+  if (!mime) {
+    throw new HttpError(
+      400,
+      "Formato de foto no admitido. Usa JPG, PNG o WebP (en iPhone: Ajustes → Cámara → Formatos → «El más compatible»).",
+    );
+  }
+  return mime;
+}
+
+/**
  * Guarda una foto del producto, por defecto como «artículo». Rechaza papel desconocido, vacías,
  * pesadas, de formato no admitido y la que pase del máximo.
  */
@@ -71,15 +88,7 @@ export async function addProductPhoto(
 ): Promise<PhotoInfo> {
   const product = await getProductFor(user, productId);
   checkRole(role);
-  if (bytes.length === 0) throw new HttpError(400, "La foto está vacía.");
-  if (bytes.length > MAX_PHOTO_BYTES) throw new HttpError(400, "La foto pesa demasiado (máximo 8 MB).");
-  const mime = detectImageType(bytes);
-  if (!mime) {
-    throw new HttpError(
-      400,
-      "Formato de foto no admitido. Usa JPG, PNG o WebP (en iPhone: Ajustes → Cámara → Formatos → «El más compatible»).",
-    );
-  }
+  const mime = checkPhotoBytes(bytes);
 
   return getDb().transaction(async (tx) => {
     // Subidas simultáneas al mismo producto van una detrás de otra: así el máximo se cumple.
@@ -125,6 +134,20 @@ export async function listProductPhotos(user: AuthUser, productId: number): Prom
     .where(eq(schema.productPhotos.productId, product.id))
     .orderBy(asc(schema.productPhotos.id));
   return rows.map(toInfo);
+}
+
+/**
+ * Huella sha256 (hex) del contenido de cada foto del producto, en orden de subida, para que el
+ * importador no repita una foto que ya está. La calcula la base de datos: no se leen las imágenes.
+ */
+export async function listPhotoHashes(user: AuthUser, productId: number): Promise<string[]> {
+  const product = await getProductFor(user, productId);
+  const rows = await getDb()
+    .select({ sha256: sql<string>`encode(sha256(${schema.productPhotos.data}), 'hex')` })
+    .from(schema.productPhotos)
+    .where(eq(schema.productPhotos.productId, product.id))
+    .orderBy(asc(schema.productPhotos.id));
+  return rows.map((row) => row.sha256);
 }
 
 /** Producto al que pertenece una foto, ya comprobado para `user`; 404 si la foto no existe o no es visible. */
