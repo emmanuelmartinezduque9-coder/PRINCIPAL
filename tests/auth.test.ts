@@ -193,6 +193,19 @@ describe("cuentas desactivadas", () => {
   });
 });
 
+describe("invitación a una cuenta desactivada", () => {
+  it("no la reactiva, avisa con claridad y no gasta el enlace", async () => {
+    const ana = await person();
+    await getDb().update(schema.users).set({ disabledAt: new Date() }).where(eq(schema.users.id, ana.id));
+    const { token } = await createInvite("ana@example.com", "Ana");
+    await expect(acceptInvite(token, "contraseña-nueva-larga")).rejects.toThrow(/desactivada/);
+    const rows = await getDb().select().from(schema.invites).where(eq(schema.invites.email, "ana@example.com"));
+    expect(rows.filter((r) => r.usedAt === null)).toHaveLength(1); // la nueva sigue sin gastar
+    expect(await login("ana@example.com", PASSWORD)).toBeNull();
+    expect(await login("ana@example.com", "contraseña-nueva-larga")).toBeNull();
+  });
+});
+
 describe("intentos fallidos", () => {
   it("tras diez fallos seguidos bloquea ese correo un cuarto de hora, aunque la contraseña sea buena", async () => {
     await person();
@@ -202,6 +215,22 @@ describe("intentos fallidos", () => {
     }
     expect(await login("ana@example.com", PASSWORD, new Date(start.getTime() + 60_000))).toBeNull();
     expect(await login("ana@example.com", PASSWORD, new Date(start.getTime() + 16 * 60_000))).not.toBeNull();
+  });
+
+  it("doce intentos fallidos a la vez también bloquean", async () => {
+    await person();
+    const now = new Date("2026-11-21T10:00:00Z");
+    await Promise.all(Array.from({ length: 12 }, () => login("ana@example.com", "equivocada-equivocada", now)));
+    expect(await login("ana@example.com", PASSWORD, now)).toBeNull();
+  });
+
+  it("rechaza entradas desmesuradas", async () => {
+    await person();
+    expect(await login("ana@example.com", "x".repeat(201))).toBeNull();
+    expect(await login(`${"a".repeat(250)}@example.com`, PASSWORD)).toBeNull();
+    const { token } = await createInvite("luz@example.com", "Luz");
+    await expect(acceptInvite(token, "x".repeat(201))).rejects.toThrow(/200 caracteres/);
+    await expect(createInvite(`${"a".repeat(250)}@example.com`, "X")).rejects.toThrow(/correo/i);
   });
 
   it("los fallos de un correo no bloquean a otra persona", async () => {

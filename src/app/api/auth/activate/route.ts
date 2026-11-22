@@ -1,4 +1,4 @@
-import { acceptInvite, login } from "@/server/auth";
+import { acceptInvite, InviteError, login } from "@/server/auth";
 import { badRequest, handle } from "@/server/http";
 import { sessionCookie } from "@/server/session-cookie";
 
@@ -14,7 +14,9 @@ export async function POST(request: Request) {
       try {
         user = await acceptInvite(body.token, body.password);
       } catch (error) {
-        return badRequest(error instanceof Error ? error.message : "No se pudo activar la cuenta.");
+        // Solo se enseñan los mensajes pensados para la persona; cualquier otro fallo sale como 500 genérico.
+        if (error instanceof InviteError) return badRequest(error.message);
+        throw error;
       }
       const session = await login(user.email, body.password);
       return Response.json(

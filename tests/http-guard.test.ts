@@ -1,8 +1,7 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { login, resetLoginAttempts } from "@/server/auth";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { authRequired, login, resetLoginAttempts } from "@/server/auth";
 import { HttpError, handle } from "@/server/http";
-import { makeUser } from "./helpers/fixtures";
-import { TEST_PASSWORD } from "./helpers/fixtures";
+import { makeUser, TEST_PASSWORD } from "./helpers/fixtures";
 import { truncateAll } from "./helpers/global-setup";
 
 const ok = async () => Response.json({ secreto: "costes de EisWerk" });
@@ -67,8 +66,20 @@ describe("protección de la API", () => {
     expect(response.status).toBe(401);
   });
 
-  it("un fallo interno sale como error 500 con mensaje, no como excepción", async () => {
+  it("PRINCIPAL_AUTH=off no desactiva el inicio de sesión en la nube", async () => {
+    process.env.PRINCIPAL_AUTH = "off";
+    process.env.PRINCIPAL_CLOUD = "1";
+    try {
+      expect(authRequired()).toBe(true);
+      expect((await handle(ok, { token: async () => undefined })).status).toBe(401);
+    } finally {
+      delete process.env.PRINCIPAL_CLOUD;
+    }
+  });
+
+  it("un fallo interno sale como 500 genérico, sin filtrar el detalle, y queda en el registro", async () => {
     const token = await sessionToken();
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
     const response = await handle(
       async () => {
         throw new Error("algo falló");
@@ -76,7 +87,9 @@ describe("protección de la API", () => {
       { token: async () => token },
     );
     expect(response.status).toBe(500);
-    expect(await response.json()).toEqual({ error: "algo falló" });
+    expect(await response.json()).toEqual({ error: "Ha ocurrido un error inesperado." });
+    expect(log).toHaveBeenCalled();
+    log.mockRestore();
   });
 
   it("una ruta solo para el dueño responde 403 a un colaborador y no ejecuta nada", async () => {

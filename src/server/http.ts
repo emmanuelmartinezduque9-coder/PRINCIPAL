@@ -53,8 +53,8 @@ export async function handle(
   } catch (error) {
     if (error instanceof HttpError) return Response.json({ error: error.message }, { status: error.status });
     console.error("[api]", error);
-    const message = error instanceof Error ? error.message : "Error inesperado";
-    return Response.json({ error: message }, { status: 500 });
+    // El detalle se queda en el registro del servidor: nunca se enseña a quien llama.
+    return Response.json({ error: "Ha ocurrido un error inesperado." }, { status: 500 });
   }
 }
 

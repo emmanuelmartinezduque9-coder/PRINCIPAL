@@ -3,6 +3,7 @@
 import { CircleAlert, Loader2 } from "lucide-react";
 import { Suspense, useState } from "react";
 import { useSearchParams } from "next/navigation";
+import { safeBackPath } from "@/lib/safe-redirect";
 import { AuthCard, AuthField } from "@/components/auth/auth-card";
 
 function LoginForm() {
@@ -27,8 +28,7 @@ function LoginForm() {
         return;
       }
       // Solo se vuelve a una dirección de esta misma aplicación.
-      const back = params.get("volver");
-      window.location.assign(back && back.startsWith("/") && !back.startsWith("//") ? back : "/");
+      window.location.assign(safeBackPath(params.get("volver"), window.location.origin));
     } catch {
       setError("No hay conexión con el servidor.");
     } finally {

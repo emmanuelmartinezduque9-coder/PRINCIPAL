@@ -12,6 +12,8 @@ export const SESSION_COOKIE = "pr_sesion";
 const SESSION_DAYS = 30;
 const INVITE_DAYS = 7;
 const MIN_PASSWORD = 10;
+const MAX_PASSWORD = 200;
+const MAX_EMAIL = 254;
 const MAX_FAILURES = 10;
 const LOCK_MS = 15 * 60 * 1000;
 const DAY = 24 * 60 * 60 * 1000;
@@ -27,6 +29,8 @@ export interface AuthUser {
 
 /** Sin inicio de sesión: solo cuando la aplicación corre en el propio ordenador. */
 export function authRequired(): boolean {
+  // En la nube el inicio de sesión no se puede desactivar, ni por error de configuración.
+  if (process.env.PRINCIPAL_CLOUD === "1") return true;
   return process.env.PRINCIPAL_AUTH !== "off";
 }
 
@@ -35,6 +39,9 @@ export const LOCAL_USER: AuthUser = { id: 0, email: "local", name: "Este ordenad
 const sha256 = (value: string) => crypto.createHash("sha256").update(value).digest("hex");
 const randomToken = () => crypto.randomBytes(32).toString("base64url");
 const normalizeEmail = (email: string) => email.trim().toLowerCase();
+
+/** Fallo del enlace de invitación con un mensaje pensado para mostrarse a la persona. */
+export class InviteError extends Error {}
 
 const userColumns = {
   id: schema.users.id,
@@ -81,29 +88,39 @@ export async function verifyPassword(password: string, stored: string): Promise<
 
 // ───────────────────────── Invitaciones ─────────────────────────
 
+/** Fila de invitación lista para insertar, con su enlace en claro (que no se guarda). */
+export function buildInvite(
+  email: string,
+  name: string,
+  options: { role?: Role; invitedBy?: number; now?: Date } = {},
+) {
+  const address = normalizeEmail(email);
+  if (address.length > MAX_EMAIL || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(address)) {
+    throw new Error("Escribe un correo válido.");
+  }
+  const now = options.now ?? new Date();
+  const token = randomToken();
+  const values = {
+    tokenHash: sha256(token),
+    email: address,
+    name: name.trim() || address,
+    role: options.role ?? "colaborador",
+    invitedBy: options.invitedBy ?? null,
+    createdAt: now,
+    expiresAt: new Date(now.getTime() + INVITE_DAYS * DAY),
+  };
+  return { token, values };
+}
+
 /** Crea un enlace de un solo uso para que la persona elija (o cambie) su contraseña. */
 export async function createInvite(
   email: string,
   name: string,
   options: { role?: Role; invitedBy?: number; now?: Date } = {},
 ): Promise<{ token: string; expiresAt: Date }> {
-  const address = normalizeEmail(email);
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(address)) throw new Error("Escribe un correo válido.");
-  const now = options.now ?? new Date();
-  const token = randomToken();
-  const expiresAt = new Date(now.getTime() + INVITE_DAYS * DAY);
-  await getDb()
-    .insert(schema.invites)
-    .values({
-      tokenHash: sha256(token),
-      email: address,
-      name: name.trim() || address,
-      role: options.role ?? "colaborador",
-      invitedBy: options.invitedBy ?? null,
-      createdAt: now,
-      expiresAt,
-    });
-  return { token, expiresAt };
+  const { token, values } = buildInvite(email, name, options);
+  await getDb().insert(schema.invites).values(values);
+  return { token, expiresAt: values.expiresAt };
 }
 
 /**
@@ -113,21 +130,32 @@ export async function createInvite(
 export async function acceptInvite(token: string, password: string, now: Date = new Date()): Promise<AuthUser> {
   const db = getDb();
   const [invite] = await db.select().from(schema.invites).where(eq(schema.invites.tokenHash, sha256(token)));
-  if (!invite || invite.usedAt) throw new Error("Este enlace no es válido o ya se ha usado.");
-  if (invite.expiresAt <= now) throw new Error("Este enlace ha caducado. Pide uno nuevo.");
+  if (!invite || invite.usedAt) throw new InviteError("Este enlace no es válido o ya se ha usado.");
+  if (invite.expiresAt <= now) throw new InviteError("Este enlace ha caducado. Pide uno nuevo.");
+  if (password.length > MAX_PASSWORD) {
+    throw new InviteError(`La contraseña no puede tener más de ${MAX_PASSWORD} caracteres.`);
+  }
   if (password.length < MIN_PASSWORD) {
-    throw new Error(`La contraseña debe tener al menos ${MIN_PASSWORD} caracteres.`);
+    throw new InviteError(`La contraseña debe tener al menos ${MIN_PASSWORD} caracteres.`);
   }
 
   const passwordHash = await hashPassword(password);
   return db.transaction(async (tx) => {
+    // Una cuenta desactivada no se reactiva con un enlace, y el enlace no se gasta.
+    const [existing] = await tx
+      .select({ disabledAt: schema.users.disabledAt })
+      .from(schema.users)
+      .where(eq(schema.users.email, invite.email));
+    if (existing?.disabledAt) {
+      throw new InviteError("Esta cuenta está desactivada. Habla con el dueño de la aplicación.");
+    }
     // Se marca como usado primero y de forma atómica: dos peticiones a la vez no lo usan dos veces.
     const claimed = await tx
       .update(schema.invites)
       .set({ usedAt: now })
       .where(and(eq(schema.invites.tokenHash, invite.tokenHash), isNull(schema.invites.usedAt)))
       .returning({ tokenHash: schema.invites.tokenHash });
-    if (claimed.length === 0) throw new Error("Este enlace no es válido o ya se ha usado.");
+    if (claimed.length === 0) throw new InviteError("Este enlace no es válido o ya se ha usado.");
 
     const [user] = await tx
       .insert(schema.users)
@@ -148,6 +176,9 @@ export function resetLoginAttempts(): void {
   failures.clear();
 }
 
+let dummy: Promise<string> | undefined;
+const dummyHash = () => (dummy ??= hashPassword(randomToken()));
+
 /** Inicia sesión. Devuelve null si el correo o la contraseña no valen, o si está bloqueado. */
 export async function login(
   email: string,
@@ -155,13 +186,19 @@ export async function login(
   now: Date = new Date(),
 ): Promise<{ token: string; user: AuthUser; expiresAt: Date } | null> {
   const address = normalizeEmail(email);
-  const state = failures.get(address);
-  if (state && state.lockedUntil > now.getTime()) return null;
+  if (address.length > MAX_EMAIL || password.length > MAX_PASSWORD) return null;
+  const locked = failures.get(address);
+  if (locked && locked.lockedUntil > now.getTime()) return null;
 
   const db = getDb();
   const [user] = await db.select().from(schema.users).where(and(eq(schema.users.email, address), isNull(schema.users.disabledAt)));
-  const valid = user ? await verifyPassword(password, user.passwordHash) : false;
+  // Aunque el correo no exista o la cuenta esté desactivada se hace el mismo trabajo, para que
+  // el tiempo de respuesta no delate qué correos tienen cuenta.
+  const valid = (await verifyPassword(password, user ? user.passwordHash : await dummyHash())) && !!user;
   if (!user || !valid) {
+    // Se lee el contador aquí, después de las esperas: varias peticiones a la vez no pueden
+    // partir del mismo valor antiguo y escribir todas 1.
+    const state = failures.get(address);
     const count = (state && state.lockedUntil <= now.getTime() && state.count >= MAX_FAILURES ? 0 : (state?.count ?? 0)) + 1;
     failures.set(address, { count, lockedUntil: count >= MAX_FAILURES ? now.getTime() + LOCK_MS : 0 });
     return null;
