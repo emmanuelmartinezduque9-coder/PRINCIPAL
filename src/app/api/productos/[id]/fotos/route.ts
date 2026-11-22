@@ -1,5 +1,5 @@
 import { badRequest, handle, HttpError } from "@/server/http";
-import { addProductPhoto, listProductPhotos, MAX_PHOTO_BYTES } from "@/server/photos";
+import { addProductPhoto, isPhotoRole, listProductPhotos, MAX_PHOTO_BYTES } from "@/server/photos";
 
 // Solo dígitos: "1e3" o "12abc" no se convierten en otro id válido.
 const parseId = (value: string) => (/^[1-9]\d{0,15}$/.test(value) ? Number(value) : Number.NaN);
@@ -12,7 +12,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
   });
 }
 
-/** Sube una foto (multipart, campo `foto`). Una foto por petición. */
+/** Sube una foto (multipart, campo `foto` y, opcional, `papel`). Una foto por petición. */
 export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
   return handle(async (user) => {
     const { id } = await params;
@@ -22,7 +22,9 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     const form = await request.formData().catch(() => null);
     const file = form?.get("foto");
     if (!(file instanceof File)) return badRequest("Elige una foto para subir.");
-    const photo = await addProductPhoto(user!, parseId(id), Buffer.from(await file.arrayBuffer()));
+    const papel = form?.get("papel") ?? undefined;
+    if (papel !== undefined && !isPhotoRole(papel)) return badRequest("Papel de foto no válido.");
+    const photo = await addProductPhoto(user!, parseId(id), Buffer.from(await file.arrayBuffer()), papel);
     return Response.json({ photo }, { status: 201 });
   });
 }

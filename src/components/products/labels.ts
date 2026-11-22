@@ -1,3 +1,4 @@
+import type { PhotoRole } from "@/lib/photo-roles";
 import type { Product } from "@/server/products";
 import type { Serialized } from "@/lib/api";
 
@@ -7,6 +8,22 @@ export const COUNTRY_LABELS: Record<string, string> = { DE: "Alemania", AT: "Aus
 
 export const languageLabel = (code: string) => LANGUAGE_LABELS[code] ?? code;
 export const countryLabels = (codes: string[]) => codes.map((code) => COUNTRY_LABELS[code] ?? code);
+
+/** Papel de cada foto del producto, y la pista de para qué sirve (se ve al pasar el ratón). */
+export const PHOTO_ROLE_LABELS: Record<PhotoRole, string> = {
+  articulo: "Artículo",
+  embalaje: "Embalaje",
+  avatar: "Avatar",
+  entorno: "Entorno",
+  otro: "Otra",
+};
+export const PHOTO_ROLE_HINTS: Record<PhotoRole, string> = {
+  articulo: "Artículo: el producto",
+  embalaje: "Embalaje: la caja o el envase",
+  avatar: "Avatar: la persona que saldrá en los vídeos",
+  entorno: "Entorno: el sitio o el estilo que quieres",
+  otro: "Otra",
+};
 
 /** Producto tal como llega por JSON, con la portada si tiene fotos. */
 export type ProductView = Serialized<Product> & { coverPhotoId?: number | null };

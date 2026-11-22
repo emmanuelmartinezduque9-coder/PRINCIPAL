@@ -1,16 +1,18 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ImagePlus, Loader2, Trash2, X } from "lucide-react";
+import { Gift, ImagePlus, Loader2, MapPin, Package, Shapes, Trash2, UserRound, X, type LucideIcon } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
 import { api, ApiError } from "@/lib/api";
+import { PHOTO_ROLES, type PhotoRole } from "@/lib/photo-roles";
 import { cn } from "@/lib/utils";
+import { PHOTO_ROLE_HINTS, PHOTO_ROLE_LABELS } from "./labels";
 
-export const MAX_PHOTOS = 6;
+export const MAX_PHOTOS = 12;
 const ACCEPTED_TYPES = ["image/jpeg", "image/png", "image/webp"];
 const ACCEPT = ACCEPTED_TYPES.join(",");
 
@@ -59,10 +61,62 @@ function useBlockStrayDrops() {
   }, []);
 }
 
+const ROLE_ICONS: Record<PhotoRole, LucideIcon> = {
+  articulo: Package,
+  embalaje: Gift,
+  avatar: UserRound,
+  entorno: MapPin,
+  otro: Shapes,
+};
+
+/** Una foto elegida y el papel que tendrá. */
+export interface PendingPhoto {
+  file: File;
+  role: PhotoRole;
+}
+
+/** Los cinco papeles como botones de icono; el activo se ve marcado. */
+function RoleSelector({
+  value,
+  onChange,
+  className,
+}: {
+  value: PhotoRole;
+  onChange: (role: PhotoRole) => void;
+  className?: string;
+}) {
+  return (
+    <div role="group" aria-label="Papel de la foto" className={cn("inline-flex gap-0.5 rounded-lg bg-background/90 p-0.5 shadow-sm", className)}>
+      {PHOTO_ROLES.map((role) => {
+        const Icon = ROLE_ICONS[role];
+        const on = role === value;
+        return (
+          <button
+            key={role}
+            type="button"
+            aria-pressed={on}
+            aria-label={PHOTO_ROLE_LABELS[role]}
+            title={PHOTO_ROLE_HINTS[role]}
+            data-role={role}
+            onClick={() => !on && onChange(role)}
+            className={cn(
+              "grid size-7 place-items-center rounded-md transition-colors outline-none focus-visible:ring-3 focus-visible:ring-ring/60",
+              on ? "bg-foreground text-background" : "text-muted-foreground hover:bg-muted hover:text-foreground",
+            )}
+          >
+            <Icon className="size-4" aria-hidden />
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 /** Sube una foto. El servidor decide si vale (formato, peso, cantidad) y explica el motivo. */
-export async function uploadPhoto(productId: number, file: File): Promise<void> {
+export async function uploadPhoto(productId: number, file: File, role: PhotoRole = "articulo"): Promise<void> {
   const body = new FormData();
   body.append("foto", file);
+  body.append("papel", role);
   let response: Response;
   try {
     response = await fetch(`/api/productos/${productId}/fotos`, { method: "POST", body });
@@ -81,11 +135,11 @@ export async function uploadPhoto(productId: number, file: File): Promise<void> 
 }
 
 /** Sube varias fotos una tras otra y avisa de cada una que no valga, con el nombre del archivo. */
-export async function uploadPhotos(productId: number, files: File[]): Promise<number> {
+export async function uploadPhotos(productId: number, photos: PendingPhoto[]): Promise<number> {
   let failed = 0;
-  for (const file of files) {
+  for (const { file, role } of photos) {
     try {
-      await uploadPhoto(productId, file);
+      await uploadPhoto(productId, file, role);
     } catch (error) {
       failed += 1;
       toast.error(`${file.name}: ${error instanceof Error ? error.message : "No se pudo subir."}`, { duration: 10_000 });
@@ -103,8 +157,13 @@ function PhotoDropzone({
   onFiles,
   busy,
   variant,
+  role,
+  onRole,
 }: {
   onFiles: (files: File[]) => void;
+  /** Papel con el que entran las fotos que se añadan. */
+  role: PhotoRole;
+  onRole: (role: PhotoRole) => void;
   busy?: boolean;
   variant: "tile" | "fill";
 }) {
@@ -118,7 +177,8 @@ function PhotoDropzone({
   }
 
   return (
-    <div className={cn(variant === "tile" ? "aspect-square" : "flex min-h-44 flex-1 flex-col")}>
+    <div className={cn("flex flex-col gap-2", variant === "tile" ? "aspect-square" : "min-h-44 flex-1")}>
+      <RoleSelector value={role} onChange={onRole} className="self-start border border-border shadow-none" />
       <input
         ref={input}
         type="file"
@@ -181,6 +241,8 @@ function Thumb({
   src,
   alt,
   cover,
+  role,
+  onRole,
   removeLabel,
   onRemove,
   icon,
@@ -189,6 +251,8 @@ function Thumb({
   src: string;
   alt: string;
   cover: boolean;
+  role: PhotoRole;
+  onRole: (role: PhotoRole) => void;
   removeLabel: string;
   onRemove: () => void;
   icon: React.ReactNode;
@@ -199,10 +263,11 @@ function Thumb({
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img src={src} alt={alt} className="absolute inset-0 size-full object-cover" />
       {cover ? (
-        <span className="absolute bottom-2 left-2 rounded-md bg-background/90 px-1.5 py-0.5 text-xs font-medium shadow-sm">
+        <span className="absolute top-2 left-2 rounded-md bg-background/90 px-1.5 py-0.5 text-xs font-medium shadow-sm">
           Portada
         </span>
       ) : null}
+      <RoleSelector value={role} onChange={onRole} className="absolute inset-x-2 bottom-2 justify-between" />
       <button
         type="button"
         aria-label={removeLabel}
@@ -226,27 +291,31 @@ const MANAGER_GRID = "grid grid-flow-dense grid-cols-2 gap-3 sm:grid-cols-3 lg:a
 const HERO = "col-span-full aspect-[4/3] lg:col-span-4 lg:row-span-3 lg:aspect-auto";
 
 /** Elegir fotos antes de que el producto exista: se ven en grande y se suben al guardar. */
-export function PhotoPicker({ files, onChange }: { files: File[]; onChange: (files: File[]) => void }) {
-  const previews = useMemo(() => files.map((file) => URL.createObjectURL(file)), [files]);
+export function PhotoPicker({ files, onChange }: { files: PendingPhoto[]; onChange: (files: PendingPhoto[]) => void }) {
+  const [newRole, setNewRole] = useState<PhotoRole>("articulo");
+  const previews = useMemo(() => files.map(({ file }) => URL.createObjectURL(file)), [files]);
   useEffect(() => () => previews.forEach((url) => URL.revokeObjectURL(url)), [previews]);
+  const coverIndex = Math.max(files.findIndex((f) => f.role === "articulo"), 0);
 
   function add(added: File[]) {
     const room = MAX_PHOTOS - files.length;
     if (added.length > room) toast.error(`Un producto admite hasta ${MAX_PHOTOS} fotos.`);
-    onChange([...files, ...added.slice(0, Math.max(room, 0))]);
+    onChange([...files, ...added.slice(0, Math.max(room, 0)).map((file) => ({ file, role: newRole }))]);
   }
 
   return (
     <div className="flex flex-1 flex-col gap-3">
       {files.length > 0 ? (
         <ul className={PICKER_GRID}>
-          {files.map((file, index) => (
+          {files.map(({ file, role }, index) => (
             <Thumb
               key={`${file.name}-${index}`}
               // Vista previa local (blob:), no una imagen del servidor.
               src={previews[index]}
               alt={file.name}
-              cover={index === 0}
+              cover={index === coverIndex}
+              role={role}
+              onRole={(next) => onChange(files.map((f, i) => (i === index ? { ...f, role: next } : f)))}
               removeLabel={`Quitar ${file.name}`}
               onRemove={() => onChange(files.filter((_, i) => i !== index))}
               icon={<X className="size-4" aria-hidden />}
@@ -254,7 +323,7 @@ export function PhotoPicker({ files, onChange }: { files: File[]; onChange: (fil
           ))}
         </ul>
       ) : null}
-      {files.length < MAX_PHOTOS ? <PhotoDropzone onFiles={add} variant="fill" /> : null}
+      {files.length < MAX_PHOTOS ? <PhotoDropzone onFiles={add} variant="fill" role={newRole} onRole={setNewRole} /> : null}
     </div>
   );
 }
@@ -263,12 +332,14 @@ interface PhotoInfo {
   id: number;
   mime: string;
   size: number;
+  role: PhotoRole;
 }
 
 /** Fotos de un producto ya creado: verlas, añadir más y borrar. Avisa del número de fotos. */
 export function PhotoManager({ productId, onCount }: { productId: number; onCount?: (count: number) => void }) {
   const client = useQueryClient();
   const [toDelete, setToDelete] = useState<PhotoInfo | null>(null);
+  const [newRole, setNewRole] = useState<PhotoRole>("articulo");
   const key = ["photos", productId];
   const photos = useQuery({
     queryKey: key,
@@ -280,8 +351,14 @@ export function PhotoManager({ productId, onCount }: { productId: number; onCoun
   };
 
   const upload = useMutation({
-    mutationFn: (files: File[]) => uploadPhotos(productId, files),
+    mutationFn: (files: File[]) => uploadPhotos(productId, files.map((file) => ({ file, role: newRole }))),
     onSettled: refresh,
+  });
+  const changeRole = useMutation({
+    mutationFn: ({ id, role }: { id: number; role: PhotoRole }) =>
+      api(`/api/fotos/${id}`, { method: "PATCH", body: JSON.stringify({ role }) }),
+    onSettled: refresh,
+    onError: (error) => toast.error(error instanceof Error ? error.message : "No se pudo cambiar el papel."),
   });
   const remove = useMutation({
     mutationFn: (id: number) => api(`/api/fotos/${id}`, { method: "DELETE" }),
@@ -298,6 +375,7 @@ export function PhotoManager({ productId, onCount }: { productId: number; onCoun
   }, [photos.data, list.length, onCount]);
   const room = list.length < MAX_PHOTOS;
   const empty = list.length === 0;
+  const coverId = (list.find((p) => p.role === "articulo") ?? list[0])?.id;
 
   return (
     <div className="flex flex-col gap-3">
@@ -318,7 +396,9 @@ export function PhotoManager({ productId, onCount }: { productId: number; onCoun
               key={photo.id}
               src={`/api/fotos/${photo.id}`}
               alt={`Foto ${index + 1} del producto`}
-              cover={index === 0}
+              cover={photo.id === coverId}
+              role={photo.role}
+              onRole={(role) => changeRole.mutate({ id: photo.id, role })}
               removeLabel={`Borrar la foto ${index + 1}`}
               onRemove={() => setToDelete(photo)}
               icon={<Trash2 className="size-4" aria-hidden />}
@@ -335,6 +415,8 @@ export function PhotoManager({ productId, onCount }: { productId: number; onCoun
                 }}
                 busy={upload.isPending}
                 variant={empty ? "fill" : "tile"}
+                role={newRole}
+                onRole={setNewRole}
               />
             </li>
           ) : null}

@@ -8,7 +8,10 @@ import {
   listProductPhotos,
   MAX_PHOTO_BYTES,
   MAX_PHOTOS_PER_PRODUCT,
+  importProductPhotos,
+  PHOTO_ROLES,
   readProductPhoto,
+  setPhotoRole,
 } from "@/server/photos";
 import type { Product } from "@/server/products";
 import { makeProduct, makeUser } from "./helpers/fixtures";
@@ -66,8 +69,8 @@ describe("fotos de producto", () => {
     const a = await addProductPhoto(ana, producto.id, PNG);
     const b = await addProductPhoto(ana, producto.id, WEBP);
     expect(await listProductPhotos(ana, producto.id)).toEqual([
-      { id: a.id, mime: "image/png", size: PNG.length },
-      { id: b.id, mime: "image/webp", size: WEBP.length },
+      { id: a.id, mime: "image/png", size: PNG.length, role: "articulo" },
+      { id: b.id, mime: "image/webp", size: WEBP.length, role: "articulo" },
     ]);
   });
 
@@ -129,19 +132,19 @@ describe("fotos de producto", () => {
     expect(await listProductPhotos(ana, producto.id)).toHaveLength(1);
   });
 
-  it("la séptima foto se rechaza", async () => {
-    expect(MAX_PHOTOS_PER_PRODUCT).toBe(6);
+  it("un producto admite 12 fotos y la 13.ª se rechaza", async () => {
+    expect(MAX_PHOTOS_PER_PRODUCT).toBe(12);
     for (let i = 0; i < MAX_PHOTOS_PER_PRODUCT; i++) await addProductPhoto(ana, producto.id, JPEG);
-    await expect(addProductPhoto(ana, producto.id, JPEG)).rejects.toThrow("Este producto ya tiene 6 fotos.");
-    expect(await listProductPhotos(ana, producto.id)).toHaveLength(6);
+    await expect(addProductPhoto(ana, producto.id, JPEG)).rejects.toThrow("Este producto ya tiene 12 fotos.");
+    expect(await listProductPhotos(ana, producto.id)).toHaveLength(12);
   });
 
   it("subidas simultáneas no superan el máximo", async () => {
     const results = await Promise.allSettled(
-      Array.from({ length: 9 }, () => addProductPhoto(ana, producto.id, JPEG)),
+      Array.from({ length: 15 }, () => addProductPhoto(ana, producto.id, JPEG)),
     );
-    expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(6);
-    expect(await listProductPhotos(ana, producto.id)).toHaveLength(6);
+    expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(12);
+    expect(await listProductPhotos(ana, producto.id)).toHaveLength(12);
   });
 
   it("la portada de cada producto es su primera foto, y solo de productos visibles", async () => {
@@ -154,5 +157,62 @@ describe("fotos de producto", () => {
     expect(covers.get(producto.id)).toBe(primera.id);
     expect(covers.has(otro.id)).toBe(false);
     expect(covers.has(sinFotos.id)).toBe(false);
+  });
+
+  it("una foto nueva es «artículo» si no se dice otra cosa, y se puede subir ya con su papel", async () => {
+    expect(PHOTO_ROLES).toEqual(["articulo", "embalaje", "avatar", "entorno", "otro"]);
+    expect((await addProductPhoto(ana, producto.id, JPEG)).role).toBe("articulo");
+    expect((await addProductPhoto(ana, producto.id, JPEG, "avatar")).role).toBe("avatar");
+  });
+
+  it("un papel desconocido se rechaza y no se guarda nada", async () => {
+    await expect(addProductPhoto(ana, producto.id, JPEG, "selfie" as never)).rejects.toMatchObject({
+      status: 400,
+      message: "Papel de foto no válido.",
+    });
+    expect(await listProductPhotos(ana, producto.id)).toHaveLength(0);
+  });
+
+  it("cambiar el papel se guarda y se ve al listar", async () => {
+    const { id } = await addProductPhoto(ana, producto.id, JPEG);
+    expect(await setPhotoRole(ana, id, "embalaje")).toMatchObject({ id, role: "embalaje" });
+    expect((await listProductPhotos(ana, producto.id))[0].role).toBe("embalaje");
+    await expect(setPhotoRole(ana, id, "selfie" as never)).rejects.toMatchObject({
+      status: 400,
+      message: "Papel de foto no válido.",
+    });
+    expect((await listProductPhotos(ana, producto.id))[0].role).toBe("embalaje");
+  });
+
+  it("cambiar el papel de la foto de un producto ajeno da el mismo 404 que si no existiera", async () => {
+    const { id } = await addProductPhoto(ana, producto.id, JPEG);
+    await expect(setPhotoRole(luis, id, "avatar")).rejects.toMatchObject({ status: 404, message: "Foto no encontrada." });
+    await expect(setPhotoRole(ana, id + 999, "avatar")).rejects.toMatchObject({ status: 404, message: "Foto no encontrada." });
+    expect((await listProductPhotos(ana, producto.id))[0].role).toBe("articulo");
+    expect((await setPhotoRole(dueno, id, "entorno")).role).toBe("entorno");
+  });
+
+  it("la portada es la primera foto de artículo, no el avatar; sin artículo, la primera foto", async () => {
+    await addProductPhoto(ana, producto.id, JPEG, "avatar");
+    const articulo = await addProductPhoto(ana, producto.id, PNG, "articulo");
+    await addProductPhoto(ana, producto.id, WEBP, "articulo");
+    expect((await coverPhotoIds(ana, [producto.id])).get(producto.id)).toBe(articulo.id);
+
+    const otro = await makeProduct(ana);
+    const primera = await addProductPhoto(ana, otro.id, JPEG, "entorno");
+    await addProductPhoto(ana, otro.id, PNG, "otro");
+    expect((await coverPhotoIds(ana, [otro.id])).get(otro.id)).toBe(primera.id);
+  });
+
+  it("la importación en bloque es solo del dueño, con papel validado y con las mismas reglas de foto", async () => {
+    const saved = await importProductPhotos(dueno, producto.id, [
+      { bytes: JPEG, role: "articulo" },
+      { bytes: PNG, role: "avatar" },
+    ]);
+    expect(saved.map((p) => p.role)).toEqual(["articulo", "avatar"]);
+    await expect(importProductPhotos(ana, producto.id, [{ bytes: JPEG, role: "otro" }])).rejects.toMatchObject({ status: 403 });
+    await expect(importProductPhotos(dueno, producto.id, [{ bytes: HEIC, role: "otro" }])).rejects.toMatchObject({ status: 400 });
+    await expect(importProductPhotos(dueno, producto.id, [{ bytes: JPEG, role: "x" as never }])).rejects.toMatchObject({ status: 400 });
+    expect(await listProductPhotos(dueno, producto.id)).toHaveLength(2);
   });
 });

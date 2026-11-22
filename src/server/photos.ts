@@ -1,5 +1,6 @@
-import { and, asc, eq, inArray, min, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { getDb, schema } from "@/db/client";
+import { isPhotoRole, PHOTO_ROLES, type PhotoRole } from "@/lib/photo-roles";
 import type { AuthUser } from "@/server/auth";
 import { HttpError } from "@/server/http";
 import { getProductFor, listProductsFor } from "@/server/products";
@@ -11,13 +12,22 @@ import { getProductFor, listProductsFor } from "@/server/products";
  */
 
 export const MAX_PHOTO_BYTES = 8 * 1024 * 1024;
-export const MAX_PHOTOS_PER_PRODUCT = 6;
+export const MAX_PHOTOS_PER_PRODUCT = 12;
+
+// Los papeles viven en un módulo sin base de datos para poder usarlos también en las pantallas.
+export { PHOTO_ROLES, isPhotoRole, type PhotoRole };
+
+function checkRole(value: unknown): PhotoRole {
+  if (!isPhotoRole(value)) throw new HttpError(400, "Papel de foto no válido.");
+  return value;
+}
 
 export type PhotoMime = "image/jpeg" | "image/png" | "image/webp";
 export interface PhotoInfo {
   id: number;
   mime: string;
   size: number;
+  role: PhotoRole;
 }
 
 const NOT_FOUND = "Foto no encontrada.";
@@ -34,9 +44,29 @@ export function detectImageType(bytes: Buffer): PhotoMime | null {
   return null;
 }
 
-/** Guarda una foto del producto. Rechaza vacías, pesadas, de formato no admitido y la séptima. */
-export async function addProductPhoto(user: AuthUser, productId: number, bytes: Buffer): Promise<PhotoInfo> {
+const INFO_COLUMNS = {
+  id: schema.productPhotos.id,
+  mime: schema.productPhotos.mime,
+  size: schema.productPhotos.size,
+  role: schema.productPhotos.role,
+};
+const toInfo = (row: { id: number; mime: string; size: number; role: string }): PhotoInfo => ({
+  ...row,
+  role: isPhotoRole(row.role) ? row.role : "otro",
+});
+
+/**
+ * Guarda una foto del producto, por defecto como «artículo». Rechaza papel desconocido, vacías,
+ * pesadas, de formato no admitido y la que pase del máximo.
+ */
+export async function addProductPhoto(
+  user: AuthUser,
+  productId: number,
+  bytes: Buffer,
+  role: PhotoRole = "articulo",
+): Promise<PhotoInfo> {
   const product = await getProductFor(user, productId);
+  checkRole(role);
   if (bytes.length === 0) throw new HttpError(400, "La foto está vacía.");
   if (bytes.length > MAX_PHOTO_BYTES) throw new HttpError(400, "La foto pesa demasiado (máximo 8 MB).");
   const mime = detectImageType(bytes);
@@ -59,20 +89,38 @@ export async function addProductPhoto(user: AuthUser, productId: number, bytes: 
     }
     const [row] = await tx
       .insert(schema.productPhotos)
-      .values({ productId: product.id, mime, size: bytes.length, data: bytes, createdBy: user.id })
-      .returning({ id: schema.productPhotos.id, mime: schema.productPhotos.mime, size: schema.productPhotos.size });
-    return row;
+      .values({ productId: product.id, mime, size: bytes.length, data: bytes, role, createdBy: user.id })
+      .returning(INFO_COLUMNS);
+    return toInfo(row);
   });
+}
+
+/**
+ * Carga en bloque de fotos ya clasificadas (para el importador del sistema antiguo). Solo el
+ * dueño; cada foto pasa por las mismas reglas que una subida normal. Los papeles se validan
+ * todos antes de guardar nada.
+ */
+export async function importProductPhotos(
+  owner: AuthUser,
+  productId: number,
+  photos: { bytes: Buffer; role: PhotoRole }[],
+): Promise<PhotoInfo[]> {
+  if (owner.role !== "dueno") throw new HttpError(403, "Solo el dueño puede importar fotos.");
+  photos.forEach((photo) => checkRole(photo.role));
+  const saved: PhotoInfo[] = [];
+  for (const photo of photos) saved.push(await addProductPhoto(owner, productId, photo.bytes, photo.role));
+  return saved;
 }
 
 /** Fotos del producto, en orden de subida (la primera es la portada). Sin los datos de la imagen. */
 export async function listProductPhotos(user: AuthUser, productId: number): Promise<PhotoInfo[]> {
   const product = await getProductFor(user, productId);
-  return getDb()
-    .select({ id: schema.productPhotos.id, mime: schema.productPhotos.mime, size: schema.productPhotos.size })
+  const rows = await getDb()
+    .select(INFO_COLUMNS)
     .from(schema.productPhotos)
     .where(eq(schema.productPhotos.productId, product.id))
     .orderBy(asc(schema.productPhotos.id));
+  return rows.map(toInfo);
 }
 
 /** Producto al que pertenece una foto, ya comprobado para `user`; 404 si la foto no existe o no es visible. */
@@ -104,6 +152,19 @@ export async function readProductPhoto(user: AuthUser, photoId: number): Promise
   return { mime: row.mime, data: Buffer.from(row.data) };
 }
 
+/** Cambia el papel de una foto, si el producto es visible para `user`. */
+export async function setPhotoRole(user: AuthUser, photoId: number, role: PhotoRole): Promise<PhotoInfo> {
+  const photo = await ownedPhoto(user, photoId);
+  checkRole(role);
+  const [row] = await getDb()
+    .update(schema.productPhotos)
+    .set({ role })
+    .where(eq(schema.productPhotos.id, photo.id))
+    .returning(INFO_COLUMNS);
+  if (!row) throw new HttpError(404, NOT_FOUND);
+  return toInfo(row);
+}
+
 /** Borra una foto, si el producto es visible para `user`. */
 export async function deleteProductPhoto(user: AuthUser, photoId: number): Promise<void> {
   const photo = await ownedPhoto(user, photoId);
@@ -113,7 +174,7 @@ export async function deleteProductPhoto(user: AuthUser, photoId: number): Promi
 }
 
 /**
- * Portada (primera foto) de cada producto, solo para los productos que `user` puede ver.
+ * Portada de cada producto: su primera foto de artículo o, si no tiene, la primera de todas. Solo para los productos que `user` puede ver.
  * Los productos sin fotos, o que no son suyos, no aparecen en el resultado.
  */
 export async function coverPhotoIds(user: AuthUser, productIds: number[]): Promise<Map<number, number>> {
@@ -121,7 +182,10 @@ export async function coverPhotoIds(user: AuthUser, productIds: number[]): Promi
   const ids = [...new Set(productIds)].filter((id) => visible.has(id));
   if (ids.length === 0) return new Map();
   const rows = await getDb()
-    .select({ productId: schema.productPhotos.productId, id: min(schema.productPhotos.id) })
+    .select({
+      productId: schema.productPhotos.productId,
+      id: sql<number | null>`coalesce(min(${schema.productPhotos.id}) filter (where ${schema.productPhotos.role} = 'articulo'), min(${schema.productPhotos.id}))`,
+    })
     .from(schema.productPhotos)
     .where(inArray(schema.productPhotos.productId, ids))
     .groupBy(schema.productPhotos.productId);

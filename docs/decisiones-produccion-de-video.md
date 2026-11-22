@@ -158,3 +158,12 @@ Reformulado (antes → después):
 - **Sin ffmpeg el arranque no falla.** `scripts/cloud.ts` escribe `[nube] Aviso: falta ffmpeg: no se podrán procesar vídeos de referencia.` y sigue.
 - **ffmpeg en Railway: por verificar.** `railpack.json` solo lleva paquetes del sistema; `railway.json` conserva los ajustes de publicación. Si tras el despliegue sale el aviso, se usa `RAILPACK_DEPLOY_APT_PACKAGES=ffmpeg` o, con Nixpacks, `NIXPACKS_APT_PKGS=ffmpeg` (ver `docs/despliegue-railway.md`).
 - **CI.** El flujo `pruebas.yml` instala ffmpeg antes de las pruebas, que usan ffmpeg real.
+
+## Papeles de las fotos (tarea 2)
+
+- **Cinco papeles**: `articulo`, `embalaje`, `avatar`, `entorno`, `otro`, en `src/lib/photo-roles.ts` (sin base de datos, para que las pantallas los usen) y reexportados por `src/server/photos.ts`. Columna `product_photos.role text not null default 'articulo'`: las fotos que ya existían quedan como artículo (el encargo lo fija así; la alternativa `otro` se descartó). El servidor valida el valor (400 «Papel de foto no válido.»); no hay restricción en la base.
+- **Portada** = la primera foto de artículo; si no hay ninguna, la primera de todas (`coalesce(min(id) filter (role = 'articulo'), min(id))`). La pantalla aplica la misma regla.
+- **Límite 12 fotos** por producto (antes 6), con el mismo cerrojo de aviso por producto.
+- **API**: `POST …/fotos` acepta el campo `papel` (opcional, por defecto artículo); `PATCH /api/fotos/[photoId]` recibe `{ role }`. Una foto de un producto ajeno da `404 Foto no encontrada.` también al cambiar el papel; el papel mal escrito da 400 sin mirar la foto (no revela nada).
+- **Importador**: `importProductPhotos(owner, productId, [{ bytes, role }])` en `photos.ts`. Solo el dueño (403 si no); valida todos los papeles antes de guardar y cada foto pasa por las mismas reglas que una subida normal (formato por contenido, 8 MB, máximo por producto). Sin transacción global: una foto inválida a mitad deja guardadas las anteriores; el importador debe ser reanudable.
+- **Pantalla**: cada miniatura lleva un selector de cinco iconos (artículo, regalo para embalaje, persona para avatar, pin para entorno, formas para otra); el activo se ve invertido y la pista de cada uno sale al pasar el ratón. Antes de subir se elige el papel con el mismo selector sobre la zona de arrastre. Por el principio de la interfaz del dueño (poco texto) **no se añadió el párrafo de ayuda** del plan: las pistas van en los `title` de los iconos.

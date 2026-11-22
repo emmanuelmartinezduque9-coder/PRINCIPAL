@@ -110,6 +110,8 @@ export const productPhotos = pgTable(
     mime: text("mime").notNull(),
     size: integer("size").notNull(),
     data: bytea("data").notNull(),
+    /** Papel de la foto (`PHOTO_ROLES` en `src/server/photos.ts`); el servidor valida el valor. */
+    role: text("role").notNull().default("articulo"),
     /** Sin clave ajena, igual que `products.created_by`: el dueño local (id 0) no tiene fila en `users`. */
     createdBy: bigint("created_by", { mode: "number" }).notNull(),
     createdAt: instant("created_at").notNull().defaultNow(),

@@ -12,14 +12,14 @@ import { Panel } from "@/components/shell/panel";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import type { ProductView } from "./labels";
-import { PhotoCount, PhotoPicker, uploadPhotos } from "./photo-uploader";
+import { PhotoCount, PhotoPicker, uploadPhotos, type PendingPhoto } from "./photo-uploader";
 import { ProductFields, type ProductValues } from "./product-fields";
 
 export function ProductForm() {
   const router = useRouter();
   const client = useQueryClient();
   const [values, setValues] = useState<ProductValues>({ name: "", summary: "", language: "de", countries: ["DE", "AT", "CH"] });
-  const [files, setFiles] = useState<File[]>([]);
+  const [files, setFiles] = useState<PendingPhoto[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
