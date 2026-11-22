@@ -1,0 +1,6 @@
+interface:
+  display_name: "Adaptación de conceptos"
+  short_description: "Traslada conceptos virales al producto elegido"
+  default_prompt: "Usa $adaptacion-de-conceptos para adaptar este vídeo al producto elegido, conservando su lógica visual y mostrando su funcionamiento real."
+policy:
+  allow_implicit_invocation: true

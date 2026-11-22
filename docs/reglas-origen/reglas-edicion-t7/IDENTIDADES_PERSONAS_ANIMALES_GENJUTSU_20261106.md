@@ -1,0 +1,12 @@
+# Personas y animales: identidad nueva y referencias en vídeo — 06/11/2026
+
+Orden expresa de Emmanuel. Aplicar a todas las cuentas y a nuevas preparaciones de vídeos, sin interrumpir el chat principal ni modificar trabajos ya enviados, aprobados o en curso por esta actualización.
+
+- En réplicas, sustituir las personas de la fuente por personas distintas de la biblioteca activa, respetando papel, edad aparente adecuada, acción e instrucciones expresas. Cambiar también el vestuario con lógica de nicho y entorno. Mantener la identidad elegida entre tomas; no cambiar de persona arbitrariamente dentro del vídeo.
+- Si hay un perro real en escena, elegir otro perro de raza distinta. Si hay un gato real, elegir otro gato de raza y color distintos. Mantener la especie: perro sigue siendo perro y gato sigue siendo gato. Cambiar de especie solo cuando Emmanuel lo indique. Para otros animales, elegir un ejemplar visualmente distinto y coherente con la acción.
+- Esta variación afecta a los sujetos de escena, no al artículo vendido: no alterar perros/gatos impresos, figuras, charms, cajas ni variantes exactas aprobadas del producto. No añadir sujetos a tomas que no los necesitan.
+- Utilizar la biblioteca activa y las herramientas de Pinterest ya configuradas para localizar referencias reales cuando hagan falta. No guardar claves en reglas ni informes. Elegir fotos orgánicas, coherentes con el mercado y la toma, según la skill fondos-pinterest-por-toma; observarlas y conservar fuente, archivo y hash.
+- En Genjutsu, adjuntar las referencias individuales de las personas y animales elegidos TANTO al generar el frame COMO a la solicitud de generación del vídeo, además del frame aprobado. El cambio visible en el frame no sustituye estos adjuntos de identidad del vídeo.
+- Antes de enviar, verificar que el payload real contiene los adjuntos correctos de identidad, con orden, papel, ID y hash, y que el prompt los vincula a cada sujeto en todas sus apariciones. Respetar esquema y límites reales del modelo; no inventar parámetros ni omitir silenciosamente referencias.
+- Revisar continuidad de identidad, raza, color, vestuario, escala y acción en todas las tomas del resultado. Adjuntar referencias mejora el control, pero no garantiza por sí solo la fidelidad.
+- No reiniciar, regenerar ni reenviar trabajos existentes por guardar esta regla. El chat principal debe leerla en su siguiente preparación; no enviarle mensajes ni interrumpirlo ahora. Esta documentación no acredita despliegue de controles automáticos en el motor.

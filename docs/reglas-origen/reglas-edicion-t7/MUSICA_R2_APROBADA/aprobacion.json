@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "approved_by": "Emmanuel",
+  "date": "2026-10-25",
+  "authority": "Exactamente eso era lo que necesitaba. Guarda esto bien. Ese es el tipo de edición que necesito cuando hay música.",
+  "scope": "V7 Nailuna R2 synchronization and music mix; reference for future music edits",
+  "output": "/Volumes/T7/AUTOMATIZACION SEGA/AnalisisLote63/v7-drop-biblioteca4-r2/Nailuna-V7-Telefono-Rojo-r2.mp4",
+  "output_sha256": "eb28c4d16b18edd25636defd7c5e7542d4a4bcce6bbb0f23d989e19018695d6a",
+  "recipe": "/Volumes/T7/AUTOMATIZACION SEGA/AnalisisLote63/v7-drop-biblioteca4-r2/render.py",
+  "recipe_sha256": "b9c5366954dbce73a2cb0ba5328a7f5ad5dab60e021700ea5586513374eafbbc",
+  "song_number": 4,
+  "song_sha256": "666e0d7e5afe6456189c46c7359587ea2adb6a25ee47a4aef1cb9c5312e34660",
+  "drop_seconds": 10.95,
+  "body_frame": 86,
+  "fps": 24,
+  "offset": 7.366666666666665,
+  "independent_review_claimed": false,
+  "ambient_preservation_verified": false
+}

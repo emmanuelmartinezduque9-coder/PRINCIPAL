@@ -1,0 +1,4 @@
+interface:
+  display_name: "Split testing de vídeos"
+  short_description: "Variaciones controladas de vídeos orgánicos ganadores"
+  default_prompt: "Usa $split-testing-videos junto con textos ganadores para preparar las variantes diarias de mis cuentas."

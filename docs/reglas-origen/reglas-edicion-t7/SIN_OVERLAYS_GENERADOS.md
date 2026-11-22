@@ -1,0 +1,3 @@
+# Frames y clips limpios — 30/10/2026
+Orden de Emmanuel tras WichtelWitz.
+Los frames y clips nuevos no deben incluir captions, subtítulos, emojis ni interfaz copiados de la referencia. Conservar textos físicos de embalajes y señales. Revisar el prompt final y el resultado real antes de editar. Los textos editoriales se añaden después como capas separadas con fondo transparente. Prohibido cubrir texto incrustado con paneles negros, rectángulos opacos o parches sin petición expresa. Si el generado conserva texto, registrar el defecto y resolverlo sin ocultarlo ni declarar el final verificado. Esta regla no autoriza gasto de regeneraciones históricas ni acredita un control automático desplegado.

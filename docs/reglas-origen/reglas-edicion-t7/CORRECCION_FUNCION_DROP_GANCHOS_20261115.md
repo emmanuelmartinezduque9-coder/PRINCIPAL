@@ -1,0 +1,19 @@
+# Orden expresa de Emmanuel — 15/11/2026
+
+Prevalece sobre defaults anteriores contradictorios. Antes de corregir medios, recuperar recetas y duraciones aprobadas; no atribuir fallos al traslado al SSD sin evidencia.
+
+- Gancho final máximo 3 segundos, excepto el concepto hablado «1, 2, 3». Conservar la duración aprobada del concepto si es menor. El mínimo técnico del proveedor no es la duración del montaje: retirar padding. No acelerar artificialmente ni cortar una acción incomprensible para aparentar cumplimiento; generar la acción breve completa.
+- La canción se adapta al corte visual. Inicio del fragmento musical = segundo del drop guardado menos segundo real de entrada del cuerpo. Ejemplo: drop 11,61 s y gancho 2,5 s → comenzar archivo musical en 9,11 s. Nunca alargar el gancho para empezar la canción en cero. Música continua desde el primer fotograma, sin cortes internos; política R2 de nivel constante.
+  El acento debe caer en la demostración real del producto funcionando. Si el cuerpo conserva pasos de preparación/despliegue antes del funcionamiento, marcar ese fotograma operativo y ajustar el offset a él; no confundir inicio del archivo de cuerpo con funcionamiento ni alargar el gancho. Conservar el orden y las acciones autorizadas.
+- Canción explícita de tarjeta prevalece también en réplica Genjutsu completa. Conservar audio original solo cuando no hay canción explícita, salvo instrucción posterior. Retirar música original al sustituirla, conservar habla pertinente y verificar mezcla. No reescribir snapshots históricos; documentar correcciones autorizadas y conservar originales.
+- Adaptar textos y emojis al producto, público y nicho destino, no copiar mecánicamente emojis de la fuente. ZauberSchirm: Harry Potter/magia, p. ej. 🪄⚡🦉; ☂️ si ayuda al producto. Mantener marca y alemán natural.
+- Antes de escribir cada demostración, consultar la función real del producto y sus referencias. La revisión final debe comprobar esa función en el vídeo, no solo presencia/forma del objeto.
+- RadBlink: direccional de bicicleta con señal luminosa y proyección de dirección en el suelo. Los cuerpos deben mostrar señal activada, proyección legible en el pavimento, y giro correspondiente de la bicicleta; entorno al atardecer/noche para visibilidad. Mostrar objeto apagado o circular recto no demuestra su función. No inventar geometría/color de proyección: usar referencia real del producto.
+
+Correcciones encargadas: lote app-2bab6ff1ded34ec18e65335512914d8c-52, V3 ZauberSchirm canción 48; V4 ZauberSchirm canción 47; ambos con emojis de Harry Potter. V5 RadBlink regenerar cuerpos mostrando funcionamiento. Test ZauberSchirm concepto regalo: regenerar gancho completo en máximo 3 s. Lote nuevo app-63a7c753a6f44022b7651b6f713fb348-37 en espera.
+
+Evidencia recuperada: REGLAS_EDICION/MUSICA_R2_APROBADA/REGLA.md y aprobacion.json (25/10/2026), Nailuna V7 R2 lote63: drop 10,95, cuerpo 86/24 s, offset 7,3666666667. La regla de recortar música ya existía; no acredita que todas las ejecuciones la aplicaran. El límite nuevo de 3 s prevalece sobre esa duración histórica.
+
+
+## Aclaración posterior de Emmanuel — 15/11/2026: límites por concepto
+No hay límite general de tres segundos. Solo el gancho regalo pop y el gancho de dejar caer café tienen máximo3s; el gancho 1,2,3 tiene máximo6s. Conservar duraciones aprobadas menores. Límites exclusivos del gancho identificado, nunca del cuerpo. Réplicas de contenido conservan secuencia, acciones, visuales, tiempos, cortes y ritmo de la referencia efectiva; no recortar ni acelerar partes para cumplir un límite general. Ajustar el fragmento de la canción al vídeo, sin prolongarlo. Canciones expresas y emojis del nicho siguen vigentes. Esta precisión sustituye la formulación general anterior, no reescribe snapshots ni modifica el regalo pop aprobado.

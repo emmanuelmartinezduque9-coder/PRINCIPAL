@@ -1,0 +1,68 @@
+{
+  "version": "20261025-fixed-test-hooks-v1",
+  "owner": "emmanuel",
+  "slots": {
+    "2": "countdown",
+    "3": "coffee",
+    "4": "gift_delivery"
+  },
+  "references": [
+    {
+      "concept": "countdown",
+      "path": "/Volumes/T7/AUTOMATIZACION SEGA/REGLAS_EDICION/REFERENCIAS_TEST_4/countdown.png",
+      "sha256": "af51bb84d9f739674727394a20eab5527d2208ca38d570131c57e4338201cea9",
+      "role": "fixed_composition_reference",
+      "exclude": [
+        "source_identity",
+        "overlays",
+        "source_brand",
+        "source_merchandise"
+      ],
+      "adapt": [
+        "product",
+        "packaging_if_visible",
+        "active_avatar",
+        "coherent_setting",
+        "lighting"
+      ]
+    },
+    {
+      "concept": "coffee",
+      "path": "/Volumes/T7/AUTOMATIZACION SEGA/REGLAS_EDICION/REFERENCIAS_TEST_4/coffee.png",
+      "sha256": "1d437374afac5c9508787419c52d0efff9f720398053ed999c894a470b227466",
+      "role": "fixed_composition_reference",
+      "exclude": [
+        "source_identity",
+        "overlays",
+        "source_brand",
+        "source_merchandise"
+      ],
+      "adapt": [
+        "product",
+        "packaging_if_visible",
+        "active_avatar",
+        "coherent_setting",
+        "lighting"
+      ]
+    },
+    {
+      "concept": "gift_delivery",
+      "path": "/Volumes/T7/AUTOMATIZACION SEGA/REGLAS_EDICION/REFERENCIAS_TEST_4/gift_delivery.png",
+      "sha256": "0854063b5a1a76a8cc0d327d6095827914ea739acc6ed84ee383293df95ec656",
+      "role": "fixed_composition_reference",
+      "exclude": [
+        "source_identity",
+        "overlays",
+        "source_brand",
+        "source_merchandise"
+      ],
+      "adapt": [
+        "product",
+        "packaging_if_visible",
+        "active_avatar",
+        "coherent_setting",
+        "lighting"
+      ]
+    }
+  ]
+}

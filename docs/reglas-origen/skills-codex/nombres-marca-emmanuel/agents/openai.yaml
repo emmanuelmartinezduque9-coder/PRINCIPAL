@@ -1,0 +1,6 @@
+interface:
+  display_name: "Nombres de marca · Emmanuel"
+  short_description: "Elige marcas según las preferencias de Emmanuel"
+  default_prompt: "Usa $nombres-marca-emmanuel para elegir el nombre del nuevo producto a partir de su cuenta competidora y mercado."
+policy:
+  allow_implicit_invocation: true

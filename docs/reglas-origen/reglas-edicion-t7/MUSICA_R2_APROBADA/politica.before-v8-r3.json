@@ -1,0 +1,17 @@
+{
+  "id": "music-continuous-r2-emmanuel-20261025",
+  "selected_song": "exact_file_sha256",
+  "drop_target": "first_real_body_frame_excluding_previous_hook",
+  "song_placement": "align_saved_drop_then_trim_only_outer_edges",
+  "start_at_video_frame": 0,
+  "internal_song_splices": false,
+  "music_denoising": false,
+  "music_separation": false,
+  "automatic_hook_ducking": false,
+  "music_gain": "constant_whole_video",
+  "constant_master_gain_for_peak_safety": true,
+  "original_clip_audio": "remove_original_music_preserve_voice_and_ambient_where_separable",
+  "no_fabricated_ambient_preservation": true,
+  "explicit_future_override_allowed": true,
+  "historical_orders_rewritten": false
+}

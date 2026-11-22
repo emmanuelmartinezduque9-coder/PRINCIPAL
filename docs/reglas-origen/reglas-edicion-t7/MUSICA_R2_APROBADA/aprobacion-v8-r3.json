@@ -1,0 +1,8 @@
+{
+  "reference": "V8 R3 lote63",
+  "output": "/Volumes/T7/AUTOMATIZACION SEGA/AnalisisLote63/v8-drop-r3/Nailuna-V8-drop-corregido.mp4",
+  "sha256": "95f791f06731472a3e22d331c257412808e768355df69310ea8f050cbbdcb3a0",
+  "approval": "Exactamente, exactamente eso es lo que yo pido cuando hagas las ediciones",
+  "scope": "Eliminación de música original y sincronización. Si hay voz debe conservarse; V8 R3 sin audio original no autoriza borrar voces por defecto.",
+  "rule": "Solo canción elegida, continua desde primer frame; drop guardado alineado con primer frame real del cuerpo; conservar voces sin música residual."
+}

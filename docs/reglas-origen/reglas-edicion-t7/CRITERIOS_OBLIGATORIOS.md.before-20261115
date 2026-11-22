@@ -1,0 +1,79 @@
+# Criterios obligatorios de edición — Emmanuel
+
+Orden consolidada: 24/10/2026. Documento principal en SSD; no migra la instalación ni acredita despliegue automático de todos los ejecutores.
+
+## Prioridades y lectura antes de editar
+
+1. Instrucción humana más reciente y notas específicas del vídeo prevalecen sobre defaults.
+2. Leer el encargo original, selección de edición, canción y referencia por posición. No modificar el encargo inmutable.
+3. Si edición está seleccionada y el enlace de edición está vacío, usar el vídeo de referencia original. Vacío NO significa sin edición. Un enlace de edición específico sustituye esa referencia.
+4. Leer completamente la skill `variaciones-textos-ganadores` y sus referencias pertinentes antes de adaptar textos, marcas, tiendas o emojis. Leer también las reglas de cortes, música/voz y texto 06B del proyecto.
+5. Registrar archivos de reglas y hashes realmente leídos. Tener notas en Obsidian no demuestra que un ejecutor las haya consultado.
+
+## Texto, tiendas y emojis
+
+- Preservar la tienda expresamente indicada por Emmanuel en el lote o en el chat. No sustituirla por la marca del producto ni por una tienda predeterminada.
+- Si la tienda de referencia no corresponde al mercado y no hay elección explícita, preguntar cuál utilizar en el único bloque inicial de dudas. No escoger automáticamente Lidl, MediaMarkt u otra. No inventar disponibilidad comercial del producto.
+- Adaptar marca y denominación al producto real, conservando significado, intención y tono; alemán natural para Alemania. No añadir beneficios, ofertas o CTA inexistentes.
+- Adaptar emojis incompatibles con el producto: un emoji de uñas no corresponde automáticamente a un producto capilar. Elegir un equivalente coherente con la acción/producto; conservar los emojis emocionales compatibles. No imponer un mismo emoji de pelo en todos los casos.
+- Guardar texto y emojis originales, adaptación, motivo y traducción española de revisión. La traducción española no se imprime en el vídeo alemán.
+- V6 HaarZauber, lote60: instrucción explícita actual, **Sephora arriba y HaarZauber debajo**; adaptar el emoji de uñas al contexto capilar. Esta nota no certifica que el MP4 ya esté corregido.
+- V2 EisWerk, lote60: Emmanuel eligió expresamente Lidl el 24/10/2026. Sustituir Costco por Lidl en esa edición; no generalizar esta elección a otros vídeos.
+- Estilo por defecto 06B: TikTokDisplay-Medium blanco, contorno negro exterior 0,05 em, interlínea 35/31; caja x112/y287/ancho886/alto318 en 1080×1920, centrado sin dibujar recuadro. Mantener legibilidad, grafía y emojis renderizados correctamente.
+
+## Montaje y sonido
+
+- Revisar cada toma y empalme por frames/PTS y hashes, no solo el primer corte. Si el cuerpo empieza en el segundo clip, ningún frame del primero puede sobrevivir, tampoco en empalmes internos.
+- Quitar espera antes del habla sin cortar fonemas/palabras. No conservar relleno por duración nominal. En destapes 1,2,3 limitar la exposición de cajas a un segundo desde el revelado observado; no prolongar tomas más cortas ni mutilar voz.
+- Usar el archivo de canción elegido y localizar el fragmento correspondiente a la referencia. No dejar que la música incrustada sustituya la canción seleccionada ni mezclar dos canciones involuntariamente.
+- Voz inteligible, nivelada y sin saturación. Después de hablar, subir la música progresivamente, sin salto brusco. Ajustar la rampa al caso, conservando la voz.
+- Alinear el acento musical principal con el revelado/cambio de escena observado en la edición de referencia. No confundir detección de beats con comprobación semántica del corte.
+- Acelerar levemente el gancho solo si hace falta, conservando tono y acciones; no forzar el cuerpo. Conservar originales y decisiones trazables.
+
+## Revisión independiente y entrega
+
+El revisor debe contrastar el MP4 final con **notas originales del lote e instrucciones humanas**, referencia y canción; no basta validar el mismo plan creado por el editor.
+
+Exigir evidencia de: límites de todas las tomas; ausencia de frames ajenos y relleno; inicio de voz; canción/fragmento; sincronía acento-corte; rampa de volumen; textos, tienda, marca, traducción, emojis y tiempos reales. Usar `cut_integrity` y `edit_audio_integrity` donde estén integrados y comprobar explícitamente los demás montadores.
+
+Recibo mínimo: lote/item, fuentes y hashes, notas consultadas, tienda y autoridad de su elección, texto antes/después, traducción española, emojis antes/después y motivo, intervalos de frames, marcadores musicales/voz/revelado, canción/hash, hash final, identidad del revisor, comprobaciones realizadas y limitaciones.
+
+Pruebas unitarias, OCR, detectores de cortes o medidas de audio no acreditan por sí solos revisión visual/escucha. No afirmar escucha si no se realizó; no marcar aprobado con comprobaciones pendientes. Una regla escrita tampoco prueba su ejecución global.
+
+Entregar únicamente finales autorizados y verificados, con botones de descarga que devuelvan el archivo completo comprobado. No declarar completo el lote con pendientes. Publicar catálogo/cuerpos y verificar su disponibilidad conforme a la regla de cierre, sin regenerar por un fallo de catálogo.
+
+## Almacenamiento
+
+Nuevos documentos, trabajo y entregas: `/Volumes/T7/AUTOMATIZACION SEGA`, comprobando que T7 está montado. No recurrir silenciosamente a iCloud, sobrescribir la copia en curso ni migrar rutas contractuales. El enlace en la bóveda Obsidian mantiene accesible esta regla sin mover la instalación.
+
+
+## Canción continua desde el inicio — orden expresa 25/10/2026
+
+La canción seleccionada debe sonar desde el primer fotograma y continuar en un único fragmento cronológico hasta el final: sin entrada diferida al cuerpo, saltos, reinicios ni cortes internos de canción. Elegir el punto inicial del archivo para que el drop o parte principal observado coincida con la entrada del segundo clip (cuerpo), sin añadir relleno al gancho. No confundir empezar desde el primer fotograma del vídeo con exigir el segundo cero del archivo musical. Mantener voz inteligible sin superponer otra canción residual del generado; separar y revisar la voz cuando sea necesario. Los cambios de ganancia, especialmente la subida tras hablar, deben ser progresivos y continuos, nunca saltos secos.
+
+Esta orden sustituye la excepción anterior de conservar música distinta durante el gancho y pasar después al MP3 en V1/V2/V3 del lote34. Corrección autorizada: V1, V2, V3 EisWerk y V6 HaarZauber del lote34; conservar clips y originales. Exigir revisión independiente del audio final, continuidad del fragmento, rampa y coincidencia drop/entrada del cuerpo, con tiempos y hashes. Documentar limitaciones reales; la actualización de esta regla no certifica renders ni despliegue global.
+
+
+## Revisión de edición antes de generar — 25/10/2026
+Antes de generar frames o clips, revisar también la viabilidad de TODAS las ediciones: referencias efectivas, canciones por vídeo, voz/separación, fragmento continuo y drop/cuerpo, límites, plantillas/textos, tienda, idioma, marca, CTA y emojis. Reunir dudas esenciales de generación Y edición en un único bloque inicial; no preguntar lo ya especificado. Conservar respuestas por item antes de generar. Tras ello, solo escalar bloqueos reales no resolubles dentro del alcance y continuar independientes. Para tests de cuatro vídeos leer `/Volumes/T7/AUTOMATIZACION SEGA/TestProductos4-20261025/PLANTILLA_Y_PREFLIGHT.md`.
+
+
+## Marcador de drop por canción — 25/10/2026
+Leer `/Volumes/T7/AUTOMATIZACION SEGA/DropSyncTutorial-20261025/FLUJO.md`. Respetar SHA256 de canción explícita. Inicio del fragmento = drop musical revisado menos entrada real del cuerpo. Canción desde el primer frame, continua y sin saltos; rampas de volumen. No usar picos arbitrarios como drop ni el gancho antiguo como cuerpo. Marcador guardado no equivale a revisión independiente del final.
+
+
+### Biblioteca central de drops — 25/10/2026
+El marcador se guarda una vez por archivo musical en Canciones, no por tarjeta de lote. Reutilizar el SHA256 y marcador persistido en cada preparación; nunca cambiar canción para hacer coincidir el drop. Ver `/Volumes/T7/AUTOMATIZACION SEGA/MusicaBiblioteca-20261025/RESULTADO.md`. Las pruebas de persistencia no sustituyen la revisión independiente del MP4 final.
+
+
+## Orden posterior: mezcla R2 aprobada — 25/10/2026
+Leer `/Volumes/T7/AUTOMATIZACION SEGA/REGLAS_EDICION/MUSICA_R2_APROBADA/REGLA.md`. Canción exacta, continua desde primer frame; alinear drop guardado a entrada del cuerpo y recortar solo extremos. Sin ducking automático del gancho, sin limpieza/separación de la canción elegida. Nivel constante; ajuste global anticlip permitido. Retirar música solo del audio original, conservar voz/ambiente cuando sea posible. Sustituye defaults anteriores de atenuación/rampa automática; no modifica históricos. Aprobación humana exacta en aprobacion.json.
+
+
+## Precisión posterior: voz conservada, música original eliminada — 25/10/2026
+Emmanuel aprueba V8 R3 como ejemplo de ausencia de música original. En próximas ediciones, si existe voz, conservarla y eliminar la música del clip; añadir únicamente la canción elegida, continua desde el primer fotograma y con el drop guardado alineado al primer frame real del cuerpo. No basta usar un archivo llamado «voz»: comprobar que no arrastra música residual. No borrar voces por defecto para resolver una separación defectuosa. V8 R3 sin audio original fue una corrección concreta, no una autorización general para silenciar el habla. Si no puede conservarse la voz sin música residual, registrar el problema y no presentar el resultado como verificado. Mantener la política R2 de canción sin cortes internos ni atenuación automática. La aprobación y documentación no acreditan integración global ni escucha independiente. Evidencia: REGLAS_EDICION/MUSICA_R2_APROBADA/aprobacion-v8-r3.json en SSD.
+
+
+## Corrección vigente: productos físicos, texto fijo 06B — 31/10/2026
+
+Texto editorial fijo 06B: blanco, contorno negro y fondo transparente, región x112/y287/ancho886/alto318 en 1080×1920. No seguir personas ni mover el texto al pecho. La regla de torso de infoproductos no aplica a productos físicos. Detalles de producto sin rostro son válidos. Correcciones de tipografía reutilizan clips limpios y preservan cortes/audio; entregar MP4, no GIF. Ver TEXTOS_FIJOS_PRODUCTOS_FISICOS_20261031.md. Esta nota no certifica cambios globales del motor.

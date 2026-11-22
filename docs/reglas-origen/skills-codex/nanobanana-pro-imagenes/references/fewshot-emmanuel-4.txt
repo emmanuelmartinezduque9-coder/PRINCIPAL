@@ -1,0 +1,63 @@
+REFERENCE IMAGE [1]: this is MY OWN finished image and it is the base. Keep EXACTLY: the first-person POV framing from the person's own lap, the left hand holding a pink bowl of soft-serve ice cream with crushed cookies and chocolate sauce, the right hand holding the pink ice cream maker with its clear dome, the bare knees under a cream cable-knit blanket, and the bedroom beyond. Change ONLY what the checklist below says.
+
+CAMERA — MATCH EXACTLY, NON-NEGOTIABLE: same crop, same distance, same POV angle and the same proportion of hands, bowl and product within the frame as image [1]. Do not zoom in, do not pull back, do not re-crop.
+
+PRODUCT — PRESERVE, DO NOT CHANGE, DO NOT REDESIGN, DO NOT SUBSTITUTE: the pink ice cream maker in the right hand is reproduced exactly as in image [1] and image [2] — same shape, same clear dome, same white oval button, same pink body, same proportions, same number of parts, held in the same position at the same distance from camera.
+
+MANDATORY BACKGROUND CHANGES — CHECKLIST, VERIFY EACH ONE BEFORE RENDERING. The final image MUST differ from image [1] in ALL SIX of the following ways simultaneously, and each must be visibly and unmistakably different:
+1. A Christmas tree is ADDED in the right background where the side table stood — a real fir with warm white lights, deep red and brushed-gold baubles, and a few wrapped presents at its base.
+2. The headboard wall is REPLACED — from the plain beige padded headboard with a bare string of lights to a deep green padded headboard with a eucalyptus-and-pinecone garland running along its top edge.
+3. The bedside surface is REPLACED — from the stacked books and candles to a small wooden advent house, two red pillar candles lit, and a bowl of clementines.
+4. The blanket is REPLACED — from cream cable knit to a chunky oatmeal knit with a deep red woven throw folded across the corner of frame.
+5. The sleeve is REPLACED — from the cream cable-knit jumper to a soft charcoal-grey knit with the cuff pushed up.
+6. The wall colour is REPLACED — from warm beige to a soft muted sage green, with one small framed print hanging at the left edge.
+This must read as a genuinely different bedroom dressed for Christmas, not a redecorated version of the same one.
+
+SETTING / MOOD — MANDATORY, NON-NEGOTIABLE: the cosy German night-in mood of the original is the STYLE, not the background, and it must survive intact. These must all stay present and clearly visible: the TV switched on showing a scene, the warm fairy lights, the soft blanket, and the single warm lamp. On top of that the room is now dressed for Christmas. This mood must never be lost or replaced.
+
+THE SCENE — ONE REAL, COHERENT PHOTOGRAPH, NOT A COLLAGE: picture a genuine home on a December evening as it actually exists — the blanket bunched unevenly, a few stray pine needles, a used mug left within reach, the tree lights very slightly uneven, nothing arranged for a photo. Everything sits under the same single light source at the same colour temperature.
+
+LIGHTING — CHANGE DIRECTION ONLY: the warm light now falls from the left instead of the right, so the shadows of the hands and the bowl drop the other way. A single coherent warm source of about 2700K lighting hands, bowl, product, blanket and room alike. Real soft contact shadows under the bowl, under the product and where the blanket folds.
+
+CRITICAL — indistinguishable from a real, unedited iPhone photo. NOT a graphic-design composition, NOT a Canva-style edit, NOT a collage:
+- Real skin texture on the hands with visible pores, knuckle creases, fine lines and natural tonal irregularity — no smoothing, no plastic beauty-filter look.
+- Anatomically correct hands: five fingers each, natural grip, realistic nail shape.
+- Realistic texture of soft-serve ice cream, of the knitted sleeve and of the blanket: creases, weave, sheen.
+- Real soft contact shadows under the bowl, under the product and under every object touching a surface, consistent with the single light direction.
+- The product reproduces image [2] exactly — same shape, colours, artwork, text and proportions, in PINK.
+- Muted, natural, low-contrast colours, slightly desaturated in the shadows — never vivid or oversaturated.
+- A single coherent warm source of about 2700K, warm muted low-contrast colours, highlights protected from clipping.
+- Visible natural sensor grain consistent with a phone camera in this low light.
+- Shot on a recent iPhone main camera, 1x.
+- Moderate depth of field, the room softly and naturally out of focus, not artificially blurred.
+- Even sharpness across the plane of focus, no chromatic aberration.
+- Slightly imperfect, casual handheld framing — a candid phone shot, not a professional shoot.
+
+NEGATIVE / avoid completely:
+- A background that matches image [1] in ANY of the checklist elements above — that is a failed generation.
+- Removing, reducing or hiding the TV, the fairy lights, the blanket or the warm lamp — they are the style of this account, not background to change.
+- Losing the cosy night-in mood (turning the scene brighter, colder, emptier or more sterile).
+- Any change to the product: it stays the SAME pink machine, same shape, same parts, same size and same position in the hand. Do not redesign it, do not recolour it, do not change the number of parts.
+- Any change to the ice cream, its toppings or the pink bowl.
+- Any change of camera angle, distance, crop or framing from image [1].
+- Any change to the hand positions or the grip.
+- Any text, logo or interface appearing on the TV screen.
+- Any leftover caption text, emoji, play button, mute icon or watermark.
+- A dull two-tone room: the Christmas dressing must have varied, real colour.
+- Any graphic-design composition, Canva-style edit or collage of separately-lit elements.
+- Mismatched lighting or shadow direction between hands, product and background.
+- Oversaturated colours, dark vignette, dramatic studio lighting, flat shadowless lighting.
+- Perfectly clean, noise-free, airbrushed rendering.
+- Malformed hands, extra or missing fingers.
+- Plastic beauty-filter skin, 3D-render or generic-AI look.
+- Any baby, toddler or child anywhere in the frame.
+
+STRICT REQUIREMENTS:
+- The pink product is unchanged and clearly legible, identical to image [2].
+- The ice cream, the toppings and the pink bowl are unchanged.
+- All checklist items visibly changed; the room reads as dressed for Christmas.
+- TV on, fairy lights, blanket and warm lamp all still present and clearly visible.
+- Same composition, camera angle, camera distance and framing as image [1].
+- One pair of hands only, POV from the person's own point of view. No other people.
+- No text overlays, no watermarks, no on-screen interface of any kind.
+- Vertical mobile photo format.

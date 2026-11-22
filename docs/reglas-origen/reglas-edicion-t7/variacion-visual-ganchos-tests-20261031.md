@@ -1,0 +1,15 @@
+# Variación visual obligatoria de los ganchos de test
+Orden de Emmanuel — 31/10/2026. Aplicar a TODOS los productos en próximos frames de tests con ganchos validados. No regenera ni modifica históricos aprobados.
+
+Las referencias fijas fijan composición, perspectiva, posiciones, roles y acción; NO fijan vestuario, identidad, decoración ni el mismo fondo para todos los productos.
+
+- Vestuario: apropiado para el nicho, contexto, edad y papel. Si no hay un nicho específico, elegir ropa cotidiana distinta entre tests; no repetir por defecto sudadera azul, jersey azul oscuro o conjuntos rosas de las referencias. Variar prendas, cortes, capas y colores, no solo recolorear el mismo uniforme.
+- Personas: elegir avatares ACTIVOS de la biblioteca adecuados a edad/género/papel, con rotación de roles libres. Respetar avatar fijo de cuenta y continuidad cuando se hayan indicado. No crear identidades nuevas ni restaurar bajas por interpretar esta petición como permiso genérico para generar avatares.
+- Destape 1,2,3: variar diseño del espacio comercial apropiado al producto, suelo, mobiliario y decoración; variar color/textura de la tela o sábana manteniéndola opaca y bien apoyada, ocultando las cajas hasta el revelado. Ropa coherente para ambas personas. Conservar geometría y acción de referencia.
+- Café/sorpresa: variar vestuario, suelo, mobiliario, escaparate y decoración del escenario con sentido para el producto. Conservar bebida, reacción, mirada/señal y espacio necesario para el movimiento. No inventar tiendas ni disponibilidad comercial.
+- Regalo POV: variar realmente la casa (suelo, sofá, alfombra, paredes, iluminación y decoración), ropa de quien entrega y ropa visible de quien recibe. Añadir decoración navideña en campañas/contextos navideños; evitar que todos los regalos repitan la misma casa o jersey. Conservar POV, escala, manos, caja y acción. No añadir caras donde no las hay.
+- Integración: luz coherente con el espacio elegido y la referencia, sombras/contacto/reflejos y piel naturales. Sin personas pegadas sobre el fondo. La variedad no cambia el producto exacto, embalaje o variante aprobados.
+- Frames/clips limpios: sin captions, emojis ni paneles negros generados; textos editoriales solo después. Conservar texto físico necesario.
+
+Antes de enviar CADA frame: observar la referencia y los últimos frames disponibles del mismo concepto; registrar avatar, vestuario, escenario, suelo, tela/decoración y motivo de cada elección en el progreso del pedido. Describir esos cambios explícitamente en el prompt FINAL y comprobar adjuntos. Si repite prácticamente el aspecto de un test reciente, variar las decisiones libres antes del envío; conservar cualquier elección expresa del usuario.
+Después de generar: revisión visual real contra referencia y plan de variación. Registrar resultado y defectos, sin afirmar variedad por el mero texto del prompt. Aprobación agrupada de frames vigente. Esta memoria documenta la obligación del agente; no demuestra despliegue de un validador automático ni garantiza el comportamiento del proveedor.

@@ -1,0 +1,9 @@
+# Ambientes de los frames de nuevos tests de producto
+
+Aplicar a cada frame nuevo de cualquier producto, incluidos los ganchos validados. En Genjutsu el frame inicial define el ambiente del clip. Diseñar un lugar reconociblemente distinto de la referencia y mantener continuidad en la misma escena. Una instrucción explícita de Emmanuel sobre un lugar o encuadre concreto prevalece.
+
+Antes de redactar el prompt, separar lo que hace funcionar la toma (acción, posiciones relativas, encuadre, trayectoria, interacción, producto exacto y escala) de lo que se puede rediseñar. Imaginar varias distribuciones plausibles y elegir una adecuada al producto. Describir en el prompt final cambios visibles de distribución y profundidad, mobiliario y orientación, superficies, colores y elementos del fondo. En exteriores cambiar la organización de la calle, fachadas y entorno cuando proceda. En primeros planos trabajar con lo que sea visible sin alejar la cámara ni ocultar la demostración. La luz, las sombras y los reflejos deben tener una fuente plausible en el nuevo lugar.
+
+Ejemplo: conservar a la madre abrazando a la niña y mostrando la alarma; situarlas junto a una mesa oscura girada, con un salón abierto detrás y luz lateral. La chimenea, el salón y la mesa son ejemplos, no un decorado fijo para otros productos.
+
+Anotar por frame qué acción se conserva y qué cambia del entorno. En la revisión independiente, comparar el fondo visible del resultado con la fuente: aun tapando a las personas y el producto debe apreciarse otro lugar, en la medida en que el plano muestra el entorno. Si se repiten la misma distribución, ventana y muebles y solo cambian la ropa o pequeños adornos, devolver el frame para corrección antes de aprobarlo. Aplicación prospectiva; quedan fuera los lotes ya preparados y sus recibos.

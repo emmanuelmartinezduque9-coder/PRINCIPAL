@@ -1,0 +1,14 @@
+# Audio en réplicas Genjutsu completas — orden 26/10/2026
+
+Orden de Emmanuel: si se replica el vídeo completo mediante Genjutsu y no se añade un cuerpo, conservar el audio del clip generado. No adjuntar ni mezclar canción externa. Una canción seleccionada accidentalmente se ignora en el plan efectivo; conservar la selección original en el snapshot para trazabilidad.
+
+Si se genera un gancho Genjutsu y se añade un cuerpo, no es una réplica completa: utilizar la canción de edición elegida o resolver la referencia musical conforme a las reglas existentes. Eliminar música original conservando voz cuando corresponda, canción continua desde t0 y drop alineado al cuerpo. No elegir otra canción al azar.
+
+La ausencia de un cuerpo resuelto no convierte un gancho en réplica completa. Verificar alcance, secuencia y cuerpos manuales o automáticos pendientes. No extender esta excepción a otros motores ni a montajes mixtos.
+
+Conservar la edición de textos, idioma y las demás instrucciones. Esta regla no elimina textos ni autoriza omitir revisión del audio generado: Genjutsu puede alterar la fuente y no se garantiza una copia acústica exacta sin comprobarla.
+
+Aplicar a nuevas preparaciones. No cambiar snapshots enviados ni reexportar históricos por guardar esta regla. La documentación no acredita integración; consultar evidencia de pruebas y activación del motor.
+
+## Precisión expresa — 27/10/2026
+Gancho más cuerpo: descartar todo audio generado/original del cuerpo y todo ambiente. Conservar únicamente habla del primer clip si existe, separada de música y canto; usar solo la canción elegida continua desde t0 con drop al cuerpo. El nombre «vocals» no acredita voz hablada ni separación limpia. Réplica completa Genjutsu, incluido Lite, sin cuerpo añadido: solo audio generado, sin canción externa. V4 HaarZauber lote39 requiere remezcla; no regenerar clips. Nuevos contratos declaran first_hook_spoken_only; históricos intactos. Verificar ejecución y escucha por separado.
