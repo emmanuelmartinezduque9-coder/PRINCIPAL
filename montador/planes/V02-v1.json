@@ -1,0 +1,63 @@
+{
+ "id": "V02-v1",
+ "tipo": "gancho+cuerpo",
+ "pedido": "app-6852a9fdeb44480983cc86d73a67d471-54",
+ "video": 2,
+ "cuenta": "EisWerk",
+ "clips": [
+  {
+   "role": "hook",
+   "path": "/Volumes/T7/PRINCIPAL/pedido-54/descargas/V2-gancho-topaz-90019505.mp4",
+   "in_frame": 11,
+   "reveal_frame": 115,
+   "hold_s": 0.45
+  },
+  {
+   "role": "body",
+   "auto": true,
+   "path": "/Volumes/T7/AUTOMATIZACION SEGA/Motor/order-preparation/app-63a7c753a6f44022b7651b6f713fb348-37/NanoBanana/_UPSCALE/6e211d6a-3c31-4f7f-9eeb-46484560abc1/final_1080p.mp4"
+  },
+  {
+   "role": "body",
+   "auto": true,
+   "path": "/Volumes/T7/AUTOMATIZACION SEGA/Motor/order-preparation/app-4b5cc5f0692f415dbacdd02be33a328c-46/NanoBanana/_UPSCALE/6f1ab6b3-f975-40ce-9081-788216661577/final_1080p.mp4"
+  }
+ ],
+ "audio": {
+  "mode": "cancion",
+  "song": "/Volumes/AutomatizacionProyecto/AUTOMATIZACION IA VIDEOS/NanoBanana/_EDICIONES/music-library/d78f8ec32a6858fa455f0834261796d40b81f13e0ee66206cb8810ce0690ecfe.mp3",
+  "drop": 7.49,
+  "product_shown": {},
+  "music_gain_db": 0,
+  "peak_limit": 0.94,
+  "voice": {
+   "clip": 0,
+   "target_lufs": -14,
+   "max_spill_s": 0.6,
+   "path": "/Volumes/T7/PRINCIPAL/pedido-54/trabajo/voz/v2-gancho-corregido.wav",
+   "from": 0.458,
+   "to": 5.75
+  }
+ },
+ "texts": [
+  {
+   "role": "main",
+   "text": "Das beste Weihnachtsgeschenk existiert ni– 😲🎁"
+  },
+  {
+   "role": "cta",
+   "text": "Kommentiere „EisWerk“, wenn du eine haben willst 😊🤗"
+  }
+ ],
+ "notas": [
+  "Gancho: entra en f11 (0,46 s; «Eins» a 0,6 s) y corta 0,45 s después de que asome la caja (f115 → f126), con la tela aún moviéndose, como los virales nº 2 y nº 4. La voz termina «… geworden ist» 0,5 s ya dentro del unboxing (no se corta ninguna palabra).",
+  "Cuerpos 209 y 223 en su orden; in/out automáticos. El 209 acaba en 3 fotogramas de la foto del producto (la «imagen que aparece» que vio el dueño) y en un giro de cámara antes: se descartan solos.",
+  "Drop (7,49 s de la canción nº 11) en el primer fotograma del cuerpo, como decidió el dueño."
+ ],
+ "version": 1,
+ "zoom": {
+  "enabled": false
+ },
+ "work_dir": "/Volumes/T7/PRINCIPAL/pedido-54/trabajo/v1/V02-v1",
+ "output": "/Volumes/T7/AUTOMATIZACION SEGA/videos editados/2026-11-22/PRINCIPAL-pedido-54/EisWerk - DE/02 - EisWerk - DE (v1).mp4"
+}

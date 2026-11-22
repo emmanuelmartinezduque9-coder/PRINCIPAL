@@ -20,6 +20,10 @@ Para cada vídeo escribe `<id>.analisis.json` al lado (o en --salida) con:
   - movimiento: escala y desplazamiento entre fotogramas consecutivos (ORB + similitud, a 12 fps) → zooms
     dentro de cada plano (acumulado), saltos de escala bruscos (punch-in) y fotogramas de mucho movimiento
     (whip/sacudida). Necesita opencv; sin él se omite.
+  - actividad (con opencv): curva de diferencia entre fotogramas y, por plano, si se corta con la acción en
+    marcha o con una cola quieta (`ultimo_tercio_s_rel`, `cola_quieta_s`, `pico_actividad_frac`).
+  - --tiras: una tira a 8 fps por corte (1 s antes, 0,5 s después) en `<id>.tiras/` para ver EN QUÉ MOMENTO de la
+    acción se sale de cada plano. --solo-cortes cortes.json usa cortes revisados a mano ({"<id>": [t, ...]}).
   - --hojas: hojas de contactos de 4 fps (bloques de 5 s, 5×4) en `<id>.hojas/` para MIRAR el vídeo.
   - --ocr (solo macOS): texto en pantalla con Vision (fotogramas a 4 fps): qué dice, cuándo entra/sale, dónde.
   - --voz: transcripción con mlx_whisper (modelo turbo) → `<id>.whisper.json`. Ojo: con música alucina;
@@ -274,6 +278,84 @@ def movimiento(video, cut_times, dur, fps_m=12):
                      'En vídeo IA, el «zoom» puede ser movimiento de cámara generado, no edición.')
 
 
+# ------------------------------------------------------------------ actividad (¿en qué momento de la acción se corta?)
+def curva_actividad(video, ancho=96):
+    """Diferencia media absoluta entre fotogramas consecutivos (gris, 96 px de ancho, 0-255), a los fps nativos.
+    Es la «cantidad de cosas que se mueven» en cada fotograma. Devuelve (tiempos, valores, fps)."""
+    import cv2
+    cap = cv2.VideoCapture(str(video))
+    vfps = cap.get(cv2.CAP_PROP_FPS) or 30
+    prev, ts, vs, idx = None, [], [], 0
+    while True:
+        ok, fr = cap.read()
+        if not ok:
+            break
+        g = cv2.cvtColor(cv2.resize(fr, (ancho, int(ancho * fr.shape[0] / fr.shape[1])), interpolation=cv2.INTER_AREA),
+                         cv2.COLOR_BGR2GRAY).astype('float32')
+        if prev is not None:
+            ts.append(idx / vfps); vs.append(float(abs(g - prev).mean()))
+        prev, idx = g, idx + 1
+    cap.release()
+    return ts, vs, vfps
+
+
+def actividad(video, cut_times, dur):
+    """Por plano: actividad media, la del último 1/3 s antes del corte (relativa a la del plano) y cuánto lleva
+    «quieto» el plano antes del corte (cola por debajo del 35 % de su percentil 80). Así se ve si los vídeos que
+    funcionan cortan con la acción todavía en marcha o dejan colas quietas."""
+    try:
+        ts, vs, vfps = curva_actividad(video)
+    except ImportError:
+        return dict(omitido='sin opencv')
+    b = [0.0] + list(cut_times) + [dur]
+    planos = []
+    for i in range(len(b) - 1):
+        a, z = b[i] + 1.5 / vfps, b[i + 1] - 0.5 / vfps     # sin el propio salto del corte
+        seg = [(t, v) for t, v in zip(ts, vs) if a < t < z]
+        if len(seg) < 4:
+            planos.append(dict(desde=r3(b[i]), hasta=r3(b[i + 1]), medido=False)); continue
+        vals = sorted(v for _, v in seg)
+        p80 = vals[int(0.8 * (len(vals) - 1))] or 1e-6
+        media = sum(vals) / len(vals)
+        ult = [v for t, v in seg if t > z - 1 / 3]
+        ult_rel = (sum(ult) / len(ult)) / (media or 1e-6) if ult else None
+        quieto = 0.0
+        for t, v in reversed(seg):
+            if v >= 0.35 * p80:
+                break
+            quieto = z - t
+        # momento de máxima actividad (suavizado 0,25 s) en fracción del plano
+        k = max(1, int(0.25 * vfps))
+        sm = [sum(v for _, v in seg[j:j + k]) / len(seg[j:j + k]) for j in range(len(seg))]
+        jmax = max(range(len(sm)), key=lambda j: sm[j])
+        planos.append(dict(desde=r3(b[i]), hasta=r3(b[i + 1]), dur=r3(b[i + 1] - b[i]), medido=True,
+                           actividad_media=round(media, 2), actividad_p80=round(p80, 2),
+                           ultimo_tercio_s_rel=r3(ult_rel), cola_quieta_s=r3(quieto),
+                           pico_actividad_frac=r3((seg[jmax][0] - b[i]) / (b[i + 1] - b[i]))))
+    return dict(planos=planos, curva=[[r3(t), round(v, 2)] for t, v in zip(ts, vs)],
+                nota='actividad = diferencia media entre fotogramas (0-255, 96 px). ultimo_tercio_s_rel <0,5 = el plano '
+                     'se corta ya quieto; ≈1 o más = se corta con la acción en marcha. cola_quieta_s = segundos finales '
+                     'por debajo del 35 % del p80 del plano.')
+
+
+def tiras(video, outdir, cut_times, dur, fps_t=8, antes=1.0, despues=0.5, ancho=160):
+    """Una tira por corte: de `antes` s antes a `despues` s después del corte, a `fps_t` fps, con la hora encima."""
+    outdir.mkdir(exist_ok=True)
+    out = []
+    font = '/System/Library/Fonts/Supplemental/Arial.ttf'
+    for k, c in enumerate(cut_times):
+        t0 = max(0.0, c - antes)
+        n = int(round((min(dur, c + despues) - t0) * fps_t))
+        f = outdir / f'corte{k + 1:02d}_{c:06.3f}s.jpg'
+        dt = (f"drawtext=fontfile={font}:text='%{{pts\\:hms}}':x=3:y=3:fontsize=14:fontcolor=yellow:box=1:boxcolor=black@0.6,"
+              if Path(font).exists() else '')
+        run([FFMPEG, '-v', 'error', '-y', '-ss', f'{t0:.3f}', '-t', f'{n / fps_t:.3f}', '-copyts', '-i', video, '-vf',
+             f'fps={fps_t},scale={ancho}:-2,{dt}tile={n}x1:padding=2:color=red', '-frames:v', '1', '-q:v', '4', f])
+        out.append(str(f))
+    return dict(fps=fps_t, antes_s=antes, despues_s=despues, archivos=out,
+                nota='cada tira va de antes_s antes a despues_s después del corte; el corte está en la celda nº antes_s×fps+1')
+
+
 # ------------------------------------------------------------------ hojas
 def hojas(video, outdir, dur, fps_h=4, cols=5, rows=4, ancho=200):
     outdir.mkdir(exist_ok=True)
@@ -387,6 +469,13 @@ def analizar(video, a):
     pts, sc = puntuaciones_escena(video)
     cuts, dud = cortes(pts, sc, dur, a.umbral)
     ct = [c[0] for c in cuts]
+    if a.solo_cortes:
+        manual = json.loads(Path(a.solo_cortes).read_text()).get(video.stem)
+        if manual is not None:
+            res['cortes_detector'] = [dict(t=r3(t), score=r3(s)) for t, s in cuts]
+            cuts = [(float(t), None) for t in manual]
+            ct = [c[0] for c in cuts]
+            res['cortes_revisados_a_mano'] = True
     res['cortes'] = dict(lista=[dict(t=r3(t), score=r3(s)) for t, s in cuts], dudosos=dud, **stats_planos(ct, dur))
     with tempfile.TemporaryDirectory() as tmp:
         if f['tiene_audio']:
@@ -402,6 +491,9 @@ def analizar(video, a):
                 res['musica'] = dict(error=str(e))
         if not a.sin_movimiento:
             res['movimiento'] = movimiento(video, ct, dur)
+            res['actividad'] = actividad(video, ct, dur)
+        if a.tiras:
+            res['tiras'] = tiras(video, salida / f'{video.stem}.tiras', ct, dur)
         if a.hojas:
             res['hojas'] = hojas(video, salida / f'{video.stem}.hojas', dur)
         if a.ocr:
@@ -435,6 +527,8 @@ if __name__ == '__main__':
     ap.add_argument('--ancla', type=float, help='segundo del vídeo en que cae un beat (por defecto, el drop detectado)')
     ap.add_argument('--salida', help='carpeta de salida (por defecto, junto al vídeo)')
     ap.add_argument('--hojas', action='store_true', help='hojas de contactos a 4 fps')
+    ap.add_argument('--tiras', action='store_true', help='tiras a 8 fps alrededor de cada corte (1 s antes, 0,5 s después)')
+    ap.add_argument('--solo-cortes', help='JSON con cortes revisados a mano {"id": [t, ...]}: sustituye al detector')
     ap.add_argument('--ocr', action='store_true', help='texto en pantalla con Vision (macOS)')
     ap.add_argument('--voz', action='store_true', help='transcripción con mlx_whisper')
     ap.add_argument('--sin-movimiento', action='store_true', help='no medir zooms/movimiento (más rápido)')

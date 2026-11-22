@@ -1,15 +1,69 @@
-# Montador v0
+# Montador (v1)
 
 Programa pequeño que monta los vídeos del dueño a partir de un **plan de montaje** (un JSON por vídeo).
-Se escribió para el piloto del pedido 54 (ver `docs/piloto-pedido-54/montaje-v0.md`).
+Se escribió para el piloto del pedido 54: v0 en `docs/piloto-pedido-54/montaje-v0.md`; **v1 (ritmo de los virales)
+en `docs/piloto-pedido-54/montaje-v1.md`**, con el patrón medido en `docs/casos/referencias-edicion/patron-viral-eiswerk.md`.
+
+## Qué cambia en v1 (22/11)
+
+Los planes con clips `"auto": true` usan el montaje nuevo; los planes v0 (in/out fijos) siguen montándose igual.
+
+1. **Análisis de cada clip** (caché `analisis_clips/<sha16>-<versión>.json`): actividad fotograma a fotograma, cortes y
+   saltos internos (umbral local), **cola IA** (el clip acaba en otra imagen, p. ej. la foto del producto: se descarta
+   y se deja 0,6 s de margen antes porque el morph empieza antes), colas quietas, trozos < 0,4 s.
+2. **In/out automáticos**: en cada tramo usable, 1–4 ventanas con la duración del patrón por sección
+   (`PATRON` en `montador.py`: revelado 1,0–1,9 s, cuerpo 0,6–1,5 s, final 1,5–3,0 s), donde hay acción y terminando
+   con la acción en marcha. Tantas ventanas como acciones reales quepan (un plano IA con verter + tapar + toppings da
+   varias). Nunca se cambia la velocidad.
+3. **Gancho**: `in_frame` (~0,1 s antes de la primera palabra) y `reveal_frame` (primer fotograma con la caja visible):
+   el corte va `hold_s` después (0,45 s por defecto). La voz puede terminar hasta `max_spill_s` (0,6 s) dentro del
+   primer plano del cuerpo para no cortar palabras.
+4. **Cortes en beat**: cada plano se alarga/acorta hasta ½ beat (máx. 0,22 s), dentro de su tramo y de su sección,
+   para que el corte caiga en un beat de la canción (o del audio original en réplicas). Para acortar se quita primero
+   el inicio (preparación), no el final de la acción.
+5. **Rótulos**: principal desde 0, CTA en el corte del último plano (o del penúltimo si el último dura < 1,5 s);
+   cualquier otro cambio se pega al corte más cercano.
+6. **Zooms apagados por defecto** (los virales no usan; el código de v0 sigue disponible con `zoom.enabled`).
+7. **Réplicas recortadas con audio original**: el audio suena seguido desde el primer fotograma usado (fundido de
+   0,15 s al final).
+8. **Autocomprobación** después de exportar: duración de cada plano frente al patrón, cola quieta o salto/imagen nueva
+   en los últimos 0,5 s de cada plano, cortes no previstos, rótulos fuera de corte/beat. Si hay algo arreglable, veta
+   esa zona y vuelve a montar (máx. 2 veces). Escribe en `revision/`: `- autocomprobacion.txt/.json`,
+   `- cortes.jpg` (tira de 0,75 s a 8 fps en cada corte), `- contactos.jpg` y `- plan-aplicado.json`.
+
+Plan v1 (ejemplo, ver `planes_v1.py`):
+
+```json
+{"id": "V02-v1", "version": 1, "tipo": "gancho+cuerpo",
+ "clips": [{"role": "hook", "path": "…", "in_frame": 11, "reveal_frame": 115, "hold_s": 0.45},
+           {"role": "body", "auto": true, "path": "…/209.mp4"},
+           {"role": "body", "auto": true, "path": "…/223.mp4"}],
+ "audio": {"mode": "cancion", "song": "…", "drop": 7.49, "product_shown": {},
+           "voice": {"path": "…", "clip": 0, "from": 0.458, "to": 5.75, "target_lufs": -14, "max_spill_s": 0.6}},
+ "texts": [{"role": "main", "text": "…"}, {"role": "cta", "text": "Kommentiere „EisWerk“ …"}],
+ "zoom": {"enabled": false}, "ritmo": {"body": [0.6, 1.0, 1.5]}, "output": "… (v1).mp4"}
+```
+
+Opciones por clip: `"ventanas": [[in_s, out_s], …]` fija las ventanas a mano; `"ventanas_por_tramo": n` fuerza n.
+`product_shown: {}` = drop en el primer fotograma del cuerpo.
+
+Lanzar en el Mac: `~/.principal-tools/montador/montar_v1.sh V02-v1 V01-v1 …` (log en
+`/Volumes/T7/PRINCIPAL/pedido-54/trabajo/v1/<id>.log`).
+
+---
+
+Lo que sigue describe v0 (sigue valiendo para los planes sin `auto`).
 
 ## Archivos
 
 - `montador.py`: el programa (Python, una sola pieza).
 - `texto06b.swift`: dibuja los rótulos con el estilo fijo 06B (TikTokDisplay-Medium, blanco, contorno negro 0,05 em,
   interlínea 35/31 em, caja invisible x112/y287/886×318 sobre 1080×1920). Lo llama `montador.py`.
-- `planes.py`: genera los planes del piloto en `planes/`.
+- `planes.py`, `planes_c.py`: generan los planes v0 del piloto; `planes_v1.py`: los planes v1 (`planes/*-v1.json`).
 - `planes/*.json`: los planes del pedido 54.
+- `analizar_referencia.py`: mide reels de referencia (cortes, actividad al cortar, tiras por corte, música, texto).
+- `resumen_patron.py` y `ritmo_cortes.py`: resumen por planos y test «¿cortan en beat más que por azar?».
+- `montar_v1.sh`: lanza planes v1 en el Mac.
 - En el Mac, además, `montar.sh` (lanza uno o varios planes) y `beatmaps/` (mapa de beats guardado por sha256 del audio).
 
 ## Cómo se usa (en el Mac)

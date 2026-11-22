@@ -1,0 +1,57 @@
+{
+ "id": "V12-v1",
+ "tipo": "gancho+cuerpo",
+ "pedido": "app-6852a9fdeb44480983cc86d73a67d471-54",
+ "video": 12,
+ "cuenta": "FalterPfote",
+ "clips": [
+  {
+   "role": "hook",
+   "path": "/Volumes/T7/AUTOMATIZACION SEGA/Motor/order-preparation/app-6852a9fdeb44480983cc86d73a67d471-54/NanoBanana/_UPSCALE/4d20b781-b650-4fd0-aac4-1524044643ce/final_1080p.mp4",
+   "in_frame": 3,
+   "reveal_frame": 122,
+   "hold_s": 0.45
+  },
+  {
+   "role": "body",
+   "auto": true,
+   "path": "/Volumes/T7/AUTOMATIZACION SEGA/Motor/order-preparation/app-ffe90d4992df4e5585acd1acd93d294b-54/NanoBanana/_UPSCALE/9bcdfe34-e119-4935-af9c-e6eaa4a937bb/final_1080p.mp4"
+  }
+ ],
+ "audio": {
+  "mode": "cancion",
+  "song": "/Volumes/AutomatizacionProyecto/AUTOMATIZACION IA VIDEOS/NanoBanana/_EDICIONES/music-library/a081c8089a0db17b330662177577c98e88efb958365758213895fd4a01bd47cf.mp3",
+  "drop": 9.32,
+  "product_shown": {},
+  "music_gain_db": 0,
+  "peak_limit": 0.94,
+  "voice": {
+   "clip": 0,
+   "target_lufs": -14,
+   "max_spill_s": 0.6,
+   "path": "/Volumes/T7/AUTOMATIZACION SEGA/Motor/order-preparation/app-6852a9fdeb44480983cc86d73a67d471-54/post-edit/audio-review/separation-v12/v12/voice-demucs.wav",
+   "from": 0.125,
+   "to": 4.95
+  }
+ },
+ "texts": [
+  {
+   "role": "main",
+   "text": "LIDL × FALTERPFOTE 😳🦋"
+  },
+  {
+   "role": "cta",
+   "text": "Kommentiere „FalterPfote“, wenn du auch eins willst! 🤩🦋"
+  }
+ ],
+ "notas": [
+  "Gancho sin acelerar: entra en f3 («Eins» a 0,25 s), las cajas se ven en f122 → destape a 4,96 s (< 5 s, nota del dueño) y corte en f133.",
+  "Cuerpo con in/out automáticos (ya trae 8 tomas; se acortan)."
+ ],
+ "version": 1,
+ "zoom": {
+  "enabled": false
+ },
+ "work_dir": "/Volumes/T7/PRINCIPAL/pedido-54/trabajo/v1/V12-v1",
+ "output": "/Volumes/T7/AUTOMATIZACION SEGA/videos editados/2026-11-22/PRINCIPAL-pedido-54/FalterPfote - DE/12 - FalterPfote - DE (v1).mp4"
+}

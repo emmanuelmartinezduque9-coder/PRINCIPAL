@@ -1,0 +1,36 @@
+{
+ "id": "V03-v1",
+ "tipo": "replica",
+ "pedido": "app-6852a9fdeb44480983cc86d73a67d471-54",
+ "video": 3,
+ "cuenta": "EisWerk",
+ "clips": [
+  {
+   "role": "replica",
+   "auto": true,
+   "path": "/Volumes/T7/AUTOMATIZACION SEGA/Motor/order-preparation/app-6852a9fdeb44480983cc86d73a67d471-54/NanoBanana/_UPSCALE/4bbbe864-d1eb-44dd-b977-d632693f47d4/final_1080p.mp4"
+  }
+ ],
+ "audio": {
+  "mode": "original"
+ },
+ "texts": [
+  {
+   "role": "main",
+   "text": "Zeig das bloß nicht deiner Freundin 🍦🎄🤫"
+  },
+  {
+   "role": "cta",
+   "text": "Kommentiere „EisWerk“, wenn du auch eine brauchst 🍦💕"
+  }
+ ],
+ "notas": [
+  "Réplica Genjutsu: el audio original (la canción de la referencia) suena seguido desde el fotograma 0; solo se recortan planos, sin cambiar velocidad. Los cortes buscan los beats de ese audio."
+ ],
+ "version": 1,
+ "zoom": {
+  "enabled": false
+ },
+ "work_dir": "/Volumes/T7/PRINCIPAL/pedido-54/trabajo/v1/V03-v1",
+ "output": "/Volumes/T7/AUTOMATIZACION SEGA/videos editados/2026-11-22/PRINCIPAL-pedido-54/EisWerk - DE/03 - EisWerk - DE (v1).mp4"
+}

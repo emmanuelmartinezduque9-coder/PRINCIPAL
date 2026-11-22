@@ -1,0 +1,60 @@
+{
+ "id": "V01-v1",
+ "tipo": "gancho+cuerpo",
+ "pedido": "app-6852a9fdeb44480983cc86d73a67d471-54",
+ "video": 1,
+ "cuenta": "EisWerk",
+ "clips": [
+  {
+   "role": "hook",
+   "path": "/Volumes/T7/PRINCIPAL/pedido-54/descargas/owner-88a7e7b3.mp4",
+   "in_frame": 10,
+   "reveal_frame": 132,
+   "hold_s": 0.45
+  },
+  {
+   "role": "body",
+   "auto": true,
+   "path": "/Volumes/T7/PRINCIPAL/pedido-54/descargas/V1-cuerpo-topaz-980c2227.mp4"
+  }
+ ],
+ "audio": {
+  "mode": "cancion",
+  "song": "/Volumes/AutomatizacionProyecto/AUTOMATIZACION IA VIDEOS/NanoBanana/_EDICIONES/music-library/a081c8089a0db17b330662177577c98e88efb958365758213895fd4a01bd47cf.mp3",
+  "drop": 9.32,
+  "product_shown": {},
+  "music_gain_db": 0,
+  "peak_limit": 0.94,
+  "voice": {
+   "clip": 0,
+   "target_lufs": -14,
+   "max_spill_s": 0.6,
+   "path": "/Volumes/T7/PRINCIPAL/pedido-54/trabajo/voz/v1-gancho-original.wav",
+   "from": 0.417,
+   "to": 5.6
+  }
+ },
+ "texts": [
+  {
+   "role": "main",
+   "text": "STARBUCKS × EISWERK 😳🍦"
+  },
+  {
+   "role": "cta",
+   "text": "Kommentiere „EisWerk“, wenn du auch eine willst! 🤩🍦"
+  }
+ ],
+ "notas": [
+  "Gancho aprobado por el dueño (Topaz 88a7e7b3). Entra en f10 («Eins» a 0,5 s); el mantel vuela a 5,4–5,5 s y las cajas se ven desde f132: corte en f143 (0,45 s después).",
+  "Cuerpo C78 (reutilizado de la biblioteca) con in/out automáticos."
+ ],
+ "avisos": [
+  "Cuerpo: hacia 6 s del cuerpo el sirope cae sobre la tapa del motor (defecto conocido, elección del dueño)."
+ ],
+ "version": 1,
+ "zoom": {
+  "enabled": false
+ },
+ "work_dir": "/Volumes/T7/PRINCIPAL/pedido-54/trabajo/v1/V01-v1",
+ "output": "/Volumes/T7/AUTOMATIZACION SEGA/videos editados/2026-11-22/PRINCIPAL-pedido-54/EisWerk - DE/01 - EisWerk - DE (v1).mp4"
+}
