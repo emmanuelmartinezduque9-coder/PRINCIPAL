@@ -40,3 +40,34 @@ Orden por uso real (572 tarjetas en 71 pedidos) y por lo que el dueño ha pedido
 4. **Música por fila** (canción de la biblioteca con su drop) para el montaje; la canción elegida gana siempre.
 5. Duplicar y quitar fila; filtro «Por revisar».
 Fuera de v2: Genjutsu/Wan, Pinterest, doblaje, versión en francés, edición en la web (sigue el montador en el Mac).
+
+## Lotes v2 — «Preparar lote» como el panel antiguo, mejorado (22/11, tras ver el panel vivo)
+Visto en vivo (`127.0.0.1:8777/#replicar`, `lote.html` + `local-lotes.js`): el lote se agrupa por **cuenta**, cada
+cuenta lleva sus «Indicaciones», y cada tarjeta tiene Generación · Avatar · Música · Edición y cuerpo · Cambios.
+Abajo: Guardar borrador · Revisar selección · Preparar · Enviar.
+
+**Qué hacía mal el sistema antiguo (y qué cambia):**
+1. ~25 controles por tarjeta y casi todos se quedan como vienen (avatar automático en 438 de 572 tarjetas). →
+   **Valores por producto** (avatar habitual, variante, canción): la tarjeta solo pide enlace, tipo y cambios; lo
+   demás va plegado en «Más opciones».
+2. Historial con ~95 lotes «Lote local · copia · copia…» porque duplicar era la única forma de reutilizar. →
+   nombre automático (fecha + cuentas) y «Añadir otra cuenta» dentro del mismo lote.
+3. Nada se analiza hasta enviar («Sin iniciar análisis») y los fallos salen al final (pedido 54: 4 de 12
+   rechazados). → el **desglose corre al añadir** y avisa de riesgos (texto quemado, función que el producto no
+   tiene) **antes** de gastar créditos; precio a la vista.
+4. Codex montaba cada pedido escribiendo scripts (~270) y validando recibos: lento y caro. → código fijo; Claude
+   solo en el desglose (céntimos por vídeo).
+5. Reintentos sin tope por clip y trabajos terminados en Higgsfield sin descargar. → 2 regeneraciones con motivo y
+   reconciliación con el historial.
+6. La canción elegida se perdía en réplicas Genjutsu (V6, V9). → la canción elegida manda siempre.
+
+**Alcance de v2 (por orden):**
+A. Lote **agrupado por cuenta** con «Indicaciones para los vídeos de X» (llegan al desglose), duplicar/quitar fila,
+   filtro «Por revisar», nombre automático, «Cambios específicos» largo (≤ 6.000) con dictado por voz.
+B. **Valores por producto**: avatar habitual (modo y foto) y, más adelante, variante y canción.
+C. **Desglose automático** al quedar lista la referencia (interruptor por lote, encendido).
+D. **Pegar enlaces** (uno por línea → una tarjeta por enlace): los baja el agente del Mac (Tareas 12–13).
+E. **Solo gancho + cuerpo existente** y **variaciones de gancho** sobre una **biblioteca de clips** (historial de
+   Higgsfield de la persona, con miniaturas y vista previa).
+F. **Canción por vídeo** (biblioteca con drop) y montaje con el montador vía agente del Mac.
+G. **Proponer lote** (motor de ángulos): por producto, Claude propone ángulos × audiencias y qué concepto adaptar.
