@@ -12,6 +12,9 @@ export async function PUT(request: Request, { params }: { params: Promise<{ id: 
       if (!body || typeof body !== "object") throw new HttpError(400, "Petición no válida.");
       const { capUsd, disabled } = body;
       if (capUsd === undefined && disabled === undefined) throw new HttpError(400, "No hay nada que cambiar.");
+      if (capUsd !== undefined && disabled !== undefined) {
+        throw new HttpError(400, "Cambia el tope o el estado de la persona, no los dos a la vez.");
+      }
       if (disabled !== undefined && typeof disabled !== "boolean") throw new HttpError(400, "Petición no válida.");
       let micros: number | undefined;
       if (capUsd !== undefined) {

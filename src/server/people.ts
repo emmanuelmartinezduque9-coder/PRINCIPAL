@@ -1,7 +1,7 @@
-import { and, asc, eq, gt, isNull, ne } from "drizzle-orm";
+import { and, asc, eq, gt, isNull, sql } from "drizzle-orm";
 import { getDb, schema } from "@/db/client";
 import { assignedProductIds } from "@/server/access";
-import { createInvite, type AuthUser, type Role } from "@/server/auth";
+import { buildInvite, type AuthUser, type Role } from "@/server/auth";
 import { deleteAllCredentials } from "@/server/credentials";
 import { HttpError } from "@/server/http";
 import { spendSummary } from "@/server/spend";
@@ -26,6 +26,9 @@ export interface PersonRow {
 function requireOwner(owner: AuthUser): void {
   if (owner.role !== "dueno") throw new HttpError(403, "Solo el dueño puede hacer esto.");
 }
+
+const MAX_NAME = 100;
+const MAX_EMAIL = 254;
 
 const isId = (value: number) => Number.isSafeInteger(value) && value > 0;
 
@@ -85,7 +88,9 @@ export async function listPeople(
 
 /**
  * Crea una invitación de colaborador y devuelve su enlace. El enlace lleva el token de un solo
- * uso: solo se devuelve aquí, no se guarda en claro ni se escribe en el registro.
+ * uso: solo se devuelve aquí, no se guarda en claro ni se escribe en el registro. Las
+ * invitaciones anteriores sin usar de ese correo se cancelan en la misma transacción: si no,
+ * quien conservara un enlace viejo podría cambiar después la contraseña de esa cuenta.
  */
 export async function invitePerson(
   owner: AuthUser,
@@ -94,14 +99,35 @@ export async function invitePerson(
 ): Promise<{ link: string; expiresAt: Date }> {
   requireOwner(owner);
   const email = input.email.trim().toLowerCase();
+  const name = input.name.trim();
+  if (email.length > MAX_EMAIL) throw new HttpError(400, `El correo no puede tener más de ${MAX_EMAIL} caracteres.`);
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new HttpError(400, "Escribe un correo válido.");
-  const [existing] = await getDb()
-    .select({ id: schema.users.id })
-    .from(schema.users)
-    .where(eq(schema.users.email, email));
-  if (existing) throw new HttpError(409, "Esa persona ya tiene cuenta.");
-  const { token, expiresAt } = await createInvite(email, input.name, { role: "colaborador", invitedBy: owner.id });
-  return { link: `${origin}/activar?token=${encodeURIComponent(token)}`, expiresAt };
+  if (name.length > MAX_NAME) throw new HttpError(400, `El nombre no puede tener más de ${MAX_NAME} caracteres.`);
+
+  const { token, values } = buildInvite(email, name, { role: "colaborador", invitedBy: owner.id });
+  await getDb().transaction(async (tx) => {
+    // Dos invitaciones a la vez para el mismo correo van una detrás de otra.
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${"invite:" + email}))`);
+    const [existing] = await tx
+      .select({ disabledAt: schema.users.disabledAt })
+      .from(schema.users)
+      .where(eq(schema.users.email, email));
+    if (existing?.disabledAt) {
+      throw new HttpError(409, "Esa cuenta está desactivada. Puedes reactivarla desde la lista de personas.");
+    }
+    if (existing) throw new HttpError(409, "Esa persona ya tiene cuenta.");
+    await tx.delete(schema.invites).where(and(eq(schema.invites.email, email), isNull(schema.invites.usedAt)));
+    await tx.insert(schema.invites).values(values);
+  });
+  return { link: `${origin}/activar?token=${encodeURIComponent(token)}`, expiresAt: values.expiresAt };
+}
+
+/** Cancela las invitaciones sin usar de un correo: sus enlaces dejan de valer. */
+export async function cancelInvitation(owner: AuthUser, email: string): Promise<void> {
+  requireOwner(owner);
+  await getDb()
+    .delete(schema.invites)
+    .where(and(eq(schema.invites.email, email.trim().toLowerCase()), isNull(schema.invites.usedAt)));
 }
 
 /**
@@ -115,22 +141,29 @@ export async function setPersonDisabled(owner: AuthUser, userId: number, disable
   if (disabled && userId === owner.id) throw new HttpError(400, "No puedes desactivar tu propia cuenta.");
 
   await getDb().transaction(async (tx) => {
+    // Orden de bloqueo fijo: primero los dueños activos (por id), después la persona. Así dos
+    // dueños que se desactivan entre sí a la vez van uno detrás de otro, sin interbloqueo.
+    const activeOwners = disabled
+      ? await tx
+          .select({ id: schema.users.id })
+          .from(schema.users)
+          .where(and(eq(schema.users.role, "dueno"), isNull(schema.users.disabledAt)))
+          .orderBy(asc(schema.users.id))
+          .for("update")
+      : [];
     const [person] = await tx
       .select({ id: schema.users.id, role: schema.users.role })
       .from(schema.users)
       .where(eq(schema.users.id, userId))
       .for("update");
     if (!person) throw new HttpError(404, "Persona no encontrada.");
-    if (disabled && person.role === "dueno") {
-      const others = await tx
-        .select({ id: schema.users.id })
-        .from(schema.users)
-        .where(and(eq(schema.users.role, "dueno"), isNull(schema.users.disabledAt), ne(schema.users.id, userId)))
-        .for("update");
-      if (others.length === 0) throw new HttpError(400, "No se puede desactivar al último dueño activo.");
+    if (disabled && person.role === "dueno" && !activeOwners.some((row) => row.id !== userId)) {
+      throw new HttpError(400, "No se puede desactivar al último dueño activo.");
     }
     await tx.update(schema.users).set({ disabledAt: disabled ? new Date() : null }).where(eq(schema.users.id, userId));
-    if (disabled) await tx.delete(schema.sessions).where(eq(schema.sessions.userId, userId));
+    if (disabled) {
+      await tx.delete(schema.sessions).where(eq(schema.sessions.userId, userId));
+      await deleteAllCredentials(userId, tx);
+    }
   });
-  if (disabled) await deleteAllCredentials(userId);
 }

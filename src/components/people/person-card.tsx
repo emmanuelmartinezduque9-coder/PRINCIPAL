@@ -6,12 +6,12 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { api, type Serialized } from "@/lib/api";
 import { formatUsd, MICROS_PER_USD } from "@/lib/money";
+import { cn } from "@/lib/utils";
 import type { PersonRow } from "@/server/people";
 import { AssignDialog } from "./assign-dialog";
 
@@ -21,17 +21,17 @@ export type ProductOption = { id: number; name: string };
 /** Importe para el campo del tope: `12,5` en lugar de `12500000`. */
 const capText = (micros: number | null) => (micros === null ? "" : String(micros / MICROS_PER_USD).replace(".", ","));
 
-function useChange(person: PersonView) {
+function useChange(person: PersonView, successText?: string) {
   const client = useQueryClient();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  async function run(body: object, done: string): Promise<boolean> {
+  async function run(body: object, done: string | undefined = successText): Promise<boolean> {
     setBusy(true);
     setError(null);
     try {
       await api(`/api/personas/${person.id}`, { method: "PUT", body: JSON.stringify(body) });
       await client.invalidateQueries({ queryKey: ["people"] });
-      toast.success(done);
+      toast.success(done ?? "Cambio guardado.");
       return true;
     } catch (e) {
       setError(e instanceof Error ? e.message : "No se pudo guardar el cambio.");
@@ -59,7 +59,7 @@ function CapDialog({ person }: { person: PersonView }) {
       }}
     >
       <DialogTrigger asChild>
-        <Button variant="outline" className="h-11 gap-2 px-3 text-base">
+        <Button variant="outline" className="h-9 gap-1.5 px-2.5">
           <Wallet className="size-4" />
           Cambiar tope
         </Button>
@@ -107,7 +107,7 @@ function DisableDialog({ person }: { person: PersonView }) {
       }}
     >
       <DialogTrigger asChild>
-        <Button variant="destructive" className="h-11 px-3 text-base">
+        <Button variant="destructive" className="h-9 px-2.5">
           Desactivar
         </Button>
       </DialogTrigger>
@@ -139,68 +139,82 @@ function DisableDialog({ person }: { person: PersonView }) {
   );
 }
 
+/** Rejilla compartida por la cabecera y las filas: en escritorio es una tabla; en móvil, una tarjeta apilada. */
+export const ROW_GRID = "lg:grid lg:grid-cols-[minmax(0,1.2fr)_minmax(0,1.3fr)_6.5rem_26rem] lg:items-center lg:gap-x-4";
+
 export function PersonCard({ person, products }: { person: PersonView; products: ProductOption[] }) {
-  const reactivate = useChange(person);
+  const reactivate = useChange(person, "Persona reactivada. Tendrá que volver a conectar Higgsfield y las demás herramientas.");
   const isOwner = person.role === "dueno";
   const names = new Map(products.map((p) => [p.id, p.name]));
   const assigned = person.productIds.map((id) => names.get(id)).filter((n): n is string => !!n);
 
   return (
-    <Card className={person.disabled ? "gap-3 p-4 opacity-80" : "gap-3 p-4"}>
-      <div className="flex items-start justify-between gap-3">
+    <div className={cn("flex flex-col gap-3 px-4 py-4", ROW_GRID, person.disabled && "bg-muted/40")}>
+      <div className="flex min-w-0 items-start justify-between gap-3 lg:block">
         <div className="min-w-0">
           <p className="text-base font-semibold break-words">{person.name}</p>
           <p className="text-sm break-all text-muted-foreground">{person.email}</p>
         </div>
-        {isOwner ? <Badge>Dueño</Badge> : person.disabled ? <Badge variant="outline">Desactivada</Badge> : null}
+        <div className="flex shrink-0 gap-1.5 lg:mt-1.5">
+          {isOwner ? <Badge>Dueño</Badge> : <Badge variant="secondary">Colaborador</Badge>}
+          {person.disabled ? <Badge variant="outline">Sin acceso</Badge> : null}
+        </div>
       </div>
 
-      {isOwner ? (
-        <p className="text-sm text-muted-foreground">Ve todos los productos. Solo cuenta el tope global.</p>
-      ) : (
-        <>
-          <p className="text-sm">
-            <span className="text-muted-foreground">Gastado este mes </span>
-            <span className="font-medium">{formatUsd(person.spentMicros)}</span>
-            {person.capMicros !== null ? <span className="text-muted-foreground"> de {formatUsd(person.capMicros)}</span> : null}
-          </p>
-          <div className="flex flex-col gap-1.5">
-            <p className="text-sm text-muted-foreground">Productos asignados</p>
-            {assigned.length === 0 ? (
-              <p className="text-sm">Ninguno todavía</p>
-            ) : (
-              <div className="flex flex-wrap gap-1.5">
-                {assigned.map((name) => (
-                  <Badge key={name} variant="secondary" className="max-w-full truncate">
-                    {name}
-                  </Badge>
-                ))}
-              </div>
-            )}
+      <div className="flex min-w-0 flex-col gap-1.5">
+        <p className="text-sm text-muted-foreground lg:hidden">Productos asignados</p>
+        {isOwner ? (
+          <p className="text-sm text-muted-foreground">Ve todos los productos</p>
+        ) : assigned.length === 0 ? (
+          <p className="text-sm text-muted-foreground">Ninguno todavía</p>
+        ) : (
+          <div className="flex flex-wrap gap-1.5">
+            {assigned.map((name) => (
+              <Badge key={name} variant="secondary" className="max-w-full truncate">
+                {name}
+              </Badge>
+            ))}
           </div>
-          <div className="flex flex-wrap gap-2 pt-1">
-            {person.disabled ? (
-              <>
-                <Button
-                  className="h-11 px-3 text-base"
-                  disabled={reactivate.busy}
-                  onClick={() => reactivate.run({ disabled: false }, "Persona reactivada.")}
-                >
-                  {reactivate.busy ? <Loader2 className="animate-spin" /> : null}
-                  Reactivar
-                </Button>
-                {reactivate.error ? <p role="alert" className="w-full text-sm text-destructive">{reactivate.error}</p> : null}
-              </>
-            ) : (
-              <>
-                <AssignDialog person={person} products={products} />
-                <CapDialog person={person} />
-                <DisableDialog person={person} />
-              </>
-            )}
+        )}
+      </div>
+
+      <p className="text-sm">
+        {isOwner ? (
+          <span className="text-muted-foreground">Solo cuenta el tope global</span>
+        ) : (
+          <>
+            <span className="text-muted-foreground lg:hidden">Gastado este mes </span>
+            <span className="font-medium tabular-nums">{formatUsd(person.spentMicros)}</span>
+            {person.capMicros !== null ? (
+              <span className="text-muted-foreground tabular-nums">
+                {" "}
+                <span className="lg:block">de {formatUsd(person.capMicros)}</span>
+              </span>
+            ) : null}
+          </>
+        )}
+      </p>
+
+      <div className="flex flex-wrap gap-2 lg:flex-nowrap lg:justify-end">
+        {isOwner ? null : person.disabled ? (
+          <div className="flex flex-col gap-2 lg:items-end">
+            <Button className="h-10 px-3" disabled={reactivate.busy} onClick={() => reactivate.run({ disabled: false })}>
+              {reactivate.busy ? <Loader2 className="animate-spin" /> : null}
+              Reactivar
+            </Button>
+            <p className="text-sm text-muted-foreground lg:max-w-48 lg:text-right">
+              Al reactivarla tendrá que volver a conectar Higgsfield.
+            </p>
+            {reactivate.error ? <p role="alert" className="text-sm text-destructive">{reactivate.error}</p> : null}
           </div>
-        </>
-      )}
-    </Card>
+        ) : (
+          <>
+            <AssignDialog person={person} products={products} />
+            <CapDialog person={person} />
+            <DisableDialog person={person} />
+          </>
+        )}
+      </div>
+    </div>
   );
 }

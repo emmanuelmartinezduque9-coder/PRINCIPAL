@@ -48,7 +48,7 @@ export function AssignDialog({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogTrigger asChild>
-        <Button variant="outline" className="h-11 gap-2 px-3 text-base">
+        <Button variant="outline" className="h-9 gap-1.5 px-2.5">
           <Package className="size-4" />
           Asignar productos
         </Button>

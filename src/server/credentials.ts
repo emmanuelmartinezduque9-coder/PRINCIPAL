@@ -71,8 +71,8 @@ export async function deleteCredential(userId: number, kind: string): Promise<vo
   await getDb().delete(schema.credentials).where(where(userId, kind));
 }
 
-/** Borra todas las credenciales de una persona, sea cual sea su tipo (p. ej. al desactivarla). */
-export async function deleteAllCredentials(userId: number): Promise<void> {
+/** Borra todas las credenciales de una persona, sea cual sea su tipo (p. ej. al desactivarla, dentro de su transacción). */
+export async function deleteAllCredentials(userId: number, executor: Pick<ReturnType<typeof getDb>, "delete"> = getDb()): Promise<void> {
   check(userId, "todas");
-  await getDb().delete(schema.credentials).where(eq(schema.credentials.userId, userId));
+  await executor.delete(schema.credentials).where(eq(schema.credentials.userId, userId));
 }

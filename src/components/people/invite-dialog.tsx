@@ -24,8 +24,17 @@ export function InviteDialog() {
   const [copied, setCopied] = useState(false);
   const linkField = useRef<HTMLInputElement>(null);
 
+  const [confirmClose, setConfirmClose] = useState(false);
+
+  /** Cerrar con el enlace a la vista y sin copiar pide confirmación: no se puede volver a ver. */
+  function requestClose() {
+    if (link && !copied) setConfirmClose(true);
+    else reset(false);
+  }
+
   function reset(next: boolean) {
     setOpen(next);
+    setConfirmClose(false);
     if (!next) {
       setName("");
       setEmail("");
@@ -65,20 +74,34 @@ export function InviteDialog() {
   }
 
   return (
-    <Dialog open={open} onOpenChange={reset}>
+    <Dialog open={open} onOpenChange={(next) => (next ? reset(true) : requestClose())}>
       <DialogTrigger asChild>
-        <Button className="h-11 gap-2 px-4 text-base">
+        <Button className="h-10 gap-2 px-4">
           <UserPlus className="size-5" />
           Invitar a una persona
         </Button>
       </DialogTrigger>
-      <DialogContent>
+      <DialogContent
+        className="sm:max-w-md"
+        onInteractOutside={(event) => {
+          if (link && !copied) {
+            event.preventDefault();
+            setConfirmClose(true);
+          }
+        }}
+        onEscapeKeyDown={(event) => {
+          if (link && !copied) {
+            event.preventDefault();
+            setConfirmClose(true);
+          }
+        }}
+      >
         <DialogHeader>
           <DialogTitle>{link ? "Invitación lista" : "Invitar a una persona"}</DialogTitle>
           <DialogDescription>
             {link
               ? "Envíaselo por WhatsApp o correo. Sirve una sola vez y caduca en 7 días."
-              : "Entrará como colaborador: solo verá los productos que le asignes."}
+              : "Entrará como colaborador: solo verá los productos que le asignes. Si ya había una invitación sin usar para ese correo, queda cancelada."}
           </DialogDescription>
         </DialogHeader>
 
@@ -86,7 +109,7 @@ export function InviteDialog() {
           <div className="flex flex-col gap-3">
             <Label htmlFor="invite-link">Enlace para {name || email}</Label>
             <Input id="invite-link" ref={linkField} readOnly value={link} className="h-11 text-sm" onFocus={(e) => e.currentTarget.select()} />
-            <Button onClick={copy} className="h-12 gap-2 text-base">
+            <Button onClick={copy} className="h-11 gap-2">
               {copied ? <Check className="size-5" /> : <Copy className="size-5" />}
               {copied ? "Enlace copiado" : "Copiar enlace"}
             </Button>
@@ -94,9 +117,23 @@ export function InviteDialog() {
               Este enlace solo se muestra ahora. Si lo pierdes, crea otra invitación.
             </p>
             {error ? <p role="alert" className="rounded-lg bg-destructive/10 px-3 py-2 text-sm">{error}</p> : null}
-            <Button variant="outline" className="h-11 text-base" onClick={() => reset(false)}>
-              Listo
-            </Button>
+            {confirmClose ? (
+              <div role="alertdialog" aria-label="Confirmar cierre" className="flex flex-col gap-2 rounded-lg border border-destructive/40 bg-destructive/5 p-3">
+                <p className="text-sm">Si cierras ahora sin copiar el enlace, no podrás volver a verlo. ¿Cerrar de todos modos?</p>
+                <div className="flex flex-wrap gap-2">
+                  <Button className="h-10" onClick={() => setConfirmClose(false)} autoFocus>
+                    Seguir aquí
+                  </Button>
+                  <Button variant="outline" className="h-10" onClick={() => reset(false)}>
+                    Cerrar y perder el enlace
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <Button variant="outline" className="h-10" onClick={requestClose}>
+                Listo
+              </Button>
+            )}
           </div>
         ) : (
           <form onSubmit={submit} className="flex flex-col gap-4">
@@ -113,7 +150,7 @@ export function InviteDialog() {
                 <CircleAlert className="mt-0.5 size-4 shrink-0 text-destructive" /> {error}
               </p>
             ) : null}
-            <Button type="submit" disabled={busy} className="h-12 text-base">
+            <Button type="submit" disabled={busy} className="h-11">
               {busy ? <Loader2 className="animate-spin" /> : null}
               Crear invitación
             </Button>
