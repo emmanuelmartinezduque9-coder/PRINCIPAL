@@ -6,16 +6,32 @@ const parseId = (value: string) => (/^[1-9]\d{0,15}$/.test(value) ? Number(value
 
 function parseResult(body: unknown): TaskResult | null {
   if (typeof body !== "object" || body === null) return null;
-  const { ok, uploadId, totalBytes, error, title } = body as { ok?: unknown; uploadId?: unknown; totalBytes?: unknown; error?: unknown; title?: unknown };
+  const { ok, uploadId, totalBytes, error, title, selfCheck } = body as {
+    ok?: unknown;
+    uploadId?: unknown;
+    totalBytes?: unknown;
+    error?: unknown;
+    title?: unknown;
+    selfCheck?: unknown;
+  };
   if (typeof uploadId !== "string") return null;
-  if (ok === true && typeof totalBytes === "number") return typeof title === "string" ? { ok: true, uploadId, totalBytes, title } : { ok: true, uploadId, totalBytes };
+  if (ok === true && typeof totalBytes === "number") {
+    return {
+      ok: true,
+      uploadId,
+      totalBytes,
+      ...(typeof title === "string" ? { title } : {}),
+      ...(selfCheck !== undefined ? { selfCheck } : {}),
+    };
+  }
   if (ok === false) return { ok: false, uploadId, error: typeof error === "string" ? error : "" };
   return null;
 }
 
 /**
- * El Mac termina la tarea: `{ ok: true, uploadId, totalBytes, title? }` (el archivo llegó entero:
- * una referencia se prepara como una subida; una canción se guarda con `title`, el de yt-dlp) o `{ ok: false, uploadId, error }` (no pudo: el vídeo lo dice).
+ * El Mac termina la tarea: `{ ok: true, uploadId, totalBytes, title?, selfCheck? }` (el archivo llegó entero:
+ * una referencia se prepara como una subida; una canción se guarda con `title`, el de yt-dlp; un
+ * montaje se guarda con `selfCheck`, la autocomprobación del montador) o `{ ok: false, uploadId, error }` (no pudo: el vídeo lo dice).
  * `uploadId` es el que recibió al reservarla. 409 si la tarea ya no es suya o la sesión es de un
  * intento anterior.
  */

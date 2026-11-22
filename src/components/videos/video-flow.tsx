@@ -1,7 +1,7 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { Clapperboard, Eye, Film, ImageIcon, ScanSearch, SearchX } from "lucide-react";
+import { Clapperboard, Eye, Film, ImageIcon, ScanSearch, Scissors, SearchX } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
 import { productLabel, productTabHref, type ProductView } from "@/components/products/labels";
@@ -15,6 +15,7 @@ import { CostSummary } from "./cost-summary";
 import { RUNNING_STATUSES, type FlowStep, type ProductPhoto, type VideoViewJson } from "./labels";
 import { StepBreakdown, type PromptDraft } from "./step-breakdown";
 import { StepClip } from "./step-clip";
+import { StepEdit } from "./step-edit";
 import { StepFrame } from "./step-frame";
 import { StepReference } from "./step-reference";
 import { TechnicalDetails } from "./technical-details";
@@ -40,6 +41,8 @@ function pollEvery(view: VideoViewJson | undefined): number | false {
   const generations = [view.frame.current?.status, view.clip.current?.status];
   if (generations.some((s) => s !== undefined && RUNNING_STATUSES.includes(s))) return 3000;
   if (generations.includes("unknown")) return 15_000;
+  // Un montaje en la cola del Mac o montándose.
+  if (view.edit.status === "en_cola" || view.edit.status === "montando") return 5000;
   return false;
 }
 
@@ -52,12 +55,15 @@ function reachableSteps(view: VideoViewJson): FlowStep[] {
   const steps: FlowStep[] = ["referencia", "desglose"];
   if ((view.analysis?.status === "done" && !view.analysis.stale) || view.frame.current !== null) steps.push("imagen");
   if (view.frame.approvedResultId !== null || view.clip.current !== null) steps.push("clip");
+  // Montaje: con el clip hecho (se puede montar) o si ya se pidió alguno.
+  if (view.edit.canStart || view.edit.latest !== null || view.edit.status !== "none") steps.push("montaje");
   return steps;
 }
 
 /** El paso con el que se abre el vídeo: el más avanzado en el que ya hay algo hecho. */
 function firstStep(view: VideoViewJson, referenceDone: boolean): FlowStep {
   const reachable = reachableSteps(view);
+  if (reachable.includes("montaje") && (view.edit.latest !== null || view.edit.status !== "none")) return "montaje";
   if (reachable.includes("clip")) return "clip";
   if (reachable.includes("imagen") && view.frame.current !== null) return "imagen";
   return view.analysis || referenceDone ? "desglose" : "referencia";
@@ -177,6 +183,7 @@ function FlowBody({
     { key: "desglose", label: "Desglose", icon: ScanSearch, done: breakdownDone },
     { key: "imagen", label: "Imagen", icon: ImageIcon, done: data.frame.approvedResultId !== null },
     { key: "clip", label: "Clip", icon: Clapperboard, done: data.clip.approvedResultId !== null },
+    { key: "montaje", label: "Montaje", icon: Scissors, done: data.edit.latest !== null },
   ];
   const steps = allSteps.filter((step) => reachable.includes(step.key));
   const spent = data.costs.higgsfieldCredits > 0 || data.costs.claudeMicros > 0;
@@ -200,8 +207,10 @@ function FlowBody({
         <StepBreakdown view={data} draft={draft} setDraft={setDraft} onGoToReference={() => select("referencia")} />
       ) : current === "imagen" ? (
         <StepFrame view={data} onGoToClip={() => select("clip")} onGoToBreakdown={() => select("desglose")} />
-      ) : (
+      ) : current === "clip" ? (
         <StepClip view={data} onGoToBreakdown={() => select("desglose")} onGoToFrame={() => select("imagen")} />
+      ) : (
+        <StepEdit view={data} />
       )}
 
       {spent || isOwner ? (

@@ -6,6 +6,7 @@ import type { AuthUser } from "@/server/auth";
 import { HttpError } from "@/server/http";
 import { coverPhotoIds, listProductPhotos } from "@/server/photos";
 import { listProductsFor, productDisplayName } from "@/server/products";
+import { editViews, type EditView } from "@/server/videos/edits";
 import { downloadableClipUrl, servableClipUrl } from "@/server/videos/clip";
 import { bodiesOfVideos, checkVideoBodies } from "@/server/videos/bodies";
 import { costsOfVideo, type VideoCosts } from "@/server/videos/costs";
@@ -338,6 +339,8 @@ export interface BatchRow {
   costs: VideoCosts;
   /** Hay un clip que se puede descargar (el aprobado o el último terminado). */
   clipReady: boolean;
+  /** El montaje en el Mac: en qué punto está, la última versión montada y si quien mira puede pedirlo. */
+  edit: EditView;
 }
 
 /** Un producto del lote: su portada, sus «Indicaciones» y cuántos vídeos suyos ve quien mira. */
@@ -422,16 +425,14 @@ export async function batchView(user: AuthUser, batchId: number): Promise<BatchV
     return found ? { id: found.id, name: found.name } : null;
   };
 
+  const clipUrls = new Map(await Promise.all(list.map(async (video) => [video.id, await downloadableClipUrl(video)] as const)));
+  const editsOf = await editViews(user, list.map((video) => ({ ...video, clipReady: clipUrls.get(video.id) != null })));
   const rows = await Promise.all(
     list.map(async (video): Promise<BatchRow> => {
       const analysis = analysisOf.get(video.id);
       const fresh = analysis ? staleness(analysis, { ...video, productNotes: notesOf.get(video.productId) ?? null }) : null;
-      const [frame, clip, costs, clipUrl] = await Promise.all([
-        generationView(video, "frame", user.id),
-        generationView(video, "clip", user.id),
-        costsOfVideo(video),
-        downloadableClipUrl(video),
-      ]);
+      const [frame, clip, costs] = await Promise.all([generationView(video, "frame", user.id), generationView(video, "clip", user.id), costsOfVideo(video)]);
+      const clipUrl = clipUrls.get(video.id) ?? null;
       return {
         id: video.id,
         title: video.title,
@@ -466,6 +467,7 @@ export async function batchView(user: AuthUser, batchId: number): Promise<BatchV
         clip,
         costs,
         clipReady: clipUrl !== null,
+        edit: editsOf.get(video.id)!,
       };
     }),
   );

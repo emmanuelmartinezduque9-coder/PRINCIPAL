@@ -5,7 +5,7 @@
 import os from "node:os";
 import path from "node:path";
 
-export const VERSION = "1.2.0";
+export const VERSION = "1.3.0";
 
 /** Sitios de los que se descarga, con sus subdominios. La misma lista que el servidor. */
 export const LINK_HOSTS = ["instagram.com", "tiktok.com", "youtube.com", "youtu.be", "facebook.com", "fb.watch"];
@@ -48,6 +48,19 @@ const MAX_TITLE = 200;
 export const YT_DLP_TIMEOUT_MS = 4 * 60_000;
 /** Una carpeta temporal de otra ejecución solo se borra si lleva este tiempo sin tocarse. */
 export const LEFTOVER_AGE_MS = 60 * 60_000;
+/** Lo más que se deja trabajar al montador (con su autocomprobación) antes de cortarlo. */
+export const MONTADOR_TIMEOUT_MS = 25 * 60_000;
+/** Lo más que se deja trabajar a rea-video con la referencia de edición. */
+export const REA_VIDEO_TIMEOUT_MS = 10 * 60_000;
+/** Lo más que pesa cada clip que se descarga para montar, y la canción. */
+export const MAX_CLIP_DOWNLOAD_BYTES = 500 * 1024 * 1024;
+export const MAX_SONG_DOWNLOAD_BYTES = 25 * 1024 * 1024;
+/** Lo más que se espera a que termine de bajar un clip. */
+const CLIP_DOWNLOAD_TIMEOUT_MS = 10 * 60_000;
+/** Nombres dentro de la carpeta del montaje. */
+export const SPEC_FILE = "ficha.json";
+export const RESULT_FILE = "resultado.json";
+export const OUTPUT_FILE = "salida.mp4";
 
 /** Lo que se escribe cuando la web no reconoce la ficha (una vez, no en cada pregunta). */
 export const BAD_TOKEN_MESSAGE = "Ficha revocada o incorrecta: la web no reconoce la de este Mac. Crea otra en Ajustes → Mac.";
@@ -91,6 +104,63 @@ export function allowedUrl(url, hosts = LINK_HOSTS) {
 /** Como `allowedUrl`, para el enlace de una canción (admite además SoundCloud). */
 export function allowedSongUrl(url) {
   return allowedUrl(url, SONG_LINK_HOSTS);
+}
+
+/**
+ * Un clip que se descarga para montar: solo `https` de la red de distribución de Higgsfield
+ * (`*.cloudfront.net`), sin usuario ni puerto, como en el servidor (`servableClipUrl`). Se pide sin
+ * la ficha y sin seguir redirecciones.
+ */
+export function allowedClipUrl(url) {
+  if (typeof url !== "string" || url.length > 4000) return false;
+  let parsed;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return false;
+  }
+  return parsed.protocol === "https:" && parsed.hostname.toLowerCase().endsWith(".cloudfront.net") && !parsed.username && !parsed.password && !parsed.port;
+}
+
+/**
+ * Dónde están en este Mac las herramientas del montaje: el montador (`montar_auto.py` y
+ * `montador.py`), rea-video con su entorno y la caché de `uv` (fuera del disco externo).
+ */
+export function montajePaths(home = os.homedir()) {
+  const tools = path.join(home, ".principal-tools");
+  return {
+    montadorDir: path.join(tools, "montador"),
+    script: path.join(tools, "montador", "montar_auto.py"),
+    reaDir: path.join(tools, "rea-video"),
+    reaPython: path.join(tools, "rea-video", ".venv", "bin", "python"),
+    uvCache: path.join(home, "Library", "Caches", "uv-principal"),
+  };
+}
+
+/**
+ * Argumentos de `uv` para lanzar el montaje automático con sus dependencias: siempre como lista,
+ * con la ficha local y la carpeta de trabajo como argumentos (nada pasa por una consola).
+ */
+export function montadorArgs(script, specPath, workDir) {
+  return [
+    "run", "--no-project", "--with", "librosa", "--with", "soundfile", "--with", "numpy", "--with", "pillow",
+    "python", script, specPath, workDir,
+  ];
+}
+
+/** Argumentos de rea-video para desglosar la referencia de edición (`breakdown.json` en `outDir`). */
+export function reaVideoArgs(videoPath, outDir) {
+  return ["-m", "rea_video", "decompose", videoPath, "-o", outDir];
+}
+
+/**
+ * El entorno de los programas que lanza el montaje: el de este proceso sin la ficha (si llegó por
+ * `PRINCIPAL_AGENTE_TOKEN`) y con `extra`.
+ */
+export function childEnv(env, extra = {}) {
+  const copy = { ...env, ...extra };
+  delete copy.PRINCIPAL_AGENTE_TOKEN;
+  return copy;
 }
 
 /**
@@ -308,6 +378,18 @@ export async function checkTools(deps, config = {}) {
   return { missing, ytDlp: ytDlp.ok ? ytDlp.out.trim().split("\n")[0].slice(0, 40) || null : null };
 }
 
+/**
+ * Si este Mac puede montar: está `montar_auto.py` en `~/.principal-tools/montador/` y `uv` se puede
+ * lanzar. Devuelve qué falta (vacío si nada). Sin esto no se piden montajes a la web.
+ */
+export async function checkMontaje(deps, config = {}) {
+  const paths = montajePaths(config.home);
+  const missing = [];
+  if (!(await deps.fs.stat(paths.script).then((stat) => stat.isFile()).catch(() => false))) missing.push("montar_auto.py");
+  if (!(await probe(deps, config.uv ?? "uv", ["--version"])).ok) missing.push("uv");
+  return { missing };
+}
+
 /** Corta yt-dlp y todo lo que haya lanzado (ffmpeg): el grupo de procesos entero. */
 function killGroup(child) {
   try {
@@ -318,15 +400,18 @@ function killGroup(child) {
 }
 
 /**
- * Lanza yt-dlp y espera a que termine, renovando la reserva cada minuto. A los 4 minutos lo corta
- * (a él y a sus hijos). Devuelve `{ ok: true }`, `{ ok: false, error }`, `{ lost: true }` (la web
- * retiró la tarea) o `{ local: true, error }` (no se pudo ni lanzar: es cosa de este Mac).
+ * Lanza un programa (en su propio grupo de procesos) y espera a que termine, renovando la reserva
+ * cada minuto. Pasado `timeoutMs` lo corta (a él y a sus hijos). Devuelve `{ ok: true }`,
+ * `{ ok: false, error }` (con `messages.failed(detalle)` o `messages.timedOut`), `{ lost: true }`
+ * (la web retiró la tarea) o `{ local: true, error }` (no se pudo ni lanzar: es cosa de este Mac).
  */
-async function download(config, deps, task, args) {
+async function runTool(config, deps, task, command, args, { timeoutMs, messages, env, cwd }) {
   let child;
   try {
-    // En su propio grupo de procesos, para poder cortarlo con todo lo que lance.
-    child = deps.spawn(config.ytDlp ?? "yt-dlp", args, { stdio: ["ignore", "ignore", "pipe"], detached: true });
+    const options = { stdio: ["ignore", "ignore", "pipe"], detached: true };
+    if (env) options.env = env;
+    if (cwd) options.cwd = cwd;
+    child = deps.spawn(command, args, options);
   } catch (error) {
     return { local: true, error: messageOf(error) };
   }
@@ -348,13 +433,12 @@ async function download(config, deps, task, args) {
     if (result) {
       if (result.error) return { local: true, error: messageOf(result.error) };
       if (result.code === 0) return { ok: true };
-      const detail = stderr.trim().split("\n").pop()?.trim();
-      return { ok: false, error: detail ? `yt-dlp no pudo descargar el enlace: ${detail}` : "yt-dlp no pudo descargar el enlace" };
+      return { ok: false, error: messages.failed(stderr.trim().split("\n").pop()?.trim() ?? "") };
     }
     waited += LEASE_BEAT_MS;
-    if (waited >= YT_DLP_TIMEOUT_MS) {
+    if (waited >= timeoutMs) {
       await stop();
-      return { ok: false, error: "yt-dlp tardó más de 4 minutos y se cortó" };
+      return { ok: false, error: messages.timedOut };
     }
     const beat = await call(config, deps, "POST", `/api/agente/tareas/${task.taskId}/latido`).catch(() => null);
     if (beat?.status === 409) {
@@ -362,6 +446,17 @@ async function download(config, deps, task, args) {
       return { lost: true };
     }
   }
+}
+
+/** yt-dlp con `args` (ver `runTool`): a los 4 minutos se corta. */
+function download(config, deps, task, args) {
+  return runTool(config, deps, task, config.ytDlp ?? "yt-dlp", args, {
+    timeoutMs: YT_DLP_TIMEOUT_MS,
+    messages: {
+      failed: (detail) => (detail ? `yt-dlp no pudo descargar el enlace: ${detail}` : "yt-dlp no pudo descargar el enlace"),
+      timedOut: "yt-dlp tardó más de 4 minutos y se cortó",
+    },
+  });
 }
 
 /** El título que dejó yt-dlp: la primera línea, sin espacios de más y recortada; `null` si no hay. */
@@ -428,7 +523,9 @@ export async function runOnce(config, deps) {
   const log = (text) => deps.log(scrub(config, text));
   let response;
   try {
-    response = await call(config, deps, "POST", "/api/agente/tareas/reclamar");
+    // Lo que este Mac sabe hacer además de traer enlaces y canciones (montar, si tiene el montador).
+    const can = Array.isArray(config.puede) && config.puede.length > 0 ? { json: { puede: config.puede } } : {};
+    response = await call(config, deps, "POST", "/api/agente/tareas/reclamar", can);
   } catch (error) {
     log(`No se pudo preguntar a la web: ${messageOf(error)}`);
     return "offline";
@@ -451,7 +548,7 @@ export async function runOnce(config, deps) {
   const finish = (result) => call(config, deps, "POST", `/api/agente/tareas/${task.taskId}/terminar`, { json: { ...result, uploadId: task.uploadId } });
   /** Comunica el fallo (el detalle solo lo ve el dueño) y sigue con otra cosa. */
   const giveUp = async (error) => {
-    log(`No se pudo traer el enlace: ${error}`);
+    log(`${task.kind === "montaje" ? "No se pudo montar" : "No se pudo traer el enlace"}: ${error}`);
     await finish({ ok: false, error: scrub(config, error).slice(0, 500) }).catch(() => {});
     return "failed";
   };
@@ -459,6 +556,8 @@ export async function runOnce(config, deps) {
     log("La web ha retirado esta tarea; se deja.");
     return "failed";
   };
+
+  if (task.kind === "montaje") return runMontaje(config, deps, task, { log, finish, giveUp, lost });
 
   // Una canción trae el audio (MP3); cualquier otra cosa, el vídeo de referencia.
   const song = task.kind === "cancion";
@@ -495,6 +594,171 @@ export async function runOnce(config, deps) {
     if (done?.status === 409) return lost();
     if (!done?.ok) return await giveUp(`La web no dio por entregado el archivo (${done?.status ?? "sin respuesta"})`);
     log("Entregado.");
+    return "done";
+  } finally {
+    await deps.fs.rm(dir, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+// ───────────────────────── Montaje ─────────────────────────
+
+/** Descarga `url` (un clip de Higgsfield) a `file`, sin la ficha, sin redirecciones y sin pasar de `maxBytes`. */
+async function fetchToFile(deps, url, file, maxBytes) {
+  let response;
+  try {
+    response = await deps.fetch(url, { method: "GET", redirect: "error", signal: AbortSignal.timeout(CLIP_DOWNLOAD_TIMEOUT_MS) });
+  } catch (error) {
+    return { error: `No se pudo descargar un clip (${messageOf(error)})` };
+  }
+  if (!response.ok || !response.body) return { error: `No se pudo descargar un clip (${response.status})` };
+  const declared = Number(response.headers.get("content-length") ?? Number.NaN);
+  if (Number.isFinite(declared) && declared > maxBytes) return { error: "Un clip pesa demasiado" };
+  const handle = await deps.fs.open(file, "wx", 0o600);
+  let size = 0;
+  try {
+    for await (const chunk of response.body) {
+      size += chunk.byteLength;
+      if (size > maxBytes) return { error: "Un clip pesa demasiado" };
+      await handle.write(chunk);
+    }
+  } catch (error) {
+    return { error: `No se pudo descargar un clip (${messageOf(error)})` };
+  } finally {
+    await handle.close();
+  }
+  return size > 0 ? { ok: true } : { error: "Un clip llegó vacío" };
+}
+
+/**
+ * La ficha que manda la web, comprobada otra vez en este Mac: de 1 a 11 clips, todos de Higgsfield;
+ * la canción, solo por la ruta de esta misma tarea. Devuelve el problema, o `null` si vale.
+ */
+export function checkSpec(task) {
+  const spec = task?.spec;
+  if (!spec || typeof spec !== "object" || !Array.isArray(spec.clips) || spec.clips.length === 0 || spec.clips.length > 11) return "La ficha de montaje no se entiende";
+  if (!spec.clips.every((clip) => clip && ["hook", "body", "clip"].includes(clip.role) && allowedClipUrl(clip.url))) return "La ficha trae un clip que no es de Higgsfield";
+  if (spec.song != null && spec.song.url !== `/api/agente/tareas/${task.taskId}/cancion`) return "La ficha trae una canción que no es de esta tarea";
+  if (spec.editReferenceUrl != null && typeof spec.editReferenceUrl !== "string") return "La ficha de montaje no se entiende";
+  return null;
+}
+
+/** El resumen de la autocomprobación que se manda a la web (lo que dejó `montar_auto.py`). */
+export function selfCheckOf(result, withReference) {
+  const check = result?.autocomprobacion ?? {};
+  const avisos = [...(Array.isArray(check.avisos) ? check.avisos : []), ...(Array.isArray(result?.avisos) ? result.avisos : [])];
+  return {
+    ok: check.ok === true,
+    avisos: avisos.filter((aviso) => typeof aviso === "string").slice(0, 20),
+    planos: Number.isSafeInteger(check.planos) ? check.planos : null,
+    cortesEnBeat: typeof check.cortesEnBeat === "string" ? check.cortesEnBeat : null,
+    intentos: Number.isSafeInteger(check.intentos) ? check.intentos : null,
+    referencia: withReference,
+  };
+}
+
+/**
+ * Una tarea `montaje`: en una carpeta temporal propia descarga los clips (de Higgsfield, sin la
+ * ficha) y la canción (de la web, con la ficha); si hay referencia de edición, la trae con yt-dlp
+ * (mismos argumentos y lista de sitios) y la desglosa con rea-video; lanza `montar_auto.py` con la
+ * ficha local; sube el MP4 por trozos con la sesión de la reserva y manda la autocomprobación.
+ */
+async function runMontaje(config, deps, task, { log, finish, giveUp, lost }) {
+  const problem = checkSpec(task);
+  if (problem) return giveUp(problem);
+  const spec = task.spec;
+  const paths = montajePaths(config.home);
+  const env = childEnv(deps.env ?? process.env, { UV_CACHE_DIR: paths.uvCache, COPYFILE_DISABLE: "1" });
+  const beat = async () => (await call(config, deps, "POST", `/api/agente/tareas/${task.taskId}/latido`).catch(() => null))?.status !== 409;
+
+  const dir = await deps.fs.mkdtemp(path.join(config.tmpDir ?? os.tmpdir(), TMP_PREFIX));
+  try {
+    log(`Montando «${String(spec.title ?? spec.videoId).slice(0, 80)}»`);
+    const clips = [];
+    for (const [index, clip] of spec.clips.entries()) {
+      const file = path.join(dir, `clip-${index}.mp4`);
+      const got = await fetchToFile(deps, new URL(clip.url).href, file, MAX_CLIP_DOWNLOAD_BYTES);
+      if (got.error) return await giveUp(got.error);
+      if (!(await beat())) return lost();
+      clips.push({ role: clip.role, path: file });
+    }
+
+    let song = null;
+    if (spec.song) {
+      const response = await call(config, deps, "GET", spec.song.url, { timeout: 2 * 60_000 }).catch(() => null);
+      if (response?.status === 409) return lost();
+      if (!response?.ok) return await giveUp(`No se pudo traer la canción (${response?.status ?? "sin respuesta"})`);
+      const bytes = Buffer.from(await response.arrayBuffer());
+      if (bytes.length === 0 || bytes.length > MAX_SONG_DOWNLOAD_BYTES) return await giveUp("La canción no es válida");
+      const file = path.join(dir, "cancion.audio");
+      await deps.fs.writeFile(file, bytes, { mode: 0o600 });
+      song = { ...spec.song, path: file };
+    }
+
+    const avisos = [];
+    let breakdown = null;
+    if (spec.editReferenceUrl) {
+      if (!allowedUrl(spec.editReferenceUrl)) {
+        avisos.push("La referencia de edición no es de un sitio admitido: se monta sin ella");
+      } else {
+        const refFile = path.join(dir, "referencia.mp4");
+        log(`Trayendo la referencia de edición ${spec.editReferenceUrl}`);
+        const got = await download(config, deps, task, ytDlpArgs(new URL(spec.editReferenceUrl).href, refFile));
+        if (got.lost) return lost();
+        if (got.ok && (await sizeOf(deps.fs, refFile))) {
+          const reaOut = path.join(dir, "rea");
+          const rea = await runTool(config, deps, task, paths.reaPython, reaVideoArgs(refFile, reaOut), {
+            timeoutMs: REA_VIDEO_TIMEOUT_MS,
+            env,
+            cwd: paths.reaDir,
+            messages: { failed: (detail) => `rea-video no pudo analizar la referencia${detail ? `: ${detail}` : ""}`, timedOut: "rea-video tardó demasiado con la referencia" },
+          });
+          if (rea.lost) return lost();
+          const file = path.join(reaOut, "breakdown.json");
+          if (rea.ok && (await sizeOf(deps.fs, file))) breakdown = file;
+          else avisos.push(`${rea.error ?? "rea-video no dejó el desglose de la referencia"}: se monta sin ella`);
+        } else {
+          avisos.push("No se pudo traer la referencia de edición: se monta sin ella");
+        }
+      }
+    }
+
+    const work = path.join(dir, "trabajo");
+    await deps.fs.mkdir(work, { mode: 0o700 });
+    const specPath = path.join(dir, SPEC_FILE);
+    await deps.fs.writeFile(specPath, JSON.stringify({ ...spec, clips, song, referencia: breakdown ? { breakdown } : null, avisos }), { mode: 0o600 });
+    log("Lanzando el montador.");
+    const ran = await runTool(config, deps, task, config.uv ?? "uv", montadorArgs(paths.script, specPath, work), {
+      timeoutMs: MONTADOR_TIMEOUT_MS,
+      env,
+      cwd: paths.montadorDir,
+      messages: { failed: (detail) => `El montador falló${detail ? `: ${detail}` : ""}`, timedOut: "El montador tardó más de 25 minutos y se cortó" },
+    });
+    if (ran.lost) return lost();
+    if (ran.local) {
+      // Cosa de este Mac: la reserva caduca sola y la tarea vuelve a la cola.
+      log(`No se pudo lanzar el montador (${ran.error}). La tarea se deja para más tarde.`);
+      return "blocked";
+    }
+    let result = null;
+    try {
+      result = JSON.parse(await deps.fs.readFile(path.join(work, RESULT_FILE), "utf8"));
+    } catch {
+      result = null;
+    }
+    if (!result) return await giveUp(ran.error ?? "El montador no dejó resultado");
+    if (result.ok !== true) return await giveUp(typeof result.error === "string" && result.error ? result.error : "El montador no pudo montar el vídeo");
+
+    const output = path.join(work, OUTPUT_FILE);
+    const size = await sizeOf(deps.fs, output);
+    if (!size) return await giveUp("El montador no dejó el vídeo");
+    if (task.maxBytes > 0 && size > task.maxBytes) return await giveUp("El vídeo montado pesa más de 200 MB");
+    const sent = await upload(config, deps, task, output, size);
+    if (sent === "lost") return lost();
+    if (sent !== "ok") return await giveUp(sent.error);
+    const done = await finish({ ok: true, totalBytes: size, selfCheck: selfCheckOf(result, breakdown !== null) }).catch(() => null);
+    if (done?.status === 409) return lost();
+    if (!done?.ok) return await giveUp(`La web no dio por entregado el vídeo (${done?.status ?? "sin respuesta"})`);
+    log("Montaje entregado.");
     return "done";
   } finally {
     await deps.fs.rm(dir, { recursive: true, force: true }).catch(() => {});

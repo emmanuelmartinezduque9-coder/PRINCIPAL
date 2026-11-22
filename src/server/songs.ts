@@ -328,3 +328,10 @@ export async function songAudioResponse(_user: AuthUser, songId: number, rangeHe
   headers["Content-Range"] = `bytes ${start}-${start + body.length - 1}/${song.size}`;
   return new Response(new Uint8Array(body), { status: 206, headers });
 }
+
+/** El archivo entero de una canción (para el Mac que monta un vídeo con ella), o `null` si no existe. */
+export async function readSongFile(songId: number): Promise<{ mime: string; data: Buffer } | null> {
+  if (!validId(songId)) return null;
+  const [song] = await getDb().select({ mime: schema.songs.mime, data: schema.songs.data }).from(schema.songs).where(eq(schema.songs.id, songId));
+  return song ? { mime: song.mime, data: Buffer.from(song.data) } : null;
+}

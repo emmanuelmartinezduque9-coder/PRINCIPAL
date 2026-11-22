@@ -18,6 +18,7 @@ import { clipManifest, imageManifest, type ManifestItem, type ManifestRefs } fro
 import { getVariantFor } from "@/server/variants";
 import { checkImagePrompt, checkVideoPrompt, type PromptIssue } from "@/server/videos/prompt-check";
 import { generationView, type GenerationView } from "@/server/videos/generations";
+import type { EditView } from "@/server/videos/edits";
 
 /**
  * Vídeos de un producto. Toda función que recibe un `videoId` empieza por `getVideoFor`, que pasa
@@ -503,6 +504,10 @@ export interface VideoView {
   clip: GenerationView;
   /** Lo que lleva costado el vídeo: créditos de Higgsfield enviados y Claude de todos sus desgloses. */
   costs: VideoCosts;
+  /** El montaje en el Mac (`edits.ts`). */
+  edit: EditView;
+  /** Los rótulos del montaje (guardados o los que llevaría) y si quien mira los puede cambiar. */
+  editTexts: { main: string; cta: string; editable: boolean };
 }
 
 /** «Automático» sin avatar elegido (ningún avatar encajaba): hay que elegir uno antes de generar. */
@@ -649,5 +654,14 @@ export async function videoView(user: AuthUser, videoId: number): Promise<VideoV
     frame: await generationView(video, "frame", user.id),
     clip: await generationView(video, "clip", user.id),
     costs: await costsOfVideo(video),
+    ...(await editParts(user, video)),
   };
+}
+
+/** El montaje del vídeo y sus rótulos. `edits.ts` importa este módulo: se carga al pedirlo, sin ciclo al arrancar. */
+async function editParts(user: AuthUser, video: Video): Promise<Pick<VideoView, "edit" | "editTexts">> {
+  const { editViews, editTextsView } = await import("@/server/videos/edits");
+  const { downloadableClipUrl } = await import("@/server/videos/clip");
+  const clipReady = (await downloadableClipUrl(video)) !== null;
+  return { edit: (await editViews(user, [{ ...video, clipReady }])).get(video.id)!, editTexts: await editTextsView(user, video) };
 }

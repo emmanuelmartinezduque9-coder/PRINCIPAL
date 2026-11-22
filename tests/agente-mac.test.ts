@@ -7,20 +7,28 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   acquireLock,
+  allowedClipUrl,
   allowedSongUrl,
   allowedUrl,
   BAD_TOKEN_MESSAGE,
   checkConfig,
+  checkMontaje,
+  checkSpec,
   checkTools,
+  childEnv,
   chunkRanges,
   cleanLeftovers,
   LEASE_BEAT_MS,
   LEFTOVER_AGE_MS,
   LINK_HOSTS,
   MAX_BACKOFF_MS,
+  MONTADOR_TIMEOUT_MS,
+  montadorArgs,
+  montajePaths,
   nextWait,
   POLL_MS,
   readConfig,
+  reaVideoArgs,
   releaseLock,
   runOnce,
   SONG_LINK_HOSTS,
@@ -511,8 +519,8 @@ describe("canciones", () => {
     };
   }
 
-  it("el Mac es de la versión 1.2.0 (la que sabe traer canciones)", () => {
-    expect(VERSION).toBe("1.2.0");
+  it("el Mac es de la versión 1.3.0 (canciones y montaje)", () => {
+    expect(VERSION).toBe("1.3.0");
   });
 
   it("saca el audio como MP3 con una lista de argumentos fija y el enlace detrás de `--`", () => {
@@ -614,6 +622,276 @@ describe("canciones", () => {
     expect(outcome).toBe("failed");
     expect(logs.join("\n")).not.toContain(TOKEN);
     expect(calls.at(-1)!.body).toEqual({ ok: false, uploadId: SONG_TASK.uploadId, error: "yt-dlp no pudo descargar el enlace: ERROR: algo con ***" });
+  });
+});
+
+describe("montaje", () => {
+  const HOOK = "https://d1abc.cloudfront.net/gancho.mp4";
+  const BODY = "https://d1abc.cloudfront.net/cuerpo.mp4";
+  const REF = "https://www.tiktok.com/@a/video/1";
+  const MONTAJE = {
+    taskId: 9,
+    kind: "montaje",
+    url: HOOK,
+    uploadId: "m".repeat(32),
+    chunkBytes: CHUNK,
+    maxBytes: 200 * 1024 * 1024,
+    spec: {
+      version: 1,
+      videoId: 3,
+      title: "Vídeo 3",
+      kind: "solo_gancho",
+      product: { name: "EisWerk", language: "de" },
+      clips: [
+        { role: "hook", url: HOOK },
+        { role: "body", url: BODY },
+      ],
+      hookMs: 4000,
+      song: { url: "/api/agente/tareas/9/cancion", id: 4, title: "C", dropMs: 9320, startMs: 0, durationMs: 30000 },
+      texts: { main: "EISWERK 😍", cta: "Kommentiere „EisWerk“!" },
+      editReferenceUrl: null as string | null,
+    },
+  };
+  const OUT = Buffer.concat([Buffer.from([0, 0, 0, 0x18]), Buffer.from("ftypisom"), Buffer.alloc(CHUNK + 50, 4)]);
+  const RESULT = { ok: true, salida: "salida.mp4", autocomprobacion: { ok: true, avisos: ["plano 3: cola quieta"], planos: 8, cortesEnBeat: "6/7", intentos: 1 } };
+
+  interface Fetched {
+    url: string;
+    method: string;
+    headers: Record<string, string> | undefined;
+    redirect: unknown;
+  }
+  let fetched: Fetched[];
+  beforeEach(() => {
+    fetched = [];
+  });
+
+  /** La web y Higgsfield de mentira: los clips por su dirección completa; lo demás, como `fakeFetch`. */
+  function web(task: unknown = MONTAJE, over: Record<string, () => Response> = {}) {
+    const site = fakeFetch({
+      "/api/agente/tareas/reclamar": () => json(200, task),
+      "/api/agente/tareas/9/cancion": () => new Response(Buffer.from("ID3 canción"), { status: 200 }),
+      ...over,
+    });
+    return async (url: string, init: RequestInit) => {
+      fetched.push({ url, method: init.method ?? "GET", headers: init.headers as Record<string, string> | undefined, redirect: init.redirect });
+      if (url.startsWith("https://d1abc.cloudfront.net/")) return new Response(Buffer.from(`clip ${url}`), { status: 200 });
+      return site(url, init);
+    };
+  }
+
+  /**
+   * Programas de mentira: yt-dlp deja la referencia, rea-video su `breakdown.json` y `uv` (el
+   * montador) lee la ficha local y deja `resultado.json` y `salida.mp4` (o termina con `code`).
+   */
+  function programs(options: { montador?: { result?: unknown; code?: number; stderr?: string }; rea?: number } = {}) {
+    let spec: Record<string, unknown> | null = null;
+    const spawn = (command: string, args: string[], spawnOptions?: Record<string, unknown>) => {
+      const child = new EventEmitter() as EventEmitter & { stderr: EventEmitter; kill: (signal: string) => void };
+      child.stderr = new EventEmitter();
+      child.kill = () => {};
+      spawned.push({ command, args, options: spawnOptions as { detached?: boolean }, killed: null });
+      queueMicrotask(() => {
+        if (command === "yt-dlp") fsSync.writeFileSync(args[args.indexOf("-o") + 1], "referencia");
+        if (command.endsWith(path.join(".venv", "bin", "python"))) {
+          if ((options.rea ?? 0) === 0) {
+            const out = args[args.indexOf("-o") + 1];
+            fsSync.mkdirSync(out, { recursive: true });
+            fsSync.writeFileSync(path.join(out, "breakdown.json"), "{}");
+          }
+          return child.emit("close", options.rea ?? 0);
+        }
+        if (command === "uv") {
+          const [specPath, work] = args.slice(-2);
+          spec = JSON.parse(fsSync.readFileSync(specPath, "utf8"));
+          const m = options.montador ?? {};
+          if (m.result !== undefined) fsSync.writeFileSync(path.join(work, "resultado.json"), JSON.stringify(m.result));
+          if ((m.result as { ok?: boolean } | undefined)?.ok) fsSync.writeFileSync(path.join(work, "salida.mp4"), OUT);
+          if (m.stderr) child.stderr.emit("data", m.stderr);
+          return child.emit("close", m.code ?? 0);
+        }
+        child.emit("close", 0);
+      });
+      return child;
+    };
+    return { spawn, spec: () => spec };
+  }
+
+  const montajeConfig = () => ({ ...config(), home: path.join(tmp, "casa"), puede: ["montaje"] });
+  const montajeDeps = (fetch: ReturnType<typeof web>, p: ReturnType<typeof programs>) => ({
+    fetch,
+    spawn: p.spawn,
+    sleep: async () => {},
+    fs,
+    log: (text: string) => logs.push(text),
+    env: { PATH: "/usr/bin", PRINCIPAL_AGENTE_TOKEN: TOKEN, HOME: "/Users/x" },
+  });
+
+  it("argumentos fijos en lista: el montador por `uv` y rea-video con su `-o`", () => {
+    const paths = montajePaths("/Users/emma");
+    expect(paths).toMatchObject({
+      script: "/Users/emma/.principal-tools/montador/montar_auto.py",
+      reaPython: "/Users/emma/.principal-tools/rea-video/.venv/bin/python",
+      uvCache: "/Users/emma/Library/Caches/uv-principal",
+    });
+    expect(montadorArgs(paths.script, "/tmp/d/ficha.json", "/tmp/d/trabajo")).toEqual([
+      "run", "--no-project", "--with", "librosa", "--with", "soundfile", "--with", "numpy", "--with", "pillow",
+      "python", "/Users/emma/.principal-tools/montador/montar_auto.py", "/tmp/d/ficha.json", "/tmp/d/trabajo",
+    ]);
+    expect(reaVideoArgs("/tmp/d/referencia.mp4", "/tmp/d/rea")).toEqual(["-m", "rea_video", "decompose", "/tmp/d/referencia.mp4", "-o", "/tmp/d/rea"]);
+    expect(MONTADOR_TIMEOUT_MS).toBe(25 * 60_000);
+    // Los programas que lanza no reciben la ficha.
+    expect(childEnv({ PATH: "/bin", PRINCIPAL_AGENTE_TOKEN: TOKEN }, { UV_CACHE_DIR: "/c" })).toEqual({ PATH: "/bin", UV_CACHE_DIR: "/c" });
+  });
+
+  it("los clips solo de Higgsfield; la canción, solo la ruta de su tarea", () => {
+    expect(allowedClipUrl(HOOK)).toBe(true);
+    for (const bad of ["http://d1abc.cloudfront.net/x.mp4", "https://evil.com/x.mp4", "https://u:p@d1.cloudfront.net/x", "https://d1.cloudfront.net:8443/x", "https://cloudfront.net.evil.com/x", "file:///etc/passwd", 7]) {
+      expect(allowedClipUrl(bad)).toBe(false);
+    }
+    expect(checkSpec(MONTAJE)).toBeNull();
+    expect(checkSpec({ ...MONTAJE, spec: { ...MONTAJE.spec, clips: [{ role: "hook", url: "https://evil.com/x.mp4" }] } })).toMatch(/Higgsfield/);
+    expect(checkSpec({ ...MONTAJE, spec: { ...MONTAJE.spec, song: { ...MONTAJE.spec.song, url: "https://evil.com/c.mp3" } } })).toMatch(/canción/);
+    expect(checkSpec({ ...MONTAJE, spec: { ...MONTAJE.spec, song: { ...MONTAJE.spec.song, url: "/api/agente/tareas/8/cancion" } } })).toMatch(/canción/);
+    expect(checkSpec({ ...MONTAJE, spec: { ...MONTAJE.spec, clips: [] } })).not.toBeNull();
+  });
+
+  it("solo pide montajes si sabe hacerlos", async () => {
+    await runOnce(config(), depsWith(fakeFetch({ "/api/agente/tareas/reclamar": () => json(204) }), fakeSpawn()));
+    await runOnce(montajeConfig(), depsWith(fakeFetch({ "/api/agente/tareas/reclamar": () => json(204) }), fakeSpawn()));
+    expect(calls.map((call) => call.body)).toEqual([null, { puede: ["montaje"] }]);
+    // Sabe hacerlos si está montar_auto.py y `uv` se puede lanzar.
+    const home = path.join(tmp, "casa");
+    const uv = (code: number) => ({
+      spawn: () => {
+        const child = new EventEmitter() as EventEmitter & { stdout: EventEmitter; kill: () => void };
+        child.stdout = new EventEmitter();
+        child.kill = () => {};
+        queueMicrotask(() => child.emit("close", code));
+        return child;
+      },
+      fs,
+    });
+    expect(await checkMontaje(uv(0), { home })).toEqual({ missing: ["montar_auto.py"] });
+    fsSync.mkdirSync(path.join(home, ".principal-tools", "montador"), { recursive: true });
+    fsSync.writeFileSync(path.join(home, ".principal-tools", "montador", "montar_auto.py"), "");
+    expect(await checkMontaje(uv(0), { home })).toEqual({ missing: [] });
+    expect(await checkMontaje(uv(1), { home })).toEqual({ missing: ["uv"] });
+  });
+
+  it("descarga los clips sin la ficha y la canción con ella, monta, sube por trozos y manda la autocomprobación", async () => {
+    const p = programs({ montador: { result: RESULT } });
+    const outcome = await runOnce(montajeConfig(), montajeDeps(web(), p));
+    expect(outcome).toBe("done");
+
+    // Los clips, a Higgsfield sin la ficha y sin seguir redirecciones; la canción, a la web con ella.
+    const clipCalls = fetched.filter((f) => f.url.includes("cloudfront"));
+    expect(clipCalls.map((f) => f.url)).toEqual([HOOK, BODY]);
+    expect(clipCalls.every((f) => f.headers === undefined && f.redirect === "error")).toBe(true);
+    const songCall = fetched.find((f) => f.url === `${WEB}/api/agente/tareas/9/cancion`)!;
+    expect(songCall.headers?.Authorization).toBe(`Bearer ${TOKEN}`);
+
+    // El montador, por `uv` con su lista de argumentos, en su carpeta y sin la ficha en el entorno.
+    const uvCall = spawned.find((call) => call.command === "uv")!;
+    const tools = montajePaths(path.join(tmp, "casa"));
+    const [specPath, work] = uvCall.args.slice(-2);
+    expect(uvCall.args).toEqual(montadorArgs(tools.script, specPath, work));
+    expect(path.dirname(path.dirname(specPath))).toBe(tmp);
+    const options = uvCall.options as unknown as { detached: boolean; cwd: string; env: Record<string, string> };
+    expect(options).toMatchObject({ detached: true, cwd: tools.montadorDir });
+    expect(options.env).toEqual({ PATH: "/usr/bin", HOME: "/Users/x", UV_CACHE_DIR: tools.uvCache, COPYFILE_DISABLE: "1" });
+    // La ficha local: los clips ya descargados en orden, la canción con su drop y sin referencia.
+    const spec = p.spec()!;
+    expect((spec.clips as Array<{ role: string; path: string }>).map((clip) => [clip.role, path.basename(clip.path)])).toEqual([
+      ["hook", "clip-0.mp4"],
+      ["body", "clip-1.mp4"],
+    ]);
+    expect(spec.song).toMatchObject({ dropMs: 9320, path: expect.stringMatching(/cancion\.audio$/) });
+    expect(spec.referencia).toBeNull();
+    expect(spec.texts).toEqual(MONTAJE.spec.texts);
+
+    const sub = `subida=${MONTAJE.uploadId}`;
+    expect(paths()).toEqual([
+      "POST /api/agente/tareas/reclamar",
+      "POST /api/agente/tareas/9/latido",
+      "POST /api/agente/tareas/9/latido",
+      "GET /api/agente/tareas/9/cancion",
+      `PUT /api/agente/tareas/9/trozo?indice=0&${sub}`,
+      `PUT /api/agente/tareas/9/trozo?indice=1&${sub}`,
+      "POST /api/agente/tareas/9/terminar",
+    ]);
+    const sent = calls.filter((call) => call.method === "PUT").map((call) => call.body as Buffer);
+    expect(Buffer.concat(sent).equals(OUT)).toBe(true);
+    expect(calls.at(-1)!.body).toEqual({
+      ok: true,
+      uploadId: MONTAJE.uploadId,
+      totalBytes: OUT.length,
+      selfCheck: { ok: true, avisos: ["plano 3: cola quieta"], planos: 8, cortesEnBeat: "6/7", intentos: 1, referencia: false },
+    });
+    // La carpeta temporal se borra.
+    expect(leftovers()).toEqual([]);
+    expect(logs.join("\n")).not.toContain(TOKEN);
+  });
+
+  it("con referencia de edición: yt-dlp con los mismos argumentos y rea-video; su desglose va en la ficha", async () => {
+    const p = programs({ montador: { result: RESULT } });
+    const task = { ...MONTAJE, spec: { ...MONTAJE.spec, editReferenceUrl: REF } };
+    expect(await runOnce(montajeConfig(), montajeDeps(web(task), p))).toBe("done");
+    const yt = spawned.find((call) => call.command === "yt-dlp")!;
+    const refFile = yt.args[yt.args.indexOf("-o") + 1];
+    expect(yt.args).toEqual(ytDlpArgs(REF, refFile));
+    const tools = montajePaths(path.join(tmp, "casa"));
+    const rea = spawned.find((call) => call.command === tools.reaPython)!;
+    expect(rea.args).toEqual(reaVideoArgs(refFile, path.join(path.dirname(refFile), "rea")));
+    expect(rea.options).toMatchObject({ detached: true, cwd: tools.reaDir });
+    expect((rea.options as unknown as { env: Record<string, string> }).env.PRINCIPAL_AGENTE_TOKEN).toBeUndefined();
+    expect(p.spec()!.referencia).toEqual({ breakdown: path.join(path.dirname(refFile), "rea", "breakdown.json") });
+    expect((calls.at(-1)!.body as { selfCheck: { referencia: boolean } }).selfCheck.referencia).toBe(true);
+  });
+
+  it("si rea-video falla o la referencia no es de un sitio admitido, monta sin ella y lo avisa", async () => {
+    const p = programs({ montador: { result: RESULT }, rea: 1 });
+    const task = { ...MONTAJE, spec: { ...MONTAJE.spec, editReferenceUrl: REF } };
+    expect(await runOnce(montajeConfig(), montajeDeps(web(task), p))).toBe("done");
+    expect(p.spec()!.referencia).toBeNull();
+    expect((p.spec()!.avisos as string[])[0]).toMatch(/rea-video/);
+
+    spawned = [];
+    const q = programs({ montador: { result: RESULT } });
+    const bad = { ...MONTAJE, spec: { ...MONTAJE.spec, editReferenceUrl: "https://l.facebook.com/l.php?u=http://192.168.1.1" } };
+    expect(await runOnce(montajeConfig(), montajeDeps(web(bad), q))).toBe("done");
+    expect(spawned.map((call) => call.command)).toEqual(["uv"]);
+    expect((q.spec()!.avisos as string[])[0]).toMatch(/no es de un sitio admitido/);
+  });
+
+  it("una ficha con un clip de fuera no descarga nada ni lanza nada: lo comunica", async () => {
+    const p = programs();
+    const task = { ...MONTAJE, spec: { ...MONTAJE.spec, clips: [{ role: "hook", url: "https://192.168.1.10/x.mp4" }] } };
+    expect(await runOnce(montajeConfig(), montajeDeps(web(task), p))).toBe("failed");
+    expect(fetched.filter((f) => !f.url.startsWith(WEB))).toEqual([]);
+    expect(spawned).toEqual([]);
+    expect(calls.at(-1)!.body).toMatchObject({ ok: false, uploadId: MONTAJE.uploadId, error: "La ficha trae un clip que no es de Higgsfield" });
+  });
+
+  it("si el montador no puede, manda su motivo y no sube nada", async () => {
+    const p = programs({ montador: { result: { ok: false, error: "La canción se acaba antes que el vídeo" }, code: 1 } });
+    expect(await runOnce(montajeConfig(), montajeDeps(web(), p))).toBe("failed");
+    expect(calls.some((call) => call.method === "PUT")).toBe(false);
+    expect(calls.at(-1)!.body).toEqual({ ok: false, uploadId: MONTAJE.uploadId, error: "La canción se acaba antes que el vídeo" });
+    expect(leftovers()).toEqual([]);
+
+    // Sin resultado: el final de lo que escribió el montador.
+    calls = [];
+    const q = programs({ montador: { code: 1, stderr: "Traceback…\nModuleNotFoundError: No module named 'librosa'" } });
+    expect(await runOnce(montajeConfig(), montajeDeps(web(), q))).toBe("failed");
+    expect((calls.at(-1)!.body as { error: string }).error).toBe("El montador falló: ModuleNotFoundError: No module named 'librosa'");
+  });
+
+  it("si la web retira la tarea (409 al pedir la canción), la suelta sin montar", async () => {
+    const p = programs({ montador: { result: RESULT } });
+    expect(await runOnce(montajeConfig(), montajeDeps(web(MONTAJE, { "/api/agente/tareas/9/cancion": () => json(409) }), p))).toBe("failed");
+    expect(spawned).toEqual([]);
+    expect(calls.some((call) => call.path.endsWith("/terminar"))).toBe(false);
   });
 });
 

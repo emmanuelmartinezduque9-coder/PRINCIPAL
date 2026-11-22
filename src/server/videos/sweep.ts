@@ -2,6 +2,7 @@ import { and, eq, inArray, lt } from "drizzle-orm";
 import { getDb, schema } from "@/db/client";
 import { expireLeases } from "@/server/agent";
 import { ANALYSIS_INTERRUPTED, ANALYSIS_STALE_MS, autoAnalyzePending, failOrphanedPausedAnalyses } from "@/server/videos/analysis";
+import { settleEditedBatches } from "@/server/videos/edits";
 import { sweepGenerations, type GenDeps } from "@/server/videos/generations";
 import { advanceRunningBatches } from "@/server/videos/lote";
 import { cleanStaleUploads, PREPARE_FAILED } from "@/server/videos/upload";
@@ -81,6 +82,11 @@ export async function videoSweep(now: Date = new Date(), deps: GenDeps = {}): Pr
     await advanceRunningBatches(deps);
   } catch (error) {
     console.error("[videos] No se pudieron avanzar los lotes:", error);
+  }
+  try {
+    await settleEditedBatches();
+  } catch (error) {
+    console.error("[videos] No se pudieron cerrar los lotes montados:", error);
   }
   try {
     const orphaned = await failOrphanedPausedAnalyses();

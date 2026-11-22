@@ -1,7 +1,7 @@
 "use client";
 
 import { useQueryClient } from "@tanstack/react-query";
-import { Check, CircleHelp, Clapperboard, ImageIcon, Loader2, PackageCheck, Pause, Play, ScanEye, Send, SkipForward } from "lucide-react";
+import { Check, CircleHelp, Clapperboard, ImageIcon, Loader2, Pause, Play, ScanEye, Scissors, Send, SkipForward } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
 import { toast } from "sonner";
@@ -18,16 +18,17 @@ const STEPS = [
   { status: "imagenes", label: "Imágenes", icon: ImageIcon, count: (a: AutoViewJson) => a.steps.imagenes },
   { status: "revision_imagenes", label: "Revisión", icon: ScanEye, count: (a: AutoViewJson) => a.steps.revision },
   { status: "clips", label: "Clips", icon: Clapperboard, count: (a: AutoViewJson) => a.steps.clips },
-  { status: "listo", label: "Listo", icon: PackageCheck, count: (a: AutoViewJson) => (a.status === "listo" ? a.total : a.steps.clips) },
+  { status: "listo", label: "Montaje", icon: Scissors, count: (a: AutoViewJson) => a.steps.montaje },
 ] as const;
 
-const ORDER: Status[] = ["borrador", "preguntas", "imagenes", "revision_imagenes", "clips", "listo"];
+/** `listo`: clips hechos y montándose en el Mac; `montado`: todos los montajes terminados (el final). */
+const ORDER: Status[] = ["borrador", "preguntas", "imagenes", "revision_imagenes", "clips", "listo", "montado"];
 
 /** El paso en el que está (en pausa: el paso en el que se paró). */
 const currentOf = (auto: AutoViewJson): Status => (auto.status === "pausado" ? ((auto.pause?.from as Status) ?? "imagenes") : auto.status);
 
 /**
- * Preguntas · Imágenes · Revisión · Clips · Listo, como una pista con nodos: lo hecho en verde, el
+ * Preguntas · Imágenes · Revisión · Clips · Montaje, como una pista con nodos: lo hecho en verde, el
  * paso actual resaltado (girando si el lote va solo, ámbar si está en pausa) y bajo cada paso
  * cuántos vídeos lleva.
  */
@@ -39,8 +40,8 @@ export function AutoStepper({ auto }: { auto: AutoViewJson }) {
     <ol aria-label="Pasos del lote" className="panel grid grid-cols-5 px-2 py-4">
       {STEPS.map((step, index) => {
         const position = ORDER.indexOf(step.status);
-        const done = position < at || (step.status === "listo" && current === "listo");
-        const now = position === at && current !== "listo";
+        const done = position < at;
+        const now = position === at;
         const Icon = now && paused ? Pause : done ? Check : step.icon;
         const count = step.count(auto);
         const spinning = now && !paused && current !== "preguntas" && current !== "revision_imagenes";

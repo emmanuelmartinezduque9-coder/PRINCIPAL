@@ -108,6 +108,11 @@ export interface Analysis {
   /** La variante del producto que se ve claramente en la referencia (su nombre), o `null`. */
   variantMatch?: string | null;
   /**
+   * Los rótulos que propone para el montaje, en el idioma del anuncio: el principal (desde el
+   * primer fotograma) y el CTA. Opcional: los desgloses anteriores no lo traen.
+   */
+  editTexts?: { main: string; cta: string } | null;
+  /**
    * Lo añade la aplicación al guardar (no Claude): con «Automático», a quién buscó y qué avatar
    * eligió (`null` si ninguno encajaba).
    */
@@ -181,6 +186,13 @@ export const analysisSchema: z.ZodType<Analysis> = z.object({
     .nullable()
     .optional(),
   variantMatch: z.string().nullable().optional(),
+  editTexts: z
+    .object({
+      main: filled.max(200).describe("Rótulo principal del montaje, en el idioma del anuncio."),
+      cta: filled.max(200).describe("CTA del montaje, en el idioma del anuncio."),
+    })
+    .nullable()
+    .optional(),
   questions: z
     .array(
       z.object({
@@ -287,6 +299,8 @@ Devuelve, con la forma pedida:
 8. personaRef: la persona principal que sale en los fotogramas de la referencia: si sale alguien (present), su sexo (mujer, hombre, otro o desconocido), su edad aproximada en años y sus rasgos visibles en una frase. Si no sale nadie, present false, gender desconocido y approxAge null.
 9. angleAudience: si el encargo (sus indicaciones, su adaptación o sus cambios) pide un público o un ángulo con una persona concreta (p. ej. «abuelas», «para mamás», «un niño»), su sexo, su edad aproximada y cómo lo nombra; si no pide ninguno, null.${variantNames.length > 0 ? `
 10. variantMatch: de las variantes del producto (${variantNames.map((name) => `«${name}»`).join(", ")}), la que coincide claramente por color o forma con el objeto que se ve en la referencia, escrita igual; si no coincide claramente ninguna, null.` : ""}
+
+editTexts: los dos rótulos del montaje, en el idioma del anuncio: main, el rótulo principal que se ve desde el primer fotograma (corto, como mucho unos 45 caracteres, con uno o dos emojis, con el gancho del concepto; p. ej. «STARBUCKS × EISWERK 😳🍦» o «Jede vielbeschäftigte Mama braucht genau DAS! 🎁😍»), sin marcas ajenas salvo que el encargo las pida; y cta, el CTA de siempre del dueño con el nombre del producto: «Kommentiere „{Produkt}“, wenn du auch eine willst!» más un emoji (en italiano, su equivalente).
 
 Ninguno de los dos prompts lleva direcciones, identificadores de archivos ni estas palabras vetadas: ${PROMPT_BLACKLIST.join(", ")}.
 
@@ -852,6 +866,14 @@ export async function runAnalysis(analysisId: number, deps: { gateway?: LlmGatew
       .update(schema.videos)
       .set({ imagePrompt: step.result.imagePrompt, videoPrompt: step.result.videoPrompt, frameUse: step.result.frameUse, updatedAt: new Date() })
       .where(eq(schema.videos.id, saved.videoId));
+    // Los rótulos del montaje que propone, solo si el vídeo aún no tiene (no pisan los que se cambiaron a mano).
+    const texts = step.result.editTexts;
+    if (texts) {
+      await tx
+        .update(schema.videos)
+        .set({ editMainText: sql`coalesce(${schema.videos.editMainText}, ${texts.main})`, editCtaText: sql`coalesce(${schema.videos.editCtaText}, ${texts.cta})` })
+        .where(eq(schema.videos.id, saved.videoId));
+    }
   });
 }
 

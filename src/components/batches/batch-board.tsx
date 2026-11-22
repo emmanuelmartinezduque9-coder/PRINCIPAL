@@ -3,7 +3,7 @@
 import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { format } from "date-fns";
 import { es } from "date-fns/locale";
-import { ChevronRight, CircleAlert, CircleHelp, Clapperboard, Coins, Download, Ellipsis, Eye, Film, ImageIcon, Link2, Link2Off, ListFilter, Loader2, Pencil, RefreshCw, ScanSearch, SearchX, Sparkles } from "lucide-react";
+import { ChevronRight, CircleAlert, CircleHelp, Clapperboard, Coins, Download, Ellipsis, Eye, Film, ImageIcon, Link2, Link2Off, ListFilter, Loader2, Pencil, Play, RefreshCw, ScanSearch, Scissors, SearchX, Sparkles } from "lucide-react";
 import Link from "next/link";
 import { useRef, useState } from "react";
 import { toast } from "sonner";
@@ -12,6 +12,7 @@ import { EmptyState } from "@/components/shell/empty-state";
 import { PageHeader } from "@/components/shell/page-header";
 import { MusicPicker } from "@/components/songs/music-picker";
 import { Button, buttonVariants } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -21,6 +22,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { avatarImageUrl } from "@/components/avatars/labels";
 import { AVATAR_MODE_LABELS, KIND_LABELS } from "@/components/videos/brief-labels";
 import { creditsLabel, formatCredits } from "@/components/videos/labels";
+import { EditDownload, editDownloadUrl, EditNotice, EditPlayer, SelfCheck, StartEditButton, useStartEdit } from "@/components/videos/edit-parts";
 import { useReferenceUploads } from "@/components/videos/upload-provider";
 import { requestLink, useMac } from "@/components/videos/use-mac";
 import { api, ApiError } from "@/lib/api";
@@ -34,6 +36,7 @@ import { BulkGenerate } from "./bulk-generate";
 import { checkLink, EditReferenceField, rowSupportsEditReference } from "./edit-reference";
 import {
   analysisState,
+  editState,
   failedLink,
   generationState,
   needsReview,
@@ -351,15 +354,26 @@ function filenameOf(response: Response, fallback: string): string {
 }
 
 async function downloadClip(videoId: number): Promise<void> {
-  const response = await fetch(`/api/videos/${videoId}/clip/descargar`);
+  return downloadFrom(`/api/videos/${videoId}/clip/descargar`, `video-${videoId}.mp4`, "No se pudo descargar el clip.");
+}
+
+/** Descarga la última versión montada de un vídeo (`<producto>-video-<id>-editado.mp4`). */
+async function downloadEdit(row: BatchRowJson): Promise<void> {
+  const version = row.edit.latest?.version;
+  if (version === undefined) return;
+  return downloadFrom(editDownloadUrl(row.id, version), `video-${row.id}-editado.mp4`, "No se pudo descargar el vídeo editado.");
+}
+
+async function downloadFrom(source: string, fallbackName: string, failure: string): Promise<void> {
+  const response = await fetch(source);
   if (!response.ok) {
     const body = await response.json().catch(() => null);
-    throw new ApiError(body?.error ?? "No se pudo descargar el clip.", response.status);
+    throw new ApiError(body?.error ?? failure, response.status);
   }
   const url = URL.createObjectURL(await response.blob());
   const link = document.createElement("a");
   link.href = url;
-  link.download = filenameOf(response, `video-${videoId}.mp4`);
+  link.download = filenameOf(response, fallbackName);
   document.body.append(link);
   link.click();
   link.remove();
@@ -367,6 +381,67 @@ async function downloadClip(videoId: number): Promise<void> {
 }
 
 const message = (error: unknown, fallback: string) => (error instanceof Error ? error.message : fallback);
+
+/**
+ * Montaje de una fila: con versión montada, abre el reproductor (descargar y «Volver a montar»
+ * dentro); sin ella, «Montar» si quien mira puede.
+ */
+function EditCell({ row, state, onDone }: { row: BatchRowJson; state: StepState; onDone: () => void }) {
+  const start = useStartEdit(row.id, onDone);
+  if (row.edit.latest) {
+    return (
+      <Dialog>
+        <DialogTrigger asChild>
+          <button
+            type="button"
+            aria-label={`Ver ${row.title} editado`}
+            className="group/edit inline-flex items-center gap-1 rounded-full outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
+          >
+            <StepChip state={state} />
+            <Play className="size-3.5 text-success-ink transition-transform duration-150 group-hover/edit:scale-110" aria-hidden />
+          </button>
+        </DialogTrigger>
+        <DialogContent className="sm:max-w-[44rem]">
+          <DialogHeader>
+            <DialogTitle>{row.title}</DialogTitle>
+          </DialogHeader>
+          <div className="grid items-start gap-5 sm:grid-cols-[minmax(0,320px)_1fr]">
+            <EditPlayer videoId={row.id} edit={row.edit} />
+            <div className="flex flex-col gap-3">
+              <EditNotice edit={row.edit} />
+              <EditDownload videoId={row.id} edit={row.edit} />
+              <StartEditButton videoId={row.id} edit={row.edit} onDone={onDone} />
+              <SelfCheck edit={row.edit} />
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+    );
+  }
+  if (!row.edit.canStart) return <StepChip state={state} />;
+  return (
+    <span className="inline-flex items-center gap-0.5">
+      <StepChip state={state} />
+      <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="size-8 text-muted-foreground"
+          aria-label={`Montar ${row.title}`}
+          disabled={start.isPending}
+          onClick={() => {
+            if (!start.isPending) start.mutate();
+          }}
+        >
+          {start.isPending ? <Loader2 className="animate-spin" aria-hidden /> : <Scissors aria-hidden />}
+        </Button>
+      </TooltipTrigger>
+        <TooltipContent>{row.edit.status === "fallido" ? "Volver a montar" : "Montar"}</TooltipContent>
+      </Tooltip>
+    </span>
+  );
+}
 
 /** Esqueleto del tablero mientras carga: cabecera, pasos y un grupo con filas. */
 function BoardSkeleton() {
@@ -421,7 +496,7 @@ export function BatchBoard({ batchId }: { batchId: number }) {
   // Con el estado de la fila en ese momento (`rowState`): en cuanto la fila cambia, el aviso ya no se enseña.
   const [notices, setNotices] = useState<Record<number, { message: string; at: string }>>({});
   /** La acción en bloque en marcha: solo una a la vez, así nunca hay más de 2 peticiones en vuelo. */
-  const [running, setRunning] = useState<null | "breakdown" | "download" | "generate">(null);
+  const [running, setRunning] = useState<null | "breakdown" | "download" | "edited" | "generate">(null);
   const inFlight = useRef(false);
   const [downloaded, setDownloaded] = useState(0);
   /** «Por revisar»: solo las filas con algo que mirar. */
@@ -459,6 +534,7 @@ export function BatchBoard({ batchId }: { batchId: number }) {
   const forReview = rows.filter(ready.review);
   const forClip = rows.filter(ready.clip);
   const forDownload = rows.filter(ready.download);
+  const forEdited = rows.filter(ready.edited);
   const credits = rows.reduce((sum, row) => sum + row.costs.higgsfieldCredits, 0);
   const note = (results: Record<number, string | null>) =>
     setNotices((all) => {
@@ -476,7 +552,7 @@ export function BatchBoard({ batchId }: { batchId: number }) {
   /** Se puede cambiar el enlace: es suyo, quien mira tiene Mac, y el enlace falló o la referencia aún no está lista. */
   const canChangeLink = (row: BatchRowJson) =>
     row.mine && mac.own && (failedLink(row) !== null || (row.referenceStatus !== "ready" && row.referenceStatus !== "processing" && uploadOf(row).kind !== "uploading"));
-  const anyBulk = forBreakdown.length + forFrame.length + forReview.length + forClip.length + forDownload.length > 0;
+  const anyBulk = forBreakdown.length + forFrame.length + forReview.length + forClip.length + forDownload.length + forEdited.length > 0;
 
   async function breakdownAll() {
     if (inFlight.current) return;
@@ -491,19 +567,20 @@ export function BatchBoard({ batchId }: { batchId: number }) {
     refresh();
   }
 
-  async function downloadAll() {
+  async function downloadAll(edited = false) {
     if (inFlight.current) return;
     inFlight.current = true;
-    setRunning("download");
+    setRunning(edited ? "edited" : "download");
     setDownloaded(0);
     const report: Record<number, string | null> = {};
-    // De uno en uno: cada clip se guarda antes de pedir el siguiente.
-    for (const row of forDownload) {
+    // De uno en uno: cada vídeo se guarda antes de pedir el siguiente.
+    for (const row of edited ? forEdited : forDownload) {
       try {
-        await downloadClip(row.id);
+        if (edited) await downloadEdit(row);
+        else await downloadClip(row.id);
         report[row.id] = null;
       } catch (error) {
-        report[row.id] = message(error, "No se pudo descargar el clip.");
+        report[row.id] = message(error, edited ? "No se pudo descargar el vídeo editado." : "No se pudo descargar el clip.");
       }
       setDownloaded((n) => n + 1);
     }
@@ -530,8 +607,10 @@ export function BatchBoard({ batchId }: { batchId: number }) {
 
   /** Lo mismo que decide `AutoAction`: hay algo que hacer ahora en el paso en que va el lote. */
   const autoActs = (auto.status === "preguntas" && (auto.questions > 0 || auto.readyToConfirm)) || (auto.status === "revision_imagenes" && forReview.length > 0);
-  const canDownloadAll = auto.status === "listo" && forDownload.length > 0;
-  const showBar = data.batch.mine && rows.length > 0 && (auto.status === "borrador" || autoActs || canDownloadAll);
+  const finished = auto.status === "listo" || auto.status === "montado";
+  const canDownloadAll = finished && forDownload.length > 0;
+  const canDownloadEdited = forEdited.length > 0;
+  const showBar = data.batch.mine && rows.length > 0 && (auto.status === "borrador" || autoActs || canDownloadAll || canDownloadEdited);
 
   return (
     <div className="flex flex-1 flex-col gap-6">
@@ -584,6 +663,12 @@ export function BatchBoard({ batchId }: { batchId: number }) {
                   <DropdownMenuItem onSelect={() => void downloadAll()}>
                     <Download aria-hidden />
                     Descargar clips ({forDownload.length})
+                  </DropdownMenuItem>
+                ) : null}
+                {forEdited.length > 0 ? (
+                  <DropdownMenuItem onSelect={() => void downloadAll(true)}>
+                    <Scissors aria-hidden />
+                    Descargar editados ({forEdited.length})
                   </DropdownMenuItem>
                 ) : null}
               </DropdownMenuContent>
@@ -650,7 +735,7 @@ export function BatchBoard({ batchId }: { batchId: number }) {
             <section key={group.productId} aria-label={group.name} className="panel overflow-hidden">
               <GroupHeader batchId={batchId} group={group} editable={data.batch.mine} variants={variants} />
               {/* Columnas fijas: las tablas de todos los productos quedan alineadas. */}
-              <Table className="min-w-[66rem] table-fixed">
+              <Table className="min-w-[68rem] table-fixed">
                 <TableHeader>
                   <TableRow className="bg-sunken/50 hover:bg-sunken/50">
                     <TableHead className="w-16 pl-5" />
@@ -660,7 +745,7 @@ export function BatchBoard({ batchId }: { batchId: number }) {
                     <TableHead className="w-36">Referencia</TableHead>
                     <TableHead className="w-28">Desglose</TableHead>
                     <TableHead className="w-26">Imagen</TableHead>
-                    <TableHead className="w-24">Clip</TableHead>
+                    <TableHead className="w-36">Clip</TableHead>
                     <TableHead className="w-20 text-right">Coste</TableHead>
                     <TableHead className="w-36 pr-5" />
                   </TableRow>
@@ -668,7 +753,13 @@ export function BatchBoard({ batchId }: { batchId: number }) {
                 <TableBody>
                   {groupRows.map((row) => {
                     const upload = uploadOf(row);
-                    const states = [referenceState(row, upload), analysisState(row), generationState(row.frame, "frame"), generationState(row.clip, "clip")];
+                    const states = [
+                      referenceState(row, upload),
+                      analysisState(row),
+                      generationState(row.frame, "frame"),
+                      // Con el clip hecho, la columna enseña su montaje en el Mac.
+                      row.edit.status === "none" ? generationState(row.clip, "clip") : editState(row.edit),
+                    ];
                     // El error de la última acción en bloque y, si no hay, el del enlace o el del paso que falló.
                     const notice = notices[row.id];
                     const failure = rowProblem(row, states);
@@ -727,7 +818,7 @@ export function BatchBoard({ batchId }: { batchId: number }) {
                         </TableCell>
                         {states.map((state, index) => (
                           <TableCell key={index}>
-                            <StepChip state={state} />
+                            {index === states.length - 1 ? <EditCell row={row} state={state} onDone={refresh} /> : <StepChip state={state} />}
                           </TableCell>
                         ))}
                         <TableCell className="text-right">
@@ -791,9 +882,15 @@ export function BatchBoard({ batchId }: { batchId: number }) {
             <AutoAction batchId={batchId} auto={auto} toReview={forReview.length} />
           )}
           {canDownloadAll ? (
-            <Button className="h-10 gap-2 px-5" disabled={running !== null} onClick={() => void downloadAll()}>
+            <Button variant={canDownloadEdited ? "outline" : "default"} className="h-10 gap-2 px-5" disabled={running !== null} onClick={() => void downloadAll()}>
               {running === "download" ? <Loader2 className="animate-spin" data-icon="inline-start" /> : <Download data-icon="inline-start" />}
-              {running === "download" ? `Descargando ${Math.min(downloaded + 1, forDownload.length)}/${forDownload.length}` : "Descargar todo"}
+              {running === "download" ? `Descargando ${Math.min(downloaded + 1, forDownload.length)}/${forDownload.length}` : "Descargar clips"}
+            </Button>
+          ) : null}
+          {canDownloadEdited ? (
+            <Button className="h-10 gap-2 px-5" disabled={running !== null} onClick={() => void downloadAll(true)}>
+              {running === "edited" ? <Loader2 className="animate-spin" data-icon="inline-start" /> : <Scissors data-icon="inline-start" />}
+              {running === "edited" ? `Descargando ${Math.min(downloaded + 1, forEdited.length)}/${forEdited.length}` : `Descargar editados (${forEdited.length})`}
             </Button>
           ) : null}
         </ActionBar>

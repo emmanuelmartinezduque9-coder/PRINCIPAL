@@ -59,6 +59,10 @@ export const ready = {
   download(row: BatchRowJson): boolean {
     return row.clipReady;
   },
+  /** Ya montado en el Mac (la última versión). */
+  edited(row: BatchRowJson): boolean {
+    return row.edit.latest !== null;
+  },
 };
 
 /** Con un clip apuntado o hecho, la imagen aprobada ya no cambia. */
@@ -176,6 +180,21 @@ export function generationState(generation: GenerationJson, kind: "frame" | "cli
   return kind === "frame" ? { label: "Revisar", tone: "review" } : { label: "Listo", tone: "ok" };
 }
 
+/** El montaje en el Mac de una fila, como chip del tablero. */
+export function editState(edit: BatchRowJson["edit"]): StepState {
+  switch (edit.status) {
+    case "en_cola":
+      return { label: "En cola", tone: "busy" };
+    case "montando":
+      return { label: "Montando", tone: "busy" };
+    case "hecho":
+      return { label: "Montado", tone: "ok" };
+    case "fallido":
+      return { label: edit.latest ? "Error" : "Sin montar", tone: "error", detail: edit.error };
+  }
+  return NONE;
+}
+
 /**
  * ¿Hay algo en marcha? Mientras lo haya, el tablero se vuelve a pedir solo (cada 3 s; enlaces que
  * el Mac va trayendo, cada 5 s; lo lento, cada 15 s).
@@ -197,6 +216,8 @@ export function pollEvery(view: BatchViewJson | undefined, uploading: boolean): 
   }
   if (uploading) return 3000;
   if (links) return 5000;
+  // Montajes en la cola del Mac o montándose.
+  if (view.rows.some((row) => row.edit.status === "en_cola" || row.edit.status === "montando")) return 5000;
   // «Enviar lote» en marcha: lo que avanza el servidor solo (desgloses, envíos, el paso siguiente).
   if (["preguntas", "imagenes", "revision_imagenes", "clips"].includes(view.auto.status)) return 5000;
   return slow ? 15_000 : false;
