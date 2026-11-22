@@ -9,7 +9,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { api } from "@/lib/api";
-import { MICROS_PER_USD } from "@/lib/money";
+import { formatUsd, MICROS_PER_USD, parseUsd } from "@/lib/money";
 
 /** Importe para el campo: `45` o `12,5` en lugar de `45000000`. */
 const capText = (micros: number) => String(micros / MICROS_PER_USD).replace(".", ",");
@@ -17,10 +17,13 @@ const capText = (micros: number) => String(micros / MICROS_PER_USD).replace(".",
 /** Botón y ventana para cambiar el tope mensual global. Al guardar, los trabajos en pausa con saldo se reanudan. */
 export function CapDialog({
   capMicros,
+  spentMicros,
   variant = "outline",
   label = "Cambiar tope",
 }: {
   capMicros: number;
+  /** Lo gastado este mes, para avisar si el tope nuevo no lo cubre. */
+  spentMicros: number;
   variant?: ComponentProps<typeof Button>["variant"];
   label?: string;
 }) {
@@ -45,6 +48,10 @@ export function CapDialog({
       setBusy(false);
     }
   }
+
+  const typed = parseUsd(value);
+  const warning =
+    typed === null ? null : typed === 0 ? "Con 0 se detiene todo el gasto." : typed < spentMicros ? "Es menos de lo ya gastado: se detiene todo el gasto." : null;
 
   return (
     <Dialog
@@ -82,6 +89,12 @@ export function CapDialog({
               required
             />
           </div>
+          <p className="text-sm text-muted-foreground tabular-nums">Gastado este mes: {formatUsd(spentMicros)}</p>
+          {warning ? (
+            <p role="status" className="flex gap-2 rounded-lg bg-amber-500/10 px-3 py-2 text-sm">
+              <CircleAlert className="mt-0.5 size-4 shrink-0 text-amber-600" /> {warning}
+            </p>
+          ) : null}
           {error ? (
             <p role="alert" className="flex gap-2 rounded-lg bg-destructive/10 px-3 py-2 text-sm">
               <CircleAlert className="mt-0.5 size-4 shrink-0 text-destructive" /> {error}

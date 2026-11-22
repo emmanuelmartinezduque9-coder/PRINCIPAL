@@ -29,7 +29,7 @@ describe("comprobación del sistema", () => {
     expect(r.costMicros).toBeGreaterThan(0);
     expect(r.costMicros).toBeLessThan(10_000); // menos de un céntimo
     expect(calls).toHaveLength(1);
-    expect(calls[0].max_tokens).toBe(16);
+    expect(calls[0].max_tokens).toBe(1024);
     expect((await spendSummary(dueno)).spentMicros).toBe(r.costMicros);
     expect(r.stages.cola.ok && r.stages.reglas?.ok && r.stages.pasarela?.ok && r.stages.libro?.ok).toBe(true);
     // Queda guardado para la pantalla.
@@ -95,14 +95,50 @@ describe("comprobación del sistema", () => {
   });
 });
 
+describe("más casos de la comprobación", () => {
+  it("una respuesta cortada pero con texto cuenta como correcta y deja el gasto apuntado", async () => {
+    const { client } = fakeMessages([{ text: "O", stopReason: "max_tokens", usage: { inputTokens: 3_000, outputTokens: 1024 } }]);
+    const r = await runSystemCheck(ctx(dueno), { gateway: createGateway({ client }) });
+    expect(r).toMatchObject({ ok: true, model: "claude-haiku-5-5" });
+    expect(r.costMicros).toBeGreaterThan(0);
+    expect((await spendSummary(dueno)).spentMicros).toBe(r.costMicros);
+    expect(r.stages.libro?.ok).toBe(true);
+  });
+
+  it("cortada y sin texto sigue siendo un fallo", async () => {
+    const { client } = fakeMessages([{ stopReason: "max_tokens", usage: { inputTokens: 3_000, outputTokens: 1024 } }]);
+    const r = await runSystemCheck(ctx(dueno), { gateway: createGateway({ client }) });
+    expect(r).toMatchObject({ ok: false, error: "La respuesta de Claude se ha cortado antes de terminar." });
+  });
+
+  it("una pulsación nueva hace una comprobación nueva aunque la anterior fallara en el mismo minuto", async () => {
+    const { client, calls } = fakeMessages([{ error: fakeApiError(500) }, { text: "OK", usage: { inputTokens: 3_000, outputTokens: 2 } }]);
+    const gateway = createGateway({ client });
+    const now = at("2026-11-22T10:00:05Z");
+    expect((await runSystemCheck(ctx(dueno), { gateway, now, requestId: "pulsacion-1" })).ok).toBe(false);
+    expect((await runSystemCheck(ctx(dueno), { gateway, now, requestId: "pulsacion-2" })).ok).toBe(true);
+    expect(calls).toHaveLength(2);
+  });
+
+  it("solo el dueño la ejecuta: un colaborador recibe 403 y no se llama al modelo", async () => {
+    const ana = await makeUser("colaborador");
+    const { client, calls } = fakeMessages([]);
+    await expect(runSystemCheck(ctx(ana), { gateway: createGateway({ client }) })).rejects.toMatchObject({ status: 403 });
+    await expect(systemCheckStatus(ana)).rejects.toMatchObject({ status: 403 });
+    expect(calls).toHaveLength(0);
+  });
+});
+
 describe("estado de la comprobación", () => {
   it("sin nada hecho no hay nada en marcha ni resultado; con la fila del trabajo en cola, está en marcha", async () => {
-    expect(await systemCheckStatus()).toEqual({ running: false, last: null });
+    expect(await systemCheckStatus(dueno)).toEqual({ running: false, workerSilent: false, last: null });
     await getDb()
       .insert(schema.jobSteps)
       .values({ key: "k", jobName: SYSTEM_CHECK_JOB, userId: dueno.id, productId: null, status: "queued", payload: {} });
-    expect((await systemCheckStatus()).running).toBe(true);
+    expect(await systemCheckStatus(dueno)).toMatchObject({ running: true, workerSilent: false });
+    // Encolada hace más de 30 s sin que nadie la empiece: el trabajador no responde.
+    expect(await systemCheckStatus(dueno, new Date(Date.now() + 31_000))).toMatchObject({ running: true, workerSilent: true });
     await getDb().update(schema.jobSteps).set({ status: "done" }).where(eq(schema.jobSteps.key, "k"));
-    expect((await systemCheckStatus()).running).toBe(false);
+    expect((await systemCheckStatus(dueno)).running).toBe(false);
   });
 });

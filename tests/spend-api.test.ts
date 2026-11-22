@@ -120,6 +120,15 @@ describe("API de gasto", () => {
     expect(await listPausedJobs(dueno)).toHaveLength(0);
   });
 
+  it("un tope por encima de 10.000 US$ se rechaza con un 400 claro", async () => {
+    await as(dueno);
+    const response = await (await tope()).PUT(put({ capUsd: "10000,01" }));
+    expect(response.status).toBe(400);
+    expect((await response.json()).error).toBe("El tope no puede ser mayor de 10.000 US$ al mes.");
+    expect(await getGlobalCap()).toBe(30_000_000);
+    expect((await (await tope()).PUT(put({ capUsd: "10000" }))).status).toBe(200);
+  });
+
   it("un importe que no vale da 400 en español y no cambia el tope", async () => {
     await as(dueno);
     for (const body of [{ capUsd: "mucho" }, { capUsd: "-3" }, {}, { capUsd: 45 }]) {
@@ -152,7 +161,10 @@ describe("API de gasto", () => {
     const { paused } = await (await (await gasto()).GET()).json();
     expect(paused[0]).toMatchObject({ userName: "Ana", reason: "persona" });
     await as(ana);
-    expect((await (await (await gasto()).GET()).json()).paused).toHaveLength(1);
+    const own = (await (await (await gasto()).GET()).json()).paused;
+    expect(own).toHaveLength(1);
+    // Un colaborador no recibe el motivo: no debe saber nada del tope global.
+    expect(own[0].reason).toBeNull();
   });
 });
 
@@ -169,6 +181,7 @@ describe("API de comprobación del sistema", () => {
       expect(await first.json()).toMatchObject({ started: true, running: true });
       // Pulsar otra vez mientras corre no encola otra: devuelve la que está en marcha.
       expect(await (await route.POST()).json()).toMatchObject({ started: false, running: true });
+      expect(await (await route.POST()).json()).toMatchObject({ workerSilent: false });
 
       await runToIdle();
       const done = await (await route.GET()).json();

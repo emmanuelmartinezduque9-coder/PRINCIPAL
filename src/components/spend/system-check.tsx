@@ -95,7 +95,11 @@ export function SystemCheck() {
         })}
       </ol>
 
-      {running ? null : last ? (
+      {running && status?.workerSilent ? (
+        <p role="alert" className="rounded-lg bg-amber-500/10 px-3 py-2 text-sm font-medium">
+          El trabajador no responde todavía
+        </p>
+      ) : running ? null : last ? (
         <p
           role={last.ok ? "status" : "alert"}
           className={cn(
@@ -104,22 +108,13 @@ export function SystemCheck() {
           )}
         >
           {last.ok ? (
-            <>
-              <span className="font-medium">Todo funciona</span>
-              <span className="text-muted-foreground">
-                {" "}
-                · coste {formatUsd(last.costMicros)} · hace {formatDistanceToNowStrict(new Date(last.at), { locale: es })}
-              </span>
-            </>
+            <span className="font-medium">Todo funciona</span>
           ) : (
-            <>
-              <span className="font-medium">{last.error ?? "Algo ha fallado."}</span>
-              <span className="text-muted-foreground">
-                {" "}
-                · hace {formatDistanceToNowStrict(new Date(last.at), { locale: es })}
-              </span>
-            </>
+            <span className="font-medium">{last.error ?? "Algo ha fallado."}</span>
           )}
+          <span className="block text-muted-foreground">
+            {last.ok ? `Coste ${formatUsd(last.costMicros)} · ` : ""}hace {formatDistanceToNowStrict(new Date(last.at), { locale: es })}
+          </span>
         </p>
       ) : query.isError ? (
         <p role="alert" className="rounded-lg bg-destructive/10 px-3 py-2 text-sm">

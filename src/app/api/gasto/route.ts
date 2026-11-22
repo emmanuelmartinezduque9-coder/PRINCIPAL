@@ -20,9 +20,9 @@ export async function GET() {
     const products = isOwner
       ? await productNamesByIds(wanted)
       : new Map((await listProductsFor(me)).map((product) => [product.id, product.name]));
-    // Qué tope detiene el trabajo: sin cifras de nadie más, solo cuál de los dos se alcanzó.
-    const reached = summary.spentMicros >= summary.capMicros;
-    const reason = isOwner ? (reached ? "global" : "persona") : reached ? "persona" : "global";
+    // Qué tope detuvo el trabajo: el que quedó apuntado al pausarlo (si no consta, el dueño lo
+    // deduce del gasto global). Un colaborador no recibe motivo: no debe saber nada del tope global.
+    const guessed = summary.spentMicros >= summary.capMicros ? "global" : "persona";
 
     const paused = pausedJobs.map((job) => ({
       jobName: job.jobName,
@@ -32,7 +32,7 @@ export async function GET() {
       productId: job.productId,
       productName: job.productId === null ? null : (products.get(job.productId) ?? null),
       since: job.since,
-      reason,
+      reason: isOwner ? (job.scope ?? guessed) : null,
     }));
     return Response.json({ role: me.role, summary, paused }, { headers: { "Cache-Control": "no-store" } });
   });

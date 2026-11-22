@@ -14,6 +14,8 @@ import { listProductsFor, productNamesByIds } from "@/server/products";
 
 export const DEFAULT_GLOBAL_CAP_MICROS = 30_000_000;
 export const DEFAULT_COLLABORATOR_CAP_MICROS = 10_000_000;
+/** Tope máximo que acepta la pantalla: protege de un cero de más al escribir el importe. */
+export const MAX_GLOBAL_CAP_MICROS = 10_000 * 1_000_000;
 export const GLOBAL_CAP_SETTING = "spend.globalCapMicros";
 
 /**
@@ -315,6 +317,7 @@ async function resumeAfterCapChange(): Promise<void> {
 /** Cambia el tope mensual global. Solo el dueño (403 si no). Reanuda los trabajos en pausa que ya tengan saldo. */
 export async function setGlobalCap(owner: AuthUser, micros: number): Promise<void> {
   checkOwnerAndCap(owner, micros);
+  if (micros > MAX_GLOBAL_CAP_MICROS) throw new HttpError(400, "El tope no puede ser mayor de 10.000 US$ al mes.");
   await setSetting(GLOBAL_CAP_SETTING, micros);
   await resumeAfterCapChange();
 }

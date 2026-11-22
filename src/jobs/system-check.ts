@@ -12,6 +12,8 @@ import {
 } from "@/llm/gateway";
 import { defineJob } from "@/jobs/registry";
 import { runStep, stepKey, type JobContext } from "@/jobs/steps";
+import { getActiveUser, type AuthUser } from "@/server/auth";
+import { HttpError } from "@/server/http";
 import { loadRules, RULE_SLUGS } from "@/server/rules";
 import { settledCostMicros } from "@/server/spend";
 
@@ -30,6 +32,15 @@ const CHECK_RULES = [RULE_SLUGS.angulos, RULE_SLUGS.ejemplos, RULE_SLUGS.metodo]
 
 /** Una comprobación en marcha que lleva más de esto sin acabar se da por perdida. */
 const STALE_RUNNING_MS = 10 * 60_000;
+
+/** Encolada más de esto sin que el proceso en segundo plano la empiece: «no responde todavía». */
+const WORKER_SILENT_MS = 30_000;
+
+/**
+ * Tokens de salida permitidos. Holgados a propósito: el modelo puede gastar parte pensando y
+ * 16 se agotaban antes de contestar. Aun así, el peor caso cuesta una fracción de céntimo.
+ */
+const CHECK_MAX_TOKENS = 1024;
 
 export interface CheckStage {
   ok: boolean;
@@ -65,18 +76,21 @@ function expectedMessage(error: unknown): string | null {
 }
 
 /**
- * Hace la comprobación y guarda el resultado (`system.lastCheck`). Todo va en un solo paso: con
- * la misma clave (el mismo minuto) no se vuelve a llamar ni a pagar. Un fallo esperado (sin clave,
+ * Hace la comprobación y guarda el resultado (`system.lastCheck`). Solo para el dueño (se vuelve
+ * a comprobar aquí). Todo va en un solo paso, con la clave de `requestId` (el identificador de la
+ * pulsación; sin él, el minuto): repetir la misma no vuelve a llamar ni a pagar, y una pulsación
+ * nueva hace una comprobación nueva aunque la anterior fallara. Un fallo esperado (sin clave,
  * tope alcanzado, Claude caído) es un resultado `ok: false` y no se reintenta: una llamada que
  * pudo cobrarse no se repite sola.
  */
 export async function runSystemCheck(
   ctx: JobContext,
-  deps: { gateway: LlmGateway; now?: () => Date },
+  deps: { gateway: LlmGateway; now?: () => Date; requestId?: string },
 ): Promise<SystemCheckResult> {
+  if ((await getActiveUser(ctx.userId))?.role !== "dueno") throw new HttpError(403, "Solo el dueño puede hacer esto.");
   const now = (deps.now ?? (() => new Date()))();
   const at = now.toISOString();
-  const key = stepKey(ctx, "comprobar", { minute: at.slice(0, 16) });
+  const key = stepKey(ctx, "comprobar", { request: deps.requestId ?? at.slice(0, 16) });
 
   const result = await runStep(ctx, key, async (): Promise<SystemCheckResult> => {
     const stages: SystemCheckResult["stages"] = { cola: { ok: true }, reglas: null, pasarela: null, libro: null };
@@ -99,7 +113,7 @@ export async function runSystemCheck(
     }
     stages.reglas = { ok: true, detail: rules.map((rule) => `${rule.slug} v${rule.version}`).join(", ") };
 
-    let answer;
+    let answer: { model: string; costMicros: number; spendEntryId: number };
     try {
       answer = await deps.gateway.call({
         tier: "small",
@@ -109,13 +123,18 @@ export async function runSystemCheck(
         rules,
         instructions: "Es una comprobación técnica. Responde solo con la palabra OK.",
         content: "Comprobación del sistema.",
-        maxTokens: 16,
+        maxTokens: CHECK_MAX_TOKENS,
       });
     } catch (error) {
-      const message = expectedMessage(error);
-      if (message === null) throw error;
-      stages.pasarela = { ok: false, detail: message };
-      return failed(message);
+      // Cortada pero con algo de texto: la conexión funciona y el gasto ya quedó apuntado.
+      if (error instanceof LlmTruncatedError && error.partial?.text.trim()) {
+        answer = error.partial;
+      } else {
+        const message = expectedMessage(error);
+        if (message === null) throw error;
+        stages.pasarela = { ok: false, detail: message };
+        return failed(message);
+      }
     }
     stages.pasarela = { ok: true, detail: answer.model };
 
@@ -140,14 +159,17 @@ export async function runSystemCheck(
 
 export interface SystemCheckStatus {
   running: boolean;
+  /** Encolada hace más de 30 s y nadie la ha empezado: el proceso en segundo plano no responde. */
+  workerSilent: boolean;
   last: SystemCheckResult | null;
 }
 
-/** Si hay una comprobación encolada o en marcha, y el último resultado guardado. */
-export async function systemCheckStatus(now: Date = new Date()): Promise<SystemCheckStatus> {
+/** Si hay una comprobación encolada o en marcha, y el último resultado guardado. Solo el dueño. */
+export async function systemCheckStatus(user: AuthUser, now: Date = new Date()): Promise<SystemCheckStatus> {
+  if (user.role !== "dueno") throw new HttpError(403, "Solo el dueño puede hacer esto.");
   const since = new Date(now.getTime() - STALE_RUNNING_MS);
   const [active] = await getDb()
-    .select({ key: schema.jobSteps.key })
+    .select({ status: schema.jobSteps.status, updatedAt: schema.jobSteps.updatedAt })
     .from(schema.jobSteps)
     .where(
       and(
@@ -158,14 +180,15 @@ export async function systemCheckStatus(now: Date = new Date()): Promise<SystemC
     )
     .orderBy(desc(schema.jobSteps.updatedAt))
     .limit(1);
-  return { running: Boolean(active), last: await getSetting<SystemCheckResult>(LAST_CHECK_SETTING) };
+  const workerSilent = active?.status === "queued" && now.getTime() - active.updatedAt.getTime() > WORKER_SILENT_MS;
+  return { running: Boolean(active), workerSilent, last: await getSetting<SystemCheckResult>(LAST_CHECK_SETTING) };
 }
 
 defineJob(
   SYSTEM_CHECK_JOB,
-  async (_data: object, ctx) => {
+  async (data: { requestId?: string }, ctx) => {
     try {
-      await runSystemCheck(ctx, { gateway: getGateway() });
+      await runSystemCheck(ctx, { gateway: getGateway(), requestId: data.requestId });
     } catch (error) {
       // Un fallo que no es de la llamada (base de datos, persona sin acceso…): que la pantalla lo diga.
       const failure: SystemCheckResult = {

@@ -392,9 +392,9 @@ describe("pausa por tope", () => {
 
     const all = await listPausedJobs(dueno);
     expect(all.map((job) => job.userId).sort()).toEqual([ana.id, luis.id].sort());
-    expect(await listPausedJobs(ana)).toEqual([{ jobName: JOB, productId: product.id, userId: ana.id, since }]);
+    expect(await listPausedJobs(ana)).toEqual([{ jobName: JOB, productId: product.id, userId: ana.id, since, scope: null }]);
     expect(await listPausedJobs(luis)).toEqual([
-      { jobName: JOB, productId: null, userId: luis.id, since: expect.any(Date) },
+      { jobName: JOB, productId: null, userId: luis.id, since: expect.any(Date), scope: null },
     ]);
 
     // Los trabajos en pausa de una persona desactivada no se van a reanudar: no salen.

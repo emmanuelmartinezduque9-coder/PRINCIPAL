@@ -1,11 +1,6 @@
 import { parseUsd } from "@/lib/money";
 import { HttpError, handle } from "@/server/http";
-import { getGlobalCap, setGlobalCap } from "@/server/spend";
-
-/** Tope mensual global actual. Solo el dueño. */
-export async function GET() {
-  return handle(async () => Response.json({ capMicros: await getGlobalCap() }), { role: "dueno" });
-}
+import { setGlobalCap } from "@/server/spend";
 
 /** Cambia el tope mensual global (`capUsd`, texto como "45" o "12,50") y reanuda los trabajos que ya tengan saldo. Solo el dueño. */
 export async function PUT(request: Request) {

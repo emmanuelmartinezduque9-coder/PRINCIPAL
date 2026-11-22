@@ -154,7 +154,8 @@ export class LlmRefusalError extends Error {
 
 /** La respuesta se cortó antes de terminar (por `maxTokens` o por tamaño). La llamada queda cobrada. */
 export class LlmTruncatedError extends Error {
-  constructor() {
+  /** Lo que sí llegó a contestar y lo que costó (ya apuntado en el libro). */
+  constructor(public partial?: { text: string; model: string; costMicros: number; spendEntryId: number }) {
     super("La respuesta de Claude se ha cortado antes de terminar.");
     this.name = "LlmTruncatedError";
   }
@@ -552,7 +553,7 @@ export function createGateway(deps: { client?: MessagesClient; now?: () => Date 
       });
 
       if (stopReason === "refusal") throw new LlmRefusalError(refusalCategory);
-      if (stopReason === "max_tokens" || stopReason === "model_context_window_exceeded") throw new LlmTruncatedError();
+      if (stopReason === "max_tokens" || stopReason === "model_context_window_exceeded") throw new LlmTruncatedError({ text: reading.text, model: reading.model, costMicros, spendEntryId: entryId });
 
       const data = request.schema ? parseData(request.schema, reading.text) : null;
       return { text: reading.text, data, model: reading.model, usage, costMicros, spendEntryId: entryId, ruleVersions };

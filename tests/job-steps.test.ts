@@ -197,7 +197,7 @@ describe("runStep", () => {
         throw capError();
       }),
     ).rejects.toBeInstanceOf(JobPausedError);
-    expect(await step("k3")).toMatchObject({ status: "paused_cap", attempts: 0, error: null });
+    expect(await step("k3")).toMatchObject({ status: "paused_cap", attempts: 0, error: "persona" });
   });
 
   it("un paso en pausa se retoma al volver a llamarlo y sigue sin contar la pausa como intento", async () => {

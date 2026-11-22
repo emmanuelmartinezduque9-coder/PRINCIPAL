@@ -496,7 +496,8 @@ function toStored(value: unknown): unknown {
 async function recordFailure(claim: Claim, error: unknown): Promise<unknown> {
   // Tope de gasto, también si viene de un paso ejecutado dentro de este: pausa, no intento fallido.
   if (error instanceof SpendCapError || error instanceof LlmCapReachedError || error instanceof JobPausedError) {
-    await mark(claim, { status: "paused_cap", attempts: notCounted, error: null, updatedAt: dbNow });
+    // En `error` queda qué tope detuvo el paso (`global` o `persona`), para decirlo en pantalla.
+    await mark(claim, { status: "paused_cap", attempts: notCounted, error: error.scope, updatedAt: dbNow });
     return new JobPausedError(error.scope);
   }
   // El proceso se para antes de empezar el siguiente paso: queda como encolado, para retomarlo.
@@ -586,6 +587,8 @@ export interface PausedJob {
   productId: number | null;
   userId: number;
   since: Date;
+  /** Qué tope lo detuvo, si se sabe. */
+  scope: "global" | "persona" | null;
 }
 
 /**
@@ -597,7 +600,13 @@ export interface PausedJob {
 export async function listPausedJobs(user: AuthUser): Promise<PausedJob[]> {
   const since = sql<Date>`min(${steps.updatedAt})`.mapWith(steps.updatedAt);
   const rows = await getDb()
-    .select({ jobName: steps.jobName, productId: steps.productId, userId: steps.userId, since })
+    .select({
+      jobName: steps.jobName,
+      productId: steps.productId,
+      userId: steps.userId,
+      since,
+      cause: sql<string | null>`max(${steps.error})`,
+    })
     .from(steps)
     .where(
       and(
@@ -613,5 +622,7 @@ export async function listPausedJobs(user: AuthUser): Promise<PausedJob[]> {
   for (const userId of new Set(rows.map((row) => row.userId))) {
     active.set(userId, (await getActiveUser(userId)) !== null);
   }
-  return rows.filter((row) => active.get(row.userId));
+  return rows
+    .filter((row) => active.get(row.userId))
+    .map(({ cause, ...job }) => ({ ...job, scope: cause === "global" || cause === "persona" ? cause : null }));
 }

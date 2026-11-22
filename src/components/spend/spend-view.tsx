@@ -26,7 +26,7 @@ interface PausedRow {
   productId: number | null;
   productName: string | null;
   since: string;
-  reason: "global" | "persona";
+  reason: "global" | "persona" | null;
 }
 
 interface SpendData {
@@ -81,7 +81,7 @@ function Block({ title, empty, children }: { title: string; empty: boolean; chil
   );
 }
 
-function PausedNotice({ paused, capMicros }: { paused: PausedRow[]; capMicros: number }) {
+function PausedNotice({ paused, capMicros, spentMicros }: { paused: PausedRow[]; capMicros: number; spentMicros: number }) {
   const n = paused.length;
   const jobs = n === 1 ? "1 trabajo esperando" : `${n} trabajos esperando`;
   return (
@@ -97,7 +97,7 @@ function PausedNotice({ paused, capMicros }: { paused: PausedRow[]; capMicros: n
           </span>
         </p>
         <div className="flex gap-2">
-            {paused.some((job) => job.reason === "global") ? <CapDialog capMicros={capMicros} variant="default" label="Subir tope" /> : null}
+            {paused.some((job) => job.reason === "global") ? <CapDialog capMicros={capMicros} spentMicros={spentMicros} variant="default" label="Subir tope" /> : null}
             {paused.some((job) => job.reason === "persona") ? (
               <Link href="/personas" className={cn(buttonVariants({ variant: "outline" }), "h-9 gap-1.5 px-3")}>
                 <User />
@@ -122,7 +122,7 @@ function PausedNotice({ paused, capMicros }: { paused: PausedRow[]; capMicros: n
             </span>
             <span className="truncate">{job.label}</span>
             <span className="text-xs text-muted-foreground md:text-right">
-              {job.reason === "global" ? "Tope global" : "Tope de la persona"} · hace {formatDistanceToNowStrict(new Date(job.since), { locale: es })}
+              {job.reason === "global" ? "Tope global" : job.reason === "persona" ? "Tope de la persona" : "Esperando saldo"} · hace {formatDistanceToNowStrict(new Date(job.since), { locale: es })}
             </span>
           </li>
         ))}
@@ -168,7 +168,7 @@ export function SpendView() {
 
   return (
     <div className="flex flex-col gap-6">
-      <PageHeader title="Gasto" actions={<CapDialog capMicros={summary.capMicros} />} />
+      <PageHeader title="Gasto" actions={<CapDialog capMicros={summary.capMicros} spentMicros={summary.spentMicros} />} />
 
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]">
         <section className="flex flex-col justify-between gap-5 rounded-xl bg-card p-5 ring-1 ring-foreground/10 md:p-6">
@@ -197,7 +197,7 @@ export function SpendView() {
         <SystemCheck />
       </div>
 
-      {paused.length > 0 ? <PausedNotice paused={paused} capMicros={summary.capMicros} /> : null}
+      {paused.length > 0 ? <PausedNotice paused={paused} capMicros={summary.capMicros} spentMicros={summary.spentMicros} /> : null}
 
       <div className="grid gap-6 lg:grid-cols-2">
         <Block title="Por producto" empty={summary.byProduct.length === 0}>
