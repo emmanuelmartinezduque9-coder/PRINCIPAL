@@ -1,14 +1,21 @@
 import { badRequest, handle } from "@/server/http";
 import { checkPromptInput, updatePrompts } from "@/server/videos/analysis";
+import { pollVideoGenerations } from "@/server/videos/generations";
 import { getVideoFor, updateVideoChoices, videoView } from "@/server/videos/videos";
 
 const parseId = (value: string) => (/^[1-9]\d{0,15}$/.test(value) ? Number(value) : Number.NaN);
 
-/** El vídeo, si es de quien pregunta, sus fotogramas, su último desglose, sus manifiestos y los avisos de sus prompts. */
+/**
+ * El vídeo, si es de quien pregunta, sus fotogramas, su último desglose, sus manifiestos, los
+ * avisos de sus prompts y sus generaciones. Si quien mira es quien lo creó, antes pregunta a su
+ * Higgsfield por las generaciones en curso (como mucho una vez cada 8 s por generación).
+ */
 export async function GET(_request: Request, { params }: { params: Promise<{ videoId: string }> }) {
   return handle(async (user) => {
     const { videoId } = await params;
-    return Response.json(await videoView(user!, parseId(videoId)));
+    const id = parseId(videoId);
+    await pollVideoGenerations(user!, id);
+    return Response.json(await videoView(user!, id));
   });
 }
 

@@ -1,0 +1,16 @@
+{
+  "_origen": "supuesto",
+  "_nota": "Forma supuesta de la respuesta de `jobs_wait` (el esquema publica entradas, no respuestas; la descripción habla de estados indexados, direcciones de resultados, `error` en los trabajos failed/nsfw/ip_detected, `all_terminal` y `poll_after_seconds`). Se sustituye por la captura real en la PUERTA.",
+  "isError": false,
+  "structuredContent": {
+    "all_terminal": false,
+    "poll_after_seconds": 10,
+    "jobs": [
+      { "index": 0, "job_id": "j1", "status": "completed", "results": [{ "url": "https://cdn.higgsfield.test/j1.png" }] },
+      { "index": 1, "job_id": "j2", "status": "nsfw", "error": "Content flagged." },
+      { "index": 2, "job_id": "j3", "status": "in_progress" },
+      { "index": 3, "job_id": "j4", "status": "failed", "error": "Generation failed." },
+      { "index": 4, "job_id": "j5", "status": "something_new" }
+    ]
+  }
+}

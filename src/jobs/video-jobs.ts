@@ -2,6 +2,7 @@ import { defineJob, defineSchedule } from "@/jobs/registry";
 import { StepFailedError } from "@/jobs/steps";
 import { probeConnections } from "@/server/higgsfield";
 import { ANALYSIS_JOB, runAnalysis } from "@/server/videos/analysis";
+import { SUBMIT_JOB, submitGeneration } from "@/server/videos/generations";
 import { processReference } from "@/server/videos/intake";
 import { videoSweep } from "@/server/videos/sweep";
 import { REFERENCE_JOB } from "@/server/videos/upload";
@@ -34,5 +35,18 @@ defineJob<{ analysisId: number }>(
   "Desglosar el vídeo de referencia",
 );
 
-/** Cada minuto: subidas abandonadas, referencias atascadas y desgloses que no terminan o ya no se pueden reanudar. */
+/**
+ * Envía una generación a Higgsfield, una sola vez (sin `runStep` dentro: repetir sería cobrar dos
+ * veces). Si el trabajo se repite, `submitGeneration` ya no encuentra la fila en `intent` y no hace nada.
+ */
+defineJob<{ generationId: number }>(
+  SUBMIT_JOB,
+  async ({ generationId }) => {
+    if (typeof generationId !== "number") throw new StepFailedError("Datos del trabajo no válidos.");
+    await submitGeneration(generationId);
+  },
+  "Enviar a Higgsfield",
+);
+
+/** Cada minuto: subidas abandonadas, referencias atascadas, desgloses que no terminan y generaciones en curso o en duda. */
 defineSchedule("video.seguimiento", "* * * * *", () => videoSweep());

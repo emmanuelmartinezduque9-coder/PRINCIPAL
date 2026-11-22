@@ -1,8 +1,29 @@
 import { describe, expect, it, vi } from "vitest";
-import { createHiggsfieldPort, DIAGNOSTIC_TOOLS, readBalance, readUploadTarget } from "@/connectors/higgsfield/adapter";
+import {
+  createHiggsfieldPort,
+  DIAGNOSTIC_TOOLS,
+  readBalance,
+  readHistory,
+  readJobs,
+  readQuote,
+  readSubmit,
+  readUploadTarget,
+} from "@/connectors/higgsfield/adapter";
 import { McpUnauthorizedError, type McpCaller } from "@/connectors/higgsfield/mcp";
-import { HiggsfieldAuthError, HiggsfieldNotConnectedError, HiggsfieldUnavailableError } from "@/connectors/higgsfield/port";
+import {
+  HiggsfieldAuthError,
+  HiggsfieldNotConnectedError,
+  HiggsfieldRejectedError,
+  HiggsfieldUnavailableError,
+  HiggsfieldUnknownOutcomeError,
+  type HfImageRequest,
+  type HfVideoRequest,
+} from "@/connectors/higgsfield/port";
 import balanceFixture from "./fixtures/higgsfield/balance.json";
+import estimateFixture from "./fixtures/higgsfield/estimate.json";
+import generateBatchFixture from "./fixtures/higgsfield/generate_batch.json";
+import jobsWaitFixture from "./fixtures/higgsfield/jobs_wait.json";
+import showGenerationsFixture from "./fixtures/higgsfield/show_generations.json";
 import mediaConfirmFixture from "./fixtures/higgsfield/media_confirm.json";
 import mediaUploadFixture from "./fixtures/higgsfield/media_upload.json";
 
@@ -239,5 +260,232 @@ describe("lector del saldo", () => {
     expect(readBalance(null)).toBeNull();
     expect(readBalance({ credits: -1 })).toBeNull();
     expect(readBalance({ credits: Infinity })).toBeNull();
+  });
+});
+
+describe("generaciones en el adaptador", () => {
+  const IMAGE: HfImageRequest = {
+    model: "nano_banana_pro",
+    prompt: "P",
+    aspectRatio: "9:16",
+    resolution: "2k",
+    medias: [{ role: "image_references", value: "m1" }],
+  };
+  const VIDEO: HfVideoRequest = {
+    model: "seedance_2_5",
+    mode: "omni_reference",
+    prompt: "P",
+    aspectRatio: "9:16",
+    duration: 10,
+    resolution: "480p",
+    generateAudio: false,
+    bitrateMode: "high",
+    medias: [
+      { role: "video_references", value: "ref" },
+      { role: "start_image", value: "job-f" },
+      { role: "image_references", value: "m2" },
+    ],
+  };
+  const accepted = (jobIds: string[]): Reply => ({
+    isError: false,
+    text: "",
+    data: { jobs: jobIds.map((job_id, index) => ({ index, job_id })) },
+  });
+
+  it("quoteImages → estimate_image_cost", async () => {
+    const { port, mcpCalls } = setup([fixtureReply(estimateFixture)]);
+    expect(await port.quoteImages(ANA, IMAGE, 2)).toEqual({ credits: 4 });
+    expect(mcpCalls[0]).toEqual({
+      name: "estimate_image_cost",
+      args: {
+        params: {
+          model: "nano_banana_pro",
+          prompt: "P",
+          aspect_ratio: "9:16",
+          resolution: "2k",
+          count: 2,
+          use_unlim: false,
+          medias: [{ role: "image_references", value: "m1" }],
+        },
+      },
+    });
+  });
+
+  it("quoteVideo → estimate_video_cost con los parámetros fijos del clip", async () => {
+    const { port, mcpCalls } = setup([fixtureReply(estimateFixture)]);
+    expect(await port.quoteVideo(ANA, VIDEO)).toEqual({ credits: 4 });
+    expect(mcpCalls[0]).toEqual({
+      name: "estimate_video_cost",
+      args: {
+        params: {
+          model: "seedance_2_5",
+          mode: "omni_reference",
+          prompt: "P",
+          aspect_ratio: "9:16",
+          duration: 10,
+          resolution: "480p",
+          generate_audio: false,
+          bitrate_mode: "high",
+          use_unlim: false,
+          medias: VIDEO.medias,
+        },
+      },
+    });
+  });
+
+  it("un presupuesto sin cifra, o con error, es HiggsfieldUnavailableError", async () => {
+    for (const reply of [{ isError: false, text: "{}", data: { quote_ref: "q" } }, { isError: true, text: "no", data: { credits: 4 } }]) {
+      const { port } = setup([reply]);
+      await expect(port.quoteImages(ANA, IMAGE, 2)).rejects.toBeInstanceOf(HiggsfieldUnavailableError);
+    }
+  });
+
+  it("submitImages → generate_image_batch, una petición por candidata", async () => {
+    const { port, mcpCalls } = setup([accepted(["a", "b"])]);
+    const result = await port.submitImages(ANA, IMAGE, 2);
+    expect(result).toMatchObject({ jobIds: ["a", "b"], rejected: [] });
+    expect(result.raw).toEqual({ jobs: [{ index: 0, job_id: "a" }, { index: 1, job_id: "b" }] });
+    expect(mcpCalls[0].name).toBe("generate_image_batch");
+    const args = mcpCalls[0].args as { requests: Array<{ index: number; params: Record<string, unknown> }> };
+    expect(args.requests.map((r) => [r.index, r.params.count, r.params.use_unlim])).toEqual([
+      [0, 1, false],
+      [1, 1, false],
+    ]);
+    expect(args.requests[1].params).toMatchObject({ model: "nano_banana_pro", prompt: "P", resolution: "2k", aspect_ratio: "9:16" });
+  });
+
+  it("submitVideo → generate_video_batch con Seedance 2.5", async () => {
+    const { port, mcpCalls } = setup([accepted(["v"])]);
+    expect(await port.submitVideo(ANA, VIDEO)).toMatchObject({ jobIds: ["v"], rejected: [] });
+    expect(mcpCalls[0]).toEqual({
+      name: "generate_video_batch",
+      args: {
+        requests: [
+          {
+            index: 0,
+            params: {
+              model: "seedance_2_5",
+              mode: "omni_reference",
+              prompt: "P",
+              aspect_ratio: "9:16",
+              duration: 10,
+              resolution: "480p",
+              generate_audio: false,
+              bitrate_mode: "high",
+              count: 1,
+              use_unlim: false,
+              medias: [
+                { role: "video_references", value: "ref" },
+                { role: "start_image", value: "job-f" },
+                { role: "image_references", value: "m2" },
+              ],
+            },
+          },
+        ],
+      },
+    });
+  });
+
+  it("si Higgsfield acepta una de dos, lo dice con el motivo de la otra", async () => {
+    const { port } = setup([fixtureReply(generateBatchFixture)]);
+    expect(await port.submitImages(ANA, IMAGE, 2)).toMatchObject({
+      jobIds: ["5b0e6a52-8a54-4c55-9d1f-1d2c3b4a5f60"],
+      rejected: ["Insufficient credits for this request."],
+    });
+  });
+
+  it("jobs → jobs_wait con índices y la espera pedida (0–15 s)", async () => {
+    const { port, mcpCalls } = setup([fixtureReply(jobsWaitFixture), fixtureReply(jobsWaitFixture)]);
+    await port.jobs(ANA, ["j1", "j2"], 0);
+    expect(mcpCalls[0]).toEqual({ name: "jobs_wait", args: { jobs: [{ index: 0, job_id: "j1" }, { index: 1, job_id: "j2" }], timeout_seconds: 0 } });
+    await port.jobs(ANA, ["j1"], 60);
+    expect(mcpCalls[1].args).toMatchObject({ timeout_seconds: 15 });
+  });
+
+  it("jobs lee terminados, bloqueados, fallidos y pendientes", async () => {
+    const { port } = setup([fixtureReply(jobsWaitFixture)]);
+    expect(await port.jobs(ANA, ["j1", "j2", "j3", "j4", "j6"], 0)).toEqual([
+      { jobId: "j1", status: "done", failure: null, error: null, urls: ["https://cdn.higgsfield.test/j1.png"] },
+      { jobId: "j2", status: "failed", failure: "nsfw", error: "Content flagged.", urls: [] },
+      { jobId: "j3", status: "pending", failure: null, error: null, urls: [] },
+      { jobId: "j4", status: "failed", failure: "failed", error: "Generation failed.", urls: [] },
+      // No aparece en la respuesta: sigue pendiente.
+      { jobId: "j6", status: "pending", failure: null, error: null, urls: [] },
+    ]);
+  });
+
+  it("un estado de trabajo que no se reconoce se trata como pendiente", () => {
+    expect(readJobs(jobsWaitFixture.structuredContent, ["j5"])).toEqual([{ jobId: "j5", status: "pending", failure: null, error: null, urls: [] }]);
+    // Sin `job_id`, por su índice; `ip_detected` también es un bloqueo.
+    expect(readJobs({ jobs: [{ index: 0, status: "ip_detected" }] }, ["x"])).toMatchObject([{ jobId: "x", status: "failed", failure: "ip_detected" }]);
+    expect(readJobs({ nada: true }, ["x"])).toBeNull();
+  });
+
+  it("una lectura de trabajos con error o ilegible es HiggsfieldUnavailableError (no un resultado desconocido)", async () => {
+    for (const reply of [{ isError: true, text: "x", data: null }, { isError: false, text: "x", data: null }, new Error("ECONNRESET")]) {
+      const { port } = setup([reply]);
+      await expect(port.jobs(ANA, ["j1"], 0)).rejects.toBeInstanceOf(HiggsfieldUnavailableError);
+    }
+  });
+
+  it("history → show_generations con todos los estados", async () => {
+    const { port, mcpCalls } = setup([fixtureReply(showGenerationsFixture)]);
+    const items = await port.history(ANA, "image", 50);
+    expect(mcpCalls[0]).toEqual({ name: "show_generations", args: { only_completed: false, type: "image", size: 50 } });
+    expect(items).toEqual([
+      { jobId: "j10", type: "image", model: "nano_banana_pro", prompt: "P", createdAt: new Date("2026-11-22T08:00:05Z") },
+      { jobId: "j9", type: "image", model: "nano_banana_pro", prompt: "P", createdAt: new Date(1795334400 * 1000) },
+    ]);
+  });
+
+  it("un envío con `isError` lanza HiggsfieldRejectedError con el texto de Higgsfield", async () => {
+    const { port } = setup([{ isError: true, text: "Insufficient credits.", data: null }]);
+    const error = await port.submitImages(ANA, IMAGE, 2).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(HiggsfieldRejectedError);
+    expect((error as HiggsfieldRejectedError).reason).toBe("Insufficient credits.");
+    expect((error as HiggsfieldRejectedError).raw).toEqual({ texto: "Insufficient credits." });
+  });
+
+  it("una respuesta `unlim_choice` es un rechazo: no se envió nada", async () => {
+    for (const data of [{ unlim_choice: { question: "Use unlimited?" } }, { status: "unlim_choice" }]) {
+      const { port } = setup([{ isError: false, text: "", data }]);
+      await expect(port.submitVideo(ANA, VIDEO)).rejects.toBeInstanceOf(HiggsfieldRejectedError);
+    }
+  });
+
+  it("si Higgsfield rechaza todas las peticiones, es un rechazo con sus motivos", async () => {
+    const { port } = setup([{ isError: false, text: "", data: { jobs: [{ index: 0, error: "bad prompt" }] } }]);
+    await expect(port.submitVideo(ANA, VIDEO)).rejects.toMatchObject({ name: "HiggsfieldRejectedError", reason: "bad prompt" });
+  });
+
+  it("un corte de conexión o una respuesta ilegible en un envío lanza HiggsfieldUnknownOutcomeError", async () => {
+    for (const reply of [new Error("ECONNRESET"), { isError: false, text: "ok", data: null }, { isError: false, text: "", data: { jobs: [] } }]) {
+      const { port, refresh } = setup([reply]);
+      await expect(port.submitImages(ANA, IMAGE, 2)).rejects.toBeInstanceOf(HiggsfieldUnknownOutcomeError);
+      expect(refresh).not.toHaveBeenCalled();
+    }
+  });
+
+  it("un 401 en un envío prueba que no se ejecutó: se refresca y se repite una vez", async () => {
+    const { port, mcpCalls, refresh } = setup([new McpUnauthorizedError(), accepted(["a"])]);
+    expect(await port.submitVideo(ANA, VIDEO)).toMatchObject({ jobIds: ["a"] });
+    expect(refresh).toHaveBeenCalledTimes(1);
+    expect(mcpCalls.map((c) => c.name)).toEqual(["generate_video_batch", "generate_video_batch"]);
+    // Dos 401 seguidos: hay que volver a conectar (y no se envió nada).
+    const twice = setup([new McpUnauthorizedError(), new McpUnauthorizedError()]);
+    await expect(twice.port.submitVideo(ANA, VIDEO)).rejects.toBeInstanceOf(HiggsfieldAuthError);
+  });
+
+  it("lectores: variantes razonables", () => {
+    expect(readQuote({ cost: { credits: 3.2 } })).toEqual({ credits: 4 });
+    expect(readQuote({ total_credits: "6" })).toEqual({ credits: 6 });
+    expect(readQuote({ quote_ref: "q" })).toBeNull();
+    expect(readSubmit({ results: ["a", "b"] })).toEqual({ jobIds: ["a", "b"], rejected: [] });
+    expect(readSubmit({ jobs: [{ index: 0, id: "a" }], rejected: [{ index: 1, reason: "no" }] })).toEqual({ jobIds: ["a"], rejected: ["no"] });
+    expect(readSubmit({})).toBeNull();
+    expect(readHistory({ data: { items: [{ job_id: "z", params: { model: "m", prompt: { ref: "x" } } }] } }, "video")).toEqual([
+      { jobId: "z", type: "video", model: "m", prompt: null, createdAt: null },
+    ]);
+    expect(readHistory({ nada: 1 }, "video")).toBeNull();
   });
 });

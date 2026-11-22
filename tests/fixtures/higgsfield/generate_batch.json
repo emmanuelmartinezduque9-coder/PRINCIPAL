@@ -1,0 +1,11 @@
+{
+  "_origen": "supuesto",
+  "_nota": "Forma supuesta de la respuesta de `generate_image_batch` / `generate_video_batch` (el esquema publica entradas, no respuestas; la descripción dice que cada petición aceptada crea un trabajo y conserva su `index`, y que las rechazadas no crean ninguno). Aquí la petición 0 se acepta y la 1 se rechaza. Se sustituye por la captura real en la PUERTA.",
+  "isError": false,
+  "structuredContent": {
+    "jobs": [
+      { "index": 0, "job_id": "5b0e6a52-8a54-4c55-9d1f-1d2c3b4a5f60", "status": "queued" },
+      { "index": 1, "error": "Insufficient credits for this request." }
+    ]
+  }
+}

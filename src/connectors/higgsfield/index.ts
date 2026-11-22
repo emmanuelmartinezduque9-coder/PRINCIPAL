@@ -23,6 +23,6 @@ const holder = globalThis as unknown as { __principalHiggsfield?: HiggsfieldPort
 
 /** El real; con `PRINCIPAL_HIGGSFIELD_FAKE=1` y fuera de la nube, uno simulado en memoria. */
 export function getHiggsfield(): HiggsfieldPort {
-  if (higgsfieldFakeMode()) return (holder.__principalHiggsfieldFake ??= createFakeHiggsfield()).port;
+  if (higgsfieldFakeMode()) return (holder.__principalHiggsfieldFake ??= createFakeHiggsfield({}, { autoComplete: true })).port;
   return (holder.__principalHiggsfield ??= createHiggsfieldPort());
 }

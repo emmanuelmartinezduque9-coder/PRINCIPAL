@@ -1,6 +1,7 @@
 import { and, eq, inArray, lt } from "drizzle-orm";
 import { getDb, schema } from "@/db/client";
 import { ANALYSIS_INTERRUPTED, ANALYSIS_STALE_MS, failOrphanedPausedAnalyses } from "@/server/videos/analysis";
+import { sweepGenerations, type GenDeps } from "@/server/videos/generations";
 import { cleanStaleUploads, PREPARE_FAILED } from "@/server/videos/upload";
 
 /**
@@ -41,7 +42,12 @@ async function failStaleAnalyses(now: Date): Promise<number> {
   return rows.length;
 }
 
-export async function videoSweep(now: Date = new Date()): Promise<void> {
+export async function videoSweep(now: Date = new Date(), deps: GenDeps = {}): Promise<void> {
+  try {
+    await sweepGenerations({ now: () => now, ...deps });
+  } catch (error) {
+    console.error("[videos] No se pudieron revisar las generaciones:", error);
+  }
   try {
     await cleanStaleUploads(now);
   } catch (error) {

@@ -8,6 +8,7 @@ import { costOfEntries } from "@/server/spend";
 import type { Analysis } from "@/server/videos/analysis";
 import { clipManifest, imageManifest, type ManifestItem } from "@/server/videos/manifest";
 import { checkImagePrompt, checkVideoPrompt, type PromptIssue } from "@/server/videos/prompt-check";
+import { generationView, type GenerationView } from "@/server/videos/generations";
 
 /**
  * Vídeos de un producto. Toda función que recibe un `videoId` empieza por `getVideoFor`, que pasa
@@ -188,6 +189,10 @@ export interface VideoView {
   videoIssues: PromptIssue[];
   imageManifest: ManifestItem[];
   clipManifest: ManifestItem[];
+  /** La imagen inicial: ronda, regeneraciones que quedan, resultado aprobado y la generación más reciente. */
+  frame: GenerationView;
+  /** El clip, igual que `frame`. */
+  clip: GenerationView;
 }
 
 /** Avisos de los prompts guardados del vídeo frente a sus manifiestos; un prompt que aún no existe no da avisos. */
@@ -237,5 +242,7 @@ export async function videoView(user: AuthUser, videoId: number): Promise<VideoV
     ...promptIssues(video, photos),
     imageManifest: imageManifest(video, photos),
     clipManifest: clipManifest(video, photos),
+    frame: await generationView(video, "frame"),
+    clip: await generationView(video, "clip"),
   };
 }

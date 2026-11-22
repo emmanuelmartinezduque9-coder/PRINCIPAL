@@ -14,6 +14,7 @@ import {
   unique,
   uniqueIndex,
   timestamp,
+  type AnyPgColumn,
 } from "drizzle-orm/pg-core";
 
 const instant = (name: string) => timestamp(name, { withTimezone: true, mode: "date" });
@@ -334,6 +335,16 @@ export const videos = pgTable(
     videoPrompt: text("video_prompt"),
     /** Cómo usa el clip la imagen aprobada: `start_image` (primer fotograma) o `contextual_reference`. */
     frameUse: text("frame_use").notNull().default("start_image"),
+    /** La imagen inicial aprobada (un resultado de una generación `frame` de este vídeo). */
+    approvedFrameResultId: bigint("approved_frame_result_id", { mode: "number" }).references(
+      (): AnyPgColumn => generationResults.id,
+      { onDelete: "set null" },
+    ),
+    /** El clip aprobado (un resultado de una generación `clip` de este vídeo). */
+    approvedClipResultId: bigint("approved_clip_result_id", { mode: "number" }).references(
+      (): AnyPgColumn => generationResults.id,
+      { onDelete: "set null" },
+    ),
     createdAt: instant("created_at").notNull().defaultNow(),
     updatedAt: instant("updated_at").notNull().defaultNow(),
   },
@@ -397,6 +408,76 @@ export const videoAnalyses = pgTable(
     index("video_analyses_status").on(t.status, t.updatedAt),
     check("video_analyses_status_valid", sql`${t.status} in ('queued', 'running', 'done', 'failed', 'paused')`),
   ],
+);
+
+/**
+ * Generaciones en Higgsfield (imagen inicial `frame` o clip `clip`), una fila por ronda. La
+ * intención se confirma aquí antes de llamar: `intent` → `submitting` (llamada en curso) →
+ * `submitted` (identificadores guardados) → `done` | `failed`. `not_sent`: seguro que no llegó (no
+ * gasta ronda, por eso queda fuera del índice único). `unknown`: no se sabe si llegó; se
+ * reconcilia contra el historial de Higgsfield y nunca se reenvía sola. Los créditos son enteros.
+ */
+export const generations = pgTable(
+  "generations",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    videoId: bigint("video_id", { mode: "number" })
+      .notNull()
+      .references(() => videos.id, { onDelete: "cascade" }),
+    kind: text("kind").notNull(),
+    round: integer("round").notNull(),
+    status: text("status").notNull().default("intent"),
+    /** Quien paga (con su Higgsfield): siempre quien creó el vídeo. */
+    userId: bigint("user_id", { mode: "number" }).notNull(),
+    /** La petición tal cual se presupuestó y se envía (`HfImageRequest` o `HfVideoRequest`). */
+    request: jsonb("request").notNull(),
+    count: integer("count").notNull(),
+    quotedCredits: integer("quoted_credits").notNull(),
+    creditsSpent: integer("credits_spent"),
+    jobIds: jsonb("job_ids").$type<string[]>().notNull().default([]),
+    /** Por qué falló o no se envió, en español y apto para la persona. */
+    error: text("error"),
+    /** Por qué la persona rechazó esta ronda (una línea); hace falta para regenerar. */
+    rejectReason: text("reject_reason"),
+    /** La última respuesta de Higgsfield en crudo, recortada a 20 000 caracteres. */
+    raw: jsonb("raw"),
+    intentAt: instant("intent_at").notNull().defaultNow(),
+    submitStartedAt: instant("submit_started_at"),
+    submittedAt: instant("submitted_at"),
+    finishedAt: instant("finished_at"),
+    lastPolledAt: instant("last_polled_at"),
+  },
+  (t) => [
+    uniqueIndex("generations_video_kind_round")
+      .on(t.videoId, t.kind, t.round)
+      .where(sql`${t.status} <> 'not_sent'`),
+    index("generations_status").on(t.status),
+    check("generations_kind_valid", sql`${t.kind} in ('frame', 'clip')`),
+    check(
+      "generations_status_valid",
+      sql`${t.status} in ('intent', 'submitting', 'submitted', 'done', 'failed', 'not_sent', 'unknown')`,
+    ),
+    check("generations_count_valid", sql`${t.count} between 1 and 12`),
+  ],
+);
+
+/** Un resultado por trabajo de una generación, con su miniatura (JPEG) en la propia base de datos. */
+export const generationResults = pgTable(
+  "generation_results",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    generationId: bigint("generation_id", { mode: "number" })
+      .notNull()
+      .references(() => generations.id, { onDelete: "cascade" }),
+    index: integer("index").notNull(),
+    jobId: text("job_id").notNull(),
+    ok: boolean("ok").notNull(),
+    url: text("url"),
+    error: text("error"),
+    thumbMime: text("thumb_mime"),
+    thumb: bytea("thumb"),
+  },
+  (t) => [unique("generation_results_generation_index").on(t.generationId, t.index)],
 );
 
 /**
