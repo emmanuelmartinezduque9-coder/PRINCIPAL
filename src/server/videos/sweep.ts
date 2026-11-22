@@ -1,5 +1,6 @@
 import { and, eq, inArray, lt } from "drizzle-orm";
 import { getDb, schema } from "@/db/client";
+import { expireLeases } from "@/server/agent";
 import { ANALYSIS_INTERRUPTED, ANALYSIS_STALE_MS, autoAnalyzePending, failOrphanedPausedAnalyses } from "@/server/videos/analysis";
 import { sweepGenerations, type GenDeps } from "@/server/videos/generations";
 import { cleanStaleUploads, PREPARE_FAILED } from "@/server/videos/upload";
@@ -52,6 +53,11 @@ export async function videoSweep(now: Date = new Date(), deps: GenDeps = {}): Pr
     await cleanStaleUploads(now);
   } catch (error) {
     console.error("[videos] No se pudieron limpiar las subidas antiguas:", error);
+  }
+  try {
+    await expireLeases(now);
+  } catch (error) {
+    console.error("[videos] No se pudieron revisar las tareas del Mac:", error);
   }
   try {
     const stuck = await failStuckReferences(now);

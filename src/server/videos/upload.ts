@@ -19,6 +19,11 @@ import { getVideoFor, MAX_REFERENCE_BYTES, requireVideoOwner } from "@/server/vi
  * el progreso dice desde dónde seguir y, si el servidor se reinició y el archivo ya no está, lo
  * dice claro (410).
  *
+ * El archivo lo sube la persona desde el navegador o, si pegó un enlace, el agente del Mac en su
+ * nombre (`src/server/agent.ts`), por estas mismas funciones: la sesión del Mac no anuncia el
+ * tamaño (no lo sabe hasta descargar) y lleva la tarea en `agentTaskId`. Un vídeo que espera un
+ * enlace está «subiendo» con origen «enlace».
+ *
  * Quien encola tiene que tener definido el trabajo: las rutas que terminan una subida importan
  * `@/jobs/video-jobs` (aquí no, para no crear un ciclo de importaciones).
  */
@@ -42,6 +47,10 @@ const NOT_FOUND = "Subida no encontrada.";
 const INCOMPLETE = "El vídeo no ha llegado entero. Inténtalo de nuevo.";
 export const UPLOAD_GONE = "La subida se ha interrumpido. Vuelve a elegir el vídeo.";
 export const PREPARE_FAILED = "No se pudo preparar el vídeo. Vuelve a subirlo.";
+/** Lo único que ve la persona cuando el Mac no consigue traer un enlace, sea cual sea el motivo. */
+export const LINK_FAILED = "No se pudo descargar el enlace. Sube el archivo del vídeo.";
+/** Nombre de archivo de las subidas del Mac (no tienen uno propio). */
+const LINK_FILENAME = "enlace";
 
 /** 24 bytes aleatorios en base64url: imposible de adivinar y seguro como nombre de archivo. */
 const UPLOAD_ID = /^[A-Za-z0-9_-]{32}$/;
@@ -60,6 +69,8 @@ export function clipPath(uploadId: string): string {
 }
 
 const totalChunksOf = (totalBytes: number) => Math.ceil(totalBytes / CHUNK_BYTES);
+/** Los trozos que caben en el máximo: una subida sin tamaño anunciado no admite más. */
+const MAX_CHUNKS = totalChunksOf(MAX_REFERENCE_BYTES);
 
 /** Bytes que debe tener el trozo `index`: todos `CHUNK_BYTES` menos el último, que lleva el resto. */
 function chunkLength(totalBytes: number, index: number): number {
@@ -77,6 +88,18 @@ async function fileSize(file: string): Promise<number | null> {
 async function removeFiles(uploadId: string): Promise<void> {
   await fs.rm(uploadPath(uploadId), { force: true });
   await fs.rm(clipPath(uploadId), { force: true });
+}
+
+/** Borra los archivos temporales de subidas cuya fila ya se borró. */
+export async function removeUploadFiles(uploadIds: string[]): Promise<void> {
+  for (const id of uploadIds) if (UPLOAD_ID.test(id)) await removeFiles(id);
+}
+
+/** Lo que hace falta para dar una referencia, se suba o se traiga de un enlace: el Higgsfield de la persona, conectado. */
+export async function requireHiggsfieldConnected(userId: number): Promise<void> {
+  const { connected, meta } = await credentialStatus(userId, HIGGSFIELD_KIND);
+  if (!connected) throw new HttpError(409, NOT_CONNECTED);
+  if (meta.needsReconnect === true) throw new HttpError(409, new HiggsfieldAuthError().message);
 }
 
 /**
@@ -105,9 +128,7 @@ export async function startUpload(
   const filename = typeof input.filename === "string" ? input.filename.trim().slice(0, MAX_FILENAME) : "";
   if (!filename) throw new HttpError(400, "Elige un vídeo.");
 
-  const { connected, meta } = await credentialStatus(user.id, HIGGSFIELD_KIND);
-  if (!connected) throw new HttpError(409, NOT_CONNECTED);
-  if (meta.needsReconnect === true) throw new HttpError(409, new HiggsfieldAuthError().message);
+  await requireHiggsfieldConnected(user.id);
 
   const uploadId = crypto.randomBytes(24).toString("base64url");
   const discarded = await getDb().transaction(async (tx) => {
@@ -125,21 +146,112 @@ export async function startUpload(
     await tx.insert(schema.uploadSessions).values({ id: uploadId, videoId: video.id, userId: user.id, filename, totalBytes });
     // Una referencia que ya funciona se conserva (estado, fotogramas y recorte) hasta que la nueva
     // subida termine: elegir otro vídeo y abandonar no la pierde. La subida pendiente vive solo
-    // en su sesión.
+    // en su sesión. Si el vídeo esperaba un enlace, deja de esperarlo (origen «archivo»): el Mac
+    // suelta esa tarea en cuanto vuelve a preguntar por ella.
     if (locked.referenceStatus !== "ready") {
       await tx
         .update(schema.videos)
-        .set({ referenceStatus: "uploading", referenceError: null, updatedAt: new Date() })
+        .set({ referenceStatus: "uploading", referenceError: null, referenceSource: "file", referenceUrl: null, updatedAt: new Date() })
         .where(eq(schema.videos.id, video.id));
     }
     return old.map((row) => row.id);
   });
-  for (const id of discarded) await removeFiles(id);
+  await removeUploadFiles(discarded);
   return { uploadId, chunkBytes: CHUNK_BYTES };
 }
 
 type Tx = Parameters<Parameters<ReturnType<typeof getDb>["transaction"]>[0]>[0];
+/** Con qué se ejecuta: la base de datos o la transacción ya abierta de quien llama. */
+type Executor = ReturnType<typeof getDb> | Tx;
 type Session = typeof schema.uploadSessions.$inferSelect;
+
+/**
+ * El vídeo pasa a esperar el archivo de un enlace que traerá el Mac: «subiendo», con origen
+ * «enlace» y su dirección. Va dentro de la transacción de quien crea la tarea
+ * (`requestLinkDownload`), para que la tarea y el estado del vídeo se guarden juntos. Como
+ * `startUpload`: no mientras otra referencia se prepara, y las subidas anteriores del vídeo se
+ * descartan; devuelve sus identificadores para borrar los archivos con `removeUploadFiles` al
+ * confirmar. A diferencia de una subida, aquí no hay un archivo en el navegador que se pueda
+ * abandonar: una referencia lista también pasa a «subiendo».
+ */
+export async function expectLinkReference(tx: Tx, videoId: number, url: string): Promise<string[]> {
+  const [locked] = await tx
+    .select({ referenceStatus: schema.videos.referenceStatus })
+    .from(schema.videos)
+    .where(eq(schema.videos.id, videoId))
+    .for("update");
+  if (!locked) throw new HttpError(404, "Vídeo no encontrado.");
+  if (locked.referenceStatus === "processing") throw new HttpError(409, STILL_PROCESSING);
+  const old = await tx.delete(schema.uploadSessions).where(eq(schema.uploadSessions.videoId, videoId)).returning({ id: schema.uploadSessions.id });
+  await tx
+    .update(schema.videos)
+    .set({ referenceStatus: "uploading", referenceError: null, referenceSource: "link", referenceUrl: url, updatedAt: new Date() })
+    .where(eq(schema.videos.id, videoId));
+  return old.map((row) => row.id);
+}
+
+/**
+ * Sesión de subida para una tarea del Mac: sin tamaño anunciado (el Mac no lo sabe hasta
+ * descargar; el tope de 100 MB se aplica según llegan los trozos) y a nombre de quien creó el
+ * vídeo. Solo si el vídeo sigue esperando un enlace: si entretanto la persona subió un archivo,
+ * devuelve `null` y no toca nada. Las sesiones que hubiera son de un intento anterior de la misma
+ * tarea, que ya nadie tiene: se borran con su archivo. Con `executor`, dentro de la transacción de
+ * quien reserva la tarea (cerrojos: la tarea, después el vídeo, después la sesión).
+ */
+export async function startAgentUpload(
+  agentTaskId: number,
+  videoId: number,
+  executor: Executor = getDb(),
+): Promise<{ uploadId: string; chunkBytes: number } | null> {
+  const uploadId = crypto.randomBytes(24).toString("base64url");
+  const discarded = await executor.transaction(async (tx) => {
+    const [video] = await tx
+      .select({
+        createdBy: schema.videos.createdBy,
+        referenceStatus: schema.videos.referenceStatus,
+        referenceSource: schema.videos.referenceSource,
+      })
+      .from(schema.videos)
+      .where(eq(schema.videos.id, videoId))
+      .for("update");
+    if (!video || video.referenceStatus !== "uploading" || video.referenceSource !== "link") return null;
+    const old = await tx.delete(schema.uploadSessions).where(eq(schema.uploadSessions.videoId, videoId)).returning({ id: schema.uploadSessions.id });
+    await tx
+      .insert(schema.uploadSessions)
+      .values({ id: uploadId, videoId, userId: video.createdBy, agentTaskId, filename: LINK_FILENAME, totalBytes: null });
+    return old.map((row) => row.id);
+  });
+  if (!discarded) return null;
+  await removeUploadFiles(discarded);
+  return { uploadId, chunkBytes: CHUNK_BYTES };
+}
+
+/** La sesión de subida de una tarea del Mac, o `null` si ya no existe (la tarea se sustituyó o se cerró). */
+export async function agentUploadId(agentTaskId: number): Promise<string | null> {
+  const [session] = await getDb()
+    .select({ id: schema.uploadSessions.id })
+    .from(schema.uploadSessions)
+    .where(eq(schema.uploadSessions.agentTaskId, agentTaskId));
+  return session?.id ?? null;
+}
+
+/**
+ * El Mac no pudo traer el enlace: se borra lo que hubiera llegado y, si el vídeo seguía esperando
+ * ese enlace, queda en error con el texto fijo (el detalle técnico se queda en la tarea, para el
+ * dueño). Si la persona ya subió un archivo, el vídeo no se toca. Con `executor`, dentro de la
+ * transacción que cierra la tarea.
+ */
+export async function failLinkReference(videoId: number, agentTaskId: number, executor: Executor = getDb()): Promise<void> {
+  await executor
+    .update(schema.videos)
+    .set({ referenceStatus: "failed", referenceError: LINK_FAILED, updatedAt: new Date() })
+    .where(and(eq(schema.videos.id, videoId), eq(schema.videos.referenceStatus, "uploading"), eq(schema.videos.referenceSource, "link")));
+  const sessions = await executor
+    .delete(schema.uploadSessions)
+    .where(eq(schema.uploadSessions.agentTaskId, agentTaskId))
+    .returning({ id: schema.uploadSessions.id });
+  await removeUploadFiles(sessions.map((row) => row.id));
+}
 
 function belongsTo(session: Session, actor: UploadActor): boolean {
   if ("agentTaskId" in actor) return session.agentTaskId !== null && session.agentTaskId === actor.agentTaskId;
@@ -179,7 +291,14 @@ export async function appendChunk(
 ): Promise<{ received: number }> {
   return getDb().transaction(async (tx) => {
     const session = await lockedSession(tx, uploadId, actor, videoId);
-    if (!Number.isSafeInteger(index) || index < 0 || index >= totalChunksOf(session.totalBytes)) throw new HttpError(400, BAD_CHUNK);
+    const { totalBytes } = session;
+    if (!Number.isSafeInteger(index) || index < 0) throw new HttpError(400, BAD_CHUNK);
+    if (totalBytes === null) {
+      // Sin tamaño anunciado, el tope se aplica aquí: no existe un trozo más allá de los 100 MB.
+      if (index >= MAX_CHUNKS) throw new HttpError(400, TOO_BIG);
+    } else if (index >= totalChunksOf(totalBytes)) {
+      throw new HttpError(400, BAD_CHUNK);
+    }
     if (index < session.received) return { received: session.received };
     if (index > session.received) throw new HttpError(409, MISSING_CHUNKS);
 
@@ -188,7 +307,9 @@ export async function appendChunk(
       mime = detectVideoType(bytes.subarray(0, 16));
       if (!mime) throw new HttpError(400, BAD_FORMAT);
     }
-    if (bytes.length !== chunkLength(session.totalBytes, index)) throw new HttpError(400, BAD_CHUNK);
+    // Con tamaño anunciado cada trozo mide lo que le toca; sin él, de 1 byte a 5 MB.
+    const validLength = totalBytes === null ? bytes.length > 0 && bytes.length <= CHUNK_BYTES : bytes.length === chunkLength(totalBytes, index);
+    if (!validLength) throw new HttpError(400, BAD_CHUNK);
 
     const file = uploadPath(session.id);
     if (index === 0) {
@@ -197,7 +318,9 @@ export async function appendChunk(
     } else {
       const offset = index * CHUNK_BYTES;
       const size = await fileSize(file);
-      if (size === null || size < offset) throw new HttpError(410, UPLOAD_GONE);
+      if (size === null) throw new HttpError(410, UPLOAD_GONE);
+      // Sin tamaño anunciado, un trozo anterior más corto era el último: detrás no cabe otro.
+      if (size < offset) throw totalBytes === null ? new HttpError(400, BAD_CHUNK) : new HttpError(410, UPLOAD_GONE);
       if (size > offset) await fs.truncate(file, offset);
       await fs.appendFile(file, bytes);
     }
@@ -206,7 +329,39 @@ export async function appendChunk(
   });
 }
 
-/** Cuántos trozos han llegado de cuántos; si el archivo ya no está, 410 (hay que empezar de nuevo). */
+/** Un trozo más el margen de cabeceras de algunos clientes: lo que pase de aquí no se lee. */
+const MAX_CHUNK_REQUEST = CHUNK_BYTES + 1024;
+const CHUNK_TOO_LARGE = "El trozo es demasiado grande.";
+
+/**
+ * Cuerpo binario de un trozo, lo envíe el navegador o el Mac. Si `Content-Length` ya dice que no
+ * cabe, 413 sin leer nada; si no lo dice (envío por partes), se lee por partes y se corta en
+ * cuanto pasa del máximo.
+ */
+export async function readChunkBody(request: Request): Promise<Buffer> {
+  const declared = request.headers.get("content-length");
+  if (declared !== null && Number(declared) > MAX_CHUNK_REQUEST) throw new HttpError(413, CHUNK_TOO_LARGE);
+  if (!request.body) return Buffer.alloc(0);
+  const reader = request.body.getReader();
+  const parts: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > MAX_CHUNK_REQUEST) {
+      await reader.cancel().catch(() => {});
+      throw new HttpError(413, CHUNK_TOO_LARGE);
+    }
+    parts.push(value);
+  }
+  return Buffer.concat(parts);
+}
+
+/**
+ * Cuántos trozos han llegado de cuántos; si el archivo ya no está, 410 (hay que empezar de nuevo).
+ * Sin tamaño anunciado, `totalChunks` es el máximo que cabría.
+ */
 export async function uploadProgress(
   uploadId: string,
   actor: UploadActor,
@@ -215,16 +370,17 @@ export async function uploadProgress(
   return getDb().transaction(async (tx) => {
     const session = await lockedSession(tx, uploadId, actor, videoId);
     if (session.received > 0 && (await fileSize(uploadPath(session.id))) === null) throw new HttpError(410, UPLOAD_GONE);
-    return { received: session.received, totalChunks: totalChunksOf(session.totalBytes) };
+    return { received: session.received, totalChunks: session.totalBytes === null ? MAX_CHUNKS : totalChunksOf(session.totalBytes) };
   });
 }
 
 /**
  * Termina la subida: comprueba que llegó entera, deja la referencia «preparándose» y encola
  * `video.referencia`. Pulsar dos veces no encola dos veces: si ya se está preparando, no hace nada.
- * Una referencia lista que se está sustituyendo pasa aquí a «preparándose».
+ * Una referencia lista que se está sustituyendo pasa aquí a «preparándose». Una subida sin tamaño
+ * anunciado (la del Mac) lo dice al terminar, en `totalBytes`: tiene que ser justo lo que llegó.
  */
-export async function finishUpload(uploadId: string, actor: UploadActor, videoId?: number): Promise<void> {
+export async function finishUpload(uploadId: string, actor: UploadActor, videoId?: number, totalBytes?: number): Promise<void> {
   const job = await getDb().transaction(async (tx) => {
     // Cerrojos en el mismo orden que `startUpload` (vídeo y luego sesión): así no se bloquean
     // entre sí. Primero se lee la sesión sin bloquear, solo para saber de qué vídeo es.
@@ -237,7 +393,11 @@ export async function finishUpload(uploadId: string, actor: UploadActor, videoId
     if (video.referenceStatus !== "uploading" && video.referenceStatus !== "ready") throw new HttpError(410, UPLOAD_GONE);
     const size = await fileSize(uploadPath(session.id));
     if (session.received > 0 && size === null) throw new HttpError(410, UPLOAD_GONE);
-    if (session.received < totalChunksOf(session.totalBytes) || size !== session.totalBytes) throw new HttpError(400, INCOMPLETE);
+    const expected = session.totalBytes ?? totalBytes;
+    if (expected === undefined || !Number.isSafeInteger(expected) || expected <= 0 || expected > MAX_REFERENCE_BYTES) {
+      throw new HttpError(400, INCOMPLETE);
+    }
+    if (session.received < totalChunksOf(expected) || size !== expected) throw new HttpError(400, INCOMPLETE);
     await tx
       .update(schema.videos)
       .set({ referenceStatus: "processing", referenceError: null, updatedAt: new Date() })

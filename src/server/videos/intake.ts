@@ -72,7 +72,7 @@ async function prepare(ctx: JobContext, videoId: number, uploadId: string, deps:
   // Ya no se espera esta referencia (el seguimiento la dio por perdida): no se gasta nada.
   if (video.referenceStatus !== "processing") return;
   const [session] = await getDb()
-    .select({ id: schema.uploadSessions.id })
+    .select({ id: schema.uploadSessions.id, agentTaskId: schema.uploadSessions.agentTaskId })
     .from(schema.uploadSessions)
     .where(and(eq(schema.uploadSessions.id, uploadId), eq(schema.uploadSessions.videoId, video.id)));
   const file = uploadPath(uploadId);
@@ -105,8 +105,8 @@ async function prepare(ctx: JobContext, videoId: number, uploadId: string, deps:
       .set({
         referenceStatus: "ready",
         referenceError: null,
-        referenceSource: "file",
-        referenceUrl: null,
+        // El archivo que trajo el Mac conserva su origen «enlace» y la dirección que se pegó.
+        ...(session.agentTaskId === null ? { referenceSource: "file", referenceUrl: null } : { referenceSource: "link" }),
         referenceDurationMs: probe.durationMs,
         referenceWidth: probe.width,
         referenceHeight: probe.height,

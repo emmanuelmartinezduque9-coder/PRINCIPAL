@@ -624,9 +624,11 @@ export const uploadSessions = pgTable(
       .notNull()
       .references(() => videos.id, { onDelete: "cascade" }),
     userId: bigint("user_id", { mode: "number" }).notNull(),
+    /** La tarea del Mac que entrega el archivo (enlace pegado); `null` si lo sube la persona. */
     agentTaskId: bigint("agent_task_id", { mode: "number" }),
     filename: text("filename").notNull(),
-    totalBytes: integer("total_bytes").notNull(),
+    /** Lo anuncia el navegador al empezar. El Mac no sabe el tamaño hasta descargar: `null`. */
+    totalBytes: integer("total_bytes"),
     received: integer("received").notNull().default(0),
     /** Tipo comprobado por el contenido del primer trozo. */
     mime: text("mime"),
@@ -696,5 +698,67 @@ export const productBodies = pgTable(
     unique("product_bodies_product_clip").on(t.productId, t.libraryClipId),
     index("product_bodies_clip").on(t.libraryClipId),
     check("product_bodies_label_length", sql`char_length(${t.label}) between 1 and 60`),
+  ],
+);
+
+/**
+ * Programas del Mac («agentes»): descargan los enlaces pegados, que la nube no puede alcanzar.
+ * Cada uno entra con una ficha que se enseña una sola vez; aquí solo queda su huella SHA-256. El
+ * programa es de quien creó la ficha y solo atiende sus tareas. Solo `src/server/agent.ts` toca
+ * esta tabla. `created_by` sin clave ajena, igual que en `videos`.
+ */
+export const agents = pgTable(
+  "agents",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    name: text("name").notNull(),
+    tokenHash: text("token_hash").notNull().unique(),
+    createdBy: bigint("created_by", { mode: "number" }).notNull(),
+    createdAt: instant("created_at").notNull().defaultNow(),
+    /** Último latido; «conectado» es uno en los últimos 90 segundos. */
+    lastSeenAt: instant("last_seen_at"),
+    /** Lo que el programa dice de sí mismo en cada latido. */
+    info: jsonb("info").$type<{ version: string; ytDlp: string | null }>(),
+    revokedAt: instant("revoked_at"),
+  },
+  (t) => [index("agents_created_by").on(t.createdBy)],
+);
+
+/**
+ * Tareas para el programa del Mac. Hoy solo `link_download`: descargar el enlace pegado como
+ * referencia de un vídeo y entregar el archivo. `queued` → `leased` (un Mac la tiene reservada y
+ * la mantiene con latidos) → `done` | `failed`; una reserva sin latido vuelve a `queued` hasta
+ * agotar los intentos. Como mucho una tarea viva por vídeo. `error` es el detalle técnico, solo
+ * para el dueño: a la persona se le enseña un texto fijo en el vídeo. Solo `src/server/agent.ts`
+ * toca esta tabla.
+ */
+export const agentTasks = pgTable(
+  "agent_tasks",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    kind: text("kind").notNull().default("link_download"),
+    videoId: bigint("video_id", { mode: "number" })
+      .notNull()
+      .references(() => videos.id, { onDelete: "cascade" }),
+    url: text("url").notNull(),
+    status: text("status").notNull().default("queued"),
+    /** Quien pegó el enlace (quien creó el vídeo): la atiende un Mac suyo. */
+    createdBy: bigint("created_by", { mode: "number" }).notNull(),
+    /** El Mac que la tiene reservada (o el último que la tuvo). */
+    agentId: bigint("agent_id", { mode: "number" }).references(() => agents.id),
+    leaseExpiresAt: instant("lease_expires_at"),
+    /** Veces que se ha reservado. */
+    attempts: integer("attempts").notNull().default(0),
+    error: text("error"),
+    createdAt: instant("created_at").notNull().defaultNow(),
+    updatedAt: instant("updated_at").notNull().defaultNow(),
+  },
+  (t) => [
+    index("agent_tasks_queue").on(t.status, t.createdBy, t.id),
+    uniqueIndex("agent_tasks_one_active_per_video")
+      .on(t.videoId)
+      .where(sql`${t.status} in ('queued', 'leased')`),
+    check("agent_tasks_kind_valid", sql`${t.kind} in ('link_download')`),
+    check("agent_tasks_status_valid", sql`${t.status} in ('queued', 'leased', 'done', 'failed')`),
   ],
 );
