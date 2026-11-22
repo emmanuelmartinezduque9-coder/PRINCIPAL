@@ -440,6 +440,20 @@ export async function spendSummary(user: AuthUser, now: Date = new Date()): Prom
   return { month, capMicros: await getGlobalCap(), spentMicros, byProduct, byUser };
 }
 
+/**
+ * Lo que cuentan esos cargos, en micro-dólares: el coste real de los liquidados y lo reservado de
+ * los que aún no (igual que el tope). Los liberados no cuentan. Para enseñar lo que costó un paso.
+ */
+export async function costOfEntries(entryIds: number[]): Promise<number> {
+  const ids = [...new Set(entryIds)].filter((id) => Number.isSafeInteger(id) && id > 0);
+  if (ids.length === 0) return 0;
+  const [row] = await getDb()
+    .select({ micros: countedMicros })
+    .from(entries)
+    .where(and(inArray(entries.id, ids), inArray(entries.status, COUNTED_STATUSES)));
+  return row?.micros ?? 0;
+}
+
 /** Coste liquidado de un cargo, o `null` si no existe o aún no está liquidado. Para comprobar el libro. */
 export async function settledCostMicros(entryId: number): Promise<number | null> {
   const [row] = await getDb()

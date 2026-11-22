@@ -12,6 +12,7 @@ import {
   primaryKey,
   text,
   unique,
+  uniqueIndex,
   timestamp,
 } from "drizzle-orm/pg-core";
 
@@ -327,6 +328,12 @@ export const videos = pgTable(
       onDelete: "set null",
     }),
     noPerson: boolean("no_person").notNull().default(false),
+    /** Prompt de la imagen inicial (en inglés): lo propone el desglose y la persona lo puede cambiar. */
+    imagePrompt: text("image_prompt"),
+    /** Prompt del clip (en inglés, con `@Video1` y `@ImageN`). */
+    videoPrompt: text("video_prompt"),
+    /** Cómo usa el clip la imagen aprobada: `start_image` (primer fotograma) o `contextual_reference`. */
+    frameUse: text("frame_use").notNull().default("start_image"),
     createdAt: instant("created_at").notNull().defaultNow(),
     updatedAt: instant("updated_at").notNull().defaultNow(),
   },
@@ -335,6 +342,7 @@ export const videos = pgTable(
     index("videos_reference_status").on(t.referenceStatus),
     check("videos_reference_status_valid", sql`${t.referenceStatus} in ('none', 'uploading', 'processing', 'ready', 'failed')`),
     check("videos_reference_source_valid", sql`${t.referenceSource} is null or ${t.referenceSource} in ('file', 'link')`),
+    check("videos_frame_use_valid", sql`${t.frameUse} in ('start_image', 'contextual_reference')`),
   ],
 );
 
@@ -352,6 +360,41 @@ export const videoFrames = pgTable(
     data: bytea("data").notNull(),
   },
   (t) => [unique("video_frames_video_index").on(t.videoId, t.index)],
+);
+
+/**
+ * Desgloses del vídeo de referencia hechos por Claude: cada «Repetir desglose» es una versión
+ * nueva y las anteriores no se tocan. Como mucho uno en marcha por vídeo (índice único parcial).
+ * `result` es el desglose validado (`Analysis` en `src/server/videos/analysis.ts`); el coste está
+ * en el libro de gasto (`spend_entry_id`, sin clave ajena, igual que el libro).
+ */
+export const videoAnalyses = pgTable(
+  "video_analyses",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    videoId: bigint("video_id", { mode: "number" })
+      .notNull()
+      .references(() => videos.id, { onDelete: "cascade" }),
+    version: integer("version").notNull(),
+    /** `queued`, `running`, `done`, `failed` o `paused` (esperando saldo). */
+    status: text("status").notNull().default("queued"),
+    /** Por qué falló o está en pausa, en español y apto para la persona. */
+    error: text("error"),
+    result: jsonb("result"),
+    ruleVersions: jsonb("rule_versions").$type<Record<string, number>>(),
+    spendEntryId: bigint("spend_entry_id", { mode: "number" }),
+    createdBy: bigint("created_by", { mode: "number" }).notNull(),
+    createdAt: instant("created_at").notNull().defaultNow(),
+    updatedAt: instant("updated_at").notNull().defaultNow(),
+  },
+  (t) => [
+    unique("video_analyses_video_version").on(t.videoId, t.version),
+    uniqueIndex("video_analyses_one_active")
+      .on(t.videoId)
+      .where(sql`${t.status} in ('queued', 'running', 'paused')`),
+    index("video_analyses_status").on(t.status, t.updatedAt),
+    check("video_analyses_status_valid", sql`${t.status} in ('queued', 'running', 'done', 'failed', 'paused')`),
+  ],
 );
 
 /**

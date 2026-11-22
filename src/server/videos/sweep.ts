@@ -1,5 +1,6 @@
-import { and, eq, lt } from "drizzle-orm";
+import { and, eq, inArray, lt } from "drizzle-orm";
 import { getDb, schema } from "@/db/client";
+import { ANALYSIS_INTERRUPTED, ANALYSIS_STALE_MS } from "@/server/videos/analysis";
 import { cleanStaleUploads, PREPARE_FAILED } from "@/server/videos/upload";
 
 /**
@@ -22,6 +23,24 @@ async function failStuckReferences(now: Date): Promise<number> {
   return rows.length;
 }
 
+/**
+ * Los desgloses en cola o en marcha sin novedades desde hace más de una hora pasan a error (la
+ * cola ya los habrá reintentado). Los que están en pausa por el tope esperan saldo. Devuelve cuántos.
+ */
+async function failStaleAnalyses(now: Date): Promise<number> {
+  const rows = await getDb()
+    .update(schema.videoAnalyses)
+    .set({ status: "failed", error: ANALYSIS_INTERRUPTED, updatedAt: now })
+    .where(
+      and(
+        inArray(schema.videoAnalyses.status, ["queued", "running"]),
+        lt(schema.videoAnalyses.updatedAt, new Date(now.getTime() - ANALYSIS_STALE_MS)),
+      ),
+    )
+    .returning({ id: schema.videoAnalyses.id });
+  return rows.length;
+}
+
 export async function videoSweep(now: Date = new Date()): Promise<void> {
   try {
     await cleanStaleUploads(now);
@@ -33,5 +52,11 @@ export async function videoSweep(now: Date = new Date()): Promise<void> {
     if (stuck > 0) console.warn(`[videos] ${stuck} referencia(s) llevaban más de una hora preparándose: quedan en error.`);
   } catch (error) {
     console.error("[videos] No se pudieron revisar las referencias atascadas:", error);
+  }
+  try {
+    const stale = await failStaleAnalyses(now);
+    if (stale > 0) console.warn(`[videos] ${stale} desglose(s) llevaban más de una hora sin terminar: quedan en error.`);
+  } catch (error) {
+    console.error("[videos] No se pudieron revisar los desgloses atascados:", error);
   }
 }

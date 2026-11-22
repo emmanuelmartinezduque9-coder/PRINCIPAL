@@ -1,6 +1,7 @@
 import { defineJob, defineSchedule } from "@/jobs/registry";
 import { StepFailedError } from "@/jobs/steps";
 import { probeConnections } from "@/server/higgsfield";
+import { ANALYSIS_JOB, runAnalysis } from "@/server/videos/analysis";
 import { processReference } from "@/server/videos/intake";
 import { videoSweep } from "@/server/videos/sweep";
 import { REFERENCE_JOB } from "@/server/videos/upload";
@@ -23,5 +24,15 @@ defineJob<{ videoId: number; uploadId: string }>(
   "Preparar el vídeo de referencia",
 );
 
-/** Cada minuto: subidas abandonadas y referencias atascadas. */
+/** Desglosa la referencia con Claude (planos, adaptación, riesgos y los dos prompts). */
+defineJob<{ analysisId: number }>(
+  ANALYSIS_JOB,
+  async ({ analysisId }) => {
+    if (typeof analysisId !== "number") throw new StepFailedError("Datos del trabajo no válidos.");
+    await runAnalysis(analysisId);
+  },
+  "Desglosar el vídeo de referencia",
+);
+
+/** Cada minuto: subidas abandonadas, referencias atascadas y desgloses que no terminan. */
 defineSchedule("video.seguimiento", "* * * * *", () => videoSweep());

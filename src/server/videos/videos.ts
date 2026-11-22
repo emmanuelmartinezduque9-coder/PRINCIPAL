@@ -2,8 +2,12 @@ import { and, asc, count, desc, eq, sql } from "drizzle-orm";
 import { getDb, schema } from "@/db/client";
 import type { AuthUser } from "@/server/auth";
 import { HttpError } from "@/server/http";
-import { listProductPhotos, type PhotoRole } from "@/server/photos";
+import { listProductPhotos, type PhotoInfo, type PhotoRole } from "@/server/photos";
 import { getProductFor } from "@/server/products";
+import { costOfEntries } from "@/server/spend";
+import type { Analysis } from "@/server/videos/analysis";
+import { clipManifest, imageManifest, type ManifestItem } from "@/server/videos/manifest";
+import { checkImagePrompt, checkVideoPrompt, type PromptIssue } from "@/server/videos/prompt-check";
 
 /**
  * Vídeos de un producto. Toda función que recibe un `videoId` empieza por `getVideoFor`, que pasa
@@ -150,15 +154,65 @@ export interface VideoView {
   video: Video;
   mine: boolean;
   frames: Array<{ index: number; timeMs: number }>;
+  /** El último desglose (el de versión más alta), o `null` si aún no se ha pedido ninguno. */
+  analysis: {
+    id: number;
+    version: number;
+    status: string;
+    error: string | null;
+    result: Analysis | null;
+    /** Lo que costó en Claude, en micro-dólares; `null` si no consta su cargo. */
+    costMicros: number | null;
+  } | null;
+  imageIssues: PromptIssue[];
+  videoIssues: PromptIssue[];
+  imageManifest: ManifestItem[];
+  clipManifest: ManifestItem[];
 }
 
-/** El vídeo con la lista de sus fotogramas (sin el contenido) y si es de `user`. */
+/** Avisos de los prompts guardados del vídeo frente a sus manifiestos; un prompt que aún no existe no da avisos. */
+export function promptIssues(video: Video, photos: PhotoInfo[]): { imageIssues: PromptIssue[]; videoIssues: PromptIssue[] } {
+  return {
+    imageIssues: video.imagePrompt === null ? [] : checkImagePrompt(video.imagePrompt, imageManifest(video, photos)),
+    videoIssues: video.videoPrompt === null ? [] : checkVideoPrompt(video.videoPrompt, clipManifest(video, photos)),
+  };
+}
+
+/**
+ * El vídeo con la lista de sus fotogramas (sin el contenido), si es de `user`, su último desglose,
+ * los manifiestos de referencias y los avisos de sus prompts.
+ */
 export async function videoView(user: AuthUser, videoId: number): Promise<VideoView> {
   const video = await getVideoFor(user, videoId);
-  const frames = await getDb()
+  const db = getDb();
+  const frames = await db
     .select({ index: schema.videoFrames.index, timeMs: schema.videoFrames.timeMs })
     .from(schema.videoFrames)
     .where(eq(schema.videoFrames.videoId, video.id))
     .orderBy(asc(schema.videoFrames.index));
-  return { video, mine: video.createdBy === user.id, frames };
+  const [latest] = await db
+    .select()
+    .from(schema.videoAnalyses)
+    .where(eq(schema.videoAnalyses.videoId, video.id))
+    .orderBy(desc(schema.videoAnalyses.version))
+    .limit(1);
+  const photos = await listProductPhotos(user, video.productId);
+  return {
+    video,
+    mine: video.createdBy === user.id,
+    frames,
+    analysis: latest
+      ? {
+          id: latest.id,
+          version: latest.version,
+          status: latest.status,
+          error: latest.error,
+          result: (latest.result as Analysis | null) ?? null,
+          costMicros: latest.spendEntryId === null ? null : await costOfEntries([latest.spendEntryId]),
+        }
+      : null,
+    ...promptIssues(video, photos),
+    imageManifest: imageManifest(video, photos),
+    clipManifest: clipManifest(video, photos),
+  };
 }
