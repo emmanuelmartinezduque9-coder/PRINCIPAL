@@ -40,24 +40,38 @@ export async function createVideo(user: AuthUser, productId: number): Promise<Vi
   });
 }
 
-/** Vídeos de un producto visible, los más recientes primero; `mine` dice cuáles creó `user`. */
+/**
+ * Vídeos de un producto visible, los más recientes primero; `mine` dice cuáles creó `user` y
+ * `creatorName` es el nombre de quien lo creó (`null` si esa cuenta no existe, como el uso local
+ * sin inicio de sesión).
+ */
 export async function listVideosFor(
   user: AuthUser,
   productId: number,
-): Promise<Array<{ id: number; title: string; createdBy: number; referenceStatus: string; createdAt: Date; mine: boolean }>> {
+): Promise<
+  Array<{ id: number; title: string; createdBy: number; creatorName: string | null; referenceStatus: string; createdAt: Date; mine: boolean }>
+> {
   const product = await getProductFor(user, productId);
   const rows = await getDb()
     .select({
       id: schema.videos.id,
       title: schema.videos.title,
       createdBy: schema.videos.createdBy,
+      creatorName: schema.users.name,
       referenceStatus: schema.videos.referenceStatus,
       createdAt: schema.videos.createdAt,
     })
     .from(schema.videos)
+    .leftJoin(schema.users, eq(schema.users.id, schema.videos.createdBy))
     .where(eq(schema.videos.productId, product.id))
     .orderBy(desc(schema.videos.createdAt), desc(schema.videos.id));
   return rows.map((row) => ({ ...row, mine: row.createdBy === user.id }));
+}
+
+/** Nombre de quien creó un vídeo, o `null` si esa cuenta no existe. */
+async function creatorNameOf(video: Video): Promise<string | null> {
+  const [row] = await getDb().select({ name: schema.users.name }).from(schema.users).where(eq(schema.users.id, video.createdBy));
+  return row?.name ?? null;
 }
 
 /** Un vídeo cuyo producto ve `user`. Si no existe, no es visible o el id no vale: 404 «Vídeo no encontrado.». */
@@ -153,6 +167,8 @@ export async function readVideoFrame(user: AuthUser, videoId: number, index: num
 export interface VideoView {
   video: Video;
   mine: boolean;
+  /** Nombre de quien lo creó (para el aviso de solo lectura); `null` si esa cuenta no existe. */
+  creatorName: string | null;
   frames: Array<{ index: number; timeMs: number }>;
   /** El último desglose (el de versión más alta), o `null` si aún no se ha pedido ninguno. */
   analysis: {
@@ -204,6 +220,7 @@ export async function videoView(user: AuthUser, videoId: number): Promise<VideoV
   return {
     video,
     mine: video.createdBy === user.id,
+    creatorName: await creatorNameOf(video),
     frames,
     analysis: latest
       ? {

@@ -1,20 +1,22 @@
 "use client";
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { CircleAlert, Languages, Loader2, MapPin, PackageX, Pencil } from "lucide-react";
+import { Clapperboard, CircleAlert, Images, Languages, Loader2, MapPin, PackageX, Pencil } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
 import { toast } from "sonner";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { PageHeader } from "@/components/shell/page-header";
 import { Panel } from "@/components/shell/panel";
 import { ApiError, api } from "@/lib/api";
 import { cn } from "@/lib/utils";
-import { countryLabels, languageLabel, type ProductView } from "./labels";
+import { countryLabels, isProductTab, languageLabel, type ProductTab, type ProductView } from "./labels";
 import { PhotoCount, PhotoManager } from "./photo-uploader";
 import { ProductFields, type ProductValues } from "./product-fields";
+import { VideoList } from "@/components/videos/video-list";
 
 const CHIP = "inline-flex h-7 items-center gap-1.5 rounded-md border bg-card px-2.5 text-sm";
 
@@ -112,7 +114,16 @@ function EditProductDialog({ product }: { product: ProductView }) {
   );
 }
 
-export function ProductDetail({ id }: { id: string }) {
+/** La pestaña elegida queda en la dirección (`?pestana=videos`): al volver de un vídeo se abre la misma. */
+function rememberTab(tab: ProductTab) {
+  const url = new URL(window.location.href);
+  if (tab === "fotos") url.searchParams.delete("pestana");
+  else url.searchParams.set("pestana", tab);
+  window.history.replaceState(window.history.state, "", url);
+}
+
+export function ProductDetail({ id, initialTab = "fotos" }: { id: string; initialTab?: ProductTab }) {
+  const [tab, setTab] = useState<ProductTab>(initialTab);
   const query = useQuery({
     queryKey: ["product", id],
     queryFn: () => api<{ product: ProductView }>(`/api/productos/${id}`),
@@ -161,9 +172,33 @@ export function ProductDetail({ id }: { id: string }) {
         <MarketChips product={product} />
       </PageHeader>
 
-      <Panel title="Fotos" actions={photoCount === null ? null : <PhotoCount count={photoCount} />}>
-        <PhotoManager productId={product.id} onCount={setPhotoCount} />
-      </Panel>
+      <Tabs
+        value={tab}
+        onValueChange={(value) => {
+          if (!isProductTab(value)) return;
+          setTab(value);
+          rememberTab(value);
+        }}
+      >
+        <TabsList aria-label="Contenido del producto">
+          <TabsTrigger value="fotos">
+            <Images className="size-4" aria-hidden />
+            Fotos
+          </TabsTrigger>
+          <TabsTrigger value="videos">
+            <Clapperboard className="size-4" aria-hidden />
+            Vídeos
+          </TabsTrigger>
+        </TabsList>
+        <TabsContent value="fotos">
+          <Panel title="Fotos" actions={photoCount === null ? null : <PhotoCount count={photoCount} />}>
+            <PhotoManager productId={product.id} onCount={setPhotoCount} />
+          </Panel>
+        </TabsContent>
+        <TabsContent value="videos">
+          <VideoList productId={product.id} />
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }

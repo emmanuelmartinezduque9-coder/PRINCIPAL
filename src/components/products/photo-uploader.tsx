@@ -61,7 +61,7 @@ function useBlockStrayDrops() {
   }, []);
 }
 
-const ROLE_ICONS: Record<PhotoRole, LucideIcon> = {
+export const ROLE_ICONS: Record<PhotoRole, LucideIcon> = {
   articulo: Package,
   embalaje: Gift,
   avatar: UserRound,
@@ -70,7 +70,7 @@ const ROLE_ICONS: Record<PhotoRole, LucideIcon> = {
 };
 
 /** Un color propio por papel: se reconoce de un vistazo sin leer nada. */
-const ROLE_TINT: Record<PhotoRole, string> = {
+export const ROLE_TINT: Record<PhotoRole, string> = {
   articulo: "bg-amber-500 text-white",
   embalaje: "bg-sky-500 text-white",
   avatar: "bg-violet-500 text-white",

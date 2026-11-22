@@ -50,6 +50,7 @@ describe("vídeos de un producto", () => {
       [videoDeAna.id, true],
     ]);
     expect(lista[1]).toMatchObject({ title: "Vídeo 1", createdBy: ana.id, referenceStatus: "none" });
+    expect(lista.map((v) => v.creatorName)).toEqual([dueno.name, ana.name]);
     await expect(listVideosFor(luis, producto.id)).rejects.toMatchObject({ status: 404 });
   });
 
@@ -62,6 +63,7 @@ describe("vídeos de un producto", () => {
 
   it("el dueño ve el vídeo de un colaborador pero no puede continuarlo", async () => {
     expect((await videoView(dueno, videoDeAna.id)).mine).toBe(false);
+    expect((await videoView(dueno, videoDeAna.id)).creatorName).toBe(ana.name);
     expect((await videoView(ana, videoDeAna.id)).mine).toBe(true);
     expect(() => requireVideoOwner(dueno, videoDeAna)).toThrow("Solo quien creó este vídeo puede continuarlo: se paga con su Higgsfield.");
     expect(() => requireVideoOwner(ana, videoDeAna)).not.toThrow();

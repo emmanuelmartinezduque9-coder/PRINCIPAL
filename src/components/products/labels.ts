@@ -27,3 +27,11 @@ export const PHOTO_ROLE_HINTS: Record<PhotoRole, string> = {
 
 /** Producto tal como llega por JSON, con la portada si tiene fotos. */
 export type ProductView = Serialized<Product> & { coverPhotoId?: number | null };
+
+/** Pestañas del detalle de un producto; la elegida va en la dirección (`?pestana=videos`). */
+export const PRODUCT_TABS = ["fotos", "videos"] as const;
+export type ProductTab = (typeof PRODUCT_TABS)[number];
+export const isProductTab = (value: unknown): value is ProductTab => PRODUCT_TABS.includes(value as ProductTab);
+
+/** Dirección de una pestaña del producto. */
+export const productTabHref = (productId: number | string, tab: ProductTab) => `/productos/${productId}?pestana=${tab}`;
