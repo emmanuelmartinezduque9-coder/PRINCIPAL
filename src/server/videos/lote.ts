@@ -7,6 +7,7 @@ import { getActiveUser, type AuthUser } from "@/server/auth";
 import { HttpError } from "@/server/http";
 import { activeAvatarSummaries, type AvatarSummary } from "@/server/avatars";
 import { listProductPhotos, type PhotoInfo } from "@/server/photos";
+import { listSongs } from "@/server/songs";
 import { listVariants, type VariantInfo } from "@/server/variants";
 import { missingForAnalysis, requestAnalysis, type Analysis } from "@/server/videos/analysis";
 import { getBatchFor, type Batch } from "@/server/videos/batches";
@@ -15,7 +16,7 @@ import { estimateClipCredits } from "@/server/videos/clip";
 // Registra el constructor de la imagen inicial (`frame`) en las generaciones.
 import "@/server/videos/frame";
 import { MAX_REGENERATIONS, quoteGeneration, requestGeneration, type GenDeps, type GenerationKind } from "@/server/videos/generations";
-import { getVideoFor, referenceOutdated, REFERENCE_OUTDATED, staleness, updateVideoChoices, withProductNotes, type Video } from "@/server/videos/videos";
+import { getVideoFor, setVideoSong, referenceOutdated, REFERENCE_OUTDATED, staleness, updateVideoChoices, withProductNotes, type Video } from "@/server/videos/videos";
 
 /**
  * «Enviar lote»: el dueño envía el lote una vez y no se le molesta más.
@@ -59,16 +60,6 @@ const MAX_ANSWER = 2_000;
 const UPLOAD_WAIT_MS = 15 * 60 * 1000;
 
 /** Riesgos del desglose que no dejan generar sin que el dueño decida. */
-const BLOCKING_RISKS: ReadonlyArray<Analysis["risks"][number]["kind"]> = ["funcion_inexistente", "marca_ajena"];
-const RISK_LABEL: Record<Analysis["risks"][number]["kind"], string> = {
-  funcion_inexistente: "Función que el producto no tiene",
-  reveal_adelantado: "Reveal adelantado",
-  escala: "Escala",
-  identidad: "Identidad",
-  texto_en_pantalla: "Texto en pantalla",
-  marca_ajena: "Marca ajena",
-  otro: "Riesgo",
-};
 
 const NOT_DRAFT = "Este lote ya se ha enviado.";
 const NO_ROWS = "El lote no tiene vídeos que enviar.";
@@ -185,7 +176,7 @@ export interface QuestionOption {
 export interface BatchQuestion {
   videoId: number;
   key: string;
-  kind: "claude" | "riesgo" | "avatar" | "biblioteca" | "variante" | "articulo" | "referencia" | "adaptacion" | "desglose";
+  kind: "claude" | "riesgo" | "cancion" | "avatar" | "biblioteca" | "variante" | "articulo" | "referencia" | "adaptacion" | "desglose";
   text: string;
   options: QuestionOption[];
   /** Se puede responder escribiendo. */
@@ -203,11 +194,14 @@ const skipOption: QuestionOption = { value: SKIP, label: "Saltar este vídeo" };
 interface AskContext {
   library: AvatarSummary[];
   variants: VariantInfo[];
+  songs: Array<{ id: number; label: string }>;
 }
 
 /** Valores de las opciones de las preguntas `avatar` y `variante` del desglose. */
 const LIBRARY_PREFIX = "bib:";
 const VARIANT_PREFIX = "var:";
+const SONG_PREFIX = "song:";
+const ORIGINAL_AUDIO = "audio:original";
 const NO_VARIANT = "var:todas";
 
 /**
@@ -262,30 +256,9 @@ function openClaudeQuestions(video: Video, analysis: AnalysisRow, context: AskCo
       questions.push(choice);
       continue;
     }
-    questions.push({
-      videoId: video.id,
-      key,
-      kind: "claude",
-      text: question.text,
-      options: (question.options ?? []).map((option) => ({ value: option, label: option })),
-      freeText: true,
-      href: null,
-    });
+    // Solo preguntas que el dueño tiene que decidir (avatar, variante); ni preguntas libres de
+    // Claude ni riesgos: el dueño no quiere que se le cuestione el lote (22/11).
   }
-  (result?.risks ?? []).forEach((risk, index) => {
-    const blocking = BLOCKING_RISKS.includes(risk.kind) || (risk as { blocking?: boolean }).blocking === true;
-    const key = `r${analysis.id}:${index}`;
-    if (!blocking || keys.has(key)) return;
-    questions.push({
-      videoId: video.id,
-      key,
-      kind: "riesgo",
-      text: `${RISK_LABEL[risk.kind]}: ${risk.detail}`,
-      options: [{ value: KEEP, label: "Seguir así" }, skipOption],
-      freeText: true,
-      href: null,
-    });
-  });
   return questions;
 }
 
@@ -343,6 +316,16 @@ async function askRow(user: AuthUser, row: Row, photos: PhotoInfo[], linkFailed:
       href: `/productos/${video.productId}`,
     });
   }
+  if (video.songId === null && !(video.ownerAnswers ?? []).some((a) => a.key === "sys:cancion") && context.songs.length > 0) {
+    questions.push({
+      key: "sys:cancion",
+      kind: "cancion",
+      text: "¿Qué canción?",
+      options: [...context.songs.map((song) => ({ value: `${SONG_PREFIX}${song.id}`, label: song.label })), { value: ORIGINAL_AUDIO, label: "Audio original" }],
+      freeText: false,
+      href: null,
+    });
+  }
   if (video.kind === "adaptacion_concepto" && !video.adaptation?.trim()) {
     questions.push({ key: "sys:adaptacion", kind: "adaptacion", text: "¿Qué adaptación quieres?", options: [], freeText: true, href: null });
   }
@@ -387,6 +370,7 @@ async function askRows(user: AuthUser, rows: Row[]): Promise<Map<number, RowAsk>
     variantsOf.set(productId, await listVariants(user, productId));
   }
   const library = await activeAvatarSummaries();
+  const songs = (await listSongs()).map((song) => ({ id: song.id, label: song.number === null ? song.title : `${song.number} · ${song.title}` }));
   const links = await linkStatesOf(rows.flatMap((row) => (row.video.linkTaskId === null ? [] : [row.video.linkTaskId])));
   const result = new Map<number, RowAsk>();
   for (const row of rows) {
@@ -396,6 +380,7 @@ async function askRows(user: AuthUser, rows: Row[]): Promise<Map<number, RowAsk>
       await askRow(user, row, photosOf.get(row.video.productId) ?? [], link?.status === "failed" ? link.error : null, link !== null && link.status !== "failed", {
         library,
         variants: variantsOf.get(row.video.productId) ?? [],
+        songs,
       }),
     );
   }
@@ -448,6 +433,11 @@ export async function answerQuestion(user: AuthUser, batchId: number, input: { v
     // Cambia el vídeo (el desglose queda por repetir y el avance lo repite) y cierra la pregunta.
     if (question.kind === "biblioteca") await updateVideoChoices(user, video.id, { avatarLibraryId: Number(value.slice(LIBRARY_PREFIX.length)) });
     else await updateVideoChoices(user, video.id, { variantId: value === NO_VARIANT ? null : Number(value.slice(VARIANT_PREFIX.length)) });
+    const label = question.options.find((o) => o.value === value)?.label ?? value;
+    await saveAnswer(video.id, { key: question.key, question: question.text, answer: label, inBrief: false });
+  } else if (question.kind === "cancion") {
+    if (!question.options.some((o) => o.value === value)) throw new HttpError(400, BAD_ANSWER);
+    if (value !== ORIGINAL_AUDIO) await setVideoSong(user, video.id, Number(value.slice(SONG_PREFIX.length)));
     const label = question.options.find((o) => o.value === value)?.label ?? value;
     await saveAnswer(video.id, { key: question.key, question: question.text, answer: label, inBrief: false });
   } else if (question.kind === "adaptacion") {

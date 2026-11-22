@@ -22,12 +22,10 @@ import {
   autoView,
   batchQuestions,
   confirmBatch,
-  KEEP,
   onBatchReady,
   quoteBatch,
   resumeBatch,
   sendBatch,
-  SKIP,
   stageOf,
 } from "@/server/videos/lote";
 import { getVideoFor, type Video } from "@/server/videos/videos";
@@ -304,7 +302,7 @@ describe("estados del envío", () => {
 // ───────────────────────── Preguntas ─────────────────────────
 
 describe("preguntas del lote", () => {
-  it("reúne las preguntas de Claude y las de la aplicación, y no deja presupuestar hasta responderlas", async () => {
+  it("solo pregunta lo que el dueño decide (quién sale); nunca preguntas libres de Claude ni riesgos", async () => {
     const { batchId, videos } = await batchWith(2, { avatar: false });
     await sendBatch(ana, batchId);
     // El primero no tiene avatar: no se desglosa y se pregunta quién sale.
@@ -312,67 +310,23 @@ describe("preguntas del lote", () => {
     expect(questions).toEqual([
       expect.objectContaining({ videoId: videos[0].id, key: "sys:avatar", kind: "avatar", options: expect.arrayContaining([expect.objectContaining({ value: `foto:${avatar}`, photoId: avatar })]) }),
     ]);
+    // Aunque Claude devuelva preguntas o riesgos que bloquean, no se le preguntan al dueño.
     await runQueuedAnalyses(() => ({
       ...REPLY,
-      questions: [{ id: "variante", text: "¿Qué variante sale, la roja o la azul?", options: ["Roja", "Azul"] }],
+      questions: [{ id: "luz", text: "¿Cocina de día o de noche?", options: ["día", "noche"] }],
+      risks: [{ kind: "funcion_inexistente", detail: "El producto no pulveriza." }],
     }));
     questions = await batchQuestions(ana, batchId);
-    expect(questions.map((q) => [q.videoId, q.kind])).toEqual([
-      [videos[0].id, "avatar"],
-      [videos[1].id, "claude"],
-    ]);
-    expect(questions[1]).toMatchObject({ text: "¿Qué variante sale, la roja o la azul?", options: [{ value: "Roja", label: "Roja" }, { value: "Azul", label: "Azul" }], freeText: true });
+    expect(questions.map((q) => [q.videoId, q.kind])).toEqual([[videos[0].id, "avatar"]]);
     await expect(quoteBatch(ana, batchId, deps)).rejects.toMatchObject({ status: 409 });
-    await expect(answerQuestion(ana, batchId, { videoId: videos[1].id, key: "c999:variante", value: "Roja" })).rejects.toMatchObject({ status: 409 });
 
-    // Quién sale: cambia el vídeo y el avance pide su desglose.
     await answerQuestion(ana, batchId, { videoId: videos[0].id, key: "sys:avatar", value: `foto:${avatar}` });
     expect((await getVideoFor(ana, videos[0].id)).avatarPhotoId).toBe(avatar);
-    // La de Claude: se guarda y, sin más preguntas, el desglose se repite con la respuesta.
-    await answerQuestion(ana, batchId, { videoId: videos[1].id, key: questions[1].key, value: "Roja" });
-    expect((await getVideoFor(ana, videos[1].id)).ownerAnswers).toEqual([
-      { key: questions[1].key, question: "¿Qué variante sale, la roja o la azul?", answer: "Roja", inBrief: true },
-    ]);
-    await advanceBatch(batchId, deps);
-    const { rows } = await getPool().query("select video_id as \"videoId\", answers from video_analyses where status = 'queued' order by video_id");
-    expect(rows).toEqual([
-      { videoId: videos[0].id, answers: null },
-      { videoId: videos[1].id, answers: "Pregunta: ¿Qué variante sale, la roja o la azul?\nRespuesta: Roja" },
-    ]);
-    // Claude recibe la respuesta en las indicaciones del encargo (y vuelve a preguntar lo mismo: no se repite).
-    const calls = await runQueuedAnalyses(() => ({
-      ...REPLY,
-      questions: [{ id: "variante", text: "¿Qué variante sale, la roja o la azul?", options: ["Roja", "Azul"] }],
-    }));
-    const sent = (calls[1].messages[0].content as Array<{ type: string; text?: string }>).map((b) => b.text ?? "").join("\n");
-    expect(sent).toContain("<respuestas_del_dueno>\nPregunta: ¿Qué variante sale, la roja o la azul?\nRespuesta: Roja\n</respuestas_del_dueno>");
-    // El primero sí la tiene por primera vez.
-    questions = await batchQuestions(ana, batchId);
-    expect(questions.map((q) => [q.videoId, q.kind])).toEqual([[videos[0].id, "claude"]]);
-    await answerQuestion(ana, batchId, { videoId: videos[0].id, key: questions[0].key, value: "Azul, la de la etiqueta nueva" });
     await advanceBatch(batchId, deps);
     await runQueuedAnalyses();
     expect(await batchQuestions(ana, batchId)).toEqual([]);
     expect((await autoView(ana, await getBatchFor(ana, batchId))).readyToConfirm).toBe(true);
     expect((await quoteBatch(ana, batchId, deps)).total).toBe(2 * (FRAME + CLIP));
-  });
-
-  it("un riesgo que bloquea se pregunta; «Seguir así» no repite el desglose y «Saltar» deja el vídeo fuera", async () => {
-    const { batchId, videos } = await batchWith(2);
-    await sendBatch(ana, batchId);
-    await runQueuedAnalyses(() => ({ ...REPLY, risks: [{ kind: "funcion_inexistente", detail: "El producto no pulveriza." }, { kind: "escala", detail: "Sin mano." }] }));
-    const questions = await batchQuestions(ana, batchId);
-    expect(questions.map((q) => [q.videoId, q.kind, q.text])).toEqual([
-      [videos[0].id, "riesgo", "Función que el producto no tiene: El producto no pulveriza."],
-      [videos[1].id, "riesgo", "Función que el producto no tiene: El producto no pulveriza."],
-    ]);
-    await answerQuestion(ana, batchId, { videoId: videos[0].id, key: questions[0].key, value: KEEP });
-    await answerQuestion(ana, batchId, { videoId: videos[1].id, key: questions[1].key, value: SKIP });
-    await advanceBatch(batchId, deps);
-    expect((await getPool().query("select count(*)::int as n from video_analyses where status = 'queued'")).rows[0].n).toBe(0);
-    const auto = await autoView(ana, await getBatchFor(ana, batchId));
-    expect(auto).toMatchObject({ readyToConfirm: true, total: 1, skipped: 1 });
-    expect((await quoteBatch(ana, batchId, deps)).rows.map((r) => r.videoId)).toEqual([videos[0].id]);
   });
 
   it("un desglose que falla no se repite solo: se pregunta", async () => {

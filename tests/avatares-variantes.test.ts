@@ -584,20 +584,20 @@ describe("avatar de la biblioteca y automático en los vídeos", () => {
     await getPool().query("update batches set status = 'preguntas' where id = $1", [batch.id]);
 
     const asked = await batchQuestions(ana, batch.id);
-    expect(asked.map((q) => q.kind)).toEqual(["claude", "biblioteca", "variante"]);
-    const avatarQuestion = asked[1];
+    expect(asked.map((q) => q.kind)).toEqual(["biblioteca", "variante"]);
+    const avatarQuestion = asked[0];
     // Primero los que sugiere el desglose; con su imagen.
     expect(avatarQuestion.options[0]).toEqual({ value: `bib:${mujer33Aleman.id}`, label: "mujer 7", avatarId: mujer33Aleman.id });
     expect(avatarQuestion.options.map((o) => o.label)).not.toContain("mujer 9");
-    expect(asked[2].options.map((o) => o.label)).toEqual(["rosa", "azul", "Fotos de siempre"]);
+    expect(asked[1].options.map((o) => o.label)).toEqual(["rosa", "azul", "Fotos de siempre"]);
 
     await expect(answerQuestion(ana, batch.id, { videoId: video.id, key: avatarQuestion.key, value: "bib:99999" })).rejects.toMatchObject({ status: 400 });
     await answerQuestion(ana, batch.id, { videoId: video.id, key: avatarQuestion.key, value: `bib:${mujer30.id}` });
     expect(await getVideoFor(ana, video.id)).toMatchObject({ avatarMode: "biblioteca", avatarLibraryId: mujer30.id });
-    await answerQuestion(ana, batch.id, { videoId: video.id, key: asked[2].key, value: `var:${rosa.id}` });
+    await answerQuestion(ana, batch.id, { videoId: video.id, key: asked[1].key, value: `var:${rosa.id}` });
     expect((await getVideoFor(ana, video.id)).variantId).toBe(rosa.id);
-    // Solo queda la de Claude; el desglose queda por repetir con el avatar y la variante elegidos.
-    expect((await batchQuestions(ana, batch.id)).map((q) => q.kind)).toEqual(["claude"]);
+    // No queda ninguna: las preguntas libres de Claude no se hacen al dueño.
+    expect(await batchQuestions(ana, batch.id)).toEqual([]);
     expect((await videoView(ana, video.id)).analysis).toMatchObject({ stale: true, staleReason: "brief" });
   });
 
