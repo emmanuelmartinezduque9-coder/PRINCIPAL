@@ -219,8 +219,12 @@ def loudness(path, af=''):
 
 
 def max_volume(path, af=''):
-    log = run([FFMPEG, '-hide_banner', '-nostats', '-i', path, '-vn', '-af', (af + ',' if af else '') + 'volumedetect', '-f', 'null', '-'])
-    return float(re.findall(r'max_volume:\s+(-?[0-9.]+) dB', log)[-1])
+    # astats (no volumedetect): volumedetect no informa de picos por encima de 0 dBFS en audio float,
+    # y la ganancia anticlip se quedaba corta cuando la voz subida empujaba la mezcla por encima de 0.
+    log = run([FFMPEG, '-hide_banner', '-nostats', '-i', path, '-vn', '-af',
+               (af + ',' if af else '') + 'aformat=sample_fmts=dbl,astats=measure_perchannel=none:measure_overall=Peak_level',
+               '-f', 'null', '-'])
+    return float(re.findall(r'Peak level dB:\s+(-?[0-9.]+|-inf)', log)[-1])
 
 
 def build_song_mix(au, segs, dur, t_prod, work):
@@ -313,7 +317,7 @@ def main():
         to_video = lambda xs: [r4(x - offset) for x in xs if 0 <= x - offset <= dur]
         beats, downbeats = to_video(bm['beats']), to_video(bm['downbeats'])
     else:
-        src = segs[0]['path']
+        src = au['path'] if au['mode'] == 'externo' else segs[0]['path']
         bm = beat_map(src, work, TOOL / 'beatmaps')
         beats, downbeats = [b for b in bm['beats'] if b <= dur], [b for b in bm['downbeats'] if b <= dur]
 
@@ -372,6 +376,18 @@ def main():
         if len(segs) != 1 or s['speed'] != 1 or s['in_frame'] or s['out_frame'] != s['src_frames']:
             sys.exit('Audio original: v0 solo admite un clip entero sin recortes (réplica fiel)')
         aargs, audio_info = ['-map', '0:a:0', '-c:a', 'copy'], dict(mode='original', note='pista original copiada sin recodificar ni tocar')
+    elif au['mode'] == 'externo':
+        # Audio de otro archivo (p. ej. el audio original del reel de referencia cuando el clip se
+        # regeneró con Seedance): desde audio.offset, sin cambiar nivel ni velocidad, recortado o
+        # completado con silencio hasta la duración del vídeo.
+        src_a, off = au['path'], float(au.get('offset', 0))
+        inputs += ['-i', src_a]
+        aargs = ['-map', f'{len(segs) + len(cues)}:a:0', '-af',
+                 f'atrim=start={off:.6f},asetpts=PTS-STARTPTS,apad,atrim=end={dur:.6f}',
+                 '-c:a', EXPORT['acodec'], '-b:a', EXPORT['abitrate'], '-ar', str(EXPORT['ar'])]
+        audio_info = dict(mode='externo', path=src_a, sha256=sha256(src_a), offset_s=off,
+                          source_audio_duration_s=r4(float(probe(src_a)['format']['duration'])),
+                          note=au.get('nota', 'audio de otro archivo, nivel y velocidad sin tocar'))
     else:
         mix, master, audio_info = build_song_mix(au, segs, dur, t_prod, work)
         inputs += ['-i', mix]

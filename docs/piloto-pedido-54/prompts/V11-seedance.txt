@@ -1,0 +1,26 @@
+This must be a clearly edited multi-shot sequence with visible hard cuts between shots. Do not generate one continuous take. Each shot has a different camera angle and framing.
+
+[References]
+@Video1 defines only the shot order, the cut rhythm, the camera and the type of action. Do not use the people, the dog, the clothing, the places, the colours, the on-screen text, the emojis or the logos of @Video1. @Video1 has burned-in captions: never reproduce any caption, word, emoji or graphic from it.
+The start image is the first frame: the woman in the green puffer jacket with her golden retriever on the evening residential pavement. She, the dog and the street are already in that image and keep their exact look in every shot.
+@Image1 is the product: a small black FalterPfote dog collar with a black cylindrical light projector clipped on it. Keep its exact shape, size and colour; it is rigid and never changes size.
+@Image2 shows only what the product projects: pink-lilac butterfly wings of light lying flat ON THE GROUND on both sides of the dog, rounded upper wings, tapered lower wings, vein lines and small star sparkles. Do not copy the dog of @Image2.
+@Image3 is the environment for shot 2 and shot 4 (harbour promenade with railings, a clock post and the water). @Image4 is the environment for shot 3 (residential road with houses and street lights at night). @Image5 is the environment for shot 5 (park path with old lanterns and autumn leaves). Never copy any person from these images.
+
+[Summary]
+A vertical UGC dog video, 14 seconds, 5 shots, hard cuts at about 3.4 s, 7.1 s, 8.9 s and 11.9 s. Handheld phone look, evening blue hour turning to night. The same woman and the same golden retriever in every shot: first the dog runs into the road while a car is coming, then she puts the glowing collar on him, and now everyone stares at the butterfly wings of light that walk with him.
+
+[Shots]
+Shot 1, 0.0-3.4 s: wide shot from behind the woman at chest height on the pavement, handheld, slight follow. The golden retriever slips off and runs from the pavement out into the road; at the same time a real moving car comes down the road towards him from the background with its headlights on, clearly getting bigger and closer during the whole shot. The woman steps forward, waves her arm and calls him back. The car slows and the dog is back at the kerb before it reaches him; no contact. End state: dog safe at the kerb, car headlights large and close in the road.
+Cut to.
+Shot 2, 3.4-7.1 s: first-person close-up at the dog's head height on the harbour promenade of @Image3, slow push in. Her two hands, green jacket sleeves, bring the black collar of @Image1 around the golden retriever's neck and close it under his chin; realistic hands, five fingers. The small projector on the collar switches on with a soft pink light. End state: collar fastened, projector glowing, dog looking up happily.
+Cut to.
+Shot 3, 7.1-8.9 s: first-person view from behind, her hand holding the leash at the bottom of frame, walking forward on the night road of @Image4. A car passes slowly on the side of the road with its headlights on. On the ground on both sides of the dog lie the pink-lilac butterfly wings of light of @Image2, moving with him, with light spill on the asphalt. End state: dog walking calmly with the wings on the ground, the passing car behind.
+Cut to.
+Shot 4, 8.9-11.9 s: first-person view from behind on the harbour promenade of @Image3 at night, walking slowly. A small crowd of people stop, smile and film the dog with their phones; one person crouches. The butterfly wings of light stay on the ground beside the dog. End state: people filming, dog in the centre with the wings.
+Cut to.
+Shot 5, 11.9-14.0 s: first-person view from behind on the park path of @Image5 with lanterns, walking forward. Passers-by turn their heads and point at the glowing butterfly wings on the ground beside the golden retriever. End state: dog walking away along the path with the wings, people looking.
+
+[Keep]
+Same woman, same green puffer jacket, same golden retriever and same black collar in every shot. The wings are always light projected flat on the ground, never physical wings, never floating graphics, never fire, flames, chains or dragon wings. Realistic hands with five fingers; the collar stays in her hands and never passes through the fingers. Movements similar to @Video1, not identical: they follow its rhythm but are their own natural movements. retaining real fine pores and skin texture.
+Pure video. No on-screen text, no subtitles, no captions, no emojis, no logos except the product's own small print, no watermark, no music.

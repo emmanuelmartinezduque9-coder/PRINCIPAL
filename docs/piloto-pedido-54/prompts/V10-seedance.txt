@@ -1,0 +1,26 @@
+This must be a clearly edited multi-shot sequence with visible hard cuts between shots. Do not generate one continuous take. Each shot has a different camera angle and framing.
+
+[References]
+@Video1 defines only the shot order, the cut rhythm, the camera and the type of action. Do not use the people, the dog, the clothing, the places, the colours, the on-screen text, the emojis or the logos of @Video1. @Video1 has burned-in captions: never reproduce any caption, word, emoji or graphic from it. Never show dragon wings, fire, flames or chains of light.
+The start image is the first frame: first-person view of two hands holding pink butterfly costume wings above a black-and-white border collie sitting in a Christmas living room. The hands, the costume, the dog and the room are already in that image and keep their exact look.
+@Image1 is the product: a small black FalterPfote dog collar with a black cylindrical light projector clipped on it. Keep its exact shape, size and colour; it is rigid and never changes size.
+@Image2 shows only what the product projects: pink-lilac butterfly wings of light lying flat ON THE GROUND on both sides of the dog, rounded upper wings, tapered lower wings, vein lines and small star sparkles. Do not copy the dog of @Image2.
+@Image3 is the environment for shot 2 (harbour promenade with railings, a clock post and the water, at blue hour). @Image4 is the environment for shot 3 (pedestrian street with cafe terraces and lit shop signs at night). @Image5 is the environment for shot 4 (large paved square between classical buildings at blue hour). @Image6 is the environment for shot 5 (park path with old lanterns and autumn leaves). Never copy any person from these images.
+
+[Summary]
+A vertical UGC dog video, 14 seconds, 5 shots, hard cuts at about 4.0 s, 7.4 s, 9.2 s and 11.8 s. Handheld phone look. The idea: real costume butterfly wings do not work on the dog. The result: the glowing collar projects butterfly wings of light on the ground and everyone stares. The same black-and-white border collie in every shot.
+
+[Shots]
+Shot 1, 0.0-4.0 s: first-person view at sitting height in the living room, handheld. The hands lower the pink butterfly costume wings onto the border collie's back; the dog shakes its whole body, the costume slips off and falls on the rug, and the dog lies down flat on the floor looking up, unimpressed. Her hands open in a small disappointed gesture. End state: costume wings lying on the rug, dog lying down.
+Cut to.
+Shot 2, 4.0-7.4 s: first-person close-up at the dog's head height on the harbour promenade of @Image3, slow push in. Her two hands, olive jacket sleeves, bring the black collar of @Image1 around the border collie's neck and close it under its chin; realistic hands, five fingers. The small projector on the collar switches on with a soft pink light. End state: collar fastened, projector glowing, dog looking straight at the lens.
+Cut to.
+Shot 3, 7.4-9.2 s: first-person view from behind, her hand holding the leash at the bottom of frame, walking forward along the night street of @Image4. On the ground on both sides of the border collie lie the pink-lilac butterfly wings of light of @Image2, moving with the dog, with light spill on the paving. People on the terraces turn and film. End state: dog walking with the wings on the ground, onlookers with phones.
+Cut to.
+Shot 4, 9.2-11.8 s: first-person view from behind, walking slowly into the square of @Image5. A small child in a yellow jacket hops excitedly towards the dog while two adults smile and film; the butterfly wings of light stay flat on the ground beside the dog. End state: child and adults around the dog and its wings.
+Cut to.
+Shot 5, 11.8-14.0 s: first-person view from behind on the park path of @Image6 with lanterns, walking forward. Passers-by stop and point at the glowing butterfly wings on the ground beside the border collie. End state: dog walking away along the path with the wings, people looking.
+
+[Keep]
+Same black-and-white border collie and same black collar in every shot. Only shot 1 has physical costume wings; in shots 3 to 5 the wings are always light projected flat on the ground, never physical, never floating graphics. Realistic hands with five fingers; the collar stays in her hands and never passes through the fingers. Movements similar to @Video1, not identical: they follow its rhythm but are their own natural movements. retaining real fine pores and skin texture.
+Pure video. No on-screen text, no subtitles, no captions, no emojis, no logos except the product's own small print, no watermark, no music.

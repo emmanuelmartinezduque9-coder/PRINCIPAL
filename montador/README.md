@@ -66,7 +66,15 @@ Nunca crea entornos virtuales en el T7: `uv` guarda su caché en `~/Library/Cach
 }
 ```
 
-`audio.mode: "original"` conserva la pista del clip (réplica Genjutsu entera). `product_shown` también acepta `{"t": segundos}`.
+`audio.mode: "original"` conserva la pista del clip (réplica Genjutsu entera). `audio.mode: "externo"` pone el audio de
+otro archivo (`path`, `offset`), sin tocar nivel ni velocidad y recortado o completado con silencio: se usa para las
+réplicas regeneradas con Seedance, que llevan el audio original del reel de referencia. `product_shown` también acepta
+`{"t": segundos}`.
+
+Cambios de la fase C (22/11): el pico de la mezcla se mide con `astats` (antes `volumedetect`, que no ve picos por
+encima de 0 dBFS y dejaba saturar la voz subida; afectaba a V12 de la fase B, rehecho como «(r2)»); `planes_c.py`
+genera los planes de la fase C; en el Mac hay además `hoja.sh` (hojas de contactos), `separar.py` (voz con HTDemucs) y
+`transcribir.py` (comprobar qué dice la voz con mlx_whisper, sin escuchar).
 
 ## Límites de v0
 
