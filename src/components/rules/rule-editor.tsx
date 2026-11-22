@@ -214,6 +214,18 @@ function VersionHistory({
   });
   const text = isCurrent ? rule.current.body : version.data?.version.body;
 
+  // Con una sola versión no hay nada que comparar ni recuperar: una línea basta.
+  if (rule.history.length === 1) {
+    return (
+      <div className="flex flex-col items-center justify-center gap-3 rounded-xl border border-dashed px-6 py-10 text-center">
+        <span className="grid size-11 place-items-center rounded-full bg-muted text-muted-foreground">
+          <History className="size-5" aria-hidden />
+        </span>
+        <p className="font-medium">Todavía no hay versiones anteriores</p>
+      </div>
+    );
+  }
+
   return (
     <div className={cn("grid gap-4 md:grid-cols-[15rem_minmax(0,1fr)] md:grid-rows-[minmax(0,1fr)]", FILL)}>
       <div className={cn("rounded-xl bg-card ring-1 ring-foreground/10", SCROLL_AREA)}>

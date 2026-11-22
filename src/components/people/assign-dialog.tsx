@@ -1,7 +1,7 @@
 "use client";
 
 import { useQueryClient } from "@tanstack/react-query";
-import { CircleAlert, Loader2, Package } from "lucide-react";
+import { CircleAlert, Loader2, PackagePlus } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -49,8 +49,8 @@ export function AssignDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogTrigger asChild>
         <Button variant="outline" className="h-9 gap-1.5 px-2.5">
-          <Package className="size-4" />
-          Productos
+          <PackagePlus className="size-4" />
+          Asignar
         </Button>
       </DialogTrigger>
       <DialogContent>

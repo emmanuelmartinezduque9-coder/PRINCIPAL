@@ -38,7 +38,10 @@ export function keepPhotos(files: File[]): File[] {
  */
 function useBlockStrayDrops() {
   useEffect(() => {
-    const outsideZone = (event: DragEvent) => !(event.target instanceof Element && event.target.closest("[data-dropzone]"));
+    // Solo arrastres de archivos: arrastrar texto entre campos sigue funcionando.
+    const outsideZone = (event: DragEvent) =>
+      !!event.dataTransfer?.types.includes("Files") &&
+      !(event.target instanceof Element && event.target.closest("[data-dropzone]"));
     function onDragOver(event: DragEvent) {
       if (!outsideZone(event)) return;
       event.preventDefault();
@@ -181,6 +184,7 @@ function Thumb({
   removeLabel,
   onRemove,
   icon,
+  className,
 }: {
   src: string;
   alt: string;
@@ -188,11 +192,12 @@ function Thumb({
   removeLabel: string;
   onRemove: () => void;
   icon: React.ReactNode;
+  className?: string;
 }) {
   return (
-    <li className="group relative aspect-square overflow-hidden rounded-xl bg-muted ring-1 ring-foreground/10">
+    <li className={cn("group relative aspect-square overflow-hidden rounded-xl bg-muted ring-1 ring-foreground/10", className)}>
       {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img src={src} alt={alt} className="size-full object-cover" />
+      <img src={src} alt={alt} className="absolute inset-0 size-full object-cover" />
       {cover ? (
         <span className="absolute bottom-2 left-2 rounded-md bg-background/90 px-1.5 py-0.5 text-xs font-medium shadow-sm">
           Portada
@@ -212,8 +217,13 @@ function Thumb({
 }
 
 const PICKER_GRID = "grid grid-cols-2 gap-3 sm:grid-cols-3";
-/** Las fotos del detalle ocupan todo el ancho: más columnas. */
-const MANAGER_GRID = "grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6";
+/**
+ * Fotos del detalle a todo el ancho: la portada en grande (4 columnas × 3 filas de casillas
+ * cuadradas, o sea 4:3) y a su derecha una tira con las demás y la casilla de añadir.
+ */
+// Filas iguales: el alto lo marcan las casillas cuadradas, no el tamaño real de la foto.
+const MANAGER_GRID = "grid grid-flow-dense grid-cols-2 gap-3 sm:grid-cols-3 lg:auto-rows-fr lg:grid-cols-6";
+const HERO = "col-span-full aspect-[4/3] lg:col-span-4 lg:row-span-3 lg:aspect-auto";
 
 /** Elegir fotos antes de que el producto exista: se ven en grande y se suben al guardar. */
 export function PhotoPicker({ files, onChange }: { files: File[]; onChange: (files: File[]) => void }) {
@@ -293,7 +303,7 @@ export function PhotoManager({ productId, onCount }: { productId: number; onCoun
     <div className="flex flex-col gap-3">
       {photos.isLoading ? (
         <div className={MANAGER_GRID}>
-          <Skeleton className="aspect-square rounded-xl" />
+          <Skeleton className={cn("rounded-xl", HERO)} />
           <Skeleton className="aspect-square rounded-xl" />
           <Skeleton className="aspect-square rounded-xl" />
         </div>
@@ -312,11 +322,12 @@ export function PhotoManager({ productId, onCount }: { productId: number; onCoun
               removeLabel={`Borrar la foto ${index + 1}`}
               onRemove={() => setToDelete(photo)}
               icon={<Trash2 className="size-4" aria-hidden />}
+              className={index === 0 ? HERO : undefined}
             />
           ))}
           {room ? (
             // Sin fotos, la zona ocupa la fila entera; con fotos, es una casilla más.
-            <li className={empty ? "col-span-full flex h-56 flex-col" : undefined}>
+            <li className={empty ? "col-span-full flex h-72 flex-col" : undefined}>
               <PhotoDropzone
                 onFiles={(files) => {
                   if (files.length > MAX_PHOTOS - list.length) toast.error(`Un producto admite hasta ${MAX_PHOTOS} fotos.`);

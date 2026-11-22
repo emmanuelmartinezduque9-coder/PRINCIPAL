@@ -81,7 +81,9 @@ export function ProductFields({
                 key={code}
                 className={cn(
                   "flex h-10 cursor-pointer items-center gap-2.5 rounded-lg border px-3 text-sm transition-colors has-[:focus-visible]:ring-3 has-[:focus-visible]:ring-ring/50",
-                  on ? "border-foreground/70 bg-foreground/[0.04] text-foreground" : "text-muted-foreground hover:bg-muted/50",
+                  on
+                    ? "border-foreground bg-foreground/[0.07] font-medium text-foreground ring-1 ring-foreground"
+                    : "text-muted-foreground hover:border-foreground/30 hover:bg-muted/50",
                 )}
               >
                 <input

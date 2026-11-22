@@ -4,9 +4,10 @@ import { useQuery } from "@tanstack/react-query";
 import { BookOpen, LogOut, Package, Users, type LucideIcon } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useEffect, useRef } from "react";
 import type { AuthUser } from "@/server/auth";
 import { api } from "@/lib/api";
-import { cn } from "@/lib/utils";
+import { cn, initials } from "@/lib/utils";
 import { Brand } from "./brand";
 
 interface NavItem {
@@ -77,11 +78,6 @@ function SignOutButton({ className, label }: { className?: string; label?: strin
   );
 }
 
-function initials(name: string): string {
-  const parts = name.trim().split(/\s+/).filter(Boolean);
-  return ((parts[0]?.[0] ?? "") + (parts.length > 1 ? parts[parts.length - 1][0] : "")).toUpperCase() || "?";
-}
-
 function CurrentUser({ user }: { user: AuthUser }) {
   return (
     <div className="flex items-center gap-2.5 px-2.5 py-2">
@@ -102,8 +98,104 @@ function CurrentUser({ user }: { user: AuthUser }) {
   );
 }
 
+const scrollKey = (path: string) => `principal:scroll:${path}`;
+
+function readScroll(path: string): number | null {
+  try {
+    const value = sessionStorage.getItem(scrollKey(path));
+    return value === null ? null : Number(value);
+  } catch {
+    return null;
+  }
+}
+
+function saveScroll(path: string, top: number) {
+  try {
+    sessionStorage.setItem(scrollKey(path), String(Math.round(top)));
+  } catch {
+    // Sin almacenamiento (ventana privada): simplemente no se recuerda la posición.
+  }
+}
+
+/**
+ * En el ordenador se desplaza la columna del contenido, no la ventana, así que lo que el
+ * navegador hace solo con la ventana se hace aquí: el teclado (Espacio, AvPág, Inicio, Fin)
+ * desplaza la columna desde que se abre la página, cada pantalla nueva empieza arriba y al
+ * volver atrás se recupera la posición en la que se estaba.
+ */
+function useContentColumn(pathname: string) {
+  const column = useRef<HTMLDivElement>(null);
+  const cameBack = useRef(false);
+  const current = useRef(pathname);
+
+  // Guarda la posición de cada dirección mientras se desplaza.
+  useEffect(() => {
+    const el = column.current;
+    if (!el) return;
+    let frame = 0;
+    const onScroll = () => {
+      cancelAnimationFrame(frame);
+      // Al cambiar de pantalla el contenido se acorta y el navegador recorta la posición: ese
+      // desplazamiento ya no es de la pantalla anterior (la dirección ha cambiado) y no se guarda.
+      frame = requestAnimationFrame(() => {
+        if (window.location.pathname === current.current) saveScroll(current.current, el.scrollTop);
+      });
+    };
+    // Justo antes de seguir un enlace se guarda la posición exacta de la pantalla que se deja.
+    const onClick = (event: MouseEvent) => {
+      if (event.target instanceof Element && event.target.closest("a[href]")) saveScroll(current.current, el.scrollTop);
+    };
+    const onPop = () => {
+      cameBack.current = true;
+    };
+    el.addEventListener("scroll", onScroll, { passive: true });
+    document.addEventListener("click", onClick, true);
+    window.addEventListener("popstate", onPop);
+    // Al recargar o llegar con «Atrás» desde otra web, también se recupera la posición.
+    const nav = performance.getEntriesByType("navigation")[0] as PerformanceNavigationTiming | undefined;
+    cameBack.current = nav?.type === "reload" || nav?.type === "back_forward";
+    return () => {
+      cancelAnimationFrame(frame);
+      el.removeEventListener("scroll", onScroll);
+      document.removeEventListener("click", onClick, true);
+      window.removeEventListener("popstate", onPop);
+    };
+  }, []);
+
+  useEffect(() => {
+    const el = column.current;
+    if (!el) return;
+    current.current = pathname;
+    const back = cameBack.current;
+    cameBack.current = false;
+
+    // El foco pasa a la columna salvo que la pantalla ya lo haya puesto en un campo.
+    const active = document.activeElement;
+    if (!active || active === document.body || !el.contains(active)) el.focus({ preventScroll: true });
+
+    const target = back ? readScroll(pathname) : null;
+    if (!target) {
+      el.scrollTop = 0;
+      return;
+    }
+    // El contenido puede tardar un poco en tener su alto (datos, imágenes): se reintenta
+    // durante un segundo como mucho hasta poder llegar a la posición guardada.
+    let tries = 0;
+    let frame = 0;
+    const restore = () => {
+      el.scrollTop = target;
+      if (Math.abs(el.scrollTop - target) > 2 && tries++ < 60) frame = requestAnimationFrame(restore);
+    };
+    restore();
+    return () => cancelAnimationFrame(frame);
+  }, [pathname]);
+
+  return column;
+}
+
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+  const column = useContentColumn(pathname);
   const { data } = useMe();
   const items = navFor(data?.user?.role);
   const isActive = (href: string) => pathname === href || pathname.startsWith(`${href}/`);
@@ -142,7 +234,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </div>
       </aside>
 
-      <div className="flex min-w-0 flex-1 flex-col md:overflow-y-auto">
+      <div ref={column} tabIndex={-1} className="flex min-w-0 flex-1 flex-col outline-none md:overflow-y-auto">
         {/* Móvil: cabecera sencilla. */}
         <header className="sticky top-0 z-30 flex h-14 items-center justify-between border-b bg-background/90 px-4 backdrop-blur md:hidden">
           <HomeLink />

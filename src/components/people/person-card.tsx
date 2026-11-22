@@ -1,7 +1,7 @@
 "use client";
 
 import { useQueryClient } from "@tanstack/react-query";
-import { CircleAlert, Loader2, ShieldCheck, Wallet } from "lucide-react";
+import { CircleAlert, Loader2, ShieldCheck, UserMinus, Wallet } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
@@ -11,7 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { api, type Serialized } from "@/lib/api";
 import { formatUsd, MICROS_PER_USD } from "@/lib/money";
-import { cn } from "@/lib/utils";
+import { cn, initials } from "@/lib/utils";
 import type { PersonRow } from "@/server/people";
 import { AssignDialog } from "./assign-dialog";
 
@@ -107,7 +107,11 @@ function DisableDialog({ person }: { person: PersonView }) {
       }}
     >
       <DialogTrigger asChild>
-        <Button variant="destructive" className="h-9 px-2.5">
+        <Button
+          variant="outline"
+          className="h-9 gap-1.5 px-2.5 text-destructive hover:border-destructive/40 hover:bg-destructive/5 hover:text-destructive"
+        >
+          <UserMinus className="size-4" />
           Desactivar
         </Button>
       </DialogTrigger>
@@ -138,18 +142,15 @@ function DisableDialog({ person }: { person: PersonView }) {
   );
 }
 
-/** Rejilla compartida por la cabecera y las filas: tabla en el ordenador; tarjeta en pantallas estrechas. */
-/** Columnas fijas para acciones y gasto: así cabecera y filas quedan alineadas. */
+/**
+ * Rejilla compartida por la cabecera y las filas: tabla en el ordenador; tarjeta en pantallas
+ * estrechas. Columnas fijas para gasto y acciones: así cabecera y filas quedan alineadas.
+ */
 export const TABLE_COLUMNS = "lg:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)_13rem_19.5rem] lg:gap-x-5";
 const ROW_GRID = `md:grid md:grid-cols-2 md:items-center md:gap-x-6 md:gap-y-3 lg:gap-y-0 ${TABLE_COLUMNS}`;
 
 /** Importe sin la moneda, para «0,00 de 12,50 US$». */
 const amount = (micros: number) => formatUsd(micros).replace(/\s*US\$$/, "");
-
-function initials(name: string): string {
-  const parts = name.trim().split(/\s+/).filter(Boolean);
-  return ((parts[0]?.[0] ?? "") + (parts.length > 1 ? parts[parts.length - 1][0] : "")).toUpperCase() || "?";
-}
 
 /** Gasto del mes frente a su tope, con una barra que se llena. */
 function Spend({ person }: { person: PersonView }) {
@@ -168,7 +169,7 @@ function Spend({ person }: { person: PersonView }) {
         <span className="font-medium">{amount(person.spentMicros)}</span>
         <span className="text-muted-foreground"> de {formatUsd(person.capMicros)} de tope</span>
       </p>
-      <div className="h-1.5 w-full max-w-48 overflow-hidden rounded-full bg-foreground/[0.08]" aria-hidden>
+      <div className="h-1.5 w-full max-w-48 overflow-hidden rounded-full bg-foreground/[0.14]" aria-hidden>
         <div className={cn("h-full rounded-full", share >= 1 ? "bg-destructive" : "bg-foreground/70")} style={{ width: `${share * 100}%` }} />
       </div>
     </div>

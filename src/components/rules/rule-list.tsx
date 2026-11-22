@@ -62,12 +62,15 @@ function RuleList({ activeSlug }: { activeSlug: string | null }) {
               <span className="flex min-w-0 flex-1 flex-col gap-1">
                 <span className="flex items-start justify-between gap-2">
                   <span className={cn("text-sm leading-snug", active ? "font-semibold" : "font-medium")}>{rule.title}</span>
-                  <span
-                    className="mt-px shrink-0 rounded bg-foreground/[0.06] px-1.5 text-xs leading-5 text-muted-foreground tabular-nums"
-                    title={`Versión ${rule.version} · ${formatDateTime(rule.updatedAt)}`}
-                  >
-                    v{rule.version}
-                  </span>
+                  {/* Solo cuando ya se ha cambiado: una «v1» en todas no dice nada. */}
+                  {rule.version > 1 ? (
+                    <span
+                      className="mt-px shrink-0 rounded bg-foreground/[0.06] px-1.5 text-xs leading-5 text-muted-foreground tabular-nums"
+                      title={`Versión ${rule.version} · ${formatDateTime(rule.updatedAt)}`}
+                    >
+                      v{rule.version}
+                    </span>
+                  ) : null}
                 </span>
                 <span className="line-clamp-2 text-xs text-muted-foreground">{rule.description}</span>
               </span>

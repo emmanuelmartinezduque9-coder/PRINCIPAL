@@ -86,9 +86,9 @@ function EditProductDialog({ product }: { product: ProductView }) {
           Editar
         </Button>
       </DialogTrigger>
-      <DialogContent className="sm:max-w-lg" aria-describedby={undefined}>
+      <DialogContent className="gap-6 p-6 sm:max-w-lg" aria-describedby={undefined}>
         <DialogHeader>
-          <DialogTitle>Editar producto</DialogTitle>
+          <DialogTitle className="text-lg">Editar producto</DialogTitle>
         </DialogHeader>
         <form onSubmit={save} className="flex flex-col gap-5">
           <ProductFields values={values} onChange={setValues} />
