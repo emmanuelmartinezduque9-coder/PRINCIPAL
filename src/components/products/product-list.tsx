@@ -7,6 +7,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
+import { EmptyState } from "@/components/shell/empty-state";
 import { PageHeader } from "@/components/shell/page-header";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
@@ -17,7 +18,7 @@ export function ProductCover({ photoId, className }: { photoId?: number | null; 
     <div className={cn("grid shrink-0 place-items-center overflow-hidden bg-muted text-muted-foreground", className)}>
       {photoId ? (
         // eslint-disable-next-line @next/next/no-img-element
-        <img src={`/api/fotos/${photoId}`} alt="" loading="lazy" className="size-full object-cover" />
+        <img src={`/api/fotos/${photoId}`} alt="" loading="lazy" className="size-full object-cover transition-transform duration-300 group-hover:scale-[1.03]" />
       ) : (
         <ImageOff className="size-6" aria-label="Sin foto" />
       )}
@@ -36,7 +37,7 @@ function ProductCard({ product }: { product: ProductView }) {
   return (
     <Link
       href={`/productos/${product.id}`}
-      className="group flex h-full flex-col overflow-hidden rounded-xl bg-card ring-1 ring-foreground/10 transition-shadow outline-none hover:shadow-[0_2px_12px_-4px_rgb(0_0_0/0.12)] hover:ring-foreground/20 focus-visible:ring-2 focus-visible:ring-foreground/70"
+      className="panel group flex h-full flex-col overflow-hidden outline-none transition-[box-shadow,transform] duration-200 hover:-translate-y-0.5 hover:shadow-raised focus-visible:ring-3 focus-visible:ring-ring/50"
     >
       <ProductCover photoId={product.coverPhotoId} className="aspect-[4/3] w-full border-b" />
       <div className="flex flex-1 flex-col gap-1.5 p-4">
@@ -185,27 +186,26 @@ export function ProductList() {
           No se pudieron cargar los productos. Recarga la página.
         </p>
       ) : !hasProducts ? (
-        <div className="flex flex-col items-center gap-4 rounded-xl border border-dashed px-6 py-16 text-center">
-          <span className="grid size-12 place-items-center rounded-full bg-muted text-muted-foreground">
-            <Package className="size-5" aria-hidden />
-          </span>
-          <p className="font-medium">Todavía no hay productos</p>
-          <Link href="/productos/nuevo" className={cn(buttonVariants(), "h-10 gap-2 px-4")}>
-            <Plus className="size-4" aria-hidden />
-            Nuevo producto
-          </Link>
-        </div>
+        <EmptyState
+          icon={Package}
+          title="Todavía no hay productos"
+          action={
+            <Link href="/productos/nuevo" className={cn(buttonVariants(), "h-10 gap-2 px-4")}>
+              <Plus className="size-4" aria-hidden />
+              Nuevo producto
+            </Link>
+          }
+        />
       ) : visible.length === 0 ? (
-        <div className="flex flex-col items-center gap-3 rounded-xl border border-dashed px-6 py-12 text-center">
-          <p className="font-medium">Ningún producto se llama así</p>
-          <button
-            type="button"
-            onClick={() => setSearch("")}
-            className={cn(buttonVariants({ variant: "outline" }), "mt-1 h-9 px-3")}
-          >
-            Ver todos
-          </button>
-        </div>
+        <EmptyState
+          icon={Search}
+          title="Ningún producto se llama así"
+          action={
+            <button type="button" onClick={() => setSearch("")} className={cn(buttonVariants({ variant: "outline" }), "h-9 px-3")}>
+              Ver todos
+            </button>
+          }
+        />
       ) : (
         <ul className={GRID}>
           {visible.map((product) => (

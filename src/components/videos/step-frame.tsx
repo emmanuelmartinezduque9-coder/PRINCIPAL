@@ -77,7 +77,7 @@ function Candidate({
       <div
         className={cn(
           "relative aspect-[9/16] overflow-hidden rounded-xl bg-muted ring-1 ring-foreground/10 transition-shadow",
-          approved && "ring-3 ring-emerald-500",
+          approved && "ring-3 ring-success",
           dimmed && "opacity-45 grayscale",
         )}
       >
@@ -96,7 +96,7 @@ function Candidate({
           </div>
         )}
         {approved ? (
-          <Badge className="pointer-events-none absolute top-3 left-3 gap-1 bg-emerald-500 text-white">
+          <Badge className="pointer-events-none absolute top-3 left-3 gap-1 bg-success text-white">
             <Check aria-hidden />
             Aprobada
           </Badge>
@@ -229,7 +229,7 @@ export function StepFrame({ view, onGoToClip, onGoToBreakdown }: { view: VideoVi
         ) : null}
 
         {reviewing && canAct ? (
-          <div className="flex flex-col gap-3 rounded-xl bg-card p-5 ring-1 ring-foreground/10">
+          <div className="panel flex flex-col gap-3 p-5">
             <RejectDialog label="Rechazar las dos" title="¿Por qué no valen?" pending={reject.isPending} onReject={(reason) => reject.mutateAsync(reason)} />
             <RegenerationsLeft left={frame.regenerationsLeft} />
           </div>

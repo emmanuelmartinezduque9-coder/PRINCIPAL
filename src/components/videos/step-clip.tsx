@@ -101,7 +101,7 @@ function Player({ view }: { view: VideoViewJson }) {
       <div
         className={cn(
           "relative aspect-[9/16] w-full max-w-[360px] overflow-hidden rounded-xl bg-neutral-950 ring-1 ring-foreground/10",
-          result && view.clip.approvedResultId === result.id && "ring-3 ring-emerald-500",
+          result && view.clip.approvedResultId === result.id && "ring-3 ring-success",
         )}
       >
         {result && broken === result.id ? (
@@ -139,7 +139,7 @@ function Player({ view }: { view: VideoViewJson }) {
           </>
         )}
         {result && view.clip.approvedResultId === result.id ? (
-          <Badge className="pointer-events-none absolute top-3 left-3 gap-1 bg-emerald-500 text-white">
+          <Badge className="pointer-events-none absolute top-3 left-3 gap-1 bg-success text-white">
             <Check aria-hidden />
             Aprobado
           </Badge>
@@ -180,7 +180,7 @@ function BodyRow({ body, order }: { body: BodyJson; order: number }) {
 function Bodies({ bodies }: { bodies: BodyJson[] }) {
   if (bodies.length === 0) return null;
   return (
-    <section aria-label="Cuerpos" className="flex flex-col rounded-xl bg-card px-4 py-2 ring-1 ring-foreground/10">
+    <section aria-label="Cuerpos" className="panel flex flex-col px-4 py-2">
       <h3 className="pt-1.5 pb-0.5 text-sm font-medium">Cuerpos</h3>
       <ol className="flex flex-col divide-y">
         {bodies.map((body, index) => (
@@ -258,7 +258,7 @@ export function StepClip({
         ) : null}
 
         {reviewing && mine ? (
-          <div className="flex flex-col gap-3 rounded-xl bg-card p-5 ring-1 ring-foreground/10">
+          <div className="panel flex flex-col gap-3 p-5">
             {approved ? null : (
               <Button
                 className="h-11 gap-2"

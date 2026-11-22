@@ -49,8 +49,8 @@ function StatusDot({ tone }: { tone: "ok" | "warn" | "off" }) {
       aria-hidden
       className={cn(
         "size-2 rounded-full",
-        tone === "ok" && "bg-emerald-500",
-        tone === "warn" && "bg-amber-500",
+        tone === "ok" && "bg-success",
+        tone === "warn" && "bg-warning",
         tone === "off" && "bg-foreground/25",
       )}
     />
@@ -124,7 +124,7 @@ export function HiggsfieldCard() {
   const stateLabel = !status?.connected ? "Sin conectar" : status.needsReconnect ? "Caducada" : "Conectado";
 
   return (
-    <section aria-labelledby="hf-title" className="flex flex-col rounded-xl bg-card ring-1 ring-foreground/10">
+    <section aria-labelledby="hf-title" className="panel flex flex-col">
       <header className="flex items-center gap-3 border-b px-5 py-4 md:px-6">
         <span className="grid size-10 shrink-0 place-items-center rounded-lg bg-foreground text-background">
           <Clapperboard className="size-5" aria-hidden />
@@ -171,8 +171,8 @@ export function HiggsfieldCard() {
           </div>
         ) : status.needsReconnect ? (
           <>
-            <div className="flex items-start gap-3 rounded-lg bg-amber-500/12 px-4 py-3">
-              <CircleAlert className="mt-0.5 size-5 shrink-0 text-amber-600" aria-hidden />
+            <div className="flex items-start gap-3 rounded-lg bg-warning/12 px-4 py-3">
+              <CircleAlert className="mt-0.5 size-5 shrink-0 text-warning-ink" aria-hidden />
               <div className="flex min-w-0 flex-col gap-0.5">
                 <p className="font-medium">Tu conexión ha caducado</p>
                 {status.email ? <p className="truncate text-sm text-muted-foreground">{status.email}</p> : null}
@@ -198,8 +198,8 @@ export function HiggsfieldCard() {
                 </p>
               ) : null}
               {status.error ? (
-                <p className="flex items-start gap-2 rounded-lg bg-amber-500/12 px-3 py-2.5 text-sm">
-                  <CircleAlert className="mt-0.5 size-4 shrink-0 text-amber-600" aria-hidden />
+                <p className="flex items-start gap-2 rounded-lg bg-warning/12 px-3 py-2.5 text-sm">
+                  <CircleAlert className="mt-0.5 size-4 shrink-0 text-warning-ink" aria-hidden />
                   {status.error}
                 </p>
               ) : null}

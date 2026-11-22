@@ -3,6 +3,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Archive, ArchiveRestore, CircleAlert, Loader2, UserRound } from "lucide-react";
 import { useMemo, useState } from "react";
+import { EmptyState } from "@/components/shell/empty-state";
 import { PageHeader } from "@/components/shell/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -151,7 +152,7 @@ function AvatarCard({ avatar, onOpen }: { avatar: AvatarJson; onOpen: (() => voi
         <span
           className={cn(
             "absolute top-2 right-2 rounded-md px-1.5 py-0.5 text-xs font-semibold tabular-nums shadow-sm",
-            avatar.ageYears === null ? "bg-amber-400 text-amber-950" : "bg-background/90 text-foreground",
+            avatar.ageYears === null ? "bg-warning text-warning-ink" : "bg-background/90 text-foreground",
           )}
           title={avatar.ageYears === null ? "Sin edad" : "Edad"}
         >
@@ -226,12 +227,7 @@ export function AvatarsScreen() {
           No se pudieron cargar los avatares.
         </p>
       ) : all.length === 0 ? (
-        <div className="flex flex-col items-center gap-3 rounded-xl border border-dashed px-6 py-20 text-center text-sm text-muted-foreground">
-          <span className="grid size-12 place-items-center rounded-full bg-muted">
-            <UserRound className="size-5" aria-hidden />
-          </span>
-          Sin avatares
-        </div>
+        <EmptyState icon={UserRound} title="Sin avatares" />
       ) : (
         <>
           <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
@@ -275,7 +271,7 @@ export function AvatarsScreen() {
             </div>
             {withoutAge > 0 ? (
               <button type="button" aria-pressed={noAge} onClick={() => setNoAge(!noAge)} className={chipClass(noAge)}>
-                <span className="size-2 rounded-full bg-amber-400" aria-hidden />
+                <span className="size-2 rounded-full bg-warning" aria-hidden />
                 Sin edad <span className="tabular-nums opacity-70">{withoutAge}</span>
               </button>
             ) : null}

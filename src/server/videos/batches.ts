@@ -136,6 +136,8 @@ export interface BatchSummary {
   videos: number;
   /** De esos, cuántos tienen ya un clip terminado. */
   done: number;
+  /** Portadas de sus productos (como mucho 4, en el orden de su primer vídeo): para la lista. */
+  covers: number[];
 }
 
 /** Los lotes que ve `user` (los suyos; el dueño, todos), los más recientes primero, con sus cuentas. */
@@ -180,11 +182,31 @@ export async function listBatchesFor(user: AuthUser): Promise<BatchSummary[]> {
     doneVideos.set(clip.batchId, set);
   }
   const byBatch = new Map(counts.map((row) => [row.batchId, { total: row.total, done: doneVideos.get(row.batchId ?? 0)?.size ?? 0 }]));
+  // Los productos de cada lote, en el orden de su primer vídeo, y sus portadas.
+  const pairs =
+    products.length === 0
+      ? []
+      : await db
+          .select({ batchId: videos.batchId, productId: videos.productId, first: sql<number>`min(${videos.id})` })
+          .from(videos)
+          .where(inScope)
+          .groupBy(videos.batchId, videos.productId)
+          .orderBy(sql`min(${videos.id})`);
+  const covers = await coverPhotoIds(user, pairs.map((pair) => pair.productId));
+  const coversOf = new Map<number, number[]>();
+  for (const pair of pairs) {
+    const cover = covers.get(pair.productId);
+    if (pair.batchId === null || cover === undefined) continue;
+    const list = coversOf.get(pair.batchId) ?? [];
+    if (list.length < 4) list.push(cover);
+    coversOf.set(pair.batchId, list);
+  }
   return rows.map((row) => ({
     ...row,
     mine: row.createdBy === user.id,
     videos: byBatch.get(row.id)?.total ?? 0,
     done: byBatch.get(row.id)?.done ?? 0,
+    covers: coversOf.get(row.id) ?? [],
   }));
 }
 

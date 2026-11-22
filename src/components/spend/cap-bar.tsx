@@ -15,9 +15,9 @@ export function capTone(spentMicros: number, capMicros: number): CapTone {
 }
 
 export const TONE_FILL: Record<CapTone, string> = {
-  ok: "bg-emerald-600 dark:bg-emerald-500",
-  warn: "bg-amber-500",
-  full: "bg-red-600 dark:bg-red-500",
+  ok: "bg-success",
+  warn: "bg-warning",
+  full: "bg-destructive",
 };
 
 /** Barra de gasto frente a un tope. `label` es lo que lee un lector de pantalla. */

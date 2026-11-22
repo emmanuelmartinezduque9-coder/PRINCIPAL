@@ -9,6 +9,7 @@ import type { AuthUser } from "@/server/auth";
 import { api } from "@/lib/api";
 import { cn, initials } from "@/lib/utils";
 import { Brand } from "./brand";
+import { ThemeToggle } from "./theme-toggle";
 import { useNewBatchDraft } from "@/components/batches/draft-provider";
 
 interface NavItem {
@@ -87,10 +88,10 @@ function SignOutButton({ className, label }: { className?: string; label?: strin
 
 function CurrentUser({ user }: { user: AuthUser }) {
   return (
-    <div className="flex items-center gap-2.5 px-2.5 py-2">
+    <div className="flex min-w-0 flex-1 items-center gap-2.5 px-1.5 py-1">
       <span
         aria-hidden
-        className="grid size-8 shrink-0 place-items-center rounded-full bg-foreground/[0.07] text-xs font-semibold text-foreground"
+        className="grid size-8 shrink-0 place-items-center rounded-full bg-brand/15 text-xs font-semibold text-brand-ink"
       >
         {initials(user.name)}
       </span>
@@ -208,41 +209,46 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const { hasDraft } = useNewBatchDraft();
   /** Punto en «Lotes» mientras hay un borrador de lote sin enviar. */
   const dot = (href: string) =>
-    href === "/lotes" && hasDraft ? <span className="size-1.5 shrink-0 rounded-full bg-amber-500" role="img" aria-label="Borrador sin enviar" /> : null;
+    href === "/lotes" && hasDraft ? <span className="size-1.5 shrink-0 rounded-full bg-warning" role="img" aria-label="Borrador sin enviar" /> : null;
+  /** Con un borrador sin enviar, «Lotes» lleva directamente a él: el trabajo está donde se dejó. */
+  const hrefOf = (href: string) => (href === "/lotes" && hasDraft && pathname !== "/lotes/nuevo" ? "/lotes/nuevo" : href);
   const isActive = (href: string) => pathname === href || pathname.startsWith(`${href}/`);
 
   return (
     <div className="flex min-h-dvh bg-background md:h-dvh md:min-h-0 md:overflow-hidden">
       {/* Ordenador y tableta: menú lateral fijo. */}
-      <aside className="hidden w-56 shrink-0 flex-col border-r bg-sidebar md:flex lg:w-60">
+      <aside className="hidden w-56 shrink-0 flex-col border-r border-sidebar-border bg-sidebar md:flex lg:w-60">
         <div className="flex h-16 items-center px-4">
           <HomeLink />
         </div>
-        <nav aria-label="Principal" className="flex flex-col gap-0.5 px-3 pt-3">
+        <nav aria-label="Principal" className="flex flex-col gap-0.5 px-3 pt-2">
           {items.map(({ href, label, icon: Icon }) => {
             const active = isActive(href);
             return (
               <Link
                 key={href}
-                href={href}
+                href={hrefOf(href)}
                 aria-current={active ? "page" : undefined}
                 className={cn(
-                  "flex h-9 items-center gap-2.5 rounded-lg px-2.5 text-sm transition-colors outline-none focus-visible:ring-3 focus-visible:ring-ring/50",
+                  "group flex h-9 items-center gap-2.5 rounded-lg px-2.5 text-sm transition-colors duration-150 outline-none focus-visible:ring-3 focus-visible:ring-ring/50",
                   active
-                    ? "bg-foreground/[0.07] font-medium text-foreground"
-                    : "text-muted-foreground hover:bg-foreground/[0.04] hover:text-foreground",
+                    ? "bg-card font-medium text-foreground shadow-card ring-1 ring-border"
+                    : "text-muted-foreground hover:bg-sidebar-accent hover:text-foreground",
                 )}
               >
-                <Icon className={cn("size-4 shrink-0", active ? "text-foreground" : "")} aria-hidden />
+                <Icon className={cn("size-4 shrink-0 transition-colors", active ? "text-brand" : "text-muted-foreground group-hover:text-foreground")} aria-hidden />
                 {label}
                 {dot(href) ? <span className="ml-auto flex">{dot(href)}</span> : null}
               </Link>
             );
           })}
         </nav>
-        <div className="mt-auto flex flex-col gap-0.5 border-t p-3">
-          {data?.user ? <CurrentUser user={data.user} /> : null}
-          <SignOutButton className="h-9 px-2.5" label="Salir" />
+        <div className="mt-auto flex flex-col gap-2 p-3">
+          <ThemeToggle className="w-full" />
+          <div className="flex items-center gap-1 rounded-lg">
+            {data?.user ? <CurrentUser user={data.user} /> : null}
+            <SignOutButton className="ml-auto size-9 justify-center" />
+          </div>
         </div>
       </aside>
 
@@ -250,11 +256,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         {/* Móvil: cabecera sencilla. */}
         <header className="sticky top-0 z-30 flex h-14 items-center justify-between border-b bg-background/90 px-4 backdrop-blur md:hidden">
           <HomeLink />
-          <SignOutButton className="size-10 justify-center" />
+          <div className="flex items-center gap-1">
+            <ThemeToggle />
+            <SignOutButton className="size-10 justify-center" />
+          </div>
         </header>
 
-        <main className="flex flex-1 flex-col px-4 pt-6 pb-28 md:px-8 md:pt-6 md:pb-8">
-          <div className="mx-auto flex w-full max-w-[1200px] flex-1 flex-col">{children}</div>
+        <main className="flex flex-1 flex-col px-4 pt-6 pb-28 md:px-10 md:pt-8 md:pb-10">
+          <div className="mx-auto flex w-full max-w-[1240px] flex-1 flex-col">{children}</div>
         </main>
       </div>
 
@@ -267,7 +276,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           {items.map(({ href, label, icon: Icon }) => (
             <li key={href} className="min-w-0 flex-1">
               <Link
-                href={href}
+                href={hrefOf(href)}
                 aria-current={isActive(href) ? "page" : undefined}
                 className={cn(
                   // Con las siete opciones del dueño no caben a 12 px: letra algo menor y recorte, sin pisarse.
@@ -277,7 +286,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 )}
               >
                 <span className="relative">
-                  <Icon className="size-5 shrink-0" aria-hidden />
+                  <Icon className={cn("size-5 shrink-0", isActive(href) && "text-brand")} aria-hidden />
                   {dot(href) ? <span className="absolute -top-0.5 -right-1 flex">{dot(href)}</span> : null}
                 </span>
                 <span className="max-w-full truncate px-0.5">{label}</span>

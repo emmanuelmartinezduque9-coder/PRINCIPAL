@@ -4,7 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { AudioLines, Check, Music, Pause, Play, Search } from "lucide-react";
 import { useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { api } from "@/lib/api";
@@ -25,7 +25,7 @@ function Chosen({ song }: { song: SongSummaryJson | null }) {
   }
   return (
     <>
-      <Music className="size-4 shrink-0 text-rose-600 dark:text-rose-400" aria-hidden />
+      <span className="grid size-5 shrink-0 place-items-center rounded bg-music/15 text-music"><Music className="size-3" aria-hidden /></span>
       {song.number !== null ? <span className="font-semibold tabular-nums">{song.number}</span> : null}
       <span className="truncate">{song.title}</span>
     </>
@@ -57,7 +57,7 @@ export function MusicPicker({
   const face = compact ? (
     value ? (
       <>
-        <Music className="size-3.5 text-rose-600 dark:text-rose-400" aria-hidden />
+        <Music className="size-3.5 text-music" aria-hidden />
         {value.number !== null ? <span className="font-semibold tabular-nums">{value.number}</span> : null}
       </>
     ) : (
@@ -75,37 +75,41 @@ export function MusicPicker({
     );
   }
   return (
-    <>
-      <Button
-        variant="outline"
-        className={cn("h-8 min-w-0 justify-start gap-1.5 px-2.5 font-normal", compact && "px-2", className)}
-        aria-label={label}
-        title={value ? value.title : "Audio original"}
-        onClick={() => setOpen(true)}
-      >
-        {face}
-      </Button>
-      {open ? <PickerDialog value={value} onClose={() => setOpen(false)} onPick={(song) => {
-        setOpen(false);
-        if ((song?.id ?? null) !== (value?.id ?? null)) onChange(song);
-      }} /> : null}
-    </>
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button
+          variant="outline"
+          className={cn("h-8 min-w-0 justify-start gap-1.5 px-2.5 font-normal", compact && "px-2", className)}
+          aria-label={label}
+          title={value ? value.title : "Audio original"}
+        >
+          {face}
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent className="flex w-[26rem] flex-col gap-2 p-2" align="start">
+        {open ? (
+          <PickerList
+            value={value}
+            onPick={(song) => {
+              setOpen(false);
+              if ((song?.id ?? null) !== (value?.id ?? null)) onChange(song);
+            }}
+          />
+        ) : null}
+      </PopoverContent>
+    </Popover>
   );
 }
 
-function PickerDialog({ value, onClose, onPick }: { value: SongSummaryJson | null; onClose: () => void; onPick: (song: SongJson | null) => void }) {
+function PickerList({ value, onPick }: { value: SongSummaryJson | null; onPick: (song: SongJson | null) => void }) {
   const songs = useQuery({ queryKey: SONGS_KEY, queryFn: () => api<{ songs: SongJson[] }>("/api/canciones"), staleTime: 60_000 });
   const player = useSongPlayer();
   const [query, setQuery] = useState("");
   const found = useMemo(() => searchSongs(songs.data?.songs ?? [], query), [songs.data, query]);
 
-  const row = "flex h-11 w-full items-center gap-2.5 rounded-lg px-2 text-left text-sm outline-none hover:bg-muted focus-visible:bg-muted focus-visible:ring-3 focus-visible:ring-ring/50";
+  const row = "flex h-10 w-full items-center gap-2.5 rounded-lg px-2 text-left text-sm outline-none hover:bg-muted focus-visible:bg-muted focus-visible:ring-3 focus-visible:ring-ring/50";
   return (
-    <Dialog open onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="flex max-h-[min(40rem,85vh)] flex-col gap-3 sm:max-w-xl">
-        <DialogHeader>
-          <DialogTitle>Música</DialogTitle>
-        </DialogHeader>
+    <>
         <div className="relative">
           <Search className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden />
           <Input
@@ -118,10 +122,10 @@ function PickerDialog({ value, onClose, onPick }: { value: SongSummaryJson | nul
             onKeyDown={(event) => {
               if (event.key === "Enter" && found.length > 0) onPick(found[0]);
             }}
-            className="h-9 pl-8"
+            className="h-9 border-0 bg-muted/60 pl-8 shadow-none focus-visible:ring-2"
           />
         </div>
-        <div className="-mx-1 min-h-0 flex-1 overflow-y-auto px-1">
+        <div className="max-h-80 min-h-0 overflow-y-auto">
           {!query ? (
             <button type="button" className={row} onClick={() => onPick(null)}>
               <span className="grid size-8 place-items-center">
@@ -167,7 +171,6 @@ function PickerDialog({ value, onClose, onPick }: { value: SongSummaryJson | nul
             </ul>
           )}
         </div>
-      </DialogContent>
-    </Dialog>
+    </>
   );
 }

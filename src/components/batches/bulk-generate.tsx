@@ -161,7 +161,7 @@ export function BulkGenerate({
                     {credits !== null ? <span className={cn(state?.kind === "error" && "text-muted-foreground line-through")}>{formatCredits(credits)}</span> : null}
                     {!plan && !quote ? <Loader2 className="size-4 animate-spin text-muted-foreground" aria-label="Calculando" /> : null}
                     {state?.kind === "sending" ? <Loader2 className="size-4 animate-spin text-muted-foreground" aria-label="Enviando" /> : null}
-                    {state?.kind === "sent" ? <Check className="size-4 text-emerald-600" aria-label="Enviado" /> : null}
+                    {state?.kind === "sent" ? <Check className="size-4 text-success-ink" aria-label="Enviado" /> : null}
                     {state?.kind === "error" || quoteError ? <CircleAlert className="size-4 text-destructive" aria-label="Error" /> : null}
                   </span>
                 </li>

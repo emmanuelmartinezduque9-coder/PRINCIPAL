@@ -5,6 +5,8 @@ import { Check, ImageOff, Loader2, SearchX, ThumbsUp } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
+import { ActionBar } from "@/components/shell/action-bar";
+import { EmptyState } from "@/components/shell/empty-state";
 import { PageHeader } from "@/components/shell/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -66,8 +68,8 @@ function ReviewItem({
       onClick={onFocus}
       aria-current={focused ? "true" : undefined}
       className={cn(
-        "grid scroll-my-4 gap-5 rounded-xl bg-card p-4 ring-1 ring-foreground/10 transition-shadow md:grid-cols-[minmax(0,220px)_auto]",
-        focused && "ring-2 ring-foreground/60",
+        "panel grid scroll-my-4 gap-5 p-4 transition-shadow md:grid-cols-[minmax(0,220px)_auto]",
+        focused && "shadow-raised ring-2 ring-brand/60",
       )}
     >
       <div className="flex min-w-0 flex-col gap-2">
@@ -78,7 +80,7 @@ function ReviewItem({
         </div>
         <div>
           {approved !== null ? (
-            <Badge className="gap-1 bg-emerald-500 text-white">
+            <Badge className="gap-1 bg-success text-white">
               <Check aria-hidden />
               Aprobada
             </Badge>
@@ -119,7 +121,7 @@ function ReviewItem({
               <div
                 className={cn(
                   "relative aspect-[9/16] overflow-hidden rounded-lg bg-muted ring-1 ring-foreground/10",
-                  isApproved && "ring-3 ring-emerald-500",
+                  isApproved && "ring-pick",
                   rejected && "opacity-45 grayscale",
                 )}
               >
@@ -272,9 +274,16 @@ export function ReviewImages({ batchId }: { batchId: number }) {
 
   if (query.isLoading) {
     return (
-      <div className="flex flex-col gap-6" aria-label="Cargando">
-        <Skeleton className="h-16 w-64" />
-        <Skeleton className="h-96 w-full rounded-xl" />
+      <div className="flex flex-col gap-5" aria-label="Cargando">
+        <Skeleton className="mt-7 h-9 w-64" />
+        {[0, 1].map((i) => (
+          <div key={i} className="panel flex gap-5 p-4">
+            <Skeleton className="h-24 w-52" />
+            {[0, 1, 2].map((j) => (
+              <Skeleton key={j} className="aspect-[9/16] w-48 rounded-lg" />
+            ))}
+          </div>
+        ))}
       </div>
     );
   }
@@ -282,46 +291,33 @@ export function ReviewImages({ batchId }: { batchId: number }) {
     return (
       <div className="flex flex-col gap-6">
         <PageHeader back={{ href: "/lotes", label: "Lotes" }} title="Lote no encontrado" />
-        <div className="flex flex-col items-center gap-4 rounded-xl border border-dashed px-6 py-16 text-center">
-          <span className="grid size-12 place-items-center rounded-full bg-muted text-muted-foreground">
-            <SearchX className="size-5" aria-hidden />
-          </span>
-          <Link href="/lotes" className={cn(buttonVariants({ variant: "outline" }), "h-10 px-4")}>
-            Ver los lotes
-          </Link>
-        </div>
+        <EmptyState
+          icon={SearchX}
+          title="Este lote no existe"
+          action={
+            <Link href="/lotes" className={cn(buttonVariants({ variant: "outline" }), "h-10 px-4")}>
+              Ver los lotes
+            </Link>
+          }
+        />
       </div>
     );
   }
 
   return (
-    <div className="flex flex-col gap-5">
-      <PageHeader
-        back={back}
-        title="Revisar imágenes"
-        actions={
-          <p className="flex items-center gap-2 text-xs text-muted-foreground">
-            <Kbd>↑</Kbd>
-            <Kbd>↓</Kbd>
-            <span className="mr-2">vídeo</span>
-            <Kbd>1</Kbd>
-            <Kbd>2</Kbd>
-            <span className="mr-2">aprobar</span>
-            <Kbd>R</Kbd>
-            <span>rechazar</span>
-          </p>
-        }
-      >
-        <p className="text-sm text-muted-foreground tabular-nums">{pending === 0 ? "Todo revisado" : `${pending} por revisar`}</p>
-      </PageHeader>
+    <div className="flex flex-1 flex-col gap-5">
+      <PageHeader back={back} title="Revisar imágenes" />
 
       {rows.length === 0 ? (
-        <div className="flex flex-col items-center gap-4 rounded-xl border border-dashed px-6 py-16 text-center">
-          <p className="font-medium">No hay imágenes que revisar</p>
-          <Link href={`/lotes/${batchId}`} className={cn(buttonVariants({ variant: "outline" }), "h-10 px-4")}>
-            Volver al lote
-          </Link>
-        </div>
+        <EmptyState
+          icon={ImageOff}
+          title="No hay imágenes que revisar"
+          action={
+            <Link href={`/lotes/${batchId}`} className={cn(buttonVariants({ variant: "outline" }), "h-10 px-4")}>
+              Volver al lote
+            </Link>
+          }
+        />
       ) : (
         <ul className="flex flex-col gap-4" aria-label="Vídeos con candidatas">
           {rows.map((row) => (
@@ -340,6 +336,28 @@ export function ReviewImages({ batchId }: { batchId: number }) {
           ))}
         </ul>
       )}
+
+      {rows.length > 0 ? (
+        <ActionBar
+          aside={
+            <p className="flex items-center gap-2 text-xs text-muted-foreground">
+              <Kbd>↑</Kbd>
+              <Kbd>↓</Kbd>
+              <span className="mr-2">vídeo</span>
+              <Kbd>1</Kbd>
+              <Kbd>2</Kbd>
+              <span className="mr-2">aprobar</span>
+              <Kbd>R</Kbd>
+              <span>rechazar</span>
+            </p>
+          }
+        >
+          <span className="px-1 text-sm text-muted-foreground tabular-nums">{pending === 0 ? "Todo revisado" : `${pending} por revisar`}</span>
+          <Link href={`/lotes/${batchId}`} className={cn(buttonVariants({ variant: pending === 0 ? "default" : "outline" }), "h-10 px-4")}>
+            Volver al lote
+          </Link>
+        </ActionBar>
+      ) : null}
 
       {/* Rechazo abierto con la tecla R para el vídeo enfocado. */}
       {rejectFor !== null ? (

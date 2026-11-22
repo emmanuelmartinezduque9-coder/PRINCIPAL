@@ -95,7 +95,7 @@ function RequestError({ error }: { error: Error | null }) {
 function Requirement({ ok, icon: Icon, label }: { ok: boolean; icon: LucideIcon; label: string }) {
   return (
     <li className="flex items-center gap-3 text-sm">
-      <span className={cn("grid size-6 shrink-0 place-items-center rounded-full", ok ? "bg-emerald-500 text-white" : "bg-muted text-muted-foreground")}>
+      <span className={cn("grid size-6 shrink-0 place-items-center rounded-full", ok ? "bg-success text-white" : "bg-muted text-muted-foreground")}>
         {ok ? <Check className="size-3.5" aria-hidden /> : <X className="size-3.5" aria-hidden />}
       </span>
       <Icon className="size-4 text-muted-foreground" aria-hidden />
@@ -239,8 +239,8 @@ function Risks({ analysis }: { analysis: NonNullable<AnalysisJson["result"]> }) 
   return (
     <ul className="grid gap-2 md:grid-cols-2" aria-label="Riesgos">
       {analysis.risks.map((risk, index) => (
-        <li key={index} className="flex gap-2.5 rounded-lg bg-amber-500/10 px-3 py-2.5 text-sm ring-1 ring-amber-500/25">
-          <TriangleAlert className="mt-0.5 size-4 shrink-0 text-amber-600" aria-hidden />
+        <li key={index} className="flex gap-2.5 rounded-lg bg-warning/10 px-3 py-2.5 text-sm ring-1 ring-warning/25">
+          <TriangleAlert className="mt-0.5 size-4 shrink-0 text-warning-ink" aria-hidden />
           <span className="min-w-0">
             <span className="font-semibold">{RISK_LABELS[risk.kind] ?? risk.kind}.</span> {risk.detail}
           </span>
@@ -487,13 +487,13 @@ export function StepBreakdown({
           role={analysis.status === "failed" ? "alert" : "status"}
           className={cn(
             "flex flex-wrap items-center gap-3 rounded-xl px-4 py-3 text-sm",
-            analysis.status === "failed" ? "bg-destructive/10" : "bg-amber-500/10",
+            analysis.status === "failed" ? "bg-destructive/10" : "bg-warning/10",
           )}
         >
           {analysis.status === "failed" ? (
             <CircleAlert className="size-4 shrink-0 text-destructive" aria-hidden />
           ) : (
-            <Loader2 className="size-4 shrink-0 animate-spin text-amber-600" aria-hidden />
+            <Loader2 className="size-4 shrink-0 animate-spin text-warning-ink" aria-hidden />
           )}
           <span className="min-w-0 flex-1">{analysis.error ?? "No se pudo hacer el desglose."}</span>
           {analysis.status === "failed" ? repeat : null}
@@ -501,8 +501,8 @@ export function StepBreakdown({
       ) : null}
 
       {stale ? (
-        <div role="status" className="flex flex-wrap items-center gap-3 rounded-xl bg-amber-500/10 px-4 py-3 text-sm ring-1 ring-amber-500/25">
-          <TriangleAlert className="size-4 shrink-0 text-amber-600" aria-hidden />
+        <div role="status" className="flex flex-wrap items-center gap-3 rounded-xl bg-warning/10 px-4 py-3 text-sm ring-1 ring-warning/25">
+          <TriangleAlert className="size-4 shrink-0 text-warning-ink" aria-hidden />
           <span className="min-w-0 flex-1">
             {view.referenceOutdated
               ? "El gancho ha cambiado: vuelve a subir el vídeo de referencia."

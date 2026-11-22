@@ -4,6 +4,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Flag, Music, Pause, Play, Search, SkipForward, Trash2, Zap } from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
+import { EmptyState } from "@/components/shell/empty-state";
 import { PageHeader } from "@/components/shell/page-header";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -72,7 +73,7 @@ function SongDetail({ song, player, owner }: { song: SongJson; player: SongPlaye
 
   const here = loaded ? player.timeMs : null;
   return (
-    <section aria-label={song.title} className="flex flex-col gap-4 rounded-xl bg-card p-5 ring-1 ring-foreground/10">
+    <section aria-label={song.title} className="panel flex flex-col gap-4 p-5">
       <div className="flex items-start gap-3">
         <span className="grid size-11 shrink-0 place-items-center rounded-lg bg-foreground text-base font-semibold text-background tabular-nums">
           {song.number ?? <Music className="size-4" aria-hidden />}
@@ -114,11 +115,11 @@ function SongDetail({ song, player, owner }: { song: SongJson; player: SongPlaye
           <>
             <span className="mx-1 h-6 w-px bg-border" aria-hidden />
             <Button variant="outline" className="h-9 gap-1.5 px-3" disabled={here === null} onClick={() => here !== null && void save({ dropMs: here })}>
-              <Zap data-icon="inline-start" className="text-rose-600 dark:text-rose-400" />
+              <Zap data-icon="inline-start" className="text-music" />
               Marcar drop aquí
             </Button>
             <Button variant="ghost" className="h-9 gap-1.5 px-3" disabled={here === null} onClick={() => here !== null && void save({ startMs: here })}>
-              <Flag data-icon="inline-start" className="text-sky-600 dark:text-sky-400" />
+              <Flag data-icon="inline-start" className="text-info-ink" />
               Inicio aquí
             </Button>
             {song.dropMs !== null ? (
@@ -174,7 +175,7 @@ export function SongsScreen() {
             <span>{all.length} canciones</span>
             <span aria-hidden>·</span>
             <span className="inline-flex items-center gap-1.5">
-              <span className="size-2 rounded-full bg-rose-600 dark:bg-rose-400" aria-hidden />
+              <span className="size-2 rounded-full bg-music" aria-hidden />
               {withDrop} con drop
             </span>
           </p>
@@ -191,12 +192,7 @@ export function SongsScreen() {
           No se pudieron cargar las canciones.
         </p>
       ) : all.length === 0 ? (
-        <div className="flex flex-col items-center gap-3 rounded-xl border border-dashed px-6 py-20 text-center text-sm text-muted-foreground">
-          <span className="grid size-12 place-items-center rounded-full bg-muted">
-            <Music className="size-5" aria-hidden />
-          </span>
-          Sin canciones
-        </div>
+        <EmptyState icon={Music} title="Sin canciones" />
       ) : (
         <div className="grid items-start gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]">
           <div className="flex min-w-0 flex-col gap-3">
@@ -230,7 +226,7 @@ export function SongsScreen() {
                 ))}
               </div>
             ) : null}
-            <div className="overflow-hidden rounded-xl bg-card ring-1 ring-foreground/10">
+            <div className="panel overflow-hidden">
               {shown.length === 0 ? (
                 <p className="px-4 py-12 text-center text-sm text-muted-foreground">Nada con «{query}».</p>
               ) : (

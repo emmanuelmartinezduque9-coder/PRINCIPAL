@@ -25,7 +25,7 @@ function StageIcon({ stage, running }: { stage: CheckStage | null | undefined; r
   if (running) return <Loader2 className="size-6 animate-spin text-muted-foreground" aria-hidden />;
   if (!stage) return <CircleMinus className="size-6 text-muted-foreground/50" aria-hidden />;
   return stage.ok ? (
-    <CircleCheck className="size-6 text-emerald-600 dark:text-emerald-500" aria-hidden />
+    <CircleCheck className="size-6 text-success-ink" aria-hidden />
   ) : (
     <CircleX className="size-6 text-destructive" aria-hidden />
   );
@@ -74,7 +74,7 @@ export function SystemCheck() {
   return (
     <section
       aria-label="Comprobar el sistema"
-      className="flex flex-col gap-4 rounded-xl bg-card p-5 ring-1 ring-foreground/10 md:p-6"
+      className="panel flex flex-col gap-4 p-5 md:p-6"
     >
       <div className="flex items-center justify-between gap-3">
         <h2 className="text-base font-semibold tracking-tight">Sistema</h2>
@@ -110,7 +110,7 @@ export function SystemCheck() {
       </ol>
 
       {running && status?.workerSilent ? (
-        <p role="alert" className="rounded-lg bg-amber-500/10 px-3 py-2 text-sm font-medium">
+        <p role="alert" className="rounded-lg bg-warning/10 px-3 py-2 text-sm font-medium">
           El trabajador no responde todavía
         </p>
       ) : running ? null : last ? (
@@ -118,7 +118,7 @@ export function SystemCheck() {
           role={last.ok ? "status" : "alert"}
           className={cn(
             "rounded-lg px-3 py-2 text-sm",
-            last.ok ? "bg-emerald-600/10 text-foreground" : "bg-destructive/10 text-foreground",
+            last.ok ? "bg-success/10 text-foreground" : "bg-destructive/10 text-foreground",
           )}
         >
           {last.ok ? (

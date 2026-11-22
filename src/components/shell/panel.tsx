@@ -13,7 +13,7 @@ export function Panel({
   children: React.ReactNode;
 }) {
   return (
-    <section className={cn("flex flex-col gap-5 rounded-xl bg-card p-5 ring-1 ring-foreground/10 md:p-6", className)}>
+    <section className={cn("panel flex flex-col gap-5 p-5 md:p-6", className)}>
       {title ? (
         <div className="flex min-h-6 items-center justify-between gap-3">
           <h2 className="text-base font-semibold tracking-tight">{title}</h2>

@@ -118,7 +118,7 @@ function Loaded({ rule, onChanged }: { rule: RuleView; onChanged: () => Promise<
           <TabsTrigger value="texto">
             Texto
             {unchanged ? null : (
-              <span className="rounded-md bg-amber-100 px-1.5 py-0.5 text-xs leading-none font-medium text-amber-900">
+              <span className="rounded-md bg-warning/15 px-1.5 py-0.5 text-xs leading-none font-medium text-warning-ink">
                 Sin guardar
               </span>
             )}
@@ -132,7 +132,7 @@ function Loaded({ rule, onChanged }: { rule: RuleView; onChanged: () => Promise<
 
         <TabsContent value="texto" forceMount className={cn("flex flex-col data-[state=inactive]:hidden", FILL)}>
           <form
-            className={cn("flex flex-col overflow-hidden rounded-xl bg-card ring-1 ring-foreground/10", FILL)}
+            className={cn("panel flex flex-col overflow-hidden", FILL)}
             onSubmit={(event) => {
               event.preventDefault();
               submit();
@@ -228,7 +228,7 @@ function VersionHistory({
 
   return (
     <div className={cn("grid gap-4 md:grid-cols-[15rem_minmax(0,1fr)] md:grid-rows-[minmax(0,1fr)]", FILL)}>
-      <div className={cn("rounded-xl bg-card ring-1 ring-foreground/10", SCROLL_AREA)}>
+      <div className={cn("panel", SCROLL_AREA)}>
         <ul className={cn("flex flex-col gap-0.5 p-1.5", SCROLL_CONTENT)}>
           {rule.history.map((entry) => {
             const active = entry.version === selected;
@@ -261,7 +261,7 @@ function VersionHistory({
 
       <section
         aria-label={`Texto de la versión ${selected}`}
-        className="flex min-h-[24rem] min-w-0 flex-col overflow-hidden rounded-xl bg-card ring-1 ring-foreground/10 md:min-h-0"
+        className="panel flex min-h-[24rem] min-w-0 flex-col overflow-hidden md:min-h-0"
       >
         <div className="flex min-h-14 shrink-0 flex-wrap items-center justify-between gap-3 border-b px-5 py-2">
           <div className="min-w-0">

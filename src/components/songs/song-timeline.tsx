@@ -135,8 +135,8 @@ export function SongTimeline({
           )}
           style={{ left: pct(shownStart) }}
         >
-          <span className="h-full w-0.5 bg-sky-600 dark:bg-sky-400" />
-          <span className="absolute bottom-0 size-2.5 translate-y-1/2 rotate-45 bg-sky-600 dark:bg-sky-400" />
+          <span className="h-full w-0.5 bg-info" />
+          <span className="absolute bottom-0 size-2.5 translate-y-1/2 rotate-45 bg-info" />
         </span>
         {shownDrop !== null ? (
           <span
@@ -156,8 +156,8 @@ export function SongTimeline({
             )}
             style={{ left: pct(shownDrop) }}
           >
-            <span className="h-full w-0.5 bg-rose-600 dark:bg-rose-400" />
-            <span className="absolute -top-2.5 rounded bg-rose-600 px-1.5 py-0.5 text-[10px] leading-none font-semibold text-white tabular-nums dark:bg-rose-500">
+            <span className="h-full w-0.5 bg-music" />
+            <span className="absolute -top-2.5 rounded bg-music px-1.5 py-0.5 text-[10px] leading-none font-semibold text-white tabular-nums">
               {formatTime(shownDrop)}
             </span>
           </span>
@@ -176,9 +176,9 @@ export function MiniTimeline({ durationMs, dropMs, startMs, className }: { durat
   return (
     <span aria-hidden className={cn("relative block h-3 w-full", className)}>
       <span className="absolute inset-x-0 top-1/2 h-px bg-foreground/20" />
-      {startMs > 0 ? <span className="absolute top-0.5 h-2 w-px bg-sky-600 dark:bg-sky-400" style={{ left: `${(startMs / durationMs) * 100}%` }} /> : null}
+      {startMs > 0 ? <span className="absolute top-0.5 h-2 w-px bg-info" style={{ left: `${(startMs / durationMs) * 100}%` }} /> : null}
       {dropMs !== null ? (
-        <span className="absolute top-0 -ml-1.5 size-3 rounded-full bg-rose-600 ring-2 ring-card dark:bg-rose-400" style={{ left: `${(dropMs / durationMs) * 100}%` }} />
+        <span className="absolute top-0 -ml-1.5 size-3 rounded-full bg-music ring-2 ring-card" style={{ left: `${(dropMs / durationMs) * 100}%` }} />
       ) : null}
     </span>
   );

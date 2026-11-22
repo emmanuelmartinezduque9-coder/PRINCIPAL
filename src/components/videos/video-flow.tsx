@@ -186,8 +186,8 @@ function FlowBody({
       <PageHeader back={back} title={video.title} />
 
       {!data.mine ? (
-        <p role="status" className="flex items-center gap-2.5 rounded-xl bg-sky-500/10 px-4 py-3 text-sm ring-1 ring-sky-500/20">
-          <Eye className="size-4 shrink-0 text-sky-700 dark:text-sky-400" aria-hidden />
+        <p role="status" className="flex items-center gap-2.5 rounded-xl bg-info/10 px-4 py-3 text-sm ring-1 ring-info/20">
+          <Eye className="size-4 shrink-0 text-info-ink" aria-hidden />
           Este vídeo es de {data.creatorName ?? "otra persona"}. Puedes verlo, pero solo esa persona puede continuarlo.
         </p>
       ) : null}

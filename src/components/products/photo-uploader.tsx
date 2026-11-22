@@ -71,10 +71,10 @@ export const ROLE_ICONS: Record<PhotoRole, LucideIcon> = {
 
 /** Un color propio por papel: se reconoce de un vistazo sin leer nada. */
 export const ROLE_TINT: Record<PhotoRole, string> = {
-  articulo: "bg-amber-500 text-white",
-  embalaje: "bg-sky-500 text-white",
-  avatar: "bg-violet-500 text-white",
-  entorno: "bg-emerald-500 text-white",
+  articulo: "bg-warning text-white",
+  embalaje: "bg-info text-white",
+  avatar: "bg-kind-adapt text-white",
+  entorno: "bg-success text-white",
   otro: "bg-slate-500 text-white",
 };
 

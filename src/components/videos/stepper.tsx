@@ -40,7 +40,7 @@ export function Stepper<K extends string>({ steps, current, onSelect }: { steps:
                     aria-hidden
                     className={cn(
                       "grid size-8 shrink-0 place-items-center rounded-full",
-                      step.done ? "bg-emerald-500 text-white" : active ? "bg-foreground text-background" : "bg-muted text-muted-foreground",
+                      step.done ? "bg-success text-white" : active ? "bg-foreground text-background" : "bg-muted text-muted-foreground",
                     )}
                   >
                     <Icon className="size-4" />

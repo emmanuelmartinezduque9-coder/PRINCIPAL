@@ -31,9 +31,9 @@ function NewToken({ token, onDone }: { token: string; onDone: () => void }) {
     }
   }
   return (
-    <div className="flex flex-col gap-3 rounded-xl bg-amber-500/10 p-4 ring-1 ring-amber-500/25" role="status">
+    <div className="flex flex-col gap-3 rounded-xl bg-warning/10 p-4 ring-1 ring-warning/25" role="status">
       <p className="flex items-center gap-2 text-sm font-medium">
-        <KeyRound className="size-4 text-amber-600" aria-hidden />
+        <KeyRound className="size-4 text-warning-ink" aria-hidden />
         Cópiala ahora: no se vuelve a enseñar
       </p>
       <div className="flex items-center gap-2">
@@ -56,7 +56,7 @@ function NewToken({ token, onDone }: { token: string; onDone: () => void }) {
 function AgentRow({ agent, onRevoke }: { agent: Agent; onRevoke: () => void }) {
   return (
     <li className="flex items-center gap-3 py-2.5">
-      <span className={cn("grid size-9 shrink-0 place-items-center rounded-full", agent.online ? "bg-emerald-500/12 text-emerald-700 dark:text-emerald-400" : "bg-muted text-muted-foreground")}>
+      <span className={cn("grid size-9 shrink-0 place-items-center rounded-full", agent.online ? "bg-success/12 text-success-ink" : "bg-muted text-muted-foreground")}>
         <Laptop className="size-4" aria-hidden />
       </span>
       <div className="flex min-w-0 flex-1 flex-col leading-tight">
@@ -128,7 +128,7 @@ export function MacCard() {
       actions={
         data ? (
           <span className="inline-flex items-center gap-2 text-sm" role="status">
-            <span aria-hidden className={cn("size-2 rounded-full", online ? "bg-emerald-500" : "bg-foreground/25")} />
+            <span aria-hidden className={cn("size-2 rounded-full", online ? "bg-success" : "bg-foreground/25")} />
             {online ? "Conectado" : "Sin conexión"}
             {data.lastSeenAt ? <span className="text-muted-foreground">· {seenAgo(data.lastSeenAt)}</span> : null}
           </span>

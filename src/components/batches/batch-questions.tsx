@@ -7,6 +7,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { toast } from "sonner";
+import { EmptyState } from "@/components/shell/empty-state";
 import { PageHeader } from "@/components/shell/page-header";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -43,10 +44,10 @@ function QuestionItem({ batchId, question, row }: { batchId: number; question: B
   const choices = question.options.filter((option) => option.value !== SKIP);
   const skip = question.options.find((option) => option.value === SKIP);
   return (
-    <li className="grid grid-cols-[3.5rem_minmax(0,1fr)] gap-4 rounded-xl bg-card p-4 ring-1 ring-foreground/10">
+    <li className="panel grid grid-cols-[4.5rem_minmax(0,1fr)] gap-5 p-5 transition-shadow duration-200 hover:shadow-raised">
       {row ? (
         <Link href={videoHref(row)} tabIndex={-1} aria-hidden>
-          <RowThumb row={row} className="h-[6.2rem] w-14" />
+          <RowThumb row={row} className="h-32 w-[4.5rem] rounded-lg shadow-card" />
         </Link>
       ) : (
         <span />
@@ -70,8 +71,8 @@ function QuestionItem({ batchId, question, row }: { batchId: number; question: B
                   aria-label={option.label}
                   title={option.label}
                   className={cn(
-                    "relative overflow-hidden rounded-lg ring-1 ring-foreground/10 outline-none hover:ring-2 hover:ring-foreground/40 focus-visible:ring-3 focus-visible:ring-ring/50 disabled:opacity-50",
-                    option.avatarId ? "h-20 w-15" : "size-14",
+                    "relative overflow-hidden rounded-xl ring-1 ring-foreground/10 outline-none transition-[box-shadow,transform] duration-150 hover:-translate-y-0.5 hover:shadow-raised hover:ring-2 hover:ring-brand/50 focus-visible:ring-3 focus-visible:ring-ring/50 disabled:opacity-50",
+                    option.avatarId ? "h-28 w-21" : "size-24",
                   )}
                 >
                   {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -88,7 +89,7 @@ function QuestionItem({ batchId, question, row }: { batchId: number; question: B
                   ) : null}
                 </button>
               ) : (
-                <Button key={option.value} variant="outline" className="h-9 px-3" disabled={saving !== null} onClick={() => void answer(option.value)}>
+                <Button key={option.value} variant="outline" className="h-10 px-4" disabled={saving !== null} onClick={() => void answer(option.value)}>
                   {saving === option.value ? <Loader2 className="animate-spin" data-icon="inline-start" /> : null}
                   {option.label}
                 </Button>
@@ -171,9 +172,9 @@ function BudgetPanel({ batchId, ready, waiting }: { batchId: number; ready: bool
   }
 
   return (
-    <aside className="flex flex-col gap-4 rounded-xl bg-card p-5 ring-1 ring-foreground/10 lg:sticky lg:top-6">
+    <aside className="panel flex flex-col gap-4 p-5 lg:sticky lg:top-6">
       <h2 className="flex items-center gap-2 text-base font-semibold">
-        <Coins className="size-4 text-muted-foreground" aria-hidden />
+        <span className="grid size-8 place-items-center rounded-lg bg-brand/10 text-brand-ink"><Coins className="size-4" aria-hidden /></span>
         Presupuesto
       </h2>
       {!ready ? (
@@ -218,7 +219,7 @@ function BudgetPanel({ batchId, ready, waiting }: { batchId: number; ready: bool
               Te faltan {creditsLabel(short)}
             </p>
           ) : null}
-          <Button className="h-10 gap-2" disabled={confirming || failed !== undefined || quote.isFetching} onClick={() => void confirm()}>
+          <Button className="h-11 gap-2 text-[0.95rem]" disabled={confirming || failed !== undefined || quote.isFetching} onClick={() => void confirm()}>
             {confirming ? <Loader2 className="animate-spin" data-icon="inline-start" /> : <Sparkles data-icon="inline-start" />}
             Generar lote · ~{creditsLabel(data.total)}
           </Button>
@@ -247,8 +248,15 @@ export function BatchQuestions({ batchId }: { batchId: number }) {
   if (board.isLoading) {
     return (
       <div className="flex flex-col gap-6" aria-label="Cargando">
-        <Skeleton className="h-16 w-64" />
-        <Skeleton className="h-80 w-full rounded-xl" />
+        <Skeleton className="mt-7 h-9 w-72" />
+        <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_20rem]">
+          <div className="flex flex-col gap-3">
+            {[0, 1, 2].map((i) => (
+              <Skeleton key={i} className="h-40 rounded-xl" />
+            ))}
+          </div>
+          <Skeleton className="h-64 rounded-xl" />
+        </div>
       </div>
     );
   }
@@ -256,9 +264,7 @@ export function BatchQuestions({ batchId }: { batchId: number }) {
     return (
       <div className="flex flex-col gap-6">
         <PageHeader back={{ href: "/lotes", label: "Lotes" }} title="Lote no encontrado" />
-        <div className="grid place-items-center rounded-xl border border-dashed py-16 text-muted-foreground">
-          <SearchX className="size-5" aria-hidden />
-        </div>
+        <EmptyState icon={SearchX} title="Este lote no existe" />
       </div>
     );
   }
@@ -271,14 +277,16 @@ export function BatchQuestions({ batchId }: { batchId: number }) {
     return (
       <div className="flex flex-col gap-6">
         <PageHeader back={back} title="Preguntas del lote" />
-        <div className="flex flex-col items-center gap-4 rounded-xl border border-dashed px-6 py-16">
-          <span className="grid size-12 place-items-center rounded-full bg-emerald-500/12 text-emerald-700 dark:text-emerald-400">
-            <Check className="size-5" aria-hidden />
-          </span>
-          <Link href={`/lotes/${batchId}`} className={cn(buttonVariants({ variant: "outline" }), "h-10 px-4")}>
-            Ver el lote
-          </Link>
-        </div>
+        <EmptyState
+          icon={Check}
+          tone="success"
+          title="Preguntas respondidas"
+          action={
+            <Link href={`/lotes/${batchId}`} className={cn(buttonVariants({ variant: "outline" }), "h-10 px-4")}>
+              Ver el lote
+            </Link>
+          }
+        />
       </div>
     );
   }
@@ -298,10 +306,7 @@ export function BatchQuestions({ batchId }: { batchId: number }) {
             ))}
           </ul>
         ) : (
-          <div className="flex flex-col items-center gap-3 rounded-xl border border-dashed px-6 py-16 text-muted-foreground">
-            {auto.readyToConfirm ? <PartyPopper className="size-5" aria-hidden /> : <Loader2 className="size-5 animate-spin" aria-hidden />}
-            <span className="text-sm">{auto.readyToConfirm ? "Sin preguntas" : "Desglosando…"}</span>
-          </div>
+          <EmptyState icon={auto.readyToConfirm ? PartyPopper : Loader2} tone={auto.readyToConfirm ? "success" : "busy"} title={auto.readyToConfirm ? "Sin preguntas" : "Desglosando…"} />
         )}
         <BudgetPanel batchId={batchId} ready={auto.readyToConfirm} waiting={Math.max(0, waiting)} />
       </div>
