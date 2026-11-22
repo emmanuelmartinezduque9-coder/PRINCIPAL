@@ -28,3 +28,9 @@ Dicho por el dueño: una de sus formas de trabajar es **generar solo el gancho y
 Para eso necesita una **biblioteca con todos los vídeos generados en la cuenta**, que al elegir "reutilizar un vídeo como cuerpo" **cargue bien y rápido** y deje **ver cada vídeo antes de seleccionarlo**. Con Codex, al compartir la aplicación, no cargaba nada e iba muy lento (los archivos estaban en su Mac y se perdían).
 
 Consecuencia técnica (decisión del constructor): los clips generados y sus miniaturas tienen que guardarse en la nube (almacén de objetos), no depender del Mac ni de enlaces de Higgsfield que caducan; la vista previa debe ser ligera (miniatura + vídeo reducido).
+
+## Recomendaciones de nichos y ángulos (22/11/2026)
+- No añadir avisos de marcas ni de propiedad intelectual a las recomendaciones: la decisión de usarlas es
+  responsabilidad del dueño. El trabajo es recomendar el nicho o ángulo que más vende, **avalado con datos
+  reales** (vistas, interacción, anuncios activos, tiendas que lo venden), sin descartar por ser de marca.
+- Sección futura en la app: ángulos y nichos por producto basados en datos (después de dejar listos los lotes).
