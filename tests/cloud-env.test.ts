@@ -18,6 +18,9 @@ describe("checkCloudEnv", () => {
       "En la nube no se puede desactivar el inicio de sesión (PRINCIPAL_AUTH=off).",
     );
     expect(checkCloudEnv({ ...ok, PUBLIC_URL: "http://x" }).problems).toContain("PUBLIC_URL debe empezar por https://.");
+    expect(checkCloudEnv({ ...ok, PRINCIPAL_HIGGSFIELD_FAKE: "1" }).problems).toContain(
+      "En la nube no se puede usar el Higgsfield simulado (PRINCIPAL_HIGGSFIELD_FAKE).",
+    );
   });
 
   it("VAULT_KEY usa la misma validación estricta que la bóveda", () => {

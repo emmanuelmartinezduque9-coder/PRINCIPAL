@@ -2,6 +2,7 @@ import { sql } from "drizzle-orm";
 import {
   bigint,
   bigserial,
+  boolean,
   check,
   customType,
   index,
@@ -228,4 +229,41 @@ export const jobSteps = pgTable(
     updatedAt: instant("updated_at").notNull().defaultNow(),
   },
   (t) => [index("job_steps_status").on(t.status)],
+);
+
+/**
+ * Conexiones de Higgsfield a medio hacer: una fila por cada «Conectar» pulsado, hasta que vuelve
+ * la persona (o caduca a los 10 minutos). Se guarda la huella del `state`, nunca el `state`, y el
+ * verificador PKCE cifrado y ligado a la persona y a esa huella. Un `state` vale una sola vez
+ * (`delete … returning`). Solo `src/connectors/higgsfield/oauth.ts` la toca. Sin clave ajena,
+ * igual que `credentials`.
+ */
+export const oauthPending = pgTable(
+  "oauth_pending",
+  {
+    stateHash: text("state_hash").primaryKey(),
+    userId: bigint("user_id", { mode: "number" }).notNull(),
+    verifierEnc: text("verifier_enc").notNull(),
+    createdAt: instant("created_at").notNull().defaultNow(),
+    expiresAt: instant("expires_at").notNull(),
+  },
+  (t) => [index("oauth_pending_user").on(t.userId)],
+);
+
+/**
+ * Sonda periódica de cada conexión de Higgsfield (cuánto dura el permiso, si refrescar funciona).
+ * Nunca guarda permisos: solo si fue bien, si hubo refresco y un detalle corto.
+ * Solo `src/server/higgsfield.ts` la toca.
+ */
+export const higgsfieldProbeLog = pgTable(
+  "higgsfield_probe_log",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    at: instant("at").notNull().defaultNow(),
+    userId: bigint("user_id", { mode: "number" }).notNull(),
+    ok: boolean("ok").notNull(),
+    refreshed: boolean("refreshed").notNull(),
+    detail: text("detail"),
+  },
+  (t) => [index("higgsfield_probe_log_user").on(t.userId, t.at)],
 );

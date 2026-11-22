@@ -44,6 +44,10 @@ const JOB_STEPS_TABLE = [/schema\.jobSteps\b/, /\bjob_steps\b/];
 const PG_BOSS = /["']pg-boss["']/;
 const JOBS_LAYER = "src/jobs/";
 
+/** El SDK de MCP (cualquier paquete `@modelcontextprotocol/*`): solo el conector de Higgsfield. */
+const MCP_SDK = /@modelcontextprotocol\//;
+const HIGGSFIELD_LAYER = "src/connectors/higgsfield/";
+
 describe("límites del código", () => {
   it("encuentra el código fuente (la comprobación no pasa por no mirar nada)", () => {
     expect(files.some((f) => f.rel === "src/server/access.ts")).toBe(true);
@@ -100,6 +104,24 @@ describe("límites del código", () => {
     const offenders = files
       .filter((f) => !f.rel.startsWith(LLM_LAYER))
       .filter((f) => ANTHROPIC_SDK.test(f.text))
+      .map((f) => f.rel);
+    expect(offenders).toEqual([]);
+  });
+
+  it("solo src/connectors/higgsfield importa el SDK de MCP", () => {
+    expect(MCP_SDK.test('import { Client } from "@modelcontextprotocol/client";')).toBe(true);
+    expect(files.some((f) => f.rel === "src/connectors/higgsfield/mcp.ts" && MCP_SDK.test(f.text))).toBe(true);
+    const offenders = files
+      .filter((f) => !f.rel.startsWith(HIGGSFIELD_LAYER))
+      .filter((f) => MCP_SDK.test(f.text))
+      .map((f) => f.rel);
+    expect(offenders).toEqual([]);
+  });
+
+  it("dentro del conector, solo mcp.ts importa el SDK de MCP", () => {
+    const offenders = files
+      .filter((f) => f.rel.startsWith(HIGGSFIELD_LAYER) && f.rel !== "src/connectors/higgsfield/mcp.ts")
+      .filter((f) => MCP_SDK.test(f.text))
       .map((f) => f.rel);
     expect(offenders).toEqual([]);
   });

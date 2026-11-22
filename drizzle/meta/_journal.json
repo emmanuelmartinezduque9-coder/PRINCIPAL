@@ -71,6 +71,13 @@
       "when": 1795328342083,
       "tag": "0009_rich_steel_serpent",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1795329716354,
+      "tag": "0010_marvelous_doctor_strange",
+      "breakpoints": true
     }
   ]
 }

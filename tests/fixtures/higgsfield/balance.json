@@ -1,0 +1,6 @@
+{
+  "_origen": "supuesto",
+  "_nota": "Forma supuesta de la herramienta `balance` (el esquema publica entradas, no respuestas). Se sustituye por la captura real en la PUERTA de la Tarea 1.",
+  "isError": false,
+  "structuredContent": { "credits": 1234, "plan": "plus" }
+}

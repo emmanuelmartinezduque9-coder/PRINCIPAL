@@ -128,6 +128,22 @@ primer despliegue con este cambio quien coordina mira el registro:
 Tú no tienes que hacer nada. Mientras falte ffmpeg la web arranca con normalidad y solo fallan
 los vídeos de referencia.
 
+## Higgsfield (conexión de cada persona)
+
+Cada persona conecta **su propia** cuenta de Higgsfield en **Ajustes**. No hace falta ninguna
+clave de Higgsfield en Railway. Lo que sí importa:
+
+- `PUBLIC_URL` debe ser la dirección pública de la web (`https://…up.railway.app`): con ella se
+  construye la dirección de vuelta `<PUBLIC_URL>/api/higgsfield/callback`. Si cambia, la web se
+  vuelve a registrar sola en Higgsfield y cada persona tiene que conectar otra vez.
+- `PRINCIPAL_HIGGSFIELD_CLIENT=cimd` (opcional): en lugar de registrarse, la web se identifica con
+  su documento público `<PUBLIC_URL>/api/higgsfield/cliente`. Solo se pone para probarlo; sin ella,
+  registro dinámico.
+- `PRINCIPAL_HIGGSFIELD_FAKE` **nunca** en Railway: es el Higgsfield simulado para el propio
+  ordenador y la web no arranca en la nube si está puesta.
+- El proceso en segundo plano lee el saldo de cada conexión cada 6 horas (no gasta créditos) y lo
+  anota en la tabla `higgsfield_probe_log`.
+
 ## Publicar un cambio más adelante
 
 Quien trabaja en el código (Claude) sube los cambios con `git push origin main`. Entonces:

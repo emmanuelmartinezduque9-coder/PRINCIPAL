@@ -66,6 +66,17 @@ export async function credentialStatus(
   return { connected: true, meta: row.meta as Record<string, unknown>, updatedAt: row.updatedAt };
 }
 
+/** Personas que tienen guardada una credencial de ese tipo (sin leer ningún secreto). */
+export async function listCredentialUsers(kind: string): Promise<number[]> {
+  check(0, kind);
+  const rows = await getDb()
+    .select({ userId: schema.credentials.userId })
+    .from(schema.credentials)
+    .where(eq(schema.credentials.kind, kind))
+    .orderBy(schema.credentials.userId);
+  return rows.map((row) => row.userId);
+}
+
 export async function deleteCredential(userId: number, kind: string): Promise<void> {
   check(userId, kind);
   await getDb().delete(schema.credentials).where(where(userId, kind));

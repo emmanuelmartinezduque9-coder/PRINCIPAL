@@ -31,7 +31,10 @@ export function checkCloudEnv(env: Env): { problems: string[]; warnings: string[
   if (env.PRINCIPAL_AUTH === "off") {
     problems.push("En la nube no se puede desactivar el inicio de sesión (PRINCIPAL_AUTH=off).");
   }
-  if (env.PUBLIC_URL?.trim() && !env.PUBLIC_URL.trim().startsWith("https://")) {
+  if (env.PRINCIPAL_HIGGSFIELD_FAKE === "1") {
+    problems.push("En la nube no se puede usar el Higgsfield simulado (PRINCIPAL_HIGGSFIELD_FAKE).");
+  }
+  if (env.PUBLIC_URL?.trim() &&!env.PUBLIC_URL.trim().startsWith("https://")) {
     problems.push("PUBLIC_URL debe empezar por https://.");
   }
   if (!env.ANTHROPIC_API_KEY?.trim()) {
