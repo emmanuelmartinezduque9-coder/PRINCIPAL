@@ -53,3 +53,6 @@ Vistas = contador que muestra la cuadrícula (Instagram en español: 'mil' = mil
 ## Límites
 - No se vio el diseño real del paraguas ni la tienda.
 - Se abrieron 2 de 12 reels.
+
+## Datos previos (Trendtrack, no vistos en esta sesión)
+- Una búsqueda anterior en Trendtrack dio una coincidencia difusa por nombre (cryptweave.shop), sin datos ni confirmación. El enlace de la bio (cryptweave.shop/products/cathedral-umbrella) confirma ahora ese dominio.

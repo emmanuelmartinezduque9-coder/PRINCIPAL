@@ -3,45 +3,57 @@
 ```json
 {
   "handle": "kloudwel",
-  "producto": "no verificado",
-  "mecanismo": "no verificado",
-  "mercado": "no verificado",
-  "audiencia": "no verificado",
-  "angulo": "no verificado",
+  "producto": "Kloud Chair: silla ('the last chair you’ll ever need') [visto: bio y enlace kloudwel.com/products/kloud-chair]",
+  "mecanismo": "no verificado (no se vio en vídeo); [inferido] silla de oficina/home office por #wfh",
+  "mercado": "[visto] inglés; #wfh, #christmas",
+  "audiencia": "[visto] gente que trabaja desde casa (#wfh) y regalo de Navidad ('Send this to someone who needs this for Christmas')",
+  "angulo": "[visto] comodidad ('Life’s better on a Kloud') + compartir con alguien ('Send this to someone who...') en vez de comentar",
   "evidencia": [
-    "ventas comunicadas por el dueño"
+    "ventas comunicadas por el dueño",
+    "señales públicas: 36,6 mil seguidores, 175 publicaciones [visto]",
+    "reels con 396 mil, 188 mil, 87,8 mil vistas [visto]",
+    "ventas comunicadas por el dueño (se mantiene; no verificadas)"
   ]
 }
 ```
 
-> Estado: **caso NO analizable con datos propios**. Fecha de intento: 2026-11-22. Ningún dato de esta ficha procede de ver la cuenta.
+> Estado: datos vistos en el perfil público abierto en el navegador del dueño el 2026-11-22 (https://www.instagram.com/kloudwel/). Solo lectura. Marcas: [visto] = observado en pantalla; [inferido] = deducción mía.
 
-## Qué se intentó y resultado
-- Trendtrack `lookup` por handle: ver abajo
-- Perfil de Instagram: `www.instagram.com` no resuelve desde la sesión en la nube (bloqueo de red). Tampoco la tienda enlazada ni `/products.json`.
-- yt-dlp en el Mac del dueño (solo metadatos, sin cookies), probado con @mybubblebrella: `ERROR [instagram:user] Unable to extract data` (extractor marcado como roto; Instagram exige sesión). Siguiendo la regla, **no se intentó rodearlo ni se probó con el resto de cuentas**.
-
-## Campos pedidos
+## Perfil
 | Campo | Valor | Marca |
 |---|---|---|
-| Producto / mecanismo | Sin datos | - |
-| URL de tienda | Sin confirmar | - |
-| Precio | Sin datos | - |
-| Mercado/idioma | Sin datos | - |
-| Bio y posicionamiento | Sin datos | - |
-| Audiencia y ángulo (comprador × usuario × momento × motivo × utilidad real) | Sin datos | - |
-| Conceptos de vídeo / hooks / ejemplos top (URL, vistas, fecha) | Sin datos; no se inventa ninguno | - |
-| CTA | Sin datos | - |
+| Nombre | Kloudwel (kloudwel) | [visto] |
+| Seguidores / siguiendo / publicaciones | 36,6 mil / 31 / 175 | [visto] |
+| Bio | ☁️ Life’s better on a Kloud / 🩵 The last chair you’ll ever need / 👇grab yours here👇 | [visto] |
+| Enlace | kloudwel.com/products/kloud-chair (destacadas: Giveaway!, Collabs) | [visto] |
 
-## Pistas (solo [inferido], baja fiabilidad)
-- [inferido] 'Kloud' sugiere comodidad/nube. 
+## Reels recientes (cuadrícula /reels/, ordenados por vistas)
+Vistas = contador que muestra la cuadrícula (Instagram en español: 'mil' = miles, 'M' = millones; cifras redondeadas por Instagram). Fecha, likes, comentarios y texto solo donde se abrió el reel.
 
-## Datos de Trendtrack (únicos datos reales obtenidos)
-- [visto, Trendtrack] Trendtrack (lookup + search_shops exact, 2 créditos), coincidencia exacta por NOMBRE con kloudwel.com (id 2d46ef82-ce60-4895-9eb3-effa0ad5f433; página FB 1225647883960397 'KloudweL'). Datos de Trendtrack, fecha 2026-11-22: tienda creada 2026-06-22, país US, USD, 2 productos, categoría 'Business & Industrial'; best sellers: 'Kloud Chair' 349 USD y 'The Dryft' 199 USD; visitas mensuales 23.551 (jul 7.355, ago 13.733, sep 8.305; histórico del feed), 90,6% US / 9,4% IT; anuncios activos Meta 0 (1 en la semana del 2026-08-31, 0 desde entonces); sin TikTok indexado; sin estimación de ventas (sales=null). Ad de vídeo registrado: https://medias.trendtrack.io/facebook/video/929adc5fae88b01f6e60376d2b82e12f29d88ce183881f1d519813dccc3d5363.mp4 (miniatura https://medias.trendtrack.io/facebook/thumbnails/629aa4cb75b84dfe28382a91e02287448618e197c9b04dab3c601ee75daab359.jpg). Falta confirmar que el IG @kloudwel sea esta tienda.
+| Reel | Vistas | Fecha | Likes | Comentarios | Texto (caption) | Marca |
+|---|---|---|---|---|---|---|
+| https://www.instagram.com/reel/Df_lBtouqt-/ | 396 mil | 2026-11-20 | 3.685 | 23 | Send this to someone who needs this for Christmas ☁️🤭 #wfh #christmas (audio: Anniqa · 9 to 5) | [visto] |
+| https://www.instagram.com/reel/Df8xU9AOpxe/ | 188 mil | 2026-11-19 | 816 | 8 | Send this to someone who can’t sit still ☁️🤭 #wfh #cloud | [visto] |
+| https://www.instagram.com/reel/DgBeq25IOwY/ | 87,8 mil | no abierto | - | - | no leído | [visto] vistas |
+| https://www.instagram.com/reel/Df_gYMkOHW6/ | 61,6 mil | no abierto | - | - | no leído | [visto] vistas |
+| https://www.instagram.com/reel/Df-MbGyv6Xm/ | 60 mil | no abierto | - | - | no leído | [visto] vistas |
+| https://www.instagram.com/reel/DfLEZ0BPSH9/ | 39,8 mil | no abierto | - | - | no leído | [visto] vistas |
+| https://www.instagram.com/reel/DbR7zLSubPB/ | 28 mil | no abierto | - | - | no leído | [visto] vistas |
+| https://www.instagram.com/reel/Df_nYYQxAK4/ | 25,4 mil | no abierto | - | - | no leído | [visto] vistas |
+| https://www.instagram.com/reel/DfiZRn5OEBa/ | 21,7 mil | no abierto | - | - | no leído | [visto] vistas |
+| https://www.instagram.com/reel/DgBJZKropUu/ | 6781 | no abierto | - | - | no leído | [visto] vistas |
+| https://www.instagram.com/reel/Df8WC8Yoz28/ | 2979 | no abierto | - | - | no leído | [visto] vistas |
+| https://www.instagram.com/reel/DgBvV5cOmIS/ | 1448 | no abierto | - | - | no leído | [visto] vistas |
 
-## Nivel de evidencia
-- `ventas comunicadas por el dueño` (afirmación suya, sin verificar)
-- No hay `señales públicas` (vistas/seguidores) verificadas.
+## Audiencia y ángulo
+- [visto] CTA diferente al resto de cuentas: 'Send this to someone who...' (compartir), no 'Comment X'. Pocos comentarios (8-23) pero miles de likes.
+- [visto] Cada caption cambia el destinatario ('needs this for Christmas', 'can’t sit still') con la misma estructura y emoji ☁️🤭.
+- [visto] Vínculo confirmado: el enlace de la bio es kloudwel.com, la tienda que apareció en Trendtrack (ver abajo).
 
-## Para completar
-Permitir en red `instagram.com` y el dominio de la tienda, o pegar aquí bio, enlace, 5-10 reels top (URL + vistas) y el `products.json`; o capturas del perfil.
+## Límites
+- Precio en tienda no verificado por mí (el de Trendtrack es un dato previo).
+- Se abrieron 2 de 12 reels.
+
+## Datos de Trendtrack (previos, no vistos en esta sesión)
+- [visto, Trendtrack, 2026-11-22] coincidencia exacta por nombre con kloudwel.com (id 2d46ef82-ce60-4895-9eb3-effa0ad5f433; página FB 'KloudweL'): tienda creada 2026-06-22, país US, USD, 2 productos; best sellers 'Kloud Chair' 349 USD y 'The Dryft' 199 USD; visitas mensuales 23.551 (jul 7.355, ago 13.733, sep 8.305); 90,6% US / 9,4% IT; anuncios activos Meta 0 (1 en la semana del 2026-08-31); sin TikTok indexado; sin estimación de ventas.
+- El enlace de la bio del IG (kloudwel.com/products/kloud-chair) confirma ahora que @kloudwel es esta tienda.
