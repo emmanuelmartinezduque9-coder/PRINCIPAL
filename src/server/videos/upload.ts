@@ -6,6 +6,7 @@ import { and, eq, inArray, lt, notExists, sql } from "drizzle-orm";
 import { HIGGSFIELD_KIND, HiggsfieldAuthError, type HiggsfieldPort } from "@/connectors/higgsfield";
 import { getDb, schema } from "@/db/client";
 import { enqueueJob } from "@/jobs/boss";
+import { cancelLinkTasks } from "@/server/agent-tasks";
 import type { AuthUser } from "@/server/auth";
 import { credentialStatus } from "@/server/credentials";
 import { HttpError } from "@/server/http";
@@ -21,8 +22,11 @@ import { getVideoFor, MAX_REFERENCE_BYTES, requireVideoOwner } from "@/server/vi
  *
  * El archivo lo sube la persona desde el navegador o, si pegó un enlace, el agente del Mac en su
  * nombre (`src/server/agent.ts`), por estas mismas funciones: la sesión del Mac no anuncia el
- * tamaño (no lo sabe hasta descargar) y lleva la tarea en `agentTaskId`. Un vídeo que espera un
- * enlace está «subiendo» con origen «enlace».
+ * tamaño (no lo sabe hasta descargar) y lleva la tarea en `agentTaskId`. El enlace que un vídeo
+ * espera está apuntado en el propio vídeo (`linkTaskId`), no se deduce de su estado: una
+ * referencia que ya estaba lista sigue lista hasta que el archivo del Mac llega entero.
+ *
+ * Orden de los cerrojos, aquí y en el agente: el vídeo, después la tarea del Mac, después la sesión.
  *
  * Quien encola tiene que tener definido el trabajo: las rutas que terminan una subida importan
  * `@/jobs/video-jobs` (aquí no, para no crear un ciclo de importaciones).
@@ -47,10 +51,10 @@ const NOT_FOUND = "Subida no encontrada.";
 const INCOMPLETE = "El vídeo no ha llegado entero. Inténtalo de nuevo.";
 export const UPLOAD_GONE = "La subida se ha interrumpido. Vuelve a elegir el vídeo.";
 export const PREPARE_FAILED = "No se pudo preparar el vídeo. Vuelve a subirlo.";
-/** Lo único que ve la persona cuando el Mac no consigue traer un enlace, sea cual sea el motivo. */
-export const LINK_FAILED = "No se pudo descargar el enlace. Sube el archivo del vídeo.";
 /** Nombre de archivo de las subidas del Mac (no tienen uno propio). */
 const LINK_FILENAME = "enlace";
+/** Lo que se apunta en la tarea del Mac cuando la persona sube un archivo en su lugar. */
+const REPLACED_BY_FILE = "Sustituida por la subida de un archivo.";
 
 /** 24 bytes aleatorios en base64url: imposible de adivinar y seguro como nombre de archivo. */
 const UPLOAD_ID = /^[A-Za-z0-9_-]{32}$/;
@@ -109,7 +113,8 @@ export async function requireHiggsfieldConnected(userId: number): Promise<void> 
  * descarta con su archivo. El vídeo pasa a «subiendo», salvo si su referencia ya está lista:
  * esa se queda como está hasta terminar la nueva subida. `deps` no se usa: la conexión se
  * comprueba en la bóveda, sin llamar a Higgsfield (se acepta para que quien llama pase el mismo
- * simulado que al resto).
+ * simulado que al resto). Si el vídeo esperaba un enlace del Mac, esa tarea se cancela aquí mismo:
+ * así el Mac no puede reservarla después y llevarse por delante esta subida.
  *
  * Orden de los cerrojos en todo este módulo: primero el vídeo, después la sesión.
  */
@@ -139,6 +144,8 @@ export async function startUpload(
       .for("update");
     if (!locked) throw new HttpError(404, "Vídeo no encontrado.");
     if (locked.referenceStatus === "processing") throw new HttpError(409, STILL_PROCESSING);
+    // El enlace que esperara del Mac (o el fallo de uno anterior) deja de contar.
+    await cancelLinkTasks(tx, video.id, REPLACED_BY_FILE);
     const old = await tx
       .delete(schema.uploadSessions)
       .where(eq(schema.uploadSessions.videoId, video.id))
@@ -146,14 +153,15 @@ export async function startUpload(
     await tx.insert(schema.uploadSessions).values({ id: uploadId, videoId: video.id, userId: user.id, filename, totalBytes });
     // Una referencia que ya funciona se conserva (estado, fotogramas y recorte) hasta que la nueva
     // subida termine: elegir otro vídeo y abandonar no la pierde. La subida pendiente vive solo
-    // en su sesión. Si el vídeo esperaba un enlace, deja de esperarlo (origen «archivo»): el Mac
-    // suelta esa tarea en cuanto vuelve a preguntar por ella.
-    if (locked.referenceStatus !== "ready") {
-      await tx
-        .update(schema.videos)
-        .set({ referenceStatus: "uploading", referenceError: null, referenceSource: "file", referenceUrl: null, updatedAt: new Date() })
-        .where(eq(schema.videos.id, video.id));
-    }
+    // en su sesión.
+    await tx
+      .update(schema.videos)
+      .set(
+        locked.referenceStatus === "ready"
+          ? { linkTaskId: null }
+          : { linkTaskId: null, referenceStatus: "uploading", referenceError: null, updatedAt: new Date() },
+      )
+      .where(eq(schema.videos.id, video.id));
     return old.map((row) => row.id);
   });
   await removeUploadFiles(discarded);
@@ -165,27 +173,48 @@ type Tx = Parameters<Parameters<ReturnType<typeof getDb>["transaction"]>[0]>[0];
 type Executor = ReturnType<typeof getDb> | Tx;
 type Session = typeof schema.uploadSessions.$inferSelect;
 
+/** La referencia de un vídeo tal como la ve quien coordina un enlace del Mac. */
+export interface LockedReference {
+  createdBy: number;
+  referenceStatus: string;
+  /** El enlace que el vídeo espera (o el último que falló); `null` si ninguno. */
+  linkTaskId: number | null;
+}
+
 /**
- * El vídeo pasa a esperar el archivo de un enlace que traerá el Mac: «subiendo», con origen
- * «enlace» y su dirección. Va dentro de la transacción de quien crea la tarea
- * (`requestLinkDownload`), para que la tarea y el estado del vídeo se guarden juntos. Como
- * `startUpload`: no mientras otra referencia se prepara, y las subidas anteriores del vídeo se
- * descartan; devuelve sus identificadores para borrar los archivos con `removeUploadFiles` al
- * confirmar. A diferencia de una subida, aquí no hay un archivo en el navegador que se pueda
- * abandonar: una referencia lista también pasa a «subiendo».
+ * Bloquea el vídeo hasta el final de la transacción y devuelve el estado de su referencia (`null`
+ * si ya no existe). Quien toca una tarea del Mac y su vídeo en la misma transacción empieza por
+ * aquí: el cerrojo del vídeo va siempre antes que el de la tarea.
  */
-export async function expectLinkReference(tx: Tx, videoId: number, url: string): Promise<string[]> {
-  const [locked] = await tx
-    .select({ referenceStatus: schema.videos.referenceStatus })
+export async function lockVideoReference(tx: Tx, videoId: number): Promise<LockedReference | null> {
+  const [video] = await tx
+    .select({ createdBy: schema.videos.createdBy, referenceStatus: schema.videos.referenceStatus, linkTaskId: schema.videos.linkTaskId })
     .from(schema.videos)
     .where(eq(schema.videos.id, videoId))
     .for("update");
+  return video ?? null;
+}
+
+/**
+ * El vídeo pasa a esperar el enlace de la tarea `agentTaskId`, dentro de la transacción que crea
+ * esa tarea (`startLinkDownload`): así la tarea y el vídeo se guardan juntos. Como `startUpload`:
+ * no mientras otra referencia se prepara, y las subidas anteriores del vídeo se descartan
+ * (devuelve sus identificadores para borrar los archivos con `removeUploadFiles` al confirmar).
+ * **Una referencia lista no se toca** (estado, origen, dirección, recorte y fotogramas) hasta que
+ * el archivo del Mac llegue entero; un vídeo sin referencia pasa a «subiendo».
+ */
+export async function expectLinkReference(tx: Tx, videoId: number, agentTaskId: number): Promise<string[]> {
+  const locked = await lockVideoReference(tx, videoId);
   if (!locked) throw new HttpError(404, "Vídeo no encontrado.");
   if (locked.referenceStatus === "processing") throw new HttpError(409, STILL_PROCESSING);
   const old = await tx.delete(schema.uploadSessions).where(eq(schema.uploadSessions.videoId, videoId)).returning({ id: schema.uploadSessions.id });
   await tx
     .update(schema.videos)
-    .set({ referenceStatus: "uploading", referenceError: null, referenceSource: "link", referenceUrl: url, updatedAt: new Date() })
+    .set(
+      locked.referenceStatus === "ready"
+        ? { linkTaskId: agentTaskId }
+        : { linkTaskId: agentTaskId, referenceStatus: "uploading", referenceError: null, updatedAt: new Date() },
+    )
     .where(eq(schema.videos.id, videoId));
   return old.map((row) => row.id);
 }
@@ -193,10 +222,10 @@ export async function expectLinkReference(tx: Tx, videoId: number, url: string):
 /**
  * Sesión de subida para una tarea del Mac: sin tamaño anunciado (el Mac no lo sabe hasta
  * descargar; el tope de 100 MB se aplica según llegan los trozos) y a nombre de quien creó el
- * vídeo. Solo si el vídeo sigue esperando un enlace: si entretanto la persona subió un archivo,
- * devuelve `null` y no toca nada. Las sesiones que hubiera son de un intento anterior de la misma
- * tarea, que ya nadie tiene: se borran con su archivo. Con `executor`, dentro de la transacción de
- * quien reserva la tarea (cerrojos: la tarea, después el vídeo, después la sesión).
+ * vídeo. Solo si el vídeo sigue esperando esa tarea (`linkTaskId`); si no, devuelve `null` y no
+ * toca nada. Las sesiones que hubiera son de un intento anterior de la misma tarea, que ya nadie
+ * tiene: se borran con su archivo. Con `executor`, dentro de la transacción de quien reserva la
+ * tarea.
  */
 export async function startAgentUpload(
   agentTaskId: number,
@@ -205,16 +234,8 @@ export async function startAgentUpload(
 ): Promise<{ uploadId: string; chunkBytes: number } | null> {
   const uploadId = crypto.randomBytes(24).toString("base64url");
   const discarded = await executor.transaction(async (tx) => {
-    const [video] = await tx
-      .select({
-        createdBy: schema.videos.createdBy,
-        referenceStatus: schema.videos.referenceStatus,
-        referenceSource: schema.videos.referenceSource,
-      })
-      .from(schema.videos)
-      .where(eq(schema.videos.id, videoId))
-      .for("update");
-    if (!video || video.referenceStatus !== "uploading" || video.referenceSource !== "link") return null;
+    const video = await lockVideoReference(tx, videoId);
+    if (!video || video.linkTaskId !== agentTaskId || video.referenceStatus === "processing") return null;
     const old = await tx.delete(schema.uploadSessions).where(eq(schema.uploadSessions.videoId, videoId)).returning({ id: schema.uploadSessions.id });
     await tx
       .insert(schema.uploadSessions)
@@ -226,9 +247,9 @@ export async function startAgentUpload(
   return { uploadId, chunkBytes: CHUNK_BYTES };
 }
 
-/** La sesión de subida de una tarea del Mac, o `null` si ya no existe (la tarea se sustituyó o se cerró). */
-export async function agentUploadId(agentTaskId: number): Promise<string | null> {
-  const [session] = await getDb()
+/** La sesión de subida de una tarea del Mac, o `null` si no tiene (aún no reservada, o ya cerrada). */
+export async function agentUploadId(agentTaskId: number, executor: Executor = getDb()): Promise<string | null> {
+  const [session] = await executor
     .select({ id: schema.uploadSessions.id })
     .from(schema.uploadSessions)
     .where(eq(schema.uploadSessions.agentTaskId, agentTaskId));
@@ -236,17 +257,20 @@ export async function agentUploadId(agentTaskId: number): Promise<string | null>
 }
 
 /**
- * El Mac no pudo traer el enlace: se borra lo que hubiera llegado y, si el vídeo seguía esperando
- * ese enlace, queda en error con el texto fijo (el detalle técnico se queda en la tarea, para el
- * dueño). Si la persona ya subió un archivo, el vídeo no se toca. Con `executor`, dentro de la
- * transacción que cierra la tarea.
+ * La tarea `agentTaskId` no trajo el enlace (falló, caducó o nadie la recogió): se borra lo que
+ * hubiera llegado y, si el vídeo esperaba esa tarea y no tenía referencia, queda en error con
+ * `message` (apto para la persona). **Un vídeo con la referencia lista sigue listo**: el fallo
+ * del enlace lo enseña la vista del vídeo (`link`). Dentro de la transacción que cierra la tarea.
  */
-export async function failLinkReference(videoId: number, agentTaskId: number, executor: Executor = getDb()): Promise<void> {
-  await executor
-    .update(schema.videos)
-    .set({ referenceStatus: "failed", referenceError: LINK_FAILED, updatedAt: new Date() })
-    .where(and(eq(schema.videos.id, videoId), eq(schema.videos.referenceStatus, "uploading"), eq(schema.videos.referenceSource, "link")));
-  const sessions = await executor
+export async function failLinkReference(tx: Tx, videoId: number, agentTaskId: number, message: string): Promise<void> {
+  const video = await lockVideoReference(tx, videoId);
+  if (video && video.linkTaskId === agentTaskId && video.referenceStatus === "uploading") {
+    await tx
+      .update(schema.videos)
+      .set({ referenceStatus: "failed", referenceError: message, updatedAt: new Date() })
+      .where(eq(schema.videos.id, videoId));
+  }
+  const sessions = await tx
     .delete(schema.uploadSessions)
     .where(eq(schema.uploadSessions.agentTaskId, agentTaskId))
     .returning({ id: schema.uploadSessions.id });
@@ -398,9 +422,10 @@ export async function finishUpload(uploadId: string, actor: UploadActor, videoId
       throw new HttpError(400, INCOMPLETE);
     }
     if (session.received < totalChunksOf(expected) || size !== expected) throw new HttpError(400, INCOMPLETE);
+    // Llegó entero: el vídeo ya no espera ningún enlace (si era del Mac, es este).
     await tx
       .update(schema.videos)
-      .set({ referenceStatus: "processing", referenceError: null, updatedAt: new Date() })
+      .set({ referenceStatus: "processing", referenceError: null, linkTaskId: null, updatedAt: new Date() })
       .where(eq(schema.videos.id, video.id));
     return { userId: video.createdBy, productId: video.productId, videoId: video.id };
   });

@@ -1,5 +1,6 @@
 import { and, asc, count, desc, eq, inArray, sql } from "drizzle-orm";
 import { getDb, schema } from "@/db/client";
+import { createVideoFromLink } from "@/server/agent";
 import type { AuthUser } from "@/server/auth";
 import { HttpError } from "@/server/http";
 import { coverPhotoIds, listProductPhotos } from "@/server/photos";
@@ -169,6 +170,10 @@ export async function listBatchesFor(user: AuthUser): Promise<BatchSummary[]> {
  * quién sale (un avatar, una foto con papel «avatar» de ese producto; «sin sustitución»; o
  * «nadie»), su tipo (con su adaptación si es «Adaptación de concepto»; con la duración del gancho y
  * sus cuerpos, de ese mismo producto, si es «Solo gancho») y sus cambios específicos opcionales. Solo quien creó el lote. Valores que no valen: 400.
+ * Con `linkUrl`, la referencia del vídeo es ese enlace pegado y su descarga queda en la cola del
+ * Mac de quien lo crea (`createVideoFromLink`): el enlace, su Higgsfield y su Mac se comprueban
+ * antes de crear el vídeo, así que un enlace que no vale (400) o un Mac desconectado (409) no
+ * dejan nada a medias.
  */
 export async function addVideoToBatch(
   user: AuthUser,
@@ -182,6 +187,7 @@ export async function addVideoToBatch(
     hookSeconds?: unknown;
     bodyClipIds?: unknown;
     note?: unknown;
+    linkUrl?: unknown;
   },
 ): Promise<Video> {
   const batch = await ownBatch(user, batchId, NOT_CREATOR);
@@ -201,7 +207,7 @@ export async function addVideoToBatch(
     throw new HttpError(400, BAD_AVATAR);
   }
   const bodyClipIds = input.bodyClipIds === undefined ? undefined : await checkVideoBodies(input.productId, input.bodyClipIds);
-  return createVideo(user, input.productId, {
+  const extras = {
     batchId: batch.id,
     note,
     avatarPhotoId: input.avatarPhotoId,
@@ -210,7 +216,8 @@ export async function addVideoToBatch(
     adaptation: adaptation ?? null,
     ...(hookSeconds === undefined ? {} : { hookSeconds }),
     ...(bodyClipIds === undefined ? {} : { bodyClipIds }),
-  });
+  };
+  return input.linkUrl == null ? createVideo(user, input.productId, extras) : createVideoFromLink(user, input.productId, input.linkUrl, extras);
 }
 
 export interface BatchRow {

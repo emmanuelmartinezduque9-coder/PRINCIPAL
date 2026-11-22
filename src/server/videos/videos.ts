@@ -1,5 +1,6 @@
 import { and, asc, count, desc, eq, sql } from "drizzle-orm";
 import { getDb, schema } from "@/db/client";
+import { linkStateOf, type LinkState } from "@/server/agent-tasks";
 import type { AuthUser } from "@/server/auth";
 import { HttpError } from "@/server/http";
 import { MAX_SEGMENT_MS } from "@/server/media/ffmpeg";
@@ -318,6 +319,11 @@ export interface VideoView {
    * es más largo, lo que sobra se recorta al montar. `null` con los otros tipos.
    */
   hook: HookTiming | null;
+  /**
+   * El enlace pegado que el Mac está trayendo (`queued`, `downloading`) o el último que falló
+   * (`failed`, con su motivo), o `null`. Mientras tanto la referencia que hubiera sigue valiendo.
+   */
+  link: LinkState | null;
   /** El último desglose (el de versión más alta), o `null` si aún no se ha pedido ninguno. */
   analysis: {
     id: number;
@@ -421,6 +427,7 @@ export async function videoView(user: AuthUser, videoId: number): Promise<VideoV
     referenceOutdated: referenceOutdated(video),
     bodies: await bodiesOfVideo(video),
     hook: hookTiming(video),
+    link: await linkStateOf(video.linkTaskId),
     analysis: latest
       ? {
           id: latest.id,

@@ -1,19 +1,22 @@
 import crypto from "node:crypto";
-import { and, asc, eq, gte, inArray, isNull, lt, max, notExists, sql } from "drizzle-orm";
+import { and, asc, eq, gte, inArray, isNull, lt, max, notExists, sql, type SQL } from "drizzle-orm";
 import { getDb, schema } from "@/db/client";
+import { cancelLinkTasks, LINK_FAILED, linkFailureMessage, TASK_TOO_OLD } from "@/server/agent-tasks";
 import { getActiveUser, type AuthUser } from "@/server/auth";
 import { HttpError } from "@/server/http";
+import { getProductFor } from "@/server/products";
 import {
   agentUploadId,
   appendChunk,
   expectLinkReference,
   failLinkReference,
   finishUpload,
+  lockVideoReference,
   removeUploadFiles,
   requireHiggsfieldConnected,
   startAgentUpload,
 } from "@/server/videos/upload";
-import { getVideoFor, MAX_REFERENCE_BYTES, requireVideoOwner } from "@/server/videos/videos";
+import { createVideo, getVideoFor, MAX_REFERENCE_BYTES, requireVideoOwner, type NewVideoExtras, type Video } from "@/server/videos/videos";
 
 /**
  * El agente del Mac: un programa pequeño en el Mac del dueño que descarga los enlaces pegados
@@ -25,12 +28,15 @@ import { getVideoFor, MAX_REFERENCE_BYTES, requireVideoOwner } from "@/server/vi
  *   solo abre las rutas `/api/agente/…`: no es una sesión de persona.
  * - El Mac es de quien creó su ficha (hoy, solo el dueño) y solo atiende sus enlaces: descarga con
  *   la sesión de Instagram de ese Mac. Quien no tiene Mac sube el archivo.
- * - Una tarea reservada sin latido en 5 minutos vuelve a la cola; a los 3 intentos, o si lleva 10
- *   minutos en la cola sin que su Mac dé señales, falla y el vídeo lo dice con un texto fijo. El
- *   detalle técnico se queda en la tarea, para el dueño.
+ * - El enlace que un vídeo espera está apuntado en el vídeo (`linkTaskId`). Una referencia que ya
+ *   estaba lista sigue lista hasta que el archivo del Mac llega entero, y también si el enlace falla.
+ * - Una tarea reservada sin latido en 5 minutos vuelve a la cola; a los 3 intentos falla. También
+ *   falla si lleva 10 minutos en la cola sin señales de su Mac, o 30 minutos desde que se creó,
+ *   pase lo que pase. El detalle técnico se queda en la tarea, para el dueño; a la persona se le
+ *   enseña un texto fijo.
  *
- * Orden de los cerrojos: la tarea, después el vídeo, después la sesión de subida. Las tablas de
- * vídeo solo las toca `src/server/videos/`; aquí, `agents` y `agent_tasks`.
+ * Orden de los cerrojos: el vídeo, después la tarea, después la sesión de subida. Las tablas de
+ * vídeo solo las toca `src/server/videos/`; aquí, las de agentes y tareas.
  */
 
 export const AGENT_ONLINE_MS = 90_000;
@@ -38,9 +44,14 @@ export const LEASE_MS = 5 * 60_000;
 export const MAX_TASK_ATTEMPTS = 3;
 /**
  * Una tarea en cola se da por perdida si lleva este tiempo esperando y, en ese mismo tiempo, su
- * Mac no ha dado señales. Con el Mac vivo y ocupado en otros enlaces, espera lo que haga falta.
+ * Mac no ha dado señales. Con el Mac vivo y ocupado en otros enlaces, sigue esperando.
  */
 export const QUEUE_WAIT_MS = 10 * 60_000;
+/**
+ * Edad máxima de una tarea, desde que se pegó el enlace: pasada, falla aunque el Mac siga dando
+ * señales (una descarga colgada) o siga ocupado con otras (una cola demasiado larga).
+ */
+export const MAX_TASK_AGE_MS = 30 * 60_000;
 /** Sitios de los que se admite un enlace, con sus subdominios. */
 export const LINK_HOSTS = ["instagram.com", "tiktok.com", "youtube.com", "youtu.be", "facebook.com", "fb.watch"] as const;
 
@@ -52,6 +63,8 @@ const TOKEN_PREFIX = "pra_";
 /** `Bearer <ficha>`: el nombre del esquema no distingue mayúsculas; la ficha, sí (por su huella). */
 const BEARER = /^Bearer +(pra_[A-Za-z0-9_-]{43})$/i;
 const ACTIVE = ["queued", "leased"];
+/** Veces que `claimTask` prueba con la siguiente tarea si otra petición se le adelanta. */
+const CLAIM_ROUNDS = 5;
 
 const OWNER_ONLY = "Solo el dueño puede hacer esto.";
 const BAD_TOKEN = "Ficha del Mac no válida.";
@@ -78,9 +91,6 @@ function requireOwner(user: AuthUser): void {
   if (user.role !== "dueno") throw new HttpError(403, OWNER_ONLY);
 }
 
-/** Un vídeo, un enlace a la vez: dos peticiones del mismo vídeo van una detrás de otra. */
-const linkLock = (videoId: number) => sql`select pg_advisory_xact_lock(hashtextextended(${`principal.agente.enlace:${videoId}`}, 0))`;
-
 /** La tarea `taskId` mientras `agentId` la tenga reservada. */
 const leasedBy = (agentId: number, taskId: number) => and(eq(agentTasks.id, taskId), eq(agentTasks.agentId, agentId), eq(agentTasks.status, "leased"));
 
@@ -99,17 +109,26 @@ export async function createAgentToken(owner: AuthUser, name: string): Promise<{
   return { agentId: row.id, token };
 }
 
-/** Revoca la ficha de un Mac propio: deja de valer al momento. Solo el dueño. */
-export async function revokeAgent(owner: AuthUser, agentId: number): Promise<void> {
+/**
+ * Revoca la ficha de un Mac propio: deja de valer al momento, y lo que tuviera reservado vuelve a
+ * la cola sin esperar a que caduque (otro Mac suyo, o el mismo con otra ficha, puede seguir). Solo
+ * el dueño.
+ */
+export async function revokeAgent(owner: AuthUser, agentId: number, now: Date = new Date()): Promise<void> {
   requireOwner(owner);
-  const revoked = isId(agentId)
-    ? await getDb()
-        .update(agents)
-        .set({ revokedAt: new Date() })
-        .where(and(eq(agents.id, agentId), eq(agents.createdBy, owner.id), isNull(agents.revokedAt)))
-        .returning({ id: agents.id })
-    : [];
-  if (revoked.length === 0) throw new HttpError(404, "Mac no encontrado.");
+  if (!isId(agentId)) throw new HttpError(404, "Mac no encontrado.");
+  await getDb().transaction(async (tx) => {
+    const revoked = await tx
+      .update(agents)
+      .set({ revokedAt: now })
+      .where(and(eq(agents.id, agentId), eq(agents.createdBy, owner.id), isNull(agents.revokedAt)))
+      .returning({ id: agents.id });
+    if (revoked.length === 0) throw new HttpError(404, "Mac no encontrado.");
+    await tx
+      .update(agentTasks)
+      .set({ status: "queued", leaseExpiresAt: null, updatedAt: now })
+      .where(and(eq(agentTasks.agentId, agentId), eq(agentTasks.status, "leased")));
+  });
 }
 
 export interface AgentInfo {
@@ -141,14 +160,16 @@ export async function listAgents(owner: AuthUser, now: Date = new Date()): Promi
 /**
  * El Mac que hace la petición, por su ficha (`Authorization: Bearer …`). Sin ficha, con una
  * inventada o revocada, o si quien la creó ya no es un dueño activo: 401. La ficha se busca por
- * su huella y la huella se compara en tiempo constante.
+ * su huella y la huella se compara en tiempo constante. Toda petición con una ficha válida cuenta
+ * como señal de vida del Mac, no solo el latido.
  */
-export async function requireAgent(request: Request): Promise<{ agentId: number }> {
+export async function requireAgent(request: Request, now: Date = new Date()): Promise<{ agentId: number }> {
   const invalid = new HttpError(401, BAD_TOKEN);
   const match = BEARER.exec(request.headers.get("authorization") ?? "");
   if (!match) throw invalid;
   const tokenHash = sha256(match[1]);
-  const [agent] = await getDb()
+  const db = getDb();
+  const [agent] = await db
     .select({ id: agents.id, tokenHash: agents.tokenHash, createdBy: agents.createdBy })
     .from(agents)
     .where(and(eq(agents.tokenHash, tokenHash), isNull(agents.revokedAt)));
@@ -158,6 +179,7 @@ export async function requireAgent(request: Request): Promise<{ agentId: number 
   if (stored.length !== given.length || !crypto.timingSafeEqual(stored, given)) throw invalid;
   const owner = await getActiveUser(agent.createdBy);
   if (owner?.role !== "dueno") throw invalid;
+  await db.update(agents).set({ lastSeenAt: now }).where(eq(agents.id, agent.id));
   return { agentId: agent.id };
 }
 
@@ -171,7 +193,7 @@ export async function agentHeartbeat(agentId: number, info: { version: string; y
     .where(eq(agents.id, agentId));
 }
 
-/** Si `user` tiene un Mac conectado: uno suyo, con ficha en vigor y un latido en los últimos 90 segundos. */
+/** Si `user` tiene un Mac conectado: uno suyo, con ficha en vigor y una señal en los últimos 90 segundos. */
 export async function agentStatus(user: AuthUser, now: Date = new Date()): Promise<{ online: boolean; lastSeenAt: Date | null }> {
   const [row] = await getDb()
     .select({ lastSeenAt: max(agents.lastSeenAt) })
@@ -204,33 +226,65 @@ export function linkOf(value: unknown): string | null {
 }
 
 /**
- * Pide al Mac que traiga `url` como referencia del vídeo. Exige lo mismo que una subida (vídeo
- * propio y Higgsfield conectado, con sus mismos mensajes), un enlace admitido y un Mac de `user`
- * conectado. Deja el vídeo «subiendo» con origen «enlace» y una tarea en cola; un enlace anterior
- * del mismo vídeo queda sustituido, lo tenga ya un Mac o no.
+ * Lo que hace falta para pegar un enlace, antes de tocar nada: un enlace admitido (400), el
+ * Higgsfield de `user` conectado (los 409 de una subida) y un Mac suyo conectado (409). Devuelve
+ * el enlace ya normalizado.
  */
-export async function requestLinkDownload(user: AuthUser, videoId: number, url: string, now: Date = new Date()): Promise<{ taskId: number }> {
-  const video = await getVideoFor(user, videoId);
-  requireVideoOwner(user, video);
+export async function checkLinkRequest(user: AuthUser, url: unknown, now: Date = new Date()): Promise<string> {
   const link = linkOf(url);
   if (!link) throw new HttpError(400, BAD_LINK);
   await requireHiggsfieldConnected(user.id);
   if (!(await agentStatus(user, now)).online) throw new HttpError(409, MAC_OFFLINE);
+  return link;
+}
 
+/**
+ * Pone en cola la descarga de `link` (ya comprobado con `checkLinkRequest`) para un vídeo propio.
+ * La tarea y el apunte en el vídeo se guardan juntos; un enlace anterior del mismo vídeo queda
+ * sustituido, lo tenga ya un Mac o no. No mientras otra referencia se prepara (409).
+ */
+export async function startLinkDownload(user: AuthUser, video: Video, link: string, now: Date = new Date()): Promise<{ taskId: number }> {
+  requireVideoOwner(user, video);
+  if (linkOf(link) !== link) throw new HttpError(400, BAD_LINK);
   const { taskId, discarded } = await getDb().transaction(async (tx) => {
-    await tx.execute(linkLock(video.id));
-    await tx
-      .update(agentTasks)
-      .set({ status: "failed", error: SUPERSEDED, leaseExpiresAt: null, updatedAt: now })
-      .where(and(eq(agentTasks.videoId, video.id), inArray(agentTasks.status, ACTIVE)));
+    // Con el vídeo bloqueado, dos peticiones del mismo vídeo van una detrás de otra.
+    if (!(await lockVideoReference(tx, video.id))) throw new HttpError(404, "Vídeo no encontrado.");
+    await cancelLinkTasks(tx, video.id, SUPERSEDED, now);
     const [task] = await tx
       .insert(agentTasks)
       .values({ kind: "link_download", videoId: video.id, url: link, createdBy: user.id, createdAt: now, updatedAt: now })
       .returning({ id: agentTasks.id });
-    return { taskId: task.id, discarded: await expectLinkReference(tx, video.id, link) };
+    return { taskId: task.id, discarded: await expectLinkReference(tx, video.id, task.id) };
   });
   await removeUploadFiles(discarded);
   return { taskId };
+}
+
+/**
+ * Pide al Mac que traiga `url` como referencia del vídeo. Exige lo mismo que una subida (vídeo
+ * propio y Higgsfield conectado, con sus mismos mensajes), un enlace admitido y un Mac de `user`
+ * conectado. Una referencia que ya estaba lista sigue lista hasta que llegue la nueva; un vídeo
+ * sin referencia queda «subiendo».
+ */
+export async function requestLinkDownload(user: AuthUser, videoId: number, url: unknown, now: Date = new Date()): Promise<{ taskId: number }> {
+  const video = await getVideoFor(user, videoId);
+  requireVideoOwner(user, video);
+  const link = await checkLinkRequest(user, url, now);
+  return startLinkDownload(user, video, link, now);
+}
+
+/**
+ * Crea un vídeo cuya referencia es un enlace pegado (un vídeo suelto o, con `extras`, el de un
+ * lote). Todo lo del enlace se comprueba antes de crear nada: un enlace que no vale o un Mac
+ * desconectado no dejan un vídeo a medias.
+ */
+export async function createVideoFromLink(user: AuthUser, productId: number, url: unknown, extras: NewVideoExtras = {}, now: Date = new Date()): Promise<Video> {
+  // Un producto que no se ve da su 404 antes que cualquier fallo del enlace.
+  await getProductFor(user, productId);
+  const link = await checkLinkRequest(user, url, now);
+  const video = await createVideo(user, productId, extras);
+  await startLinkDownload(user, video, link, now);
+  return getVideoFor(user, video.id);
 }
 
 // ───────────────────────── Tareas: reserva y latido ─────────────────────────
@@ -238,35 +292,39 @@ export async function requestLinkDownload(user: AuthUser, videoId: number, url: 
 export interface ClaimedTask {
   taskId: number;
   url: string;
+  /** La sesión de subida de esta reserva: hay que mandarla con cada trozo y al terminar. */
   uploadId: string;
   chunkBytes: number;
   maxBytes: number;
 }
 
 /**
- * El Mac se lleva la tarea más antigua de la cola de su dueño, o `null` si no hay. Reservarla y
+ * El Mac se lleva la tarea más antigua de la cola de su dueño, o `null` si no hay: las de varios
+ * enlaces pegados a la vez salen una detrás de otra, en el orden en que se pegaron. Reservarla y
  * abrir su sesión de subida van en la misma transacción; con `for update skip locked`, dos Macs
- * que preguntan a la vez no se llevan la misma. Una tarea cuyo vídeo ya no espera el enlace (la
- * persona subió un archivo) se cierra y se pasa a la siguiente.
+ * que preguntan a la vez no se llevan la misma (el segundo prueba con la siguiente).
  */
 export async function claimTask(agentId: number, now: Date = new Date()): Promise<ClaimedTask | null> {
   const db = getDb();
   const [agent] = await db.select({ createdBy: agents.createdBy }).from(agents).where(and(eq(agents.id, agentId), isNull(agents.revokedAt)));
   if (!agent) return null;
-  for (;;) {
-    const outcome = await db.transaction(async (tx) => {
+  const queued = and(eq(agentTasks.status, "queued"), eq(agentTasks.createdBy, agent.createdBy));
+  for (let round = 0; round < CLAIM_ROUNDS; round++) {
+    const [candidate] = await db.select({ id: agentTasks.id, videoId: agentTasks.videoId }).from(agentTasks).where(queued).orderBy(asc(agentTasks.id)).limit(1);
+    if (!candidate) return null;
+    const claimed = await db.transaction(async (tx): Promise<ClaimedTask | null> => {
+      await lockVideoReference(tx, candidate.videoId);
       const [task] = await tx
         .select({ id: agentTasks.id, videoId: agentTasks.videoId, url: agentTasks.url })
         .from(agentTasks)
-        .where(and(eq(agentTasks.status, "queued"), eq(agentTasks.createdBy, agent.createdBy)))
-        .orderBy(asc(agentTasks.id))
-        .limit(1)
+        .where(and(eq(agentTasks.id, candidate.id), queued))
         .for("update", { skipLocked: true });
-      if (!task) return "empty" as const;
+      // Otro Mac se la llevó o se canceló mientras tanto: a por la siguiente.
+      if (!task) return null;
       const upload = await startAgentUpload(task.id, task.videoId, tx);
       if (!upload) {
         await tx.update(agentTasks).set({ status: "failed", error: NOT_EXPECTED, updatedAt: now }).where(eq(agentTasks.id, task.id));
-        return "next" as const;
+        return null;
       }
       await tx
         .update(agentTasks)
@@ -274,9 +332,9 @@ export async function claimTask(agentId: number, now: Date = new Date()): Promis
         .where(eq(agentTasks.id, task.id));
       return { taskId: task.id, url: task.url, ...upload, maxBytes: MAX_REFERENCE_BYTES };
     });
-    if (outcome === "empty") return null;
-    if (outcome !== "next") return outcome;
+    if (claimed) return claimed;
   }
+  return null;
 }
 
 /** Latido de la tarea (cada 60 s mientras descarga): la reserva dura 5 minutos más. Si ya no la tiene, 409. */
@@ -291,38 +349,39 @@ export async function extendLease(agentId: number, taskId: number, now: Date = n
   if (extended.length === 0) throw taskLost();
 }
 
-/** Cierra una tarea reservada cuyo vídeo ya no espera el enlace; el vídeo no se toca. */
-async function dropTask(agentId: number, taskId: number, now: Date): Promise<void> {
-  await getDb().update(agentTasks).set({ status: "failed", error: NOT_EXPECTED, leaseExpiresAt: null, updatedAt: now }).where(leasedBy(agentId, taskId));
-}
-
 /**
  * Un trozo del archivo descargado, por la misma subida por trozos que el navegador (mismos
- * límites y mismas respuestas). Solo quien tiene la reserva; cada trozo la prolonga.
+ * límites y mismas respuestas). Solo quien tiene la reserva, y con la sesión de **esa** reserva
+ * (`uploadId`): un trozo rezagado de un intento anterior, aunque sea del mismo Mac, da 409. Cada
+ * trozo prolonga la reserva.
  */
-export async function appendTaskChunk(agentId: number, taskId: number, index: number, bytes: Buffer, now: Date = new Date()): Promise<{ received: number }> {
+export async function appendTaskChunk(
+  agentId: number,
+  taskId: number,
+  uploadId: string,
+  index: number,
+  bytes: Buffer,
+  now: Date = new Date(),
+): Promise<{ received: number }> {
   await extendLease(agentId, taskId, now);
-  const uploadId = await agentUploadId(taskId);
-  if (!uploadId) {
-    await dropTask(agentId, taskId, now);
-    throw taskLost();
-  }
   try {
     return await appendChunk(uploadId, index, bytes, { agentTaskId: taskId });
   } catch (error) {
-    // La sesión desapareció entre medias (otro enlace u otro archivo la sustituyó).
+    // Esa sesión ya no existe o no es de esta tarea.
     if (error instanceof HttpError && error.status === 404) throw taskLost();
     throw error;
   }
 }
 
-export type TaskResult = { ok: true; totalBytes: number } | { ok: false; error: string };
+/** Lo que el Mac dice al terminar; `uploadId` es la sesión que recibió al reservar la tarea. */
+export type TaskResult = { ok: true; uploadId: string; totalBytes: number } | { ok: false; uploadId: string; error: string };
 
 /**
  * El Mac termina la tarea. Si fue bien, dice cuánto pesa lo que entregó y el vídeo entra en el
- * mismo procesado que una subida (`finishUpload`); repetirlo no hace nada. Si no pudo, el vídeo
- * queda en error con el texto fijo y el detalle (recortado) se guarda en la tarea. Solo quien
- * tiene la reserva.
+ * mismo procesado que una subida (`finishUpload`); repetirlo no hace nada. Si no pudo, se borra
+ * lo que hubiera llegado, el detalle (recortado) se guarda en la tarea y el vídeo lo dice con el
+ * texto fijo (una referencia que ya estaba lista sigue lista). Solo quien tiene la reserva y con
+ * la sesión de esa reserva.
  */
 export async function finishTask(agentId: number, taskId: number, result: TaskResult, now: Date = new Date()): Promise<void> {
   if (!isId(taskId)) throw taskLost();
@@ -337,24 +396,21 @@ export async function finishTask(agentId: number, taskId: number, result: TaskRe
 
   if (!result.ok) {
     await db.transaction(async (tx) => {
+      await lockVideoReference(tx, task.videoId);
+      if ((await agentUploadId(task.id, tx)) !== result.uploadId) throw taskLost();
       const closed = await tx
         .update(agentTasks)
         .set({ status: "failed", error: clip(result.error, MAX_ERROR) || NO_DETAIL, leaseExpiresAt: null, updatedAt: now })
         .where(leasedBy(agentId, task.id))
         .returning({ id: agentTasks.id });
       if (closed.length === 0) throw taskLost();
-      await failLinkReference(task.videoId, task.id, tx);
+      await failLinkReference(tx, task.videoId, task.id, LINK_FAILED);
     });
     return;
   }
 
-  const uploadId = await agentUploadId(task.id);
-  if (!uploadId) {
-    await dropTask(agentId, task.id, now);
-    throw taskLost();
-  }
   try {
-    await finishUpload(uploadId, { agentTaskId: task.id }, task.videoId, result.totalBytes);
+    await finishUpload(result.uploadId, { agentTaskId: task.id }, task.videoId, result.totalBytes);
   } catch (error) {
     if (error instanceof HttpError && error.status === 404) throw taskLost();
     throw error;
@@ -362,33 +418,45 @@ export async function finishTask(agentId: number, taskId: number, result: TaskRe
   await db.update(agentTasks).set({ status: "done", leaseExpiresAt: null, updatedAt: now }).where(leasedBy(agentId, task.id));
 }
 
+/** Cierra como fallida una tarea que sigue cumpliendo `condition` y lo refleja en su vídeo. */
+async function failTask(task: { id: number; videoId: number }, condition: SQL | undefined, reason: string, now: Date): Promise<void> {
+  await getDb().transaction(async (tx) => {
+    await lockVideoReference(tx, task.videoId);
+    const closed = await tx
+      .update(agentTasks)
+      .set({ status: "failed", error: reason, leaseExpiresAt: null, updatedAt: now })
+      .where(and(eq(agentTasks.id, task.id), condition))
+      .returning({ id: agentTasks.id });
+    // Si entretanto cambió (llegó un latido, alguien la reservó), se queda como está.
+    if (closed.length > 0) await failLinkReference(tx, task.videoId, task.id, linkFailureMessage(reason));
+  });
+}
+
 /**
- * Seguimiento de las tareas (dentro de `videoSweep`, cada minuto): una reserva sin latido en 5
- * minutos vuelve a la cola; agotados los intentos, o tras 10 minutos en la cola sin señales de
- * ningún Mac de quien la pidió, la tarea falla y el vídeo lo dice.
+ * Seguimiento de las tareas (dentro de `videoSweep`, cada minuto). Fallan, y el vídeo lo dice: la
+ * tarea de más de 30 minutos, la reserva caducada en su tercer intento y la que lleva 10 minutos
+ * en la cola sin señales de ningún Mac de quien la pidió. Una reserva sin latido en 5 minutos, con
+ * intentos por delante, vuelve a la cola.
  */
 export async function expireLeases(now: Date = new Date()): Promise<void> {
-  await getDb().transaction(async (tx) => {
-    const expired = and(eq(agentTasks.status, "leased"), lt(agentTasks.leaseExpiresAt, now));
-    await tx
-      .update(agentTasks)
-      .set({ status: "queued", leaseExpiresAt: null, updatedAt: now })
-      .where(and(expired, lt(agentTasks.attempts, MAX_TASK_ATTEMPTS)));
-    const exhausted = await tx
-      .update(agentTasks)
-      .set({ status: "failed", error: NO_HEARTBEAT, leaseExpiresAt: null, updatedAt: now })
-      .where(and(expired, gte(agentTasks.attempts, MAX_TASK_ATTEMPTS)))
-      .returning({ id: agentTasks.id, videoId: agentTasks.videoId });
-    const waitLimit = new Date(now.getTime() - QUEUE_WAIT_MS);
-    const macSeen = tx
-      .select({ one: sql`1` })
-      .from(agents)
-      .where(and(eq(agents.createdBy, agentTasks.createdBy), isNull(agents.revokedAt), gte(agents.lastSeenAt, waitLimit)));
-    const unclaimed = await tx
-      .update(agentTasks)
-      .set({ status: "failed", error: UNCLAIMED, updatedAt: now })
-      .where(and(eq(agentTasks.status, "queued"), lt(agentTasks.updatedAt, waitLimit), notExists(macSeen)))
-      .returning({ id: agentTasks.id, videoId: agentTasks.videoId });
-    for (const task of [...exhausted, ...unclaimed]) await failLinkReference(task.videoId, task.id, tx);
-  });
+  const db = getDb();
+  const waitLimit = new Date(now.getTime() - QUEUE_WAIT_MS);
+  const expired = and(eq(agentTasks.status, "leased"), lt(agentTasks.leaseExpiresAt, now));
+  const macSeen = db
+    .select({ one: sql`1` })
+    .from(agents)
+    .where(and(eq(agents.createdBy, agentTasks.createdBy), isNull(agents.revokedAt), gte(agents.lastSeenAt, waitLimit)));
+  const failures: Array<{ condition: SQL | undefined; reason: string }> = [
+    { condition: and(inArray(agentTasks.status, ACTIVE), lt(agentTasks.createdAt, new Date(now.getTime() - MAX_TASK_AGE_MS))), reason: TASK_TOO_OLD },
+    { condition: and(expired, gte(agentTasks.attempts, MAX_TASK_ATTEMPTS)), reason: NO_HEARTBEAT },
+    { condition: and(eq(agentTasks.status, "queued"), lt(agentTasks.updatedAt, waitLimit), notExists(macSeen)), reason: UNCLAIMED },
+  ];
+  for (const { condition, reason } of failures) {
+    const tasks = await db.select({ id: agentTasks.id, videoId: agentTasks.videoId }).from(agentTasks).where(condition);
+    for (const task of tasks) await failTask(task, condition, reason, now);
+  }
+  await db
+    .update(agentTasks)
+    .set({ status: "queued", leaseExpiresAt: null, updatedAt: now })
+    .where(and(expired, lt(agentTasks.attempts, MAX_TASK_ATTEMPTS)));
 }

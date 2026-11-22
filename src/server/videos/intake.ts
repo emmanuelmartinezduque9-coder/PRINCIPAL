@@ -3,6 +3,7 @@ import { and, eq } from "drizzle-orm";
 import { getHiggsfield, HiggsfieldUnavailableError, isHiggsfieldError, type HfMediaFile, type HiggsfieldPort } from "@/connectors/higgsfield";
 import { getDb, schema } from "@/db/client";
 import { runStep, stepKey, StepFailedError, type JobContext } from "@/jobs/steps";
+import { linkUrlOfTask } from "@/server/agent-tasks";
 import { getActiveUser } from "@/server/auth";
 import {
   detectCuts,
@@ -90,6 +91,11 @@ async function prepare(ctx: JobContext, videoId: number, uploadId: string, deps:
   const cutsMs = (await detectCuts(file, segmentDurationMs)).filter((ms) => ms > 0 && ms < segmentDurationMs);
   const clip = clipPath(uploadId);
   await normalizeClip(file, clip, segmentDurationMs);
+  // El archivo que trajo el Mac queda con origen «enlace» y la dirección que se pegó.
+  const origin =
+    session.agentTaskId === null
+      ? { referenceSource: "file", referenceUrl: null }
+      : { referenceSource: "link", referenceUrl: await linkUrlOfTask(session.agentTaskId) };
   const { mediaId } = await uploadWithRetries(
     deps.higgsfield ?? getHiggsfield(),
     video.createdBy,
@@ -105,8 +111,7 @@ async function prepare(ctx: JobContext, videoId: number, uploadId: string, deps:
       .set({
         referenceStatus: "ready",
         referenceError: null,
-        // El archivo que trajo el Mac conserva su origen «enlace» y la dirección que se pegó.
-        ...(session.agentTaskId === null ? { referenceSource: "file", referenceUrl: null } : { referenceSource: "link" }),
+        ...origin,
         referenceDurationMs: probe.durationMs,
         referenceWidth: probe.width,
         referenceHeight: probe.height,

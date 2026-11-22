@@ -2,8 +2,8 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { eq } from "drizzle-orm";
-import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { asc, eq } from "drizzle-orm";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { createFakeHiggsfield } from "@/connectors/higgsfield/fake";
 import { getDb, schema } from "@/db/client";
 import { stopWorker } from "@/jobs/boss";
@@ -23,27 +23,35 @@ import {
   LINK_HOSTS,
   linkOf,
   listAgents,
+  MAX_TASK_AGE_MS,
   MAX_TASK_ATTEMPTS,
   QUEUE_WAIT_MS,
   requestLinkDownload,
   requireAgent,
   revokeAgent,
+  type ClaimedTask,
 } from "@/server/agent";
 import { login, resetLoginAttempts, type AuthUser } from "@/server/auth";
 import { saveCredential } from "@/server/credentials";
 import { setPersonDisabled } from "@/server/people";
+import { addVideoToBatch, createBatch } from "@/server/videos/batches";
+import "@/server/videos/clip";
+import { quoteGeneration } from "@/server/videos/generations";
 import { processReference } from "@/server/videos/intake";
 import { videoSweep } from "@/server/videos/sweep";
-import { CHUNK_BYTES, startUpload, uploadPath, uploadProgress } from "@/server/videos/upload";
-import { createVideo, getVideoFor, type Video } from "@/server/videos/videos";
+import { appendChunk, CHUNK_BYTES, finishUpload, startUpload, uploadPath, uploadProgress } from "@/server/videos/upload";
+import { createVideo, getVideoFor, videoView, type Video } from "@/server/videos/videos";
 import { POST as heartbeatRoute } from "@/app/api/agente/latido/route";
 import { POST as claimRoute } from "@/app/api/agente/tareas/reclamar/route";
 import { POST as leaseRoute } from "@/app/api/agente/tareas/[taskId]/latido/route";
 import { PUT as chunkRoute } from "@/app/api/agente/tareas/[taskId]/trozo/route";
 import { POST as finishRoute } from "@/app/api/agente/tareas/[taskId]/terminar/route";
 import { DELETE as revokeRoute, GET as statusRoute, POST as tokenRoute } from "@/app/api/ajustes/agente/route";
+import { POST as batchVideoRoute } from "@/app/api/lotes/[id]/videos/route";
 import { GET as productsRoute } from "@/app/api/productos/route";
+import { POST as newVideoRoute } from "@/app/api/productos/[id]/videos/route";
 import { POST as linkRoute } from "@/app/api/videos/[videoId]/referencia/enlace/route";
+import { GET as videoRoute } from "@/app/api/videos/[videoId]/route";
 import { makeProduct, makeUser, TEST_PASSWORD } from "./helpers/fixtures";
 import { truncateAll } from "./helpers/global-setup";
 import { makeSampleVideo } from "./helpers/sample-video";
@@ -62,11 +70,14 @@ const mp4 = (size: number) => Buffer.concat([Buffer.from([0, 0, 0, 0x18]), Buffe
 const PDF_BYTES = Buffer.concat([Buffer.from("%PDF-1.7\n"), Buffer.alloc(100)]);
 
 const REEL = "https://www.instagram.com/reel/abc/";
+const TIKTOK = "https://vm.tiktok.com/xyz";
 const MAC_OFFLINE = "El Mac no está conectado ahora mismo. Sube el archivo del vídeo.";
 const LINK_FAILED = "No se pudo descargar el enlace. Sube el archivo del vídeo.";
+const LINK_TOO_SLOW = "El Mac no trajo el enlace a tiempo. Pégalo otra vez o sube el archivo del vídeo.";
 const TASK_LOST = { status: 409, message: "Esta tarea ya no es tuya." };
 const T0 = new Date("2026-11-22T10:00:00Z");
 const later = (ms: number) => new Date(T0.getTime() + ms);
+const MINUTE = 60_000;
 
 let dueno: AuthUser;
 let ana: AuthUser;
@@ -88,6 +99,7 @@ async function mac(owner: AuthUser = dueno, at: Date = T0): Promise<{ agentId: n
 const tasks = () => getDb().select().from(schema.agentTasks).orderBy(schema.agentTasks.id);
 const taskOf = async (taskId: number) => (await getDb().select().from(schema.agentTasks).where(eq(schema.agentTasks.id, taskId)))[0];
 const sessionRows = () => getDb().select().from(schema.uploadSessions);
+const linkOfVideo = async (video: Video) => (await videoView(dueno, video.id)).link;
 const bearer = (token: string) => ({ Authorization: `Bearer ${token}` });
 const agentRequest = (token: string | null, init: RequestInit = {}, query = "") =>
   new Request(`http://localhost/api/agente/x${query}`, { method: "POST", ...init, headers: token ? bearer(token) : {} });
@@ -95,6 +107,85 @@ const taskParams = (taskId: number | string) => ({ params: Promise.resolve({ tas
 const as = async (user: AuthUser) => {
   cookie.value = (await login(user.email, TEST_PASSWORD))!.token;
 };
+
+/** Reserva la siguiente tarea, que tiene que existir. */
+async function claim(agentId: number, now: Date = T0): Promise<ClaimedTask> {
+  const claimed = await claimTask(agentId, now);
+  expect(claimed).not.toBeNull();
+  return claimed!;
+}
+/** Un trozo con la sesión de esa reserva. */
+const send = (agentId: number, task: ClaimedTask, index: number, bytes: Buffer, now: Date = T0) =>
+  appendTaskChunk(agentId, task.taskId, task.uploadId, index, bytes, now);
+const succeed = (agentId: number, task: ClaimedTask, totalBytes: number, now: Date = T0) =>
+  finishTask(agentId, task.taskId, { ok: true, uploadId: task.uploadId, totalBytes }, now);
+const fail = (agentId: number, task: ClaimedTask, error = "yt-dlp no pudo descargar el enlace", now: Date = T0) =>
+  finishTask(agentId, task.taskId, { ok: false, uploadId: task.uploadId, error }, now);
+
+/** Deja el vídeo con una referencia lista (subida como archivo), con un fotograma. */
+async function makeReady(video: Video): Promise<void> {
+  await getDb()
+    .update(schema.videos)
+    .set({
+      referenceStatus: "ready",
+      referenceSource: "file",
+      referenceUrl: null,
+      referenceMediaId: "ref-media",
+      referenceDurationMs: 6000,
+      referenceWidth: 360,
+      referenceHeight: 640,
+      segmentDurationMs: 6000,
+      cutsMs: [2000],
+    })
+    .where(eq(schema.videos.id, video.id));
+  await getDb().insert(schema.videoFrames).values({ videoId: video.id, index: 0, timeMs: 0, mime: "image/jpeg", size: 3, data: Buffer.from([1, 2, 3]) });
+}
+
+/** Todo lo que hace que una referencia sirva: su estado, su origen, su recorte y sus fotogramas. */
+async function referenceOf(video: Video) {
+  const row = await getVideoFor(dueno, video.id);
+  const frames = await getDb()
+    .select({ index: schema.videoFrames.index, size: schema.videoFrames.size })
+    .from(schema.videoFrames)
+    .where(eq(schema.videoFrames.videoId, video.id))
+    .orderBy(asc(schema.videoFrames.index));
+  return {
+    referenceStatus: row.referenceStatus,
+    referenceError: row.referenceError,
+    referenceSource: row.referenceSource,
+    referenceUrl: row.referenceUrl,
+    referenceMediaId: row.referenceMediaId,
+    referenceDurationMs: row.referenceDurationMs,
+    segmentDurationMs: row.segmentDurationMs,
+    cutsMs: row.cutsMs,
+    frames,
+  };
+}
+
+const READY = {
+  referenceStatus: "ready",
+  referenceError: null,
+  referenceSource: "file",
+  referenceUrl: null,
+  referenceMediaId: "ref-media",
+  referenceDurationMs: 6000,
+  segmentDurationMs: 6000,
+  cutsMs: [2000],
+  frames: [{ index: 0, size: 3 }],
+};
+
+let sampleDir: string;
+/** Dos vídeos de muestra de verdad (ffmpeg), para las pruebas que preparan la referencia. */
+const samples = { tres: Buffer.alloc(0), cuatro: Buffer.alloc(0) };
+
+beforeAll(async () => {
+  sampleDir = fs.mkdtempSync(path.join(os.tmpdir(), "prueba-agente-"));
+  for (const [name, seconds] of [["tres", 3], ["cuatro", 4]] as const) {
+    const sub = path.join(sampleDir, name);
+    fs.mkdirSync(sub);
+    samples[name] = fs.readFileSync(await makeSampleVideo(sub, { seconds }));
+  }
+}, 120_000);
 
 beforeEach(async () => {
   await truncateAll();
@@ -111,6 +202,7 @@ beforeEach(async () => {
 });
 
 afterAll(async () => {
+  fs.rmSync(sampleDir, { recursive: true, force: true });
   await stopWorker();
 });
 
@@ -149,6 +241,7 @@ describe("fichas del Mac", () => {
     await revokeAgent(dueno, agentId);
     await expect(requireAgent(request(bearer(token)))).rejects.toMatchObject(invalid);
     await expect(revokeAgent(dueno, 9999)).rejects.toMatchObject({ status: 404 });
+    await expect(revokeAgent(dueno, agentId)).rejects.toMatchObject({ status: 404 });
     expect(await listAgents(dueno)).toEqual([]);
   });
 
@@ -180,11 +273,29 @@ describe("fichas del Mac", () => {
       expect((await heartbeatRoute(agentRequest(bad, { body: "{}" }))).status).toBe(401);
       expect((await claimRoute(agentRequest(bad))).status).toBe(401);
       expect((await leaseRoute(agentRequest(bad), taskParams(taskId))).status).toBe(401);
-      expect((await chunkRoute(agentRequest(bad, { method: "PUT", body: new Uint8Array(mp4(100)) }, "?indice=0"), taskParams(taskId))).status).toBe(401);
-      expect((await finishRoute(agentRequest(bad, { body: JSON.stringify({ ok: false, error: "x" }) }), taskParams(taskId))).status).toBe(401);
+      expect((await chunkRoute(agentRequest(bad, { method: "PUT", body: new Uint8Array(mp4(100)) }, "?indice=0&subida=x"), taskParams(taskId))).status).toBe(401);
+      expect((await finishRoute(agentRequest(bad, { body: JSON.stringify({ ok: false, uploadId: "x", error: "x" }) }), taskParams(taskId))).status).toBe(401);
     }
     expect(await tasks()).toMatchObject([{ id: taskId, status: "queued", attempts: 0 }]);
     expect((await claimRoute(agentRequest(token))).status).toBe(200);
+  });
+
+  it("revocar una ficha devuelve a la cola lo que ese Mac tenía reservado", async () => {
+    const viejo = await mac();
+    const { taskId } = await requestLinkDownload(dueno, v.id, REEL, T0);
+    const first = await claim(viejo.agentId);
+    await send(viejo.agentId, first, 0, mp4(100));
+    await revokeAgent(dueno, viejo.agentId, later(MINUTE));
+    // Sin esperar a que caduque, y sin gastar otro intento.
+    expect(await taskOf(taskId)).toMatchObject({ status: "queued", leaseExpiresAt: null, attempts: 1 });
+    expect((await getVideoFor(dueno, v.id)).referenceStatus).toBe("uploading");
+    // El Mac, con otra ficha, se la lleva con una sesión nueva; la vieja ya no existe.
+    const nuevo = await mac(dueno, later(MINUTE));
+    const second = await claim(nuevo.agentId, later(MINUTE));
+    expect(second).toMatchObject({ taskId, url: REEL });
+    expect(second.uploadId).not.toBe(first.uploadId);
+    expect((await sessionRows()).map((row) => row.id)).toEqual([second.uploadId]);
+    expect(fs.existsSync(uploadPath(first.uploadId))).toBe(false);
   });
 });
 
@@ -206,6 +317,24 @@ describe("conectado", () => {
     // Revocada, deja de contar.
     await revokeAgent(dueno, agentId);
     expect((await agentStatus(dueno, later(120_000))).online).toBe(false);
+  });
+
+  it("cualquier petición del Mac con su ficha cuenta como señal de vida, no solo el latido", async () => {
+    const { token } = await createAgentToken(dueno, "Mac de casa");
+    const request = () => new Request("http://localhost/api/agente/tareas/reclamar", { method: "POST", headers: bearer(token) });
+    await requireAgent(request(), T0);
+    expect(await agentStatus(dueno, later(30_000))).toEqual({ online: true, lastSeenAt: T0 });
+    await requireAgent(request(), later(5 * MINUTE));
+    expect(await agentStatus(dueno, later(5 * MINUTE + 30_000))).toEqual({ online: true, lastSeenAt: later(5 * MINUTE) });
+    // Una ficha que no vale no cuenta.
+    await expect(requireAgent(new Request("http://localhost/x", { headers: bearer("pra_" + "z".repeat(43)) }), later(20 * MINUTE))).rejects.toMatchObject({ status: 401 });
+    expect((await agentStatus(dueno, later(20 * MINUTE))).lastSeenAt).toEqual(later(5 * MINUTE));
+    // Por la ruta: reclamar sin tareas también deja al Mac «conectado».
+    const antes = Date.now();
+    expect((await claimRoute(agentRequest(token))).status).toBe(204);
+    const { online, lastSeenAt } = await agentStatus(dueno);
+    expect(online).toBe(true);
+    expect(lastSeenAt!.getTime()).toBeGreaterThanOrEqual(antes);
   });
 
   it("el Mac es de quien creó su ficha: para los demás no hay Mac conectado", async () => {
@@ -233,7 +362,8 @@ describe("pegar un enlace", () => {
     await mac(dueno, T0);
     await expect(requestLinkDownload(dueno, v.id, REEL, later(91_000))).rejects.toMatchObject({ status: 409, message: MAC_OFFLINE });
     expect(await tasks()).toEqual([]);
-    expect((await getVideoFor(dueno, v.id)).referenceStatus).toBe("none");
+    expect(await getVideoFor(dueno, v.id)).toMatchObject({ referenceStatus: "none", linkTaskId: null });
+    expect(await linkOfVideo(v)).toBeNull();
   });
 
   it.each([
@@ -304,13 +434,21 @@ describe("pegar un enlace", () => {
     expect(await tasks()).toEqual([]);
   });
 
-  it("deja el vídeo esperando el enlace y la tarea en cola", async () => {
+  it("un vídeo sin referencia queda «subiendo», con el enlace apuntado y la tarea en cola", async () => {
     await mac();
     const { taskId } = await requestLinkDownload(dueno, v.id, `  ${REEL}  `, T0);
     expect(await tasks()).toMatchObject([
       { id: taskId, kind: "link_download", videoId: v.id, url: REEL, status: "queued", createdBy: dueno.id, agentId: null, attempts: 0, error: null },
     ]);
-    expect(await getVideoFor(dueno, v.id)).toMatchObject({ referenceStatus: "uploading", referenceSource: "link", referenceUrl: REEL, referenceError: null });
+    // El origen y la dirección de la referencia no se tocan hasta que el archivo llegue.
+    expect(await getVideoFor(dueno, v.id)).toMatchObject({
+      referenceStatus: "uploading",
+      referenceError: null,
+      referenceSource: null,
+      referenceUrl: null,
+      linkTaskId: taskId,
+    });
+    expect(await linkOfVideo(v)).toEqual({ url: REEL, status: "queued", error: null });
     expect(await sessionRows()).toEqual([]);
   });
 
@@ -322,25 +460,28 @@ describe("pegar un enlace", () => {
       message: "Espera a que termine de prepararse el vídeo de referencia.",
     });
     expect(await tasks()).toEqual([]);
+    expect((await getVideoFor(dueno, v.id)).linkTaskId).toBeNull();
   });
 
   it("pegar otro enlace sustituye al anterior, también si el Mac ya lo estaba descargando", async () => {
     const { agentId } = await mac();
     const first = await requestLinkDownload(dueno, v.id, REEL, T0);
-    const claimed = await claimTask(agentId, T0);
+    const claimed = await claim(agentId);
     expect(claimed).toMatchObject({ taskId: first.taskId });
-    const second = await requestLinkDownload(dueno, v.id, "https://vm.tiktok.com/xyz", T0);
+    await send(agentId, claimed, 0, mp4(100));
+    const second = await requestLinkDownload(dueno, v.id, TIKTOK, T0);
     expect(await tasks()).toMatchObject([
       { id: first.taskId, status: "failed" },
-      { id: second.taskId, status: "queued", url: "https://vm.tiktok.com/xyz" },
+      { id: second.taskId, status: "queued", url: TIKTOK },
     ]);
     expect(await sessionRows()).toEqual([]);
-    expect(fs.existsSync(uploadPath(claimed!.uploadId))).toBe(false);
+    expect(fs.existsSync(uploadPath(claimed.uploadId))).toBe(false);
     // El Mac se entera al siguiente paso y su fallo ya no toca el vídeo.
-    await expect(appendTaskChunk(agentId, first.taskId, 0, mp4(100), T0)).rejects.toMatchObject(TASK_LOST);
-    await expect(finishTask(agentId, first.taskId, { ok: false, error: "x" }, T0)).rejects.toMatchObject(TASK_LOST);
-    expect(await getVideoFor(dueno, v.id)).toMatchObject({ referenceStatus: "uploading", referenceUrl: "https://vm.tiktok.com/xyz" });
-    expect(await claimTask(agentId, T0)).toMatchObject({ taskId: second.taskId, url: "https://vm.tiktok.com/xyz" });
+    await expect(send(agentId, claimed, 1, mp4(100))).rejects.toMatchObject(TASK_LOST);
+    await expect(fail(agentId, claimed)).rejects.toMatchObject(TASK_LOST);
+    expect(await getVideoFor(dueno, v.id)).toMatchObject({ referenceStatus: "uploading", linkTaskId: second.taskId });
+    expect(await linkOfVideo(v)).toEqual({ url: TIKTOK, status: "queued", error: null });
+    expect(await claim(agentId)).toMatchObject({ taskId: second.taskId, url: TIKTOK });
   });
 
   it("pulsar dos veces a la vez deja una sola tarea viva", async () => {
@@ -348,52 +489,247 @@ describe("pegar un enlace", () => {
     const results = await Promise.all([requestLinkDownload(dueno, v.id, REEL, T0), requestLinkDownload(dueno, v.id, REEL, T0)]);
     const rows = await tasks();
     expect(rows).toHaveLength(2);
-    expect(rows.filter((row) => row.status === "queued")).toHaveLength(1);
+    const alive = rows.filter((row) => row.status === "queued");
+    expect(alive).toHaveLength(1);
     expect(results.map((r) => r.taskId).sort()).toEqual(rows.map((row) => row.id));
+    // El vídeo espera la que quedó viva.
+    expect((await getVideoFor(dueno, v.id)).linkTaskId).toBe(alive[0].id);
+  });
+});
+
+describe("una referencia que ya funciona no se pierde por un enlace", () => {
+  it("pegar un enlace sobre una referencia lista la deja lista, con la tarea en cola y con el Mac descargando", async () => {
+    await makeReady(v);
+    const { agentId } = await mac();
+    expect(await referenceOf(v)).toEqual(READY);
+
+    const { taskId } = await requestLinkDownload(dueno, v.id, REEL, T0);
+    expect(await referenceOf(v)).toEqual(READY);
+    expect((await getVideoFor(dueno, v.id)).linkTaskId).toBe(taskId);
+    expect(await linkOfVideo(v)).toEqual({ url: REEL, status: "queued", error: null });
+
+    const task = await claim(agentId);
+    expect(await referenceOf(v)).toEqual(READY);
+    expect(await linkOfVideo(v)).toEqual({ url: REEL, status: "downloading", error: null });
+
+    // Ni siquiera con el archivo a medias: solo cambia cuando ha llegado entero.
+    await send(agentId, task, 0, mp4(CHUNK_BYTES));
+    await extendLease(agentId, taskId, later(MINUTE));
+    expect(await referenceOf(v)).toEqual(READY);
+    expect((await videoView(dueno, v.id)).frames).toEqual([{ index: 0, timeMs: 0 }]);
   });
 
-  it("subir un archivo deja sin efecto el enlace pendiente", async () => {
+  /** Con la referencia lista y un desglose hecho, lo único que falta para el clip es aprobar la imagen. */
+  async function clipStillAllowed(video: Video): Promise<void> {
+    await expect(quoteGeneration(dueno, video.id, "clip", { higgsfield: createFakeHiggsfield().port })).rejects.toMatchObject({
+      status: 409,
+      message: "Aprueba primero la imagen inicial.",
+    });
+  }
+
+  async function readyWithAnalysis(video: Video): Promise<void> {
+    await makeReady(video);
+    const row = await getVideoFor(dueno, video.id);
+    await getDb().insert(schema.videoAnalyses).values({
+      videoId: video.id,
+      version: 1,
+      status: "done",
+      referenceMediaId: "ref-media",
+      kind: row.kind,
+      avatarMode: row.avatarMode,
+      createdBy: dueno.id,
+    });
+    await getDb().update(schema.videos).set({ videoPrompt: "@Video1 gives only the movement." }).where(eq(schema.videos.id, video.id));
+    await clipStillAllowed(video);
+  }
+
+  it("si el Mac dice que no pudo, la referencia sigue lista y el clip se puede seguir generando", async () => {
+    await readyWithAnalysis(v);
+    const { agentId } = await mac();
+    await requestLinkDownload(dueno, v.id, REEL, T0);
+    const task = await claim(agentId);
+    await send(agentId, task, 0, mp4(100));
+    await fail(agentId, task);
+    expect(await referenceOf(v)).toEqual(READY);
+    // El fallo se ve en la vista del vídeo, no en la referencia.
+    expect(await linkOfVideo(v)).toEqual({ url: REEL, status: "failed", error: LINK_FAILED });
+    expect(JSON.stringify(await videoView(dueno, v.id))).not.toContain("yt-dlp");
+    expect(await sessionRows()).toEqual([]);
+    await clipStillAllowed(v);
+  });
+
+  it("si la reserva caduca tres veces, la referencia sigue lista", async () => {
+    await readyWithAnalysis(v);
     const { agentId } = await mac();
     const { taskId } = await requestLinkDownload(dueno, v.id, REEL, T0);
-    await startUpload(dueno, v.id, { filename: "a.mp4", totalBytes: 100 });
-    expect(await getVideoFor(dueno, v.id)).toMatchObject({ referenceStatus: "uploading", referenceSource: "file", referenceUrl: null });
-    // El Mac ya no se la lleva, y la subida de la persona sigue intacta.
-    expect(await claimTask(agentId, T0)).toBeNull();
-    expect(await tasks()).toMatchObject([{ id: taskId, status: "failed" }]);
-    expect(await sessionRows()).toMatchObject([{ userId: dueno.id, agentTaskId: null }]);
-    expect((await getVideoFor(dueno, v.id)).referenceStatus).toBe("uploading");
-  });
-
-  it("si la persona sube un archivo con el Mac a medias, el Mac suelta la tarea", async () => {
-    const { agentId } = await mac();
-    const { taskId } = await requestLinkDownload(dueno, v.id, REEL, T0);
-    await claimTask(agentId, T0);
-    await startUpload(dueno, v.id, { filename: "a.mp4", totalBytes: 100 });
-    await expect(appendTaskChunk(agentId, taskId, 0, mp4(100), T0)).rejects.toMatchObject(TASK_LOST);
-    expect(await tasks()).toMatchObject([{ id: taskId, status: "failed" }]);
-    expect(await getVideoFor(dueno, v.id)).toMatchObject({ referenceStatus: "uploading", referenceSource: "file", referenceError: null });
-  });
-
-  it("un enlace que falla después de que la persona suba un archivo no estropea su subida", async () => {
-    const { agentId } = await mac();
-    // El Mac lo tenía reservado y dice que no pudo.
-    const leased = await requestLinkDownload(dueno, v.id, REEL, T0);
-    await claimTask(agentId, T0);
-    const { uploadId } = await startUpload(dueno, v.id, { filename: "a.mp4", totalBytes: 100 });
-    await finishTask(agentId, leased.taskId, { ok: false, error: "yt-dlp no pudo" }, T0);
-    // Otro, aún en la cola, se da por perdido cuando el Mac se apaga.
-    const otro = await createVideo(dueno, v.productId);
-    const queued = await requestLinkDownload(dueno, otro.id, REEL, T0);
-    const suya = await startUpload(dueno, otro.id, { filename: "b.mp4", totalBytes: 100 });
-    await expireLeases(later(QUEUE_WAIT_MS + 1000));
-    expect(await tasks()).toMatchObject([
-      { id: leased.taskId, status: "failed" },
-      { id: queued.taskId, status: "failed" },
-    ]);
-    for (const video of [v, otro]) {
-      expect(await getVideoFor(dueno, video.id)).toMatchObject({ referenceStatus: "uploading", referenceSource: "file", referenceError: null });
+    let now = T0;
+    for (let attempt = 1; attempt <= MAX_TASK_ATTEMPTS; attempt++) {
+      await claim(agentId, now);
+      now = new Date(now.getTime() + LEASE_MS + 1000);
+      await expireLeases(now);
     }
-    expect((await sessionRows()).map((row) => row.id).sort()).toEqual([uploadId, suya.uploadId].sort());
+    expect(await taskOf(taskId)).toMatchObject({ status: "failed", attempts: 3 });
+    expect(await referenceOf(v)).toEqual(READY);
+    expect(await linkOfVideo(v)).toEqual({ url: REEL, status: "failed", error: LINK_FAILED });
+    await clipStillAllowed(v);
+  });
+
+  it("si ningún Mac recoge el enlace, o se pasa del tiempo máximo, la referencia sigue lista", async () => {
+    await readyWithAnalysis(v);
+    const otro = await createVideo(dueno, v.productId);
+    await makeReady(otro);
+    const { agentId } = await mac();
+    // El Mac se apaga: a los 10 minutos el primero se da por perdido.
+    await requestLinkDownload(dueno, v.id, REEL, T0);
+    await expireLeases(later(QUEUE_WAIT_MS + 1000));
+    expect(await referenceOf(v)).toEqual(READY);
+    expect(await linkOfVideo(v)).toEqual({ url: REEL, status: "failed", error: LINK_FAILED });
+    await clipStillAllowed(v);
+    // El otro lo tiene el Mac, que sigue dando señales sin terminar: a los 30 minutos se corta.
+    const start = later(60 * MINUTE);
+    await agentHeartbeat(agentId, { version: "1.0.0", ytDlp: null }, start);
+    const { taskId } = await requestLinkDownload(dueno, otro.id, TIKTOK, start);
+    await claim(agentId, start);
+    for (let minute = 1; minute <= 31; minute++) {
+      const now = new Date(start.getTime() + minute * MINUTE);
+      await extendLease(agentId, taskId, now).catch(() => {});
+      await expireLeases(now);
+    }
+    expect(await taskOf(taskId)).toMatchObject({ status: "failed" });
+    expect(await referenceOf(otro)).toEqual(READY);
+    expect(await linkOfVideo(otro)).toEqual({ url: TIKTOK, status: "failed", error: LINK_TOO_SLOW });
+  });
+
+  it("un enlace sustituido por otro deja la referencia lista", async () => {
+    await readyWithAnalysis(v);
+    const { agentId } = await mac();
+    await requestLinkDownload(dueno, v.id, REEL, T0);
+    const task = await claim(agentId);
+    await send(agentId, task, 0, mp4(100));
+    const second = await requestLinkDownload(dueno, v.id, TIKTOK, T0);
+    expect(await referenceOf(v)).toEqual(READY);
+    expect(await linkOfVideo(v)).toEqual({ url: TIKTOK, status: "queued", error: null });
+    expect((await getVideoFor(dueno, v.id)).linkTaskId).toBe(second.taskId);
+    await clipStillAllowed(v);
+  });
+
+  it("volver a pegar un enlace tras un fallo lo vuelve a intentar", async () => {
+    await makeReady(v);
+    const { agentId } = await mac();
+    await requestLinkDownload(dueno, v.id, REEL, T0);
+    await fail(agentId, await claim(agentId));
+    expect((await linkOfVideo(v))?.status).toBe("failed");
+    const again = await requestLinkDownload(dueno, v.id, REEL, T0);
+    expect(await linkOfVideo(v)).toEqual({ url: REEL, status: "queued", error: null });
+    expect(await claim(agentId)).toMatchObject({ taskId: again.taskId });
+    expect(await referenceOf(v)).toEqual(READY);
+  });
+
+  it("entregado el enlace, la referencia pasa a prepararse y queda lista como «enlace», con su dirección", async () => {
+    const fake = createFakeHiggsfield();
+    // Primero, una referencia de verdad subida como archivo.
+    const { uploadId } = await startUpload(dueno, v.id, { filename: "ref.mp4", totalBytes: samples.tres.length });
+    await appendChunk(uploadId, 0, samples.tres, { userId: dueno.id });
+    await finishUpload(uploadId, { userId: dueno.id });
+    await processReference(v.id, uploadId, { higgsfield: fake.port });
+    const before = await referenceOf(v);
+    expect(before).toMatchObject({ referenceStatus: "ready", referenceSource: "file", referenceUrl: null, referenceMediaId: "media-1" });
+    expect(before.frames.length).toBeGreaterThan(0);
+
+    const { agentId } = await mac();
+    const { taskId } = await requestLinkDownload(dueno, v.id, REEL, T0);
+    const task = await claim(agentId);
+    for (let i = 0; i * CHUNK_BYTES < samples.cuatro.length; i++) {
+      await send(agentId, task, i, samples.cuatro.subarray(i * CHUNK_BYTES, (i + 1) * CHUNK_BYTES));
+    }
+    // Hasta aquí, intacta.
+    expect(await referenceOf(v)).toEqual(before);
+
+    await succeed(agentId, task, samples.cuatro.length);
+    // Llegó entero: ahora sí se prepara. Todavía es la referencia anterior la que consta.
+    expect(await getVideoFor(dueno, v.id)).toMatchObject({ referenceStatus: "processing", referenceSource: "file", referenceMediaId: "media-1", linkTaskId: null });
+    expect(await linkOfVideo(v)).toBeNull();
+    expect(await taskOf(taskId)).toMatchObject({ status: "done" });
+
+    await processReference(v.id, task.uploadId, { higgsfield: fake.port });
+    const after = await getVideoFor(dueno, v.id);
+    expect(after).toMatchObject({ referenceStatus: "ready", referenceError: null, referenceSource: "link", referenceUrl: REEL, referenceMediaId: "media-2", linkTaskId: null });
+    expect(Math.abs(after.referenceDurationMs! - 4000)).toBeLessThan(200);
+    // Se sube al Higgsfield de quien pegó el enlace, y el archivo no se guarda.
+    expect(fake.calls.filter((c) => c.method === "uploadMedia")).toMatchObject([{ userId: dueno.id }, { userId: dueno.id }]);
+    expect(fs.existsSync(uploadPath(task.uploadId))).toBe(false);
+    expect(await sessionRows()).toEqual([]);
+  }, 60_000);
+});
+
+describe("subir un archivo con un enlace pendiente", () => {
+  it("con el enlace aún en la cola: la tarea se cancela y la subida del navegador sigue intacta", async () => {
+    const { agentId } = await mac();
+    const { taskId } = await requestLinkDownload(dueno, v.id, REEL, T0);
+    const { uploadId } = await startUpload(dueno, v.id, { filename: "a.mp4", totalBytes: 100 });
+    // Cancelada en la misma transacción: no espera a que el Mac pregunte.
+    expect(await tasks()).toMatchObject([{ id: taskId, status: "failed", error: "Sustituida por la subida de un archivo." }]);
+    expect(await getVideoFor(dueno, v.id)).toMatchObject({ referenceStatus: "uploading", referenceError: null, linkTaskId: null });
+    expect(await linkOfVideo(v)).toBeNull();
+    // El Mac no se lleva nada, y la sesión del navegador sigue ahí.
+    expect(await claimTask(agentId, T0)).toBeNull();
+    expect(await sessionRows()).toMatchObject([{ id: uploadId, userId: dueno.id, agentTaskId: null }]);
+    // Ni el seguimiento la toca.
+    await expireLeases(later(QUEUE_WAIT_MS + 1000));
+    expect(await getVideoFor(dueno, v.id)).toMatchObject({ referenceStatus: "uploading", referenceError: null });
+    // Y la subida termina con normalidad.
+    await appendChunk(uploadId, 0, mp4(100), { userId: dueno.id });
+    await finishUpload(uploadId, { userId: dueno.id });
+    expect((await getVideoFor(dueno, v.id)).referenceStatus).toBe("processing");
+  });
+
+  it("con el Mac ya descargando: el Mac suelta la tarea y la subida del navegador sobrevive", async () => {
+    const { agentId } = await mac();
+    const { taskId } = await requestLinkDownload(dueno, v.id, REEL, T0);
+    const task = await claim(agentId);
+    await send(agentId, task, 0, mp4(CHUNK_BYTES));
+
+    const { uploadId } = await startUpload(dueno, v.id, { filename: "a.mp4", totalBytes: CHUNK_BYTES + 100 });
+    await appendChunk(uploadId, 0, mp4(CHUNK_BYTES), { userId: dueno.id });
+    expect(await tasks()).toMatchObject([{ id: taskId, status: "failed" }]);
+    expect(fs.existsSync(uploadPath(task.uploadId))).toBe(false);
+
+    // Todo lo que el Mac intente después da 409 y no toca ni el vídeo ni la subida del navegador.
+    await expect(send(agentId, task, 1, mp4(100))).rejects.toMatchObject(TASK_LOST);
+    await expect(extendLease(agentId, taskId, T0)).rejects.toMatchObject(TASK_LOST);
+    await expect(succeed(agentId, task, CHUNK_BYTES + 100)).rejects.toMatchObject(TASK_LOST);
+    await expect(fail(agentId, task)).rejects.toMatchObject(TASK_LOST);
+    expect(await claimTask(agentId, T0)).toBeNull();
+    await expireLeases(later(LEASE_MS + 1000));
+
+    expect(await sessionRows()).toMatchObject([{ id: uploadId, userId: dueno.id, agentTaskId: null, received: 1 }]);
+    expect(await getVideoFor(dueno, v.id)).toMatchObject({ referenceStatus: "uploading", referenceError: null, linkTaskId: null });
+    expect(fs.existsSync(uploadPath(uploadId))).toBe(true);
+    await appendChunk(uploadId, 1, mp4(100), { userId: dueno.id });
+    await finishUpload(uploadId, { userId: dueno.id });
+    expect((await getVideoFor(dueno, v.id)).referenceStatus).toBe("processing");
+  });
+
+  it("sobre una referencia lista: el enlace se cancela y la referencia sigue lista mientras sube el archivo", async () => {
+    await makeReady(v);
+    const { agentId } = await mac();
+    const { taskId } = await requestLinkDownload(dueno, v.id, REEL, T0);
+    await claim(agentId);
+    await startUpload(dueno, v.id, { filename: "a.mp4", totalBytes: 100 });
+    expect(await taskOf(taskId)).toMatchObject({ status: "failed" });
+    expect(await referenceOf(v)).toEqual(READY);
+    expect(await linkOfVideo(v)).toBeNull();
+  });
+
+  it("subir un archivo también quita de la vista el fallo de un enlace anterior", async () => {
+    await makeReady(v);
+    const { agentId } = await mac();
+    await requestLinkDownload(dueno, v.id, REEL, T0);
+    await fail(agentId, await claim(agentId));
+    expect((await linkOfVideo(v))?.status).toBe("failed");
+    await startUpload(dueno, v.id, { filename: "a.mp4", totalBytes: 100 });
+    expect(await linkOfVideo(v)).toBeNull();
+    expect(await referenceOf(v)).toEqual(READY);
   });
 });
 
@@ -423,6 +759,38 @@ describe("reserva y latido", () => {
     }
   });
 
+  it("varios enlaces pegados a la vez salen uno detrás de otro, del más antiguo al más nuevo", async () => {
+    const { agentId } = await mac();
+    const videos = [v, await createVideo(dueno, v.productId), await createVideo(dueno, v.productId)];
+    const urls = [REEL, TIKTOK, "https://youtu.be/abc"];
+    const ids: number[] = [];
+    for (const [i, video] of videos.entries()) ids.push((await requestLinkDownload(dueno, video.id, urls[i], T0)).taskId);
+    expect((await tasks()).map((task) => task.status)).toEqual(["queued", "queued", "queued"]);
+
+    // El Mac los atiende de uno en uno: descarga, entrega, y pide el siguiente.
+    for (const [i, video] of videos.entries()) {
+      const task = await claim(agentId, later(i * MINUTE));
+      expect(task).toMatchObject({ taskId: ids[i], url: urls[i] });
+      await send(agentId, task, 0, mp4(100), later(i * MINUTE));
+      await succeed(agentId, task, 100, later(i * MINUTE));
+      expect((await getVideoFor(dueno, video.id)).referenceStatus).toBe("processing");
+      // Los que quedan siguen esperando su turno.
+      expect((await tasks()).map((row) => row.status)).toEqual(ids.map((_, j) => (j <= i ? "done" : "queued")));
+    }
+    expect(await claimTask(agentId, later(3 * MINUTE))).toBeNull();
+    expect((await getDb().select().from(schema.jobSteps).where(eq(schema.jobSteps.jobName, "video.referencia"))).length).toBe(3);
+  });
+
+  it("si el Mac pide otra con una a medias, recibe la siguiente más antigua de la cola", async () => {
+    const { agentId } = await mac();
+    const otro = await createVideo(dueno, v.productId);
+    const first = await requestLinkDownload(dueno, v.id, REEL, T0);
+    const second = await requestLinkDownload(dueno, otro.id, TIKTOK, T0);
+    expect(await claim(agentId)).toMatchObject({ taskId: first.taskId });
+    expect(await claim(agentId)).toMatchObject({ taskId: second.taskId });
+    expect(await claimTask(agentId, T0)).toBeNull();
+  });
+
   it("el Mac de una persona solo se lleva sus enlaces", async () => {
     const socio = await makeUser("dueno");
     await connect(socio);
@@ -436,10 +804,10 @@ describe("reserva y latido", () => {
   it("el latido de la tarea y cada trozo prolongan la reserva", async () => {
     const { agentId } = await mac();
     const { taskId } = await requestLinkDownload(dueno, v.id, REEL, T0);
-    await claimTask(agentId, T0);
+    const task = await claim(agentId);
     await extendLease(agentId, taskId, later(60_000));
     expect((await taskOf(taskId)).leaseExpiresAt).toEqual(later(60_000 + LEASE_MS));
-    await appendTaskChunk(agentId, taskId, 0, mp4(100), later(120_000));
+    await send(agentId, task, 0, mp4(100), later(120_000));
     expect((await taskOf(taskId)).leaseExpiresAt).toEqual(later(120_000 + LEASE_MS));
     // Con latidos no caduca aunque pasen más de 5 minutos desde que se reservó.
     await expireLeases(later(LEASE_MS + 60_000));
@@ -452,12 +820,12 @@ describe("reserva y latido", () => {
     expect(LEASE_MS).toBe(5 * 60_000);
     expect(MAX_TASK_ATTEMPTS).toBe(3);
     let now = T0;
-    let uploadId = "";
+    let last: ClaimedTask | null = null;
     for (let attempt = 1; attempt <= MAX_TASK_ATTEMPTS; attempt++) {
-      const claimed = await claimTask(agentId, now);
-      expect(claimed).toMatchObject({ taskId });
-      uploadId = claimed!.uploadId;
-      await appendTaskChunk(agentId, taskId, 0, mp4(100), now);
+      const task = await claim(agentId, now);
+      expect(task).toMatchObject({ taskId });
+      last = task;
+      await send(agentId, task, 0, mp4(100), now);
       // Antes de los 5 minutos sigue reservada.
       await expireLeases(new Date(now.getTime() + LEASE_MS - 1000));
       expect(await taskOf(taskId)).toMatchObject({ status: "leased", attempts: attempt });
@@ -467,15 +835,46 @@ describe("reserva y latido", () => {
         expect(await taskOf(taskId)).toMatchObject({ status: "queued", attempts: attempt, leaseExpiresAt: null });
         expect((await getVideoFor(dueno, v.id)).referenceStatus).toBe("uploading");
         // Quien la tenía ya no puede seguir.
-        await expect(appendTaskChunk(agentId, taskId, 1, mp4(100), now)).rejects.toMatchObject(TASK_LOST);
+        await expect(send(agentId, task, 1, mp4(100), now)).rejects.toMatchObject(TASK_LOST);
       }
     }
     expect(await taskOf(taskId)).toMatchObject({ status: "failed", attempts: 3 });
     expect(await getVideoFor(dueno, v.id)).toMatchObject({ referenceStatus: "failed", referenceError: LINK_FAILED });
+    expect(await linkOfVideo(v)).toEqual({ url: REEL, status: "failed", error: LINK_FAILED });
     // Lo que había llegado se borra.
     expect(await sessionRows()).toEqual([]);
-    expect(fs.existsSync(uploadPath(uploadId))).toBe(false);
+    expect(fs.existsSync(uploadPath(last!.uploadId))).toBe(false);
     expect(await claimTask(agentId, now)).toBeNull();
+  });
+
+  it("un trozo o un «terminar» de un intento anterior da 409 y no estropea el intento en curso", async () => {
+    const { agentId } = await mac();
+    const { taskId } = await requestLinkDownload(dueno, v.id, REEL, T0);
+    const stale = await claim(agentId);
+    await send(agentId, stale, 0, mp4(CHUNK_BYTES));
+    // La reserva caduca y el mismo Mac se la vuelve a llevar: sesión nueva.
+    const now = later(LEASE_MS + 1000);
+    await expireLeases(now);
+    const fresh = await claim(agentId, now);
+    expect(fresh.taskId).toBe(taskId);
+    expect(fresh.uploadId).not.toBe(stale.uploadId);
+    await send(agentId, fresh, 0, mp4(100), now);
+
+    // Lo rezagado del primer intento: 409, aunque el Mac tenga la reserva.
+    await expect(send(agentId, stale, 1, mp4(100), now)).rejects.toMatchObject(TASK_LOST);
+    await expect(succeed(agentId, stale, CHUNK_BYTES + 100, now)).rejects.toMatchObject(TASK_LOST);
+    await expect(fail(agentId, stale, "x", now)).rejects.toMatchObject(TASK_LOST);
+    for (const uploadId of ["", "no-es-una-subida", "a".repeat(32)]) {
+      await expect(appendTaskChunk(agentId, taskId, uploadId, 1, mp4(100), now)).rejects.toMatchObject(TASK_LOST);
+      await expect(finishTask(agentId, taskId, { ok: false, uploadId, error: "x" }, now)).rejects.toMatchObject(TASK_LOST);
+      await expect(finishTask(agentId, taskId, { ok: true, uploadId, totalBytes: 100 }, now)).rejects.toMatchObject(TASK_LOST);
+    }
+    // El intento en curso sigue entero y termina bien.
+    expect(await taskOf(taskId)).toMatchObject({ status: "leased", attempts: 2 });
+    expect(await sessionRows()).toMatchObject([{ id: fresh.uploadId, received: 1 }]);
+    expect((await getVideoFor(dueno, v.id)).referenceStatus).toBe("uploading");
+    await succeed(agentId, fresh, 100, now);
+    expect((await getVideoFor(dueno, v.id)).referenceStatus).toBe("processing");
   });
 
   it("si el Mac se apaga con la tarea en cola, a los 10 minutos falla y el vídeo lo dice", async () => {
@@ -486,29 +885,66 @@ describe("reserva y latido", () => {
     await expireLeases(later(QUEUE_WAIT_MS + 1000));
     expect(await taskOf(taskId)).toMatchObject({ status: "failed", attempts: 0 });
     expect(await getVideoFor(dueno, v.id)).toMatchObject({ referenceStatus: "failed", referenceError: LINK_FAILED });
+    expect(await linkOfVideo(v)).toEqual({ url: REEL, status: "failed", error: LINK_FAILED });
   });
 
-  it("con el Mac vivo y ocupado, una tarea espera en la cola lo que haga falta", async () => {
+  it("con el Mac vivo y ocupado, una tarea espera en la cola más de 10 minutos", async () => {
     const { agentId } = await mac();
     const otro = await createVideo(dueno, v.productId);
     const first = await requestLinkDownload(dueno, v.id, REEL, T0);
-    const second = await requestLinkDownload(dueno, otro.id, "https://vm.tiktok.com/xyz", T0);
+    const second = await requestLinkDownload(dueno, otro.id, TIKTOK, T0);
     // El Mac se lleva la primera y tarda: sigue dando señales y manteniendo su reserva.
-    expect(await claimTask(agentId, T0)).toMatchObject({ taskId: first.taskId });
+    expect(await claim(agentId)).toMatchObject({ taskId: first.taskId });
     for (let minute = 1; minute <= 25; minute++) {
-      await agentHeartbeat(agentId, { version: "1.0.0", ytDlp: null }, later(minute * 60_000));
-      await extendLease(agentId, first.taskId, later(minute * 60_000));
-      await expireLeases(later(minute * 60_000 + 1000));
+      await agentHeartbeat(agentId, { version: "1.0.0", ytDlp: null }, later(minute * MINUTE));
+      await extendLease(agentId, first.taskId, later(minute * MINUTE));
+      await expireLeases(later(minute * MINUTE + 1000));
     }
     expect(await taskOf(second.taskId)).toMatchObject({ status: "queued", attempts: 0 });
     expect((await getVideoFor(dueno, otro.id)).referenceStatus).toBe("uploading");
-    // El Mac de otra persona no cuenta: sin el suyo, la tarea se da por perdida.
+    // El Mac de otra persona no cuenta: si el suyo calla, la tarea se da por perdida.
     const socio = await makeUser("dueno");
-    const suMac = await mac(socio, later(40 * 60_000));
-    await agentHeartbeat(suMac.agentId, { version: "1.0.0", ytDlp: null }, later(40 * 60_000));
-    await expireLeases(later(40 * 60_000));
-    expect(await taskOf(second.taskId)).toMatchObject({ status: "failed" });
+    await mac(socio, later(28 * MINUTE));
+    await expireLeases(later(28 * MINUTE));
+    expect(await taskOf(second.taskId)).toMatchObject({ status: "queued" });
+    await mac(socio, later(29 * MINUTE + 30_000));
+    await getDb().update(schema.agents).set({ lastSeenAt: later(15 * MINUTE) }).where(eq(schema.agents.id, agentId));
+    await expireLeases(later(29 * MINUTE + 30_000));
+    expect(await taskOf(second.taskId)).toMatchObject({ status: "failed", error: "El Mac se desconectó antes de recoger la tarea." });
     expect(await getVideoFor(dueno, otro.id)).toMatchObject({ referenceStatus: "failed", referenceError: LINK_FAILED });
+  });
+
+  it("ninguna tarea vive más de 30 minutos: ni reservada con latidos ni en cola con el Mac vivo", async () => {
+    expect(MAX_TASK_AGE_MS).toBe(30 * MINUTE);
+    const { agentId } = await mac();
+    const otro = await createVideo(dueno, v.productId);
+    const hung = await requestLinkDownload(dueno, v.id, REEL, T0);
+    const waiting = await requestLinkDownload(dueno, otro.id, TIKTOK, T0);
+    const task = await claim(agentId);
+    await send(agentId, task, 0, mp4(100));
+    // La descarga se cuelga, pero el programa sigue latiendo y manteniendo la reserva.
+    for (let minute = 1; minute <= 29; minute++) {
+      await agentHeartbeat(agentId, { version: "1.0.0", ytDlp: null }, later(minute * MINUTE));
+      await extendLease(agentId, hung.taskId, later(minute * MINUTE));
+      await expireLeases(later(minute * MINUTE + 1000));
+    }
+    expect((await tasks()).map((row) => row.status)).toEqual(["leased", "queued"]);
+    await agentHeartbeat(agentId, { version: "1.0.0", ytDlp: null }, later(30 * MINUTE));
+    await expireLeases(later(30 * MINUTE + 1000));
+    expect(await tasks()).toMatchObject([
+      { id: hung.taskId, status: "failed", error: "La tarea superó el tiempo máximo." },
+      { id: waiting.taskId, status: "failed", error: "La tarea superó el tiempo máximo." },
+    ]);
+    // A la persona se le dice claro qué pasó y qué puede hacer.
+    for (const [video, url] of [[v, REEL], [otro, TIKTOK]] as const) {
+      expect(await getVideoFor(dueno, video.id)).toMatchObject({ referenceStatus: "failed", referenceError: LINK_TOO_SLOW });
+      expect(await linkOfVideo(video)).toEqual({ url, status: "failed", error: LINK_TOO_SLOW });
+    }
+    // El Mac se entera en su siguiente paso, y lo que había llegado se borra.
+    await expect(extendLease(agentId, hung.taskId, later(31 * MINUTE))).rejects.toMatchObject(TASK_LOST);
+    await expect(send(agentId, task, 1, mp4(100), later(31 * MINUTE))).rejects.toMatchObject(TASK_LOST);
+    expect(await sessionRows()).toEqual([]);
+    expect(await claimTask(agentId, later(31 * MINUTE))).toBeNull();
   });
 
   it("el seguimiento de cada minuto caduca las reservas", async () => {
@@ -524,23 +960,23 @@ describe("reserva y latido", () => {
     const b = await mac();
     const { taskId } = await requestLinkDownload(dueno, v.id, REEL, T0);
     // En cola, nadie la tiene.
-    await expect(appendTaskChunk(a.agentId, taskId, 0, mp4(100), T0)).rejects.toMatchObject(TASK_LOST);
-    await claimTask(a.agentId, T0);
+    await expect(appendTaskChunk(a.agentId, taskId, "x", 0, mp4(100), T0)).rejects.toMatchObject(TASK_LOST);
+    const task = await claim(a.agentId);
+    // Ni conociendo la sesión de quien la tiene.
     await expect(extendLease(b.agentId, taskId, T0)).rejects.toMatchObject(TASK_LOST);
-    await expect(appendTaskChunk(b.agentId, taskId, 0, mp4(100), T0)).rejects.toMatchObject(TASK_LOST);
-    await expect(finishTask(b.agentId, taskId, { ok: true, totalBytes: 100 }, T0)).rejects.toMatchObject(TASK_LOST);
-    await expect(finishTask(b.agentId, taskId, { ok: false, error: "x" }, T0)).rejects.toMatchObject(TASK_LOST);
+    await expect(send(b.agentId, task, 0, mp4(100))).rejects.toMatchObject(TASK_LOST);
+    await expect(succeed(b.agentId, task, 100)).rejects.toMatchObject(TASK_LOST);
+    await expect(fail(b.agentId, task)).rejects.toMatchObject(TASK_LOST);
     for (const bad of [9999, Number.NaN, -1, 1.5]) {
       await expect(extendLease(a.agentId, bad, T0)).rejects.toMatchObject(TASK_LOST);
-      await expect(appendTaskChunk(a.agentId, bad, 0, mp4(100), T0)).rejects.toMatchObject(TASK_LOST);
-      await expect(finishTask(a.agentId, bad, { ok: false, error: "x" }, T0)).rejects.toMatchObject(TASK_LOST);
+      await expect(appendTaskChunk(a.agentId, bad, task.uploadId, 0, mp4(100), T0)).rejects.toMatchObject(TASK_LOST);
+      await expect(finishTask(a.agentId, bad, { ok: false, uploadId: task.uploadId, error: "x" }, T0)).rejects.toMatchObject(TASK_LOST);
     }
     expect(await taskOf(taskId)).toMatchObject({ status: "leased", agentId: a.agentId });
     expect(await sessionRows()).toMatchObject([{ received: 0 }]);
     expect((await getVideoFor(dueno, v.id)).referenceStatus).toBe("uploading");
     // La persona tampoco puede tocar la subida del Mac por las rutas del navegador.
-    const [session] = await sessionRows();
-    await expect(uploadProgress(session.id, { userId: dueno.id })).rejects.toMatchObject({ status: 404 });
+    await expect(uploadProgress(task.uploadId, { userId: dueno.id })).rejects.toMatchObject({ status: 404 });
   });
 });
 
@@ -548,60 +984,60 @@ describe("entrega del archivo", () => {
   it("al terminar bien, el vídeo entra en el mismo procesado que una subida", async () => {
     const { agentId } = await mac();
     const { taskId } = await requestLinkDownload(dueno, v.id, REEL, T0);
-    const claimed = (await claimTask(agentId, T0))!;
+    const task = await claim(agentId);
     const file = mp4(CHUNK_BYTES + 300);
-    expect(await appendTaskChunk(agentId, taskId, 0, file.subarray(0, CHUNK_BYTES), T0)).toEqual({ received: 1 });
+    expect(await send(agentId, task, 0, file.subarray(0, CHUNK_BYTES))).toEqual({ received: 1 });
     // Un trozo repetido (se perdió la respuesta) no se escribe dos veces.
-    expect(await appendTaskChunk(agentId, taskId, 0, file.subarray(0, CHUNK_BYTES), T0)).toEqual({ received: 1 });
-    expect(await appendTaskChunk(agentId, taskId, 1, file.subarray(CHUNK_BYTES), T0)).toEqual({ received: 2 });
-    expect(fs.readFileSync(uploadPath(claimed.uploadId)).equals(file)).toBe(true);
+    expect(await send(agentId, task, 0, file.subarray(0, CHUNK_BYTES))).toEqual({ received: 1 });
+    expect(await send(agentId, task, 1, file.subarray(CHUNK_BYTES))).toEqual({ received: 2 });
+    expect(fs.readFileSync(uploadPath(task.uploadId)).equals(file)).toBe(true);
 
-    await finishTask(agentId, taskId, { ok: true, totalBytes: file.length }, T0);
+    await succeed(agentId, task, file.length);
     const video = await getVideoFor(dueno, v.id);
-    expect(video).toMatchObject({ referenceStatus: "processing", referenceSource: "link", referenceUrl: REEL, referenceError: null });
+    expect(video).toMatchObject({ referenceStatus: "processing", referenceError: null, linkTaskId: null });
     expect(await taskOf(taskId)).toMatchObject({ status: "done", error: null });
-    const key = jobKey("video.referencia", dueno.id, video.productId, { videoId: v.id, uploadId: claimed.uploadId });
+    const key = jobKey("video.referencia", dueno.id, video.productId, { videoId: v.id, uploadId: task.uploadId });
     const jobs = await getDb().select().from(schema.jobSteps).where(eq(schema.jobSteps.jobName, "video.referencia"));
     expect(jobs.map((j) => [j.key, j.status])).toEqual([[key, "queued"]]);
     // Repetir «terminar» (se perdió la respuesta) no falla ni encola otra vez.
-    await finishTask(agentId, taskId, { ok: true, totalBytes: file.length }, T0);
+    await succeed(agentId, task, file.length);
     expect(await getDb().select().from(schema.jobSteps).where(eq(schema.jobSteps.jobName, "video.referencia"))).toHaveLength(1);
     // Ya terminada, no admite un fallo tardío.
-    await expect(finishTask(agentId, taskId, { ok: false, error: "x" }, T0)).rejects.toMatchObject(TASK_LOST);
+    await expect(fail(agentId, task)).rejects.toMatchObject(TASK_LOST);
     expect((await getVideoFor(dueno, v.id)).referenceStatus).toBe("processing");
   });
 
   it("si lo que llegó no es lo que el Mac dice haber enviado, no se da por entregado", async () => {
     const { agentId } = await mac();
     const { taskId } = await requestLinkDownload(dueno, v.id, REEL, T0);
-    await claimTask(agentId, T0);
+    const task = await claim(agentId);
     const incomplete = { status: 400, message: "El vídeo no ha llegado entero. Inténtalo de nuevo." };
-    await expect(finishTask(agentId, taskId, { ok: true, totalBytes: 100 }, T0)).rejects.toMatchObject(incomplete);
-    await appendTaskChunk(agentId, taskId, 0, mp4(100), T0);
+    await expect(succeed(agentId, task, 100)).rejects.toMatchObject(incomplete);
+    await send(agentId, task, 0, mp4(100));
     for (const totalBytes of [101, 99, 0, -1, 1.5, Number.NaN, 200 * 1024 * 1024]) {
-      await expect(finishTask(agentId, taskId, { ok: true, totalBytes }, T0)).rejects.toMatchObject(incomplete);
+      await expect(succeed(agentId, task, totalBytes)).rejects.toMatchObject(incomplete);
     }
     expect(await taskOf(taskId)).toMatchObject({ status: "leased" });
     expect((await getVideoFor(dueno, v.id)).referenceStatus).toBe("uploading");
-    await finishTask(agentId, taskId, { ok: true, totalBytes: 100 }, T0);
+    await succeed(agentId, task, 100);
     expect((await getVideoFor(dueno, v.id)).referenceStatus).toBe("processing");
   });
 
   it("si el Mac informa de un fallo, el vídeo lo enseña sin detalles técnicos", async () => {
     const { agentId } = await mac();
     const { taskId } = await requestLinkDownload(dueno, v.id, REEL, T0);
-    const claimed = (await claimTask(agentId, T0))!;
-    await appendTaskChunk(agentId, taskId, 0, mp4(100), T0);
+    const task = await claim(agentId);
+    await send(agentId, task, 0, mp4(100));
     const detail = "yt-dlp: ERROR: [Instagram] abc: Requested content is not available /Users/emmanuel/.cache " + "x".repeat(600);
-    await finishTask(agentId, taskId, { ok: false, error: detail }, T0);
+    await fail(agentId, task, detail);
     const video = await getVideoFor(dueno, v.id);
     expect(video).toMatchObject({ referenceStatus: "failed", referenceError: LINK_FAILED });
-    expect(JSON.stringify(video)).not.toContain("yt-dlp");
+    expect(JSON.stringify(await videoView(dueno, v.id))).not.toContain("yt-dlp");
+    expect(await linkOfVideo(v)).toEqual({ url: REEL, status: "failed", error: LINK_FAILED });
     // El detalle queda recortado en la tarea, solo para el dueño.
-    const task = await taskOf(taskId);
-    expect(task).toMatchObject({ status: "failed", error: detail.slice(0, 500) });
+    expect(await taskOf(taskId)).toMatchObject({ status: "failed", error: detail.slice(0, 500) });
     expect(await sessionRows()).toEqual([]);
-    expect(fs.existsSync(uploadPath(claimed.uploadId))).toBe(false);
+    expect(fs.existsSync(uploadPath(task.uploadId))).toBe(false);
     // No se reintenta sola.
     expect(await claimTask(agentId, T0)).toBeNull();
     // Y se puede volver a pegar el enlace.
@@ -611,58 +1047,136 @@ describe("entrega del archivo", () => {
 
   it("el archivo que entrega el Mac pasa los mismos límites: 100 MB y tipo por contenido", async () => {
     const { agentId } = await mac();
-    const { taskId } = await requestLinkDownload(dueno, v.id, REEL, T0);
-    await claimTask(agentId, T0);
+    await requestLinkDownload(dueno, v.id, REEL, T0);
+    const task = await claim(agentId);
     // El tipo se decide por el contenido del primer trozo.
-    await expect(appendTaskChunk(agentId, taskId, 0, PDF_BYTES, T0)).rejects.toMatchObject({
+    await expect(send(agentId, task, 0, PDF_BYTES)).rejects.toMatchObject({
       status: 400,
       message: "Formato de vídeo no admitido. Usa MP4, MOV o WebM.",
     });
     const tooBig = { status: 400, message: "El vídeo pesa demasiado (máximo 100 MB)." };
     // 100 MB son 20 trozos de 5 MB: no existe un trozo 21.
-    await expect(appendTaskChunk(agentId, taskId, 20, mp4(100), T0)).rejects.toMatchObject(tooBig);
+    await expect(send(agentId, task, 20, mp4(100))).rejects.toMatchObject(tooBig);
     // Ningún trozo pasa de 5 MB ni llega vacío.
-    await expect(appendTaskChunk(agentId, taskId, 0, mp4(CHUNK_BYTES + 1), T0)).rejects.toMatchObject({ status: 400, message: "Trozo no válido." });
-    await expect(appendTaskChunk(agentId, taskId, 0, Buffer.alloc(0), T0)).rejects.toMatchObject({ status: 400 });
-    await expect(appendTaskChunk(agentId, taskId, 1, mp4(100), T0)).rejects.toMatchObject({ status: 409, message: "Faltan trozos anteriores." });
+    await expect(send(agentId, task, 0, mp4(CHUNK_BYTES + 1))).rejects.toMatchObject({ status: 400, message: "Trozo no válido." });
+    await expect(send(agentId, task, 0, Buffer.alloc(0))).rejects.toMatchObject({ status: 400 });
+    await expect(send(agentId, task, 1, mp4(100))).rejects.toMatchObject({ status: 409, message: "Faltan trozos anteriores." });
     expect(await sessionRows()).toMatchObject([{ received: 0, mime: null }]);
 
-    await appendTaskChunk(agentId, taskId, 0, mp4(CHUNK_BYTES), T0);
-    await appendTaskChunk(agentId, taskId, 1, mp4(100), T0);
+    await send(agentId, task, 0, mp4(CHUNK_BYTES));
+    await send(agentId, task, 1, mp4(100));
     // Un trozo corto es el último: detrás no cabe otro.
-    await expect(appendTaskChunk(agentId, taskId, 2, mp4(100), T0)).rejects.toMatchObject({ status: 400, message: "Trozo no válido." });
+    await expect(send(agentId, task, 2, mp4(100))).rejects.toMatchObject({ status: 400, message: "Trozo no válido." });
     expect(await sessionRows()).toMatchObject([{ received: 2, mime: "video/mp4", totalBytes: null }]);
-    await finishTask(agentId, taskId, { ok: true, totalBytes: CHUNK_BYTES + 100 }, T0);
+    await succeed(agentId, task, CHUNK_BYTES + 100);
     expect((await getVideoFor(dueno, v.id)).referenceStatus).toBe("processing");
   });
 
-  it("la referencia traída por enlace queda lista como «enlace», con su dirección", async () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "prueba-agente-"));
-    try {
-      const bytes = fs.readFileSync(await makeSampleVideo(dir, { seconds: 3 }));
-      const fake = createFakeHiggsfield();
-      const { agentId } = await mac();
-      const { taskId } = await requestLinkDownload(dueno, v.id, REEL, T0);
-      const claimed = (await claimTask(agentId, T0))!;
-      for (let i = 0; i * CHUNK_BYTES < bytes.length; i++) {
-        await appendTaskChunk(agentId, taskId, i, bytes.subarray(i * CHUNK_BYTES, (i + 1) * CHUNK_BYTES), T0);
-      }
-      await finishTask(agentId, taskId, { ok: true, totalBytes: bytes.length }, T0);
-      await processReference(v.id, claimed.uploadId, { higgsfield: fake.port });
-      expect(await getVideoFor(dueno, v.id)).toMatchObject({
-        referenceStatus: "ready",
-        referenceSource: "link",
-        referenceUrl: REEL,
-        referenceMediaId: "media-1",
-      });
-      // Se sube al Higgsfield de quien pegó el enlace, y el archivo no se guarda.
-      expect(fake.calls.filter((c) => c.method === "uploadMedia")).toMatchObject([{ userId: dueno.id }]);
-      expect(fs.existsSync(uploadPath(claimed.uploadId))).toBe(false);
-      expect(await sessionRows()).toEqual([]);
-    } finally {
-      fs.rmSync(dir, { recursive: true, force: true });
-    }
+  it("un vídeo sin referencia queda listo como «enlace» cuando el Mac entrega el archivo", async () => {
+    const fake = createFakeHiggsfield();
+    const { agentId } = await mac();
+    await requestLinkDownload(dueno, v.id, REEL, T0);
+    const task = await claim(agentId);
+    await send(agentId, task, 0, samples.tres);
+    await succeed(agentId, task, samples.tres.length);
+    await processReference(v.id, task.uploadId, { higgsfield: fake.port });
+    expect(await getVideoFor(dueno, v.id)).toMatchObject({
+      referenceStatus: "ready",
+      referenceSource: "link",
+      referenceUrl: REEL,
+      referenceMediaId: "media-1",
+      linkTaskId: null,
+    });
+    expect(await linkOfVideo(v)).toBeNull();
   }, 60_000);
+});
+
+describe("crear el vídeo ya con su enlace", () => {
+  const batchInput = (productId: number, linkUrl?: unknown) => ({ productId, avatarPhotoId: null, avatarMode: "nadie", linkUrl });
+
+  it("un lote crea cada vídeo con su enlace en la cola del Mac, y el Mac los trae en orden", async () => {
+    // El lote crea por el camino real, con la hora de verdad.
+    const { agentId } = await mac(dueno, new Date());
+    const batch = await createBatch(dueno, "Semana 48");
+    const urls = [REEL, TIKTOK, "https://youtu.be/abc"];
+    const created: Video[] = [];
+    for (const url of urls) created.push(await addVideoToBatch(dueno, batch.id, batchInput(v.productId, url)));
+
+    // Cada vídeo nace ya esperando su enlace.
+    for (const [i, video] of created.entries()) {
+      expect(video).toMatchObject({ batchId: batch.id, referenceStatus: "uploading", avatarMode: "nadie" });
+      expect(await linkOfVideo(video)).toEqual({ url: urls[i], status: "queued", error: null });
+    }
+    expect((await tasks()).map((task) => [task.videoId, task.url, task.status, task.createdBy])).toEqual(
+      created.map((video, i) => [video.id, urls[i], "queued", dueno.id]),
+    );
+    // Tres en la cola: el Mac se los lleva de uno en uno, del primero al último.
+    for (const [i, video] of created.entries()) {
+      const task = await claim(agentId, new Date());
+      expect(task.url).toBe(urls[i]);
+      await send(agentId, task, 0, mp4(100), new Date());
+      await succeed(agentId, task, 100, new Date());
+      expect((await getVideoFor(dueno, video.id)).referenceStatus).toBe("processing");
+    }
+    expect(await claimTask(agentId)).toBeNull();
+    expect((await tasks()).map((task) => task.status)).toEqual(["done", "done", "done"]);
+  });
+
+  it("un enlace que no vale o un Mac desconectado no dejan un vídeo a medias en el lote", async () => {
+    const batch = await createBatch(dueno, "Semana 48");
+    const count = async () => (await getDb().select().from(schema.videos).where(eq(schema.videos.batchId, batch.id))).length;
+    // Sin Mac.
+    await expect(addVideoToBatch(dueno, batch.id, batchInput(v.productId, REEL))).rejects.toMatchObject({ status: 409, message: MAC_OFFLINE });
+    await mac(dueno, new Date());
+    for (const bad of ["https://evil.test/?u=instagram.com", 7, ""]) {
+      await expect(addVideoToBatch(dueno, batch.id, batchInput(v.productId, bad))).rejects.toMatchObject({ status: 400 });
+    }
+    // Sin Higgsfield.
+    await saveCredential(dueno.id, "higgsfield", { accessToken: "a" }, { needsReconnect: true });
+    await expect(addVideoToBatch(dueno, batch.id, batchInput(v.productId, REEL))).rejects.toMatchObject({ status: 409 });
+    expect(await count()).toBe(0);
+    expect(await tasks()).toEqual([]);
+    // Sin enlace, el lote sigue creando vídeos como siempre.
+    const plain = await addVideoToBatch(dueno, batch.id, batchInput(v.productId));
+    expect(plain).toMatchObject({ referenceStatus: "none", linkTaskId: null });
+    expect(await addVideoToBatch(dueno, batch.id, batchInput(v.productId, null))).toMatchObject({ referenceStatus: "none" });
+    expect(await tasks()).toEqual([]);
+  });
+
+  it("por las rutas: el lote y el vídeo suelto aceptan `linkUrl`", async () => {
+    await as(dueno);
+    await mac(dueno, new Date());
+    const batch = await createBatch(dueno, "Semana 48");
+    const json = (body: unknown) => new Request("http://localhost/x", { method: "POST", body: JSON.stringify(body) });
+
+    const inBatch = await batchVideoRoute(json({ productId: v.productId, avatarPhotoId: null, avatarMode: "nadie", linkUrl: REEL }), {
+      params: Promise.resolve({ id: String(batch.id) }),
+    });
+    expect(inBatch.status).toBe(201);
+    const first = (await inBatch.json()).video;
+    expect(first).toMatchObject({ batchId: batch.id, referenceStatus: "uploading" });
+
+    const product = { params: Promise.resolve({ id: String(v.productId) }) };
+    const single = await newVideoRoute(json({ linkUrl: TIKTOK }), product);
+    expect(single.status).toBe(201);
+    const second = (await single.json()).video;
+    expect(second).toMatchObject({ batchId: null, referenceStatus: "uploading" });
+    expect((await tasks()).map((task) => [task.videoId, task.url])).toEqual([
+      [first.id, REEL],
+      [second.id, TIKTOK],
+    ]);
+
+    // Un enlace que no vale: 400 y ningún vídeo nuevo. Sin cuerpo, un vídeo vacío como siempre.
+    const before = (await getDb().select().from(schema.videos)).length;
+    expect((await newVideoRoute(json({ linkUrl: "https://evil.test/x" }), product)).status).toBe(400);
+    expect((await getDb().select().from(schema.videos)).length).toBe(before);
+    const empty = await newVideoRoute(new Request("http://localhost/x", { method: "POST" }), product);
+    expect(empty.status).toBe(201);
+    expect((await empty.json()).video).toMatchObject({ referenceStatus: "none", linkTaskId: null });
+    // Quien no ve el producto recibe su 404 de siempre, antes que nada del enlace.
+    await as(ana);
+    expect((await newVideoRoute(json({ linkUrl: REEL }), product)).status).toBe(404);
+  });
 });
 
 describe("rutas", () => {
@@ -683,26 +1197,37 @@ describe("rutas", () => {
     });
     expect(asked.status).toBe(201);
     const { taskId } = await asked.json();
+    // La pantalla del vídeo ve el enlace pendiente.
+    const seen = await (await videoRoute(new Request("http://localhost/api/videos/x"), { params: Promise.resolve({ videoId: String(v.id) }) })).json();
+    expect(seen.link).toEqual({ url: REEL, status: "queued", error: null });
     cookie.value = undefined;
 
     const claimed = await claimRoute(agentRequest(token));
     expect(claimed.status).toBe(200);
     const task = await claimed.json();
     expect(task).toEqual({ taskId, url: REEL, uploadId: expect.any(String), chunkBytes: CHUNK_BYTES, maxBytes: 100 * 1024 * 1024 });
+    const chunk = (query: string) => chunkRoute(agentRequest(token, { method: "PUT", body: new Uint8Array(mp4(100)) }, query), taskParams(taskId));
+    const finish = (body: unknown) => finishRoute(agentRequest(token, { body: typeof body === "string" ? body : JSON.stringify(body) }), taskParams(taskId));
 
     expect((await leaseRoute(agentRequest(token), taskParams(taskId))).status).toBe(200);
-    const put = await chunkRoute(agentRequest(token, { method: "PUT", body: new Uint8Array(mp4(100)) }, "?indice=0"), taskParams(taskId));
+    // Sin la sesión de la reserva, o con otra, 409.
+    expect((await chunk("?indice=0")).status).toBe(409);
+    expect((await chunk(`?indice=0&subida=${"a".repeat(32)}`)).status).toBe(409);
+    const put = await chunk(`?indice=0&subida=${task.uploadId}`);
     expect(put.status).toBe(200);
     expect(await put.json()).toEqual({ received: 1 });
     // Un índice mal escrito no se acepta.
-    expect((await chunkRoute(agentRequest(token, { method: "PUT", body: new Uint8Array(mp4(100)) }, "?indice=uno"), taskParams(taskId))).status).toBe(400);
-    expect((await chunkRoute(agentRequest(token, { method: "PUT", body: new Uint8Array(mp4(100)) }), taskParams(taskId))).status).toBe(400);
-    // Un «terminar» sin forma válida no hace nada.
-    expect((await finishRoute(agentRequest(token, { body: JSON.stringify({ ok: "sí" }) }), taskParams(taskId))).status).toBe(400);
-    expect((await finishRoute(agentRequest(token, { body: "no es json" }), taskParams(taskId))).status).toBe(400);
+    expect((await chunk(`?indice=uno&subida=${task.uploadId}`)).status).toBe(400);
+    expect((await chunk(`?subida=${task.uploadId}`)).status).toBe(400);
+    // Un «terminar» sin forma válida no hace nada; con la sesión de otro intento, 409.
+    expect((await finish({ ok: "sí", uploadId: task.uploadId })).status).toBe(400);
+    expect((await finish({ ok: true, totalBytes: 100 })).status).toBe(400);
+    expect((await finish("no es json")).status).toBe(400);
+    expect((await finish({ ok: true, uploadId: "a".repeat(32), totalBytes: 100 })).status).toBe(409);
+    expect((await finish({ ok: false, uploadId: "a".repeat(32), error: "x" })).status).toBe(409);
     expect((await getVideoFor(dueno, v.id)).referenceStatus).toBe("uploading");
 
-    const done = await finishRoute(agentRequest(token, { body: JSON.stringify({ ok: true, totalBytes: 100 }) }), taskParams(taskId));
+    const done = await finish({ ok: true, uploadId: task.uploadId, totalBytes: 100 });
     expect(done.status).toBe(200);
     expect((await getVideoFor(dueno, v.id)).referenceStatus).toBe("processing");
     // Un identificador de tarea que no es un número: la misma respuesta que una tarea ajena.
@@ -714,8 +1239,8 @@ describe("rutas", () => {
   it("un trozo que dice pesar más del máximo da 413 sin leer el cuerpo", async () => {
     const { agentId, token } = await mac(dueno, new Date());
     const { taskId } = await requestLinkDownload(dueno, v.id, REEL);
-    await claimTask(agentId);
-    const request = new Request("http://localhost/api/agente/x?indice=0", {
+    const task = (await claimTask(agentId))!;
+    const request = new Request(`http://localhost/api/agente/x?indice=0&subida=${task.uploadId}`, {
       method: "PUT",
       headers: { ...bearer(token), "content-length": String(CHUNK_BYTES + 2048) },
     });
@@ -725,10 +1250,17 @@ describe("rutas", () => {
   it("el Mac informa de un fallo por su ruta y el detalle no llega a la persona", async () => {
     const { token } = await mac(dueno, new Date());
     const { taskId } = await requestLinkDownload(dueno, v.id, REEL);
-    await claimRoute(agentRequest(token));
-    const failed = await finishRoute(agentRequest(token, { body: JSON.stringify({ ok: false, error: "yt-dlp no pudo descargar el enlace" }) }), taskParams(taskId));
+    const task = await (await claimRoute(agentRequest(token))).json();
+    const failed = await finishRoute(
+      agentRequest(token, { body: JSON.stringify({ ok: false, uploadId: task.uploadId, error: "yt-dlp no pudo descargar el enlace" }) }),
+      taskParams(taskId),
+    );
     expect(failed.status).toBe(200);
     expect(await getVideoFor(dueno, v.id)).toMatchObject({ referenceStatus: "failed", referenceError: LINK_FAILED });
+    await as(dueno);
+    const seen = await (await videoRoute(new Request("http://localhost/api/videos/x"), { params: Promise.resolve({ videoId: String(v.id) }) })).json();
+    expect(seen.link).toEqual({ url: REEL, status: "failed", error: LINK_FAILED });
+    expect(JSON.stringify(seen)).not.toContain("yt-dlp");
   });
 
   it("pegar un enlace por la ruta: sin sesión 401, sin Mac 409 y un enlace raro 400", async () => {

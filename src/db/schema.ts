@@ -420,6 +420,12 @@ export const videos = pgTable(
       { onDelete: "set null" },
     ),
     /**
+     * El enlace pegado que este vídeo espera del Mac, o el último que falló (su tarea en
+     * `agent_tasks`): es lo que enseña la pantalla. `null` si no hay ninguno. Mientras tanto, una
+     * referencia que ya estaba lista sigue lista. Se vacía al entregarse el archivo o al subir uno.
+     */
+    linkTaskId: bigint("link_task_id", { mode: "number" }).references((): AnyPgColumn => agentTasks.id, { onDelete: "set null" }),
+    /**
      * El desglose automático del lote no se pide para este vídeo hasta que se cambie (un duplicado
      * sin desglose válido que copiar: así no se gasta antes de editarlo).
      */
@@ -614,7 +620,8 @@ export const generationResults = pgTable(
  * Subidas por trozos de un vídeo de referencia. El identificador es aleatorio y es también el
  * nombre del archivo temporal; `received` cuenta los trozos ya escritos. La sube la persona
  * (`user_id`, siempre quien creó el vídeo) o, en su nombre, una tarea del agente del Mac
- * (`agent_task_id`). Las de más de 24 h se borran con su archivo.
+ * (`agent_task_id`; si la tarea se borra, su sesión también). Las de más de 24 h se borran con su
+ * archivo.
  */
 export const uploadSessions = pgTable(
   "upload_sessions",
@@ -625,7 +632,7 @@ export const uploadSessions = pgTable(
       .references(() => videos.id, { onDelete: "cascade" }),
     userId: bigint("user_id", { mode: "number" }).notNull(),
     /** La tarea del Mac que entrega el archivo (enlace pegado); `null` si lo sube la persona. */
-    agentTaskId: bigint("agent_task_id", { mode: "number" }),
+    agentTaskId: bigint("agent_task_id", { mode: "number" }).references((): AnyPgColumn => agentTasks.id, { onDelete: "cascade" }),
     filename: text("filename").notNull(),
     /** Lo anuncia el navegador al empezar. El Mac no sabe el tamaño hasta descargar: `null`. */
     totalBytes: integer("total_bytes"),
@@ -634,7 +641,11 @@ export const uploadSessions = pgTable(
     mime: text("mime"),
     createdAt: instant("created_at").notNull().defaultNow(),
   },
-  (t) => [index("upload_sessions_video").on(t.videoId), index("upload_sessions_created").on(t.createdAt)],
+  (t) => [
+    index("upload_sessions_video").on(t.videoId),
+    index("upload_sessions_created").on(t.createdAt),
+    index("upload_sessions_agent_task").on(t.agentTaskId),
+  ],
 );
 
 /**
@@ -729,8 +740,9 @@ export const agents = pgTable(
  * referencia de un vídeo y entregar el archivo. `queued` → `leased` (un Mac la tiene reservada y
  * la mantiene con latidos) → `done` | `failed`; una reserva sin latido vuelve a `queued` hasta
  * agotar los intentos. Como mucho una tarea viva por vídeo. `error` es el detalle técnico, solo
- * para el dueño: a la persona se le enseña un texto fijo en el vídeo. Solo `src/server/agent.ts`
- * toca esta tabla.
+ * para el dueño: a la persona se le enseña un texto fijo en el vídeo. La escribe
+ * `src/server/agent.ts`; la capa de vídeos solo cancela la tarea viva de un vídeo y lee su enlace,
+ * por `src/server/agent-tasks.ts`.
  */
 export const agentTasks = pgTable(
   "agent_tasks",
@@ -760,5 +772,7 @@ export const agentTasks = pgTable(
       .where(sql`${t.status} in ('queued', 'leased')`),
     check("agent_tasks_kind_valid", sql`${t.kind} in ('link_download')`),
     check("agent_tasks_status_valid", sql`${t.status} in ('queued', 'leased', 'done', 'failed')`),
+    // Una tarea reservada siempre dice quién la tiene y hasta cuándo.
+    check("agent_tasks_lease_complete", sql`${t.status} <> 'leased' or (${t.agentId} is not null and ${t.leaseExpiresAt} is not null)`),
   ],
 );

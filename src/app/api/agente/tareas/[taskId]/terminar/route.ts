@@ -6,15 +6,18 @@ const parseId = (value: string) => (/^[1-9]\d{0,15}$/.test(value) ? Number(value
 
 function parseResult(body: unknown): TaskResult | null {
   if (typeof body !== "object" || body === null) return null;
-  const { ok, totalBytes, error } = body as { ok?: unknown; totalBytes?: unknown; error?: unknown };
-  if (ok === true && typeof totalBytes === "number") return { ok: true, totalBytes };
-  if (ok === false) return { ok: false, error: typeof error === "string" ? error : "" };
+  const { ok, uploadId, totalBytes, error } = body as { ok?: unknown; uploadId?: unknown; totalBytes?: unknown; error?: unknown };
+  if (typeof uploadId !== "string") return null;
+  if (ok === true && typeof totalBytes === "number") return { ok: true, uploadId, totalBytes };
+  if (ok === false) return { ok: false, uploadId, error: typeof error === "string" ? error : "" };
   return null;
 }
 
 /**
- * El Mac termina la tarea: `{ ok: true, totalBytes }` (el archivo llegó entero: se prepara como
- * una subida) o `{ ok: false, error }` (no pudo: el vídeo lo dice). 409 si la tarea ya no es suya.
+ * El Mac termina la tarea: `{ ok: true, uploadId, totalBytes }` (el archivo llegó entero: se
+ * prepara como una subida) o `{ ok: false, uploadId, error }` (no pudo: el vídeo lo dice).
+ * `uploadId` es el que recibió al reservarla. 409 si la tarea ya no es suya o la sesión es de un
+ * intento anterior.
  */
 export async function POST(request: Request, { params }: { params: Promise<{ taskId: string }> }) {
   return handle(
