@@ -700,3 +700,10 @@ La nube no llega a Instagram; el Mac del dueño sí. Un programa pequeño en ese
 - El emoji va delante del nombre en toda la web. En el servidor, los nombres que llegan ya hechos (grupos y filas del lote, marcas de la biblioteca) se componen con `productDisplayName`; en la pantalla, con `productLabel`.
 - Archivar no borra nada: el dueño quiere conservar los productos viejos para aprender. `listProductsFor` excluye los archivados por defecto (lista y todos los selectores, que leen `GET /api/productos`); `"solo"` es la vista «Archivados (N)» del dueño (`?archivados=1`, 403 a un colaborador) y `"todos"` lo usan las comprobaciones de visibilidad (lotes, biblioteca, portadas, gasto, personas), así los lotes y vídeos existentes siguen enseñando su producto y la dirección directa sigue abriendo.
 - Solo el dueño archiva o desarchiva (403 a los demás); el emoji lo cambia cualquiera que pueda editar el producto. No se impide crear vídeos nuevos de un producto archivado por la API: simplemente no aparece en los selectores.
+
+## Nuevo lote: borrador que no se pierde (22/11)
+
+- Todo el formulario de «Nuevo lote» (nombre, «Desglosar al subir», grupos con tipo, gancho e indicaciones, y cada tarjeta con tipo, nota, avatar, canción, enlace y el archivo soltado) vive en `NewBatchDraftProvider`, montado en `Providers` junto a las subidas de referencia. Ir a otra pantalla y volver lo restaura igual, con los `File` en memoria y sus vistas previas.
+- Además, sin los archivos, se guarda en `localStorage` (`principal:borrador-lote`, siempre en try/catch). Tras recargar, las tarjetas de archivo salen como «Vuelve a arrastrar este archivo» con la zona para soltarlo en la propia tarjeta; «Crear y subir» espera a que estén todas. La lógica de guardar y leer es pura (`src/components/batches/draft.ts`) y descarta lo que no vale.
+- El lote creado a medias (`batchId`) también se guarda, para seguir con «Añadir y subir».
+- «Lotes» en el menú lleva un punto mientras hay borrador. Tras enviar todo se vacía; «Descartar borrador» pide confirmación.

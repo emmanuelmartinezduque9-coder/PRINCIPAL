@@ -9,6 +9,7 @@ import type { AuthUser } from "@/server/auth";
 import { api } from "@/lib/api";
 import { cn, initials } from "@/lib/utils";
 import { Brand } from "./brand";
+import { useNewBatchDraft } from "@/components/batches/draft-provider";
 
 interface NavItem {
   href: string;
@@ -203,6 +204,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const column = useContentColumn(pathname);
   const { data } = useMe();
   const items = navFor(data?.user?.role);
+  const { hasDraft } = useNewBatchDraft();
+  /** Punto en «Lotes» mientras hay un borrador de lote sin enviar. */
+  const dot = (href: string) =>
+    href === "/lotes" && hasDraft ? <span className="size-1.5 shrink-0 rounded-full bg-amber-500" role="img" aria-label="Borrador sin enviar" /> : null;
   const isActive = (href: string) => pathname === href || pathname.startsWith(`${href}/`);
 
   return (
@@ -229,6 +234,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               >
                 <Icon className={cn("size-4 shrink-0", active ? "text-foreground" : "")} aria-hidden />
                 {label}
+                {dot(href) ? <span className="ml-auto flex">{dot(href)}</span> : null}
               </Link>
             );
           })}
@@ -269,7 +275,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                   isActive(href) ? "font-semibold text-foreground" : "text-muted-foreground",
                 )}
               >
-                <Icon className="size-5 shrink-0" aria-hidden />
+                <span className="relative">
+                  <Icon className="size-5 shrink-0" aria-hidden />
+                  {dot(href) ? <span className="absolute -top-0.5 -right-1 flex">{dot(href)}</span> : null}
+                </span>
                 <span className="max-w-full truncate px-0.5">{label}</span>
               </Link>
             </li>

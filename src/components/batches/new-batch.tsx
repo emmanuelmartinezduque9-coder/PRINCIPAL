@@ -1,21 +1,21 @@
 "use client";
 
 import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronDown, CircleAlert, Copy, FileVideo, Link2, Loader2, MonitorOff, Plus, Trash2, Upload, X } from "lucide-react";
+import { ChevronDown, CircleAlert, Copy, FileVideo, Link2, Loader2, MonitorOff, Plus, RotateCcw, Trash2, Upload, X } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { useId, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { BodyPicker, HookStepper } from "@/components/library/body-picker";
 import { productLabel, type ProductView } from "@/components/products/labels";
 import { PageHeader } from "@/components/shell/page-header";
-import type { SongJson } from "@/components/songs/labels";
 import { MusicPicker } from "@/components/songs/music-picker";
 import { Button, buttonVariants } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { DEFAULT_HOOK_SECONDS, MAX_ADAPTATION, MAX_NOTE, MAX_PRODUCT_NOTES } from "@/components/videos/brief-labels";
+import { MAX_ADAPTATION, MAX_NOTE, MAX_PRODUCT_NOTES } from "@/components/videos/brief-labels";
 import { appendDictation, DictateButton } from "@/components/videos/dictate-button";
 import type { ProductPhoto } from "@/components/videos/labels";
 import { useReferenceUploads } from "@/components/videos/upload-provider";
@@ -23,7 +23,6 @@ import { useMac } from "@/components/videos/use-mac";
 import { api } from "@/lib/api";
 import { linkLabel, parsePastedLinks } from "@/lib/links";
 import { cn } from "@/lib/utils";
-import type { VideoKind } from "@/server/videos/brief";
 import {
   AvatarBadge,
   AvatarSelect,
@@ -34,56 +33,12 @@ import {
   type AvatarChoice,
 } from "./batch-fields";
 import { autoBatchName } from "./labels";
+import { newGroup, nextKey, type Group, type Row, type Source } from "./draft";
+import { useNewBatchDraft } from "./draft-provider";
 
 /** Lo mismo que admite el servidor. */
 const MAX_REFERENCE_BYTES = 100 * 1024 * 1024;
 const VIDEO_TYPES = /\.(mp4|mov|webm)$/i;
-
-/** De dónde sale la referencia de una tarjeta: un archivo que se sube o un enlace que trae el Mac. */
-type Source = { type: "file"; file: File; preview: string } | { type: "link"; url: string };
-
-interface Row {
-  key: string;
-  source: Source;
-  /** `null`: el avatar habitual del producto. */
-  avatar: AvatarChoice | null;
-  kind: VideoKind;
-  /** «Qué adaptación quieres» (solo con adaptación). */
-  adaptation: string;
-  /** Duración del gancho y cuerpos que van detrás, en orden (solo con «Solo gancho»). */
-  hookSeconds: number;
-  bodies: number[];
-  /** «Cambios específicos». */
-  note: string;
-  /** «Música»: una canción de la biblioteca o `null` (audio original). */
-  song: SongJson | null;
-  /** «Más opciones» abierto. */
-  open: boolean;
-  error: string | null;
-}
-
-/** Un producto del lote con sus «Indicaciones» y sus vídeos. */
-interface Group {
-  key: string;
-  productId: number | null;
-  notes: string;
-  /** «Tipo» del grupo: el que reciben las tarjetas nuevas (cada una lo puede cambiar después). */
-  kind: VideoKind;
-  /** Con «Solo gancho», la duración que reciben las tarjetas nuevas. */
-  hookSeconds: number;
-  rows: Row[];
-}
-
-let counter = 0;
-const nextKey = (prefix: string) => `${prefix}-${++counter}`;
-const newGroup = (productId: number | null = null): Group => ({
-  key: nextKey("grupo"),
-  productId,
-  notes: "",
-  kind: "replicar",
-  hookSeconds: DEFAULT_HOOK_SECONDS,
-  rows: [],
-});
 
 const sizeLabel = (bytes: number) =>
   bytes < 1024 * 1024
@@ -93,9 +48,12 @@ const sizeLabel = (bytes: number) =>
 const isVideoFile = (file: File) => VIDEO_TYPES.test(file.name) || /^video\/(mp4|quicktime|webm)$/.test(file.type);
 
 const tooBig = (row: Row) => row.source.type === "file" && row.source.file.size > MAX_REFERENCE_BYTES;
+/** Archivo soltado antes de recargar: hay que volver a arrastrarlo. */
+const isMissing = (row: Row) => row.source.type === "missing";
 /** Cómo se llama la tarjeta: el archivo, o el sitio y el código del enlace. */
 const rowName = (row: Row) => {
   if (row.source.type === "file") return row.source.file.name;
+  if (row.source.type === "missing") return row.source.name;
   const { host, code } = linkLabel(row.source.url);
   return code ? `${host} ${code}` : host;
 };
@@ -115,6 +73,58 @@ function LinkPreview() {
     <div className="grid h-16 w-9 shrink-0 place-items-center rounded-md bg-muted text-muted-foreground">
       <Link2 className="size-4" aria-hidden />
     </div>
+  );
+}
+
+/**
+ * Tarjeta de un archivo que se soltó antes de recargar la página: el navegador no lo conserva, así
+ * que se vuelve a arrastrar (o elegir) aquí mismo.
+ */
+function RedropZone({ name, onFile, disabled }: { name: string; onFile: (file: File) => void; disabled: boolean }) {
+  const input = useRef<HTMLInputElement>(null);
+  const [over, setOver] = useState(false);
+  const take = (files: FileList | null) => {
+    const file = files?.[0];
+    if (file) onFile(file);
+  };
+  return (
+    <>
+      <input
+        ref={input}
+        type="file"
+        accept="video/mp4,video/quicktime,video/webm,.mp4,.mov,.webm"
+        className="sr-only"
+        tabIndex={-1}
+        aria-hidden
+        onChange={(event) => {
+          take(event.target.files);
+          event.target.value = "";
+        }}
+      />
+      <button
+        type="button"
+        disabled={disabled}
+        aria-label={`Vuelve a arrastrar ${name}`}
+        onClick={() => input.current?.click()}
+        onDragOver={(event) => {
+          event.preventDefault();
+          setOver(true);
+        }}
+        onDragLeave={() => setOver(false)}
+        onDrop={(event) => {
+          event.preventDefault();
+          setOver(false);
+          take(event.dataTransfer.files);
+        }}
+        className={cn(
+          "flex items-center justify-center gap-2 rounded-lg border-2 border-dashed border-amber-500/60 px-4 py-3 text-sm text-foreground transition-colors outline-none hover:bg-muted/50 focus-visible:ring-3 focus-visible:ring-ring/50 disabled:opacity-50 lg:ml-12",
+          over && "border-primary bg-muted/60",
+        )}
+      >
+        <RotateCcw className="size-4 text-amber-600" aria-hidden />
+        Vuelve a arrastrar este archivo
+      </button>
+    </>
   );
 }
 
@@ -247,6 +257,7 @@ function RowCard({
   onChange,
   onDuplicate,
   onRemove,
+  onRedrop,
 }: {
   row: Row;
   productId: number | null;
@@ -258,6 +269,7 @@ function RowCard({
   onChange: (changes: Partial<Row>) => void;
   onDuplicate: () => void;
   onRemove: () => void;
+  onRedrop: (file: File) => void;
 }) {
   const noteId = useId();
   const name = rowName(row);
@@ -265,14 +277,24 @@ function RowCard({
   return (
     <li className="flex flex-col gap-3 px-4 py-3">
       <div className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-3 lg:grid-cols-[auto_minmax(0,11rem)_10rem_12rem_minmax(0,1fr)_auto]">
-        {row.source.type === "file" ? <FilePreview src={row.source.preview} /> : <LinkPreview />}
+        {row.source.type === "file" ? (
+          <FilePreview src={row.source.preview} />
+        ) : row.source.type === "missing" ? (
+          <div className="grid h-16 w-9 shrink-0 place-items-center rounded-md bg-muted text-muted-foreground">
+            <FileVideo className="size-4" aria-hidden />
+          </div>
+        ) : (
+          <LinkPreview />
+        )}
         <div className="flex min-w-0 flex-col pt-1">
-          <span className="truncate text-sm font-medium" title={row.source.type === "file" ? name : row.source.url}>
+          <span className="truncate text-sm font-medium" title={row.source.type === "link" ? row.source.url : name}>
             <span className="mr-1.5 text-muted-foreground tabular-nums">{index + 1}</span>
             {link ? link.host : name}
           </span>
-          {row.source.type === "file" ? (
-            <span className="text-xs text-muted-foreground tabular-nums">{sizeLabel(row.source.file.size)}</span>
+          {row.source.type === "file" || row.source.type === "missing" ? (
+            <span className="text-xs text-muted-foreground tabular-nums">
+              {sizeLabel(row.source.type === "file" ? row.source.file.size : row.source.size)}
+            </span>
           ) : (
             <span className="truncate text-xs text-muted-foreground" title={row.source.url}>
               {link?.code}
@@ -314,6 +336,7 @@ function RowCard({
           <DictateButton className="self-end" onText={(text) => onChange({ note: appendDictation(row.note, text).slice(0, MAX_NOTE) })} />
         </div>
       </div>
+      {row.source.type === "missing" ? <RedropZone name={name} onFile={onRedrop} disabled={busy} /> : null}
       {row.kind === "adaptacion_concepto" ? (
         <Textarea
           aria-label="Qué adaptación quieres"
@@ -347,6 +370,41 @@ function RowCard({
   );
 }
 
+/** «Descartar borrador», con confirmación: vacía el formulario entero. */
+function DiscardDraft({ onDiscard }: { onDiscard: () => void }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <Button variant="ghost" className="h-10 gap-2 px-3 text-muted-foreground hover:text-destructive">
+          <Trash2 data-icon="inline-start" />
+          Descartar borrador
+        </Button>
+      </DialogTrigger>
+      <DialogContent className="gap-6 p-6 sm:max-w-sm" aria-describedby={undefined}>
+        <DialogHeader>
+          <DialogTitle>¿Descartar el borrador?</DialogTitle>
+        </DialogHeader>
+        <DialogFooter>
+          <Button variant="outline" className="h-10 px-4" onClick={() => setOpen(false)}>
+            Cancelar
+          </Button>
+          <Button
+            variant="destructive"
+            className="h-10 px-4"
+            onClick={() => {
+              onDiscard();
+              setOpen(false);
+            }}
+          >
+            Descartar
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 /**
  * `/lotes/nuevo`, agrupado por producto como el panel antiguo: cada grupo tiene su producto, sus
  * «Indicaciones para los vídeos de …» y sus tarjetas (una por referencia que se suelta en él, o
@@ -366,11 +424,10 @@ export function NewBatch() {
   const mac = useMac();
   const nameId = useId();
   const autoId = useId();
-  const [name, setName] = useState("");
-  const [autoAnalyze, setAutoAnalyze] = useState(true);
-  const [groups, setGroups] = useState<Group[]>(() => [newGroup()]);
+  // Todo el formulario vive en el borrador del diseño: salir y volver no pierde nada.
+  const { draft, hasDraft, setName, setAutoAnalyze, setGroups, setBatchId, preview, release, clear } = useNewBatchDraft();
+  const { name, autoAnalyze, groups, batchId } = draft;
   const [busy, setBusy] = useState(false);
-  const [batchId, setBatchId] = useState<number | null>(null);
 
   const products = useQuery({
     queryKey: ["products"],
@@ -398,22 +455,6 @@ export function NewBatch() {
     return loading ? null : defaultAvatarChoice(productOf(group.productId), avatars);
   };
 
-  // Las vistas previas se sueltan al quitar una fila o salir de la pantalla.
-  const previews = useRef(new Set<string>());
-  useEffect(() => {
-    const all = previews.current;
-    return () => all.forEach((url) => URL.revokeObjectURL(url));
-  }, []);
-  const preview = (file: File) => {
-    const url = URL.createObjectURL(file);
-    previews.current.add(url);
-    return url;
-  };
-  const release = (row: Row) => {
-    if (row.source.type !== "file") return;
-    URL.revokeObjectURL(row.source.preview);
-    previews.current.delete(row.source.preview);
-  };
   /** Una tarjeta nueva, con el tipo (y la duración del gancho) que tenga elegido su grupo. */
   const newRow = (source: Source, group: Pick<Group, "kind" | "hookSeconds">): Row => ({
     key: nextKey("fila"),
@@ -462,6 +503,16 @@ export function NewBatch() {
     });
   }
 
+  /** El archivo de una tarjeta que se soltó antes de recargar, otra vez en memoria. */
+  function redrop(groupKey: string, row: Row, file: File) {
+    if (!isVideoFile(file)) {
+      toast.error("Solo vídeos MP4, MOV o WebM.");
+      return;
+    }
+    const next: Row = { ...row, source: { type: "file", file, preview: preview(file) } };
+    updateRow(groupKey, row.key, { source: next.source, error: tooBig(next) ? "Pesa más de 100 MB." : null });
+  }
+
   function removeRow(groupKey: string, row: Row) {
     release(row);
     updateGroup(groupKey, (group) => ({ ...group, rows: group.rows.filter((r) => r.key !== row.key) }));
@@ -475,13 +526,14 @@ export function NewBatch() {
   const rowCount = groups.reduce((sum, group) => sum + group.rows.length, 0);
   const filled = groups.filter((group) => group.rows.length > 0);
   const anyTooBig = groups.some((group) => group.rows.some(tooBig));
+  const anyMissing = groups.some((group) => group.rows.some(isMissing));
   const complete = filled.every(
     (group) =>
       group.productId !== null &&
       group.rows.every((row) => avatarOf(group, row) !== null && (row.kind !== "adaptacion_concepto" || row.adaptation.trim() !== "")),
   );
   const automaticName = autoBatchName(new Date(), filled.map((group) => productOf(group.productId)?.name ?? ""));
-  const canCreate = rowCount > 0 && complete && !anyTooBig && !busy;
+  const canCreate = rowCount > 0 && complete && !anyTooBig && !anyMissing && !busy;
 
   async function create() {
     if (!canCreate) return;
@@ -529,12 +581,14 @@ export function NewBatch() {
         }
       }
       void client.invalidateQueries({ queryKey: ["batches"] });
-      // Las vistas previas de las tarjetas creadas ya no hacen falta; el archivo sigue en la cola de subida.
-      for (const group of groups) for (const row of group.rows) if (done.has(row.key) && row.source.type === "file") URL.revokeObjectURL(row.source.preview);
       if (done.size === rowCount) {
+        // Todo enviado: el borrador se vacía (los archivos siguen en la cola de subida).
+        clear();
         router.push(`/lotes/${id}`);
         return;
       }
+      // Las vistas previas de las tarjetas creadas ya no hacen falta.
+      for (const group of groups) for (const row of group.rows) if (done.has(row.key)) release(row);
       setGroups((all) => all.map((group) => ({ ...group, rows: group.rows.filter((row) => !done.has(row.key)) })));
       toast.error("Algunos vídeos no se han podido crear.");
     } catch (error) {
@@ -546,7 +600,11 @@ export function NewBatch() {
 
   return (
     <div className="flex flex-col gap-6">
-      <PageHeader back={{ href: "/lotes", label: "Lotes" }} title="Nuevo lote" />
+      <PageHeader
+        back={{ href: "/lotes", label: "Lotes" }}
+        title="Nuevo lote"
+        actions={hasDraft && !busy ? <DiscardDraft onDiscard={clear} /> : null}
+      />
 
       <section className="grid gap-4 rounded-xl bg-card p-5 ring-1 ring-foreground/10 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
         <div className="flex min-w-0 flex-col gap-2">
@@ -657,6 +715,7 @@ export function NewBatch() {
                     onChange={(changes) => updateRow(group.key, row.key, changes)}
                     onDuplicate={() => duplicate(group.key, row)}
                     onRemove={() => removeRow(group.key, row)}
+                    onRedrop={(file) => redrop(group.key, row, file)}
                   />
                 ))}
               </ul>
