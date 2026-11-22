@@ -1,8 +1,7 @@
-import { enqueueJob } from "@/jobs/boss";
-import { SYSTEM_CHECK_JOB, systemCheckStatus } from "@/jobs/system-check";
+import { CheckCooldownError, requestSystemCheck, systemCheckStatus } from "@/jobs/system-check";
 import { handle } from "@/server/http";
 
-/** Si hay una comprobación en marcha y el último resultado. Solo el dueño. */
+/** Si hay una comprobación en marcha, la espera que queda y el último resultado. Solo el dueño. */
 export async function GET() {
   return handle(
     async (owner) => Response.json(await systemCheckStatus(owner!), { headers: { "Cache-Control": "no-store" } }),
@@ -12,16 +11,21 @@ export async function GET() {
 
 /**
  * Lanza la comprobación del sistema en el proceso en segundo plano (la llamada a Claude nunca
- * corre dentro de una petición web). Solo una a la vez: si ya hay una en marcha, no encola otra.
+ * corre dentro de una petición web). Una sola a la vez y con 30 s de espera entre dos: si ya hay
+ * una en marcha devuelve esa (202, `started: false`); si es demasiado pronto, 409 con los segundos.
  */
 export async function POST() {
   return handle(
     async (owner) => {
-      const before = await systemCheckStatus(owner!);
-      if (before.running) return Response.json({ ...before, started: false }, { status: 202 });
-      // Cada pulsación lleva su identificador: es otra comprobación, no la repetición de la anterior.
-      await enqueueJob(SYSTEM_CHECK_JOB, { userId: owner!.id, productId: null }, { requestId: crypto.randomUUID() });
-      return Response.json({ ...(await systemCheckStatus(owner!)), started: true }, { status: 202 });
+      try {
+        const { started, status } = await requestSystemCheck(owner!);
+        return Response.json({ ...status, started }, { status: 202 });
+      } catch (error) {
+        if (error instanceof CheckCooldownError) {
+          return Response.json({ error: error.message, secondsLeft: error.secondsLeft }, { status: 409 });
+        }
+        throw error;
+      }
     },
     { role: "dueno" },
   );

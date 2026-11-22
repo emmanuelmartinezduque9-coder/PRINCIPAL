@@ -4,7 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { formatDistanceToNowStrict } from "date-fns";
 import { es } from "date-fns/locale";
 import { Activity, CircleCheck, CircleMinus, CircleX, Loader2 } from "lucide-react";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { api, type Serialized } from "@/lib/api";
@@ -43,10 +43,24 @@ export function SystemCheck() {
   const press = useMutation({
     mutationFn: () => api<Status>("/api/gasto/comprobar", { method: "POST" }),
     onSuccess: (status) => client.setQueryData(["gasto", "comprobar"], status),
-    onError: (e) => toast.error(e instanceof Error ? e.message : "No se pudo lanzar la comprobación."),
+    onError: (e) => {
+      toast.error(e instanceof Error ? e.message : "No se pudo lanzar la comprobación.");
+      void client.invalidateQueries({ queryKey: ["gasto", "comprobar"] });
+    },
   });
 
   const status = query.data;
+
+  // Espera obligatoria entre dos comprobaciones: la fija el servidor; aquí solo se cuenta atrás.
+  const deadline = status ? query.dataUpdatedAt + status.cooldownSeconds * 1000 : 0;
+  const [now, setNow] = useState(Date.now);
+  useEffect(() => {
+    if (deadline <= now) return;
+    const timer = setTimeout(() => setNow(Date.now()), 250);
+    return () => clearTimeout(timer);
+  }, [deadline, now]);
+  const cooldown = Math.max(0, Math.ceil((deadline - now) / 1000));
+
   const running = Boolean(status?.running) || press.isPending;
   const last = status?.last ?? null;
 
@@ -66,11 +80,11 @@ export function SystemCheck() {
         <h2 className="text-base font-semibold tracking-tight">Sistema</h2>
         <Button
           className="h-9 gap-1.5 px-3"
-          disabled={running}
+          disabled={running || cooldown > 0}
           onClick={() => press.mutate()}
         >
           {running ? <Loader2 className="animate-spin" /> : <Activity />}
-          {running ? "Comprobando…" : "Comprobar el sistema"}
+          {running ? "Comprobando…" : cooldown > 0 ? `Comprobar el sistema (${cooldown} s)` : "Comprobar el sistema"}
         </Button>
       </div>
 

@@ -154,10 +154,16 @@ export class LlmRefusalError extends Error {
 
 /** La respuesta se cortó antes de terminar (por `maxTokens` o por tamaño). La llamada queda cobrada. */
 export class LlmTruncatedError extends Error {
-  /** Lo que sí llegó a contestar y lo que costó (ya apuntado en el libro). */
-  constructor(public partial?: { text: string; model: string; costMicros: number; spendEntryId: number }) {
+  /**
+   * Lo que sí llegó a contestar y lo que costó (ya apuntado en el libro). No enumerable: al
+   * registrar o serializar el error no sale la respuesta.
+   */
+  declare readonly partial?: { text: string; model: string; costMicros: number; spendEntryId: number };
+
+  constructor(partial?: { text: string; model: string; costMicros: number; spendEntryId: number }) {
     super("La respuesta de Claude se ha cortado antes de terminar.");
     this.name = "LlmTruncatedError";
+    Object.defineProperty(this, "partial", { value: partial, enumerable: false });
   }
 }
 

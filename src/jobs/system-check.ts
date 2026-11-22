@@ -1,4 +1,4 @@
-import { and, desc, eq, gte, inArray } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, sql } from "drizzle-orm";
 import { getDb, getSetting, schema, setSetting } from "@/db/client";
 import {
   getGateway,
@@ -10,6 +10,7 @@ import {
   LlmTruncatedError,
   type LlmGateway,
 } from "@/llm/gateway";
+import { enqueueJob } from "@/jobs/boss";
 import { defineJob } from "@/jobs/registry";
 import { runStep, stepKey, type JobContext } from "@/jobs/steps";
 import { getActiveUser, type AuthUser } from "@/server/auth";
@@ -157,7 +158,30 @@ export async function runSystemCheck(
   return result;
 }
 
+/** Espera mínima entre dos comprobaciones: cada una cuesta dinero. */
+export const COOLDOWN_SECONDS = 30;
+const LAST_REQUEST_SETTING = "system.lastCheckRequestedAt";
+/** Cerrojo de asesoría propio de la comprobación (dos claves: no choca con los del libro ni los de las reglas). */
+const REQUEST_LOCK_NAMESPACE = 0x5359_5343; // "SYSC"
+
+/** Se pidió otra comprobación demasiado pronto. El mensaje se puede mostrar. */
+export class CheckCooldownError extends Error {
+  constructor(public secondsLeft: number) {
+    super(`Espera ${secondsLeft} s antes de volver a comprobar.`);
+    this.name = "CheckCooldownError";
+  }
+}
+
+async function cooldownLeft(now: Date): Promise<number> {
+  const at = await getSetting<string>(LAST_REQUEST_SETTING);
+  if (!at) return 0;
+  const left = COOLDOWN_SECONDS - (now.getTime() - new Date(at).getTime()) / 1000;
+  return left > 0 ? Math.ceil(left) : 0;
+}
+
 export interface SystemCheckStatus {
+  /** Segundos que faltan para poder pedir otra comprobación. */
+  cooldownSeconds: number;
   running: boolean;
   /** Encolada hace más de 30 s y nadie la ha empezado: el proceso en segundo plano no responde. */
   workerSilent: boolean;
@@ -181,7 +205,30 @@ export async function systemCheckStatus(user: AuthUser, now: Date = new Date()):
     .orderBy(desc(schema.jobSteps.updatedAt))
     .limit(1);
   const workerSilent = active?.status === "queued" && now.getTime() - active.updatedAt.getTime() > WORKER_SILENT_MS;
-  return { running: Boolean(active), workerSilent, last: await getSetting<SystemCheckResult>(LAST_CHECK_SETTING) };
+  return { cooldownSeconds: await cooldownLeft(now), running: Boolean(active), workerSilent, last: await getSetting<SystemCheckResult>(LAST_CHECK_SETTING) };
+}
+
+/**
+ * Pide una comprobación: una sola a la vez y con `COOLDOWN_SECONDS` de espera desde la última.
+ * La lectura del estado y el encolado van bajo un cerrojo de asesoría, así que dos pulsaciones
+ * simultáneas no encolan dos comprobaciones de pago. Si ya hay una en marcha devuelve
+ * `started: false`; si la última se pidió hace menos de 30 s lanza `CheckCooldownError`.
+ */
+export async function requestSystemCheck(
+  owner: AuthUser,
+  now: Date = new Date(),
+): Promise<{ started: boolean; status: SystemCheckStatus }> {
+  if (owner.role !== "dueno") throw new HttpError(403, "Solo el dueño puede hacer esto.");
+  return getDb().transaction(async (tx) => {
+    await tx.execute(sql`select pg_advisory_xact_lock(${REQUEST_LOCK_NAMESPACE}::int, 1::int)`);
+    const before = await systemCheckStatus(owner, now);
+    if (before.running) return { started: false, status: before };
+    if (before.cooldownSeconds > 0) throw new CheckCooldownError(before.cooldownSeconds);
+    // Cada pulsación lleva su identificador: es otra comprobación, no la repetición de la anterior.
+    await enqueueJob(SYSTEM_CHECK_JOB, { userId: owner.id, productId: null }, { requestId: crypto.randomUUID() });
+    await setSetting(LAST_REQUEST_SETTING, now.toISOString());
+    return { started: true, status: await systemCheckStatus(owner, now) };
+  });
 }
 
 defineJob(

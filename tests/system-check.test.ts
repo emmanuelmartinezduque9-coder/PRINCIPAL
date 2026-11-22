@@ -1,7 +1,8 @@
 import { eq } from "drizzle-orm";
 import { beforeEach, describe, expect, it } from "vitest";
 import { getDb, getSetting, schema } from "@/db/client";
-import { createGateway } from "@/llm/gateway";
+import { createGateway, LlmTruncatedError } from "@/llm/gateway";
+import { inspect } from "node:util";
 import { runSystemCheck, SYSTEM_CHECK_JOB, systemCheckStatus, type SystemCheckResult } from "@/jobs/system-check";
 import type { JobContext } from "@/jobs/steps";
 import type { AuthUser } from "@/server/auth";
@@ -129,9 +130,18 @@ describe("más casos de la comprobación", () => {
   });
 });
 
+describe("el error de respuesta cortada", () => {
+  it("no deja salir la respuesta al serializarlo ni al registrarlo", () => {
+    const error = new LlmTruncatedError({ text: "SECRETO", model: "m", costMicros: 1, spendEntryId: 1 });
+    expect(error.partial?.text).toBe("SECRETO");
+    expect(JSON.stringify(error)).not.toContain("SECRETO");
+    expect(inspect(error)).not.toContain("SECRETO");
+  });
+});
+
 describe("estado de la comprobación", () => {
   it("sin nada hecho no hay nada en marcha ni resultado; con la fila del trabajo en cola, está en marcha", async () => {
-    expect(await systemCheckStatus(dueno)).toEqual({ running: false, workerSilent: false, last: null });
+    expect(await systemCheckStatus(dueno)).toEqual({ cooldownSeconds: 0, running: false, workerSilent: false, last: null });
     await getDb()
       .insert(schema.jobSteps)
       .values({ key: "k", jobName: SYSTEM_CHECK_JOB, userId: dueno.id, productId: null, status: "queued", payload: {} });

@@ -2,7 +2,9 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vites
 import type { PgBoss } from "pg-boss";
 import { enqueueJob, getBoss, startWorker, stopWorker } from "@/jobs/boss";
 import { defineJob } from "@/jobs/registry";
-import "@/jobs/system-check"; // el proceso de trabajos solo atiende lo definido al arrancar
+import { requestSystemCheck } from "@/jobs/system-check"; // el proceso de trabajos solo atiende lo definido al arrancar
+import { getDb, schema } from "@/db/client";
+import { like } from "drizzle-orm";
 import { listPausedJobs, runStep, stepKey, type JobContext } from "@/jobs/steps";
 import { setAssignments } from "@/server/access";
 import { login, type AuthUser } from "@/server/auth";
@@ -192,5 +194,40 @@ describe("API de comprobación del sistema", () => {
     } finally {
       if (saved !== undefined) process.env.ANTHROPIC_API_KEY = saved;
     }
+  });
+
+  /** Filas del trabajo entero (no de sus pasos): una por comprobación encolada. */
+  const queuedChecks = async () =>
+    (await getDb().select().from(schema.jobSteps).where(like(schema.jobSteps.key, "sistema.comprobar:%:@trabajo:%"))).length;
+
+  it("dos pulsaciones a la vez encolan exactamente una comprobación", async () => {
+    await seedRules();
+    delete process.env.ANTHROPIC_API_KEY;
+    const results = await Promise.allSettled([requestSystemCheck(dueno), requestSystemCheck(dueno)]);
+    expect(results.every((r) => r.status === "fulfilled" || (r.reason as Error).name === "CheckCooldownError")).toBe(true);
+    expect(await queuedChecks()).toBe(1);
+    await runToIdle();
+  });
+
+  it("una segunda pulsación antes de 30 s da 409 con los segundos; pasados 30 s se acepta", async () => {
+    await seedRules();
+    delete process.env.ANTHROPIC_API_KEY;
+    await as(dueno);
+    const route = await comprobar();
+    expect((await route.POST()).status).toBe(202);
+    await runToIdle();
+
+    const early = await route.POST();
+    expect(early.status).toBe(409);
+    const body = await early.json();
+    expect(body.error).toMatch(/Espera \d+ s antes de volver a comprobar/);
+    expect(body.secondsLeft).toBeGreaterThan(0);
+    expect(body.secondsLeft).toBeLessThanOrEqual(30);
+    expect(await queuedChecks()).toBe(1);
+
+    const later = await requestSystemCheck(dueno, new Date(Date.now() + 31_000));
+    expect(later.started).toBe(true);
+    expect(await queuedChecks()).toBe(2);
+    await runToIdle();
   });
 });
