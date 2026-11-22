@@ -87,7 +87,12 @@ export interface PendingPhoto {
 /** Los cinco papeles como botones de icono (para elegir el papel de las fotos que se van a subir). */
 function RoleSelector({ value, onChange }: { value: PhotoRole; onChange: (role: PhotoRole) => void }) {
   return (
-    <div role="group" aria-label="Papel de las fotos nuevas" className="inline-flex gap-1 rounded-full bg-muted p-1">
+    // En una casilla estrecha los iconos pasan a dos filas en vez de salirse.
+    <div
+      role="group"
+      aria-label="Papel de las fotos nuevas"
+      className="inline-flex max-w-full flex-wrap justify-center gap-1 rounded-3xl bg-muted p-1"
+    >
       {PHOTO_ROLES.map((role) => {
         const Icon = ROLE_ICONS[role];
         const on = role === value;
@@ -335,7 +340,7 @@ function PhotoDropzone({
   );
 }
 
-/** «3 / 6» junto al título del panel de fotos. */
+/** «3 / 12» junto al título del panel de fotos. */
 export function PhotoCount({ count }: { count: number }) {
   return (
     <span className="text-sm text-muted-foreground tabular-nums" aria-label={`${count} de ${MAX_PHOTOS} fotos`}>
@@ -494,7 +499,12 @@ export function PhotoManager({ productId, onCount }: { productId: number; onCoun
   }, [photos.data, list.length, onCount]);
   const room = list.length < MAX_PHOTOS;
   const empty = list.length === 0;
-  const coverId = (list.find((p) => p.role === "articulo") ?? list[0])?.id;
+  // La portada (primera foto de artículo, o la primera si no hay ninguna) va delante y en grande;
+  // las demás siguen en su orden.
+  const shown = useMemo(() => {
+    const cover = list.find((p) => p.role === "articulo") ?? list[0];
+    return cover ? [cover, ...list.filter((p) => p !== cover)] : list;
+  }, [list]);
 
   return (
     <div className="flex flex-col gap-3">
@@ -510,12 +520,12 @@ export function PhotoManager({ productId, onCount }: { productId: number; onCoun
         </p>
       ) : (
         <ul className={MANAGER_GRID}>
-          {list.map((photo, index) => (
+          {shown.map((photo, index) => (
             <Thumb
               key={photo.id}
               src={`/api/fotos/${photo.id}`}
               alt={`Foto ${index + 1} del producto`}
-              cover={photo.id === coverId}
+              cover={index === 0}
               role={photo.role}
               onRole={(role) => changeRole.mutate({ id: photo.id, role })}
               removeLabel={`Borrar la foto ${index + 1}`}

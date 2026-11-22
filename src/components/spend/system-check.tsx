@@ -99,10 +99,10 @@ export function SystemCheck() {
                 {running ? "en curso" : !stage ? "sin comprobar" : stage.ok ? "correcto" : "con error"}
               </span>
               {index === 2 && !running && last?.model ? (
-                <span className="max-w-full px-1 text-[11px] break-words text-muted-foreground">{last.model}</span>
+                <span className="max-w-full px-1 text-xs break-words text-muted-foreground">{last.model}</span>
               ) : null}
               {index === 3 && !running && last?.stages.libro?.ok ? (
-                <span className="text-[11px] text-muted-foreground tabular-nums">{formatUsd(last.costMicros)}</span>
+                <span className="text-xs text-muted-foreground tabular-nums">{formatUsd(last.costMicros)}</span>
               ) : null}
             </li>
           );
