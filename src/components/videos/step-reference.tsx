@@ -1,14 +1,16 @@
 "use client";
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { CircleAlert, Clock, Film, FishingHook, Loader2, Plug, RefreshCw, Upload } from "lucide-react";
+import { CircleAlert, Clock, Download, Film, FishingHook, Link2, Loader2, MonitorOff, Plug, RefreshCw, Upload } from "lucide-react";
 import Link from "next/link";
 import { useRef, useState } from "react";
 import { toast } from "sonner";
 import { Panel } from "@/components/shell/panel";
 import { Button, buttonVariants } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
 import { api } from "@/lib/api";
+import { linkLabel, linkOf } from "@/lib/links";
 import { cn } from "@/lib/utils";
 import type { HiggsfieldStatus } from "@/server/higgsfield";
 import type { AvatarMode } from "@/server/videos/brief";
@@ -17,6 +19,7 @@ import { BriefPanel } from "./brief-panel";
 import { clockTime, frameUrl, MAX_SEGMENT_MS, secondsLabel, type ProductPhoto, type VideoJson, type VideoViewJson } from "./labels";
 import { PhotoPick } from "./photo-pick";
 import type { ReferenceUpload } from "./upload-provider";
+import { requestLink, useMac } from "./use-mac";
 
 const ACCEPT = "video/mp4,video/quicktime,video/webm";
 
@@ -118,6 +121,105 @@ function UploadProgress({ upload }: { upload: Extract<ReferenceUpload, { kind: "
   );
 }
 
+/**
+ * «Pegar enlace»: el Mac de quien lo pide descarga el vídeo y lo entrega. Sin Mac conectado, el
+ * campo queda desactivado y lo dice.
+ */
+function LinkField({ videoId, offline, onRequested }: { videoId: number; offline: boolean; onRequested: () => void }) {
+  const [url, setUrl] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  async function submit() {
+    if (busy || offline) return;
+    if (linkOf(url) === null) {
+      setError("Solo se admiten enlaces de Instagram, TikTok, YouTube o Facebook.");
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      await requestLink(videoId, url);
+      setUrl("");
+      onRequested();
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : "No se pudo pedir el enlace.");
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <form
+      className="flex flex-col gap-1.5"
+      onSubmit={(event) => {
+        event.preventDefault();
+        void submit();
+      }}
+    >
+      <div className="flex items-center gap-2">
+        <div className="relative min-w-0 flex-1">
+          <Link2 className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden />
+          <Input
+            type="url"
+            inputMode="url"
+            aria-label="Pegar enlace"
+            aria-invalid={error !== null || undefined}
+            placeholder="Pegar enlace (Instagram, TikTok…)"
+            value={url}
+            disabled={offline || busy}
+            spellCheck={false}
+            onChange={(event) => {
+              setUrl(event.target.value);
+              setError(null);
+            }}
+            className="h-10 pl-9"
+          />
+        </div>
+        <Button type="submit" variant="outline" className="h-10 shrink-0 gap-2 px-4" disabled={offline || busy || url.trim() === ""}>
+          {busy ? <Loader2 className="animate-spin" data-icon="inline-start" /> : <Download data-icon="inline-start" />}
+          Traer vídeo
+        </Button>
+      </div>
+      {offline ? (
+        <p role="status" className="flex items-center gap-1.5 text-xs text-muted-foreground">
+          <MonitorOff className="size-3.5 shrink-0" aria-hidden />
+          El Mac no está conectado: sube el archivo del vídeo.
+        </p>
+      ) : error ? (
+        <p role="alert" className="flex items-center gap-1.5 text-xs text-destructive">
+          <CircleAlert className="size-3.5 shrink-0" aria-hidden />
+          {error}
+        </p>
+      ) : null}
+    </form>
+  );
+}
+
+/** El Mac está trayendo (o va a traer) el enlace pegado. `compact`: encima de una referencia que sigue lista. */
+function LinkPending({ link, compact }: { link: NonNullable<VideoViewJson["link"]>; compact?: boolean }) {
+  const { host, code } = linkLabel(link.url);
+  const text = link.status === "queued" ? "En cola: el Mac lo traerá enseguida…" : "El Mac está descargando el vídeo…";
+  if (compact) {
+    return (
+      <div role="status" className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg bg-amber-500/10 px-3 py-2.5 text-sm">
+        <Loader2 className="size-4 shrink-0 animate-spin text-amber-600" aria-hidden />
+        <span className="min-w-0 flex-1">{text}</span>
+        <span className="truncate text-xs text-muted-foreground" title={link.url}>
+          {host} {code}
+        </span>
+      </div>
+    );
+  }
+  return (
+    <div className="flex min-h-60 flex-col items-center justify-center gap-3 rounded-xl bg-muted/40 px-6 text-center text-sm text-muted-foreground" role="status">
+      <Loader2 className="size-6 animate-spin" aria-hidden />
+      <span className="text-foreground">{text}</span>
+      <span className="max-w-full truncate text-xs" title={link.url}>
+        {host} {code}
+      </span>
+    </div>
+  );
+}
+
 function Processing() {
   return (
     <div className="flex min-h-80 flex-col items-center justify-center gap-3 rounded-xl bg-muted/40 text-sm text-muted-foreground" role="status">
@@ -210,20 +312,46 @@ function AvatarModes({ mode, readOnly, onChange }: { mode: AvatarMode; readOnly:
 
 // ───────────────────────── Paso ─────────────────────────
 
-/** Lo que va en el panel de la referencia, según la subida del navegador y el estado del vídeo. */
+/**
+ * Lo que va en el panel de la referencia, según la subida del navegador, el enlace pegado y el
+ * estado del vídeo. `linkField`: el campo «Pegar enlace», para quien puede usarlo (`null` si no).
+ */
 function ReferenceBody({
   view,
   upload,
   canUpload,
   onFile,
+  linkField,
+  onRetryLink,
 }: {
   view: VideoViewJson;
   upload: ReferenceUpload;
   canUpload: boolean;
   onFile: (file: File) => void;
+  linkField: React.ReactNode;
+  onRetryLink: (url: string) => void;
 }) {
-  const { video } = view;
+  const { video, link } = view;
   if (upload.kind === "uploading") return <UploadProgress upload={upload} />;
+  const pending = link && link.status !== "failed" ? link : null;
+  // El enlace que no se pudo traer; si el vídeo se quedó sin referencia, ese mismo texto ya es su error.
+  const failedLink =
+    link?.status === "failed" ? (
+      <Notice
+        tone="error"
+        icon={CircleAlert}
+        action={
+          canUpload && linkField ? (
+            <Button variant="outline" className="h-8 gap-1.5 bg-background" onClick={() => onRetryLink(link.url)}>
+              <RefreshCw aria-hidden />
+              Reintentar enlace
+            </Button>
+          ) : null
+        }
+      >
+        {link.error}
+      </Notice>
+    ) : null;
 
   const failedUpload =
     upload.kind === "failed" ? (
@@ -255,14 +383,27 @@ function ReferenceBody({
               El gancho ha cambiado: vuelve a subir el vídeo.
             </Notice>
           ) : null}
+          {/* La referencia sigue lista mientras el Mac trae la nueva, y también si el enlace falla. */}
+          {pending ? <LinkPending link={pending} compact /> : failedLink}
           <ReferenceFacts video={video} />
           <Frames view={view} />
+          {canUpload && !pending ? linkField : null}
         </div>
       );
     default: {
+      if (pending) {
+        return (
+          <div className="flex flex-col gap-3">
+            {failedUpload}
+            <LinkPending link={pending} />
+            {/* Subir un archivo sigue siendo posible: deja sin efecto el enlace. */}
+            {canUpload ? <UploadZone onFile={onFile} compact /> : null}
+          </div>
+        );
+      }
       // «Subiendo» sin subida en este navegador: se recargó la página o se cerró a medias.
       const interrupted = video.referenceStatus === "uploading" && upload.kind === "idle";
-      const failed = video.referenceStatus === "failed" && upload.kind === "idle" && video.referenceError;
+      const failed = video.referenceStatus === "failed" && upload.kind === "idle" && video.referenceError && !failedLink;
       if (!canUpload) {
         return (
           <div className="flex flex-col gap-3">
@@ -276,6 +417,7 @@ function ReferenceBody({
       return (
         <div className="flex flex-col gap-3">
           {failedUpload}
+          {failedLink}
           {failed ? (
             <Notice tone="error" icon={CircleAlert}>
               {video.referenceError}
@@ -287,6 +429,7 @@ function ReferenceBody({
             </Notice>
           ) : null}
           <UploadZone onFile={onFile} />
+          {linkField}
         </div>
       );
     }
@@ -337,6 +480,18 @@ export function StepReference({
   const connected = !!status?.connected && !status.needsReconnect;
   const canUpload = mine && connected;
   const busy = upload.kind === "uploading" || video.referenceStatus === "processing";
+  // «Pegar enlace» solo para quien puede tener un Mac (el dueño), en sus propios vídeos.
+  const mac = useMac();
+  const refresh = () => void client.invalidateQueries({ queryKey: ["video", video.id] });
+  const linkField = canUpload && mac.own ? <LinkField videoId={video.id} offline={!mac.online} onRequested={refresh} /> : null;
+  async function retryLink(url: string) {
+    try {
+      await requestLink(video.id, url);
+      refresh();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "No se pudo reintentar.");
+    }
+  }
 
   async function choose(changes: { avatarPhotoId?: number | null; environmentPhotoId?: number | null; avatarMode?: AvatarMode }) {
     const key = ["video", video.id];
@@ -385,7 +540,7 @@ export function StepReference({
               {status?.needsReconnect ? "Vuelve a conectar tu Higgsfield para subir el vídeo." : "Conecta tu Higgsfield para subir el vídeo."}
             </Notice>
           ) : null}
-          <ReferenceBody view={view} upload={upload} canUpload={canUpload} onFile={onUpload} />
+          <ReferenceBody view={view} upload={upload} canUpload={canUpload} onFile={onUpload} linkField={linkField} onRetryLink={(url) => void retryLink(url)} />
         </Panel>
 
         <div className="flex flex-col gap-6">

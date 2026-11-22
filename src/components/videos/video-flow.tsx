@@ -32,6 +32,8 @@ function rememberStep(step: FlowStep) {
 function pollEvery(view: VideoViewJson | undefined): number | false {
   if (!view) return false;
   if (view.video.referenceStatus === "processing") return 2000;
+  // Un enlace que el Mac está trayendo (o va a traer).
+  if (view.link && view.link.status !== "failed") return 3000;
   const status = view.analysis?.status;
   if (status === "queued" || status === "running") return 2000;
   if (status === "paused") return 10_000;

@@ -1,7 +1,7 @@
 "use client";
 
 import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronDown, CircleAlert, Copy, FileVideo, Loader2, Plus, Trash2, Upload, X } from "lucide-react";
+import { ChevronDown, CircleAlert, Copy, FileVideo, Link2, Loader2, MonitorOff, Plus, Trash2, Upload, X } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
@@ -17,7 +17,9 @@ import { DEFAULT_HOOK_SECONDS, MAX_ADAPTATION, MAX_NOTE, MAX_PRODUCT_NOTES } fro
 import { appendDictation, DictateButton } from "@/components/videos/dictate-button";
 import type { ProductPhoto } from "@/components/videos/labels";
 import { useReferenceUploads } from "@/components/videos/upload-provider";
+import { useMac } from "@/components/videos/use-mac";
 import { api } from "@/lib/api";
+import { linkLabel, parsePastedLinks } from "@/lib/links";
 import { cn } from "@/lib/utils";
 import type { VideoKind } from "@/server/videos/brief";
 import {
@@ -35,10 +37,12 @@ import { autoBatchName } from "./labels";
 const MAX_REFERENCE_BYTES = 100 * 1024 * 1024;
 const VIDEO_TYPES = /\.(mp4|mov|webm)$/i;
 
+/** De dónde sale la referencia de una tarjeta: un archivo que se sube o un enlace que trae el Mac. */
+type Source = { type: "file"; file: File; preview: string } | { type: "link"; url: string };
+
 interface Row {
   key: string;
-  file: File;
-  preview: string;
+  source: Source;
   /** `null`: el avatar habitual del producto. */
   avatar: AvatarChoice | null;
   kind: VideoKind;
@@ -73,11 +77,95 @@ const sizeLabel = (bytes: number) =>
 
 const isVideoFile = (file: File) => VIDEO_TYPES.test(file.name) || /^video\/(mp4|quicktime|webm)$/.test(file.type);
 
+const tooBig = (row: Row) => row.source.type === "file" && row.source.file.size > MAX_REFERENCE_BYTES;
+/** Cómo se llama la tarjeta: el archivo, o el sitio y el código del enlace. */
+const rowName = (row: Row) => {
+  if (row.source.type === "file") return row.source.file.name;
+  const { host, code } = linkLabel(row.source.url);
+  return code ? `${host} ${code}` : host;
+};
+
 /** Primer fotograma del archivo elegido, sin subir nada. */
 function FilePreview({ src }: { src: string }) {
   return (
     <div className="relative h-16 w-9 shrink-0 overflow-hidden rounded-md bg-muted">
       <video src={`${src}#t=0.1`} muted playsInline preload="metadata" className="absolute inset-0 size-full object-cover" />
+    </div>
+  );
+}
+
+/** Donde iría el primer fotograma, para una tarjeta de enlace: el vídeo aún no está aquí. */
+function LinkPreview() {
+  return (
+    <div className="grid h-16 w-9 shrink-0 place-items-center rounded-md bg-muted text-muted-foreground">
+      <Link2 className="size-4" aria-hidden />
+    </div>
+  );
+}
+
+/**
+ * «Pegar enlaces»: uno por línea. Al pegar (o con Intro, o al salir del campo) los que valen pasan
+ * a ser tarjetas y los que no se quedan en el campo, marcados. Sin Mac conectado, desactivado.
+ */
+function LinkPaste({ onLinks, big, disabled, offline }: { onLinks: (links: string[]) => void; big: boolean; disabled: boolean; offline: boolean }) {
+  const [text, setText] = useState("");
+  const [invalid, setInvalid] = useState(0);
+  const hintId = useId();
+  function commit(raw: string) {
+    const parsed = parsePastedLinks(raw);
+    if (parsed.links.length > 0) onLinks(parsed.links);
+    setText(parsed.invalid.join("\n"));
+    setInvalid(parsed.invalid.length);
+  }
+  const hint = offline ? "El Mac no está conectado" : invalid > 0 ? (invalid === 1 ? "No es un enlace de Instagram, TikTok, YouTube o Facebook" : `${invalid} no son enlaces de Instagram, TikTok, YouTube o Facebook`) : null;
+  return (
+    <div className="flex min-w-0 flex-col gap-1.5">
+      <div
+        className={cn(
+          "flex gap-2.5 rounded-xl border-2 border-dashed px-4 text-sm text-muted-foreground transition-colors focus-within:border-primary focus-within:text-foreground",
+          big ? "min-h-44 flex-1 py-4" : "items-center py-2",
+          invalid > 0 && "border-destructive/60",
+          (disabled || offline) && "opacity-60",
+        )}
+      >
+        <Link2 className={cn("size-4 shrink-0", big && "mt-0.5")} aria-hidden />
+        <textarea
+          aria-label="Pegar enlaces"
+          aria-invalid={invalid > 0 || undefined}
+          aria-describedby={hint ? hintId : undefined}
+          placeholder={big ? "Pega aquí los enlaces de Instagram, TikTok…\nUno por línea" : "Pegar enlaces, uno por línea"}
+          value={text}
+          rows={big ? 4 : 1}
+          disabled={disabled || offline}
+          spellCheck={false}
+          onChange={(event) => {
+            setText(event.target.value);
+            if (invalid > 0) setInvalid(0);
+          }}
+          onPaste={(event) => {
+            event.preventDefault();
+            commit(`${text}\n${event.clipboardData.getData("text")}`);
+          }}
+          onKeyDown={(event) => {
+            if (event.key !== "Enter" || event.shiftKey) return;
+            event.preventDefault();
+            commit(text);
+          }}
+          onBlur={() => {
+            if (text.trim()) commit(text);
+          }}
+          className={cn(
+            "field-sizing-content w-full min-w-0 resize-none bg-transparent text-foreground outline-none placeholder:text-muted-foreground disabled:cursor-not-allowed",
+            big ? "min-h-24 self-stretch" : "max-h-32 min-h-5",
+          )}
+        />
+      </div>
+      {hint ? (
+        <p id={hintId} role={offline ? "status" : "alert"} className={cn("flex items-center gap-1.5 text-xs", offline ? "text-muted-foreground" : "text-destructive")}>
+          {offline ? <MonitorOff className="size-3.5 shrink-0" aria-hidden /> : <CircleAlert className="size-3.5 shrink-0" aria-hidden />}
+          {hint}
+        </p>
+      ) : null}
     </div>
   );
 }
@@ -117,7 +205,7 @@ function DropZone({ onFiles, big, disabled }: { onFiles: (files: File[]) => void
         }}
         className={cn(
           "flex items-center justify-center gap-2.5 rounded-xl border-2 border-dashed px-6 text-sm text-muted-foreground transition-colors outline-none hover:bg-muted/50 hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50",
-          big ? "flex-col py-12" : "py-4",
+          big ? "min-h-44 flex-col py-10" : "py-4",
           over && "border-primary bg-muted/60 text-foreground",
         )}
       >
@@ -130,8 +218,8 @@ function DropZone({ onFiles, big, disabled }: { onFiles: (files: File[]) => void
 }
 
 /**
- * Una tarjeta: el archivo, el tipo y los cambios; el avatar, en «Más opciones». Con «Solo gancho»,
- * la duración del gancho y los cuerpos del producto que van detrás.
+ * Una tarjeta: el archivo o el enlace, el tipo y los cambios; el avatar, en «Más opciones». Con
+ * «Solo gancho», la duración del gancho y los cuerpos del producto que van detrás.
  */
 function RowCard({
   row,
@@ -157,16 +245,24 @@ function RowCard({
   onRemove: () => void;
 }) {
   const noteId = useId();
+  const name = rowName(row);
+  const link = row.source.type === "link" ? linkLabel(row.source.url) : null;
   return (
     <li className="flex flex-col gap-3 px-4 py-3">
       <div className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-3 lg:grid-cols-[auto_minmax(0,11rem)_10rem_minmax(0,1fr)_auto]">
-        <FilePreview src={row.preview} />
+        {row.source.type === "file" ? <FilePreview src={row.source.preview} /> : <LinkPreview />}
         <div className="flex min-w-0 flex-col pt-1">
-          <span className="truncate text-sm font-medium" title={row.file.name}>
+          <span className="truncate text-sm font-medium" title={row.source.type === "file" ? name : row.source.url}>
             <span className="mr-1.5 text-muted-foreground tabular-nums">{index + 1}</span>
-            {row.file.name}
+            {link ? link.host : name}
           </span>
-          <span className="text-xs text-muted-foreground tabular-nums">{sizeLabel(row.file.size)}</span>
+          {row.source.type === "file" ? (
+            <span className="text-xs text-muted-foreground tabular-nums">{sizeLabel(row.source.file.size)}</span>
+          ) : (
+            <span className="truncate text-xs text-muted-foreground" title={row.source.url}>
+              {link?.code}
+            </span>
+          )}
         </div>
         <div className="flex items-center gap-0.5 lg:order-last">
           <Button
@@ -180,10 +276,10 @@ function RowCard({
             <AvatarBadge choice={avatar} />
             <ChevronDown className={cn("size-4 text-muted-foreground transition-transform", row.open && "rotate-180")} aria-hidden />
           </Button>
-          <Button variant="ghost" size="icon" className="size-9" aria-label={`Duplicar ${row.file.name}`} title="Duplicar" disabled={busy} onClick={onDuplicate}>
+          <Button variant="ghost" size="icon" className="size-9" aria-label={`Duplicar ${name}`} title="Duplicar" disabled={busy} onClick={onDuplicate}>
             <Copy aria-hidden />
           </Button>
-          <Button variant="ghost" size="icon" className="size-9" aria-label={`Quitar ${row.file.name}`} title="Quitar" disabled={busy} onClick={onRemove}>
+          <Button variant="ghost" size="icon" className="size-9" aria-label={`Quitar ${name}`} title="Quitar" disabled={busy} onClick={onRemove}>
             <Trash2 aria-hidden />
           </Button>
         </div>
@@ -237,17 +333,21 @@ function RowCard({
 
 /**
  * `/lotes/nuevo`, agrupado por producto como el panel antiguo: cada grupo tiene su producto, sus
- * «Indicaciones para los vídeos de …» y sus tarjetas (una por referencia que se suelta en él);
- * «Añadir otro producto» abre otro grupo en el mismo lote. Cada tarjeta pide tipo y cambios; el
- * avatar empieza con el habitual del producto y se cambia en «Más opciones»; con «Solo gancho»
- * pide además la duración del gancho y los cuerpos. «Crear y subir» crea
- * el lote (con un nombre automático si se deja vacío), guarda las indicaciones, crea los vídeos y
- * pone las subidas en la cola (como mucho 2 a la vez).
+ * «Indicaciones para los vídeos de …» y sus tarjetas (una por referencia que se suelta en él, o
+ * por enlace que se pega); «Añadir otro producto» abre otro grupo en el mismo lote. Cada tarjeta
+ * pide tipo y cambios; el avatar empieza con el habitual del producto y se cambia en «Más
+ * opciones»; con «Solo gancho» pide además la duración del gancho y los cuerpos. «Crear y subir»
+ * crea el lote (con un nombre automático si se deja vacío), guarda las indicaciones, crea los
+ * vídeos y pone las subidas en la cola (como mucho 2 a la vez); los vídeos de enlace se crean ya
+ * con su enlace y los trae el Mac de quien los crea.
+ *
+ * «Pegar enlaces» solo lo ve quien puede tener un Mac (el dueño); sin su Mac conectado, desactivado.
  */
 export function NewBatch() {
   const router = useRouter();
   const client = useQueryClient();
   const { enqueue } = useReferenceUploads();
+  const mac = useMac();
   const nameId = useId();
   const autoId = useId();
   const [name, setName] = useState("");
@@ -294,9 +394,22 @@ export function NewBatch() {
     return url;
   };
   const release = (row: Row) => {
-    URL.revokeObjectURL(row.preview);
-    previews.current.delete(row.preview);
+    if (row.source.type !== "file") return;
+    URL.revokeObjectURL(row.source.preview);
+    previews.current.delete(row.source.preview);
   };
+  const newRow = (source: Source): Row => ({
+    key: nextKey("fila"),
+    source,
+    avatar: null,
+    kind: "replicar",
+    adaptation: "",
+    hookSeconds: DEFAULT_HOOK_SECONDS,
+    bodies: [],
+    note: "",
+    open: false,
+    error: null,
+  });
 
   const updateGroup = (key: string, change: (group: Group) => Group) => setGroups((all) => all.map((group) => (group.key === key ? change(group) : group)));
   const updateRow = (groupKey: string, rowKey: string, changes: Partial<Row>) =>
@@ -305,28 +418,27 @@ export function NewBatch() {
   function addFiles(groupKey: string, files: File[]) {
     const videos = files.filter(isVideoFile);
     if (videos.length < files.length) toast.error("Solo vídeos MP4, MOV o WebM.");
-    const rows = videos.map(
-      (file): Row => ({
-        key: nextKey("fila"),
-        file,
-        preview: preview(file),
-        avatar: null,
-        kind: "replicar",
-        adaptation: "",
-        hookSeconds: DEFAULT_HOOK_SECONDS,
-        bodies: [],
-        note: "",
-        open: false,
-        error: file.size > MAX_REFERENCE_BYTES ? "Pesa más de 100 MB." : null,
-      }),
-    );
+    const rows = videos.map((file): Row => {
+      const row = newRow({ type: "file", file, preview: preview(file) });
+      return { ...row, error: tooBig(row) ? "Pesa más de 100 MB." : null };
+    });
     updateGroup(groupKey, (group) => ({ ...group, rows: [...group.rows, ...rows] }));
+  }
+
+  /** Cada enlace pegado es una tarjeta más; uno que ya está en el grupo no se repite. */
+  function addLinks(groupKey: string, links: string[]) {
+    updateGroup(groupKey, (group) => {
+      const present = new Set(group.rows.flatMap((row) => (row.source.type === "link" ? [row.source.url] : [])));
+      const fresh = links.filter((url) => !present.has(url));
+      return { ...group, rows: [...group.rows, ...fresh.map((url) => newRow({ type: "link", url }))] };
+    });
   }
 
   function duplicate(groupKey: string, row: Row) {
     updateGroup(groupKey, (group) => {
       const at = group.rows.findIndex((r) => r.key === row.key);
-      const copy: Row = { ...row, key: nextKey("fila"), preview: preview(row.file), error: row.file.size > MAX_REFERENCE_BYTES ? row.error : null };
+      const source: Source = row.source.type === "file" ? { ...row.source, preview: preview(row.source.file) } : row.source;
+      const copy: Row = { ...row, key: nextKey("fila"), source, error: tooBig(row) ? row.error : null };
       return { ...group, rows: [...group.rows.slice(0, at + 1), copy, ...group.rows.slice(at + 1)] };
     });
   }
@@ -343,14 +455,14 @@ export function NewBatch() {
 
   const rowCount = groups.reduce((sum, group) => sum + group.rows.length, 0);
   const filled = groups.filter((group) => group.rows.length > 0);
-  const tooBig = groups.some((group) => group.rows.some((row) => row.file.size > MAX_REFERENCE_BYTES));
+  const anyTooBig = groups.some((group) => group.rows.some(tooBig));
   const complete = filled.every(
     (group) =>
       group.productId !== null &&
       group.rows.every((row) => avatarOf(group, row) !== null && (row.kind !== "adaptacion_concepto" || row.adaptation.trim() !== "")),
   );
   const automaticName = autoBatchName(new Date(), filled.map((group) => productOf(group.productId)?.name ?? ""));
-  const canCreate = rowCount > 0 && complete && !tooBig && !busy;
+  const canCreate = rowCount > 0 && complete && !anyTooBig && !busy;
 
   async function create() {
     if (!canCreate) return;
@@ -385,9 +497,11 @@ export function NewBatch() {
                 adaptation: row.kind === "adaptacion_concepto" ? row.adaptation.trim() : null,
                 ...(row.kind === "solo_gancho" ? { hookSeconds: row.hookSeconds, bodyClipIds: row.bodies } : {}),
                 note: row.note.trim() || null,
+                // Con enlace, el vídeo nace esperando al Mac; con archivo, se sube después.
+                ...(row.source.type === "link" ? { linkUrl: row.source.url } : {}),
               }),
             });
-            enqueue(video.id, row.file);
+            if (row.source.type === "file") enqueue(video.id, row.source.file);
             done.add(row.key);
           } catch (error) {
             updateRow(group.key, row.key, { error: error instanceof Error ? error.message : "No se pudo crear." });
@@ -396,7 +510,7 @@ export function NewBatch() {
       }
       void client.invalidateQueries({ queryKey: ["batches"] });
       // Las vistas previas de las tarjetas creadas ya no hacen falta; el archivo sigue en la cola de subida.
-      for (const group of groups) for (const row of group.rows) if (done.has(row.key)) URL.revokeObjectURL(row.preview);
+      for (const group of groups) for (const row of group.rows) if (done.has(row.key) && row.source.type === "file") URL.revokeObjectURL(row.source.preview);
       if (done.size === rowCount) {
         router.push(`/lotes/${id}`);
         return;
@@ -513,8 +627,16 @@ export function NewBatch() {
                 ))}
               </ul>
             ) : null}
-            <div className="p-4 pt-3">
+            <div className={cn("grid items-stretch gap-3 p-4 pt-3", mac.own && "lg:grid-cols-2")}>
               <DropZone big={group.rows.length === 0} disabled={busy || group.productId === null} onFiles={(files) => addFiles(group.key, files)} />
+              {mac.own ? (
+                <LinkPaste
+                  big={group.rows.length === 0}
+                  disabled={busy || group.productId === null}
+                  offline={!mac.online}
+                  onLinks={(links) => addLinks(group.key, links)}
+                />
+              ) : null}
             </div>
           </section>
         );

@@ -73,11 +73,26 @@ export interface StepState {
 
 const NONE: StepState = { label: "—", tone: "off" };
 
+/** El enlace pegado que el Mac aún tiene que traer (en cola o descargando), o `null`. */
+export function pendingLink(row: BatchRowJson): NonNullable<BatchRowJson["link"]> | null {
+  return row.link && row.link.status !== "failed" ? row.link : null;
+}
+
+/** El enlace pegado que falló (con su motivo), o `null`. La referencia que hubiera sigue valiendo. */
+export function failedLink(row: BatchRowJson): NonNullable<BatchRowJson["link"]> | null {
+  return row.link?.status === "failed" ? row.link : null;
+}
+
 export function referenceState(row: BatchRowJson, upload: LocalUpload): StepState {
   if (upload.kind === "uploading") {
     return upload.queued ? { label: "En cola", tone: "busy" } : { label: `Subiendo ${Math.round(upload.fraction * 100)} %`, tone: "busy" };
   }
   if (upload.kind === "failed") return { label: "Error", tone: "error", detail: upload.message };
+  // Un enlace pegado: mientras el Mac lo trae, eso es lo que pasa con la referencia (la que hubiera sigue lista).
+  const link = pendingLink(row);
+  if (link && row.referenceStatus !== "processing") {
+    return link.status === "queued" ? { label: "En cola", tone: "busy" } : { label: "Descargando en el Mac…", tone: "busy" };
+  }
   switch (row.referenceStatus) {
     case "ready":
       if (row.referenceOutdated) return { label: "Resubir", tone: "error", detail: "El gancho ha cambiado: vuelve a subir el vídeo de referencia en su página." };
@@ -91,6 +106,17 @@ export function referenceState(row: BatchRowJson, upload: LocalUpload): StepStat
     default:
       return { label: "Sin subir", tone: "off" };
   }
+}
+
+/**
+ * Lo que falla en una fila y se enseña bajo ella: el enlace que no se pudo traer (aunque la
+ * referencia anterior siga lista) o, si no, el primer paso con error. `link`: se puede reintentar.
+ */
+export function rowProblem(row: BatchRowJson, states: StepState[]): { message: string; link: string | null } | null {
+  const link = failedLink(row);
+  if (link) return { message: link.error ?? "No se pudo descargar el enlace.", link: row.mine ? link.url : null };
+  const detail = states.find((state) => state.tone === "error" && state.detail && !state.quiet)?.detail;
+  return detail ? { message: detail, link: null } : null;
 }
 
 export function analysisState(row: BatchRowJson): StepState {
@@ -132,11 +158,16 @@ export function generationState(generation: GenerationJson, kind: "frame" | "cli
   return kind === "frame" ? { label: "Revisar", tone: "review" } : { label: "Listo", tone: "ok" };
 }
 
-/** ¿Hay algo en marcha? Mientras lo haya, el tablero se vuelve a pedir solo (cada 3 s; lo lento, cada 15 s). */
+/**
+ * ¿Hay algo en marcha? Mientras lo haya, el tablero se vuelve a pedir solo (cada 3 s; enlaces que
+ * el Mac va trayendo, cada 5 s; lo lento, cada 15 s).
+ */
 export function pollEvery(view: BatchViewJson | undefined, uploading: boolean): number | false {
   if (!view) return false;
   let slow = false;
+  let links = false;
   for (const row of view.rows) {
+    if (pendingLink(row)) links = true;
     if (row.referenceStatus === "processing") return 3000;
     const analysis = row.analysis?.status;
     if (analysis === "queued" || analysis === "running") return 3000;
@@ -147,13 +178,14 @@ export function pollEvery(view: BatchViewJson | undefined, uploading: boolean): 
     }
   }
   if (uploading) return 3000;
+  if (links) return 5000;
   return slow ? 15_000 : false;
 }
 
 /** Huella del estado de una fila: cambia cuando la fila avanza (o cambia) en cualquier paso. */
 export function rowState(row: BatchRowJson): string {
   const gen = (g: GenerationJson) => `${g.current?.id ?? 0}:${g.current?.status ?? ""}:${g.current?.rejectReason ?? ""}:${g.approvedResultId ?? 0}`;
-  return [row.updatedAt, row.referenceStatus, row.analysis?.status ?? "", gen(row.frame), gen(row.clip)].join("|");
+  return [row.updatedAt, row.referenceStatus, row.link?.status ?? "", row.analysis?.status ?? "", gen(row.frame), gen(row.clip)].join("|");
 }
 
 /** Ruta de la pantalla de un vídeo. */
@@ -161,10 +193,11 @@ export const videoHref = (row: Pick<BatchRowJson, "productId" | "id">) => `/prod
 
 /**
  * «Por revisar»: filas con algo que mirar antes de seguir: un paso con error (también la subida en
- * este navegador), un desglose que ya no vale, candidatas esperando aprobación o una generación en duda.
+ * este navegador), un enlace que no se pudo traer, un desglose que ya no vale, candidatas esperando
+ * aprobación o una generación en duda.
  */
 export function needsReview(row: BatchRowJson, upload: LocalUpload = { kind: "idle" }): boolean {
-  if (ready.review(row)) return true;
+  if (ready.review(row) || failedLink(row)) return true;
   if ([row.frame.current?.status, row.clip.current?.status].includes("unknown")) return true;
   const states = [referenceState(row, upload), analysisState(row), generationState(row.frame, "frame"), generationState(row.clip, "clip")];
   return states.some((state) => state.tone === "error" && !state.quiet);

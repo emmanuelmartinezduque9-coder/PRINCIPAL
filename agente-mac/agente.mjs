@@ -14,7 +14,13 @@ import { cleanLeftovers, heartbeat, HEARTBEAT_MS, POLL_MS, readConfig, runOnce, 
 const CONFIG_RETRY_MS = 30_000;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-const log = (text) => console.log(`${new Date().toLocaleString("es-ES")}  ${text}`);
+// Un mismo aviso repetido (sin red, ficha revocada…) se escribe una vez, no cada 5 segundos.
+let lastLine = "";
+const log = (text) => {
+  if (text === lastLine) return;
+  lastLine = text;
+  console.log(`${new Date().toLocaleString("es-ES")}  ${text}`);
+};
 
 /** La versión de yt-dlp instalada, o `null` si no se encuentra. */
 function ytDlpVersion() {

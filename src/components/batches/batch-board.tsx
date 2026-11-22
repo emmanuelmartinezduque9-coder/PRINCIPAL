@@ -3,7 +3,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { format } from "date-fns";
 import { es } from "date-fns/locale";
-import { ChevronRight, CircleAlert, Download, Eye, ImageIcon, ListFilter, Loader2, ScanSearch, SearchX } from "lucide-react";
+import { ChevronRight, CircleAlert, Download, Eye, ImageIcon, Link2, ListFilter, Loader2, RefreshCw, ScanSearch, SearchX } from "lucide-react";
 import Link from "next/link";
 import { useRef, useState } from "react";
 import { toast } from "sonner";
@@ -14,7 +14,9 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { AVATAR_MODE_LABELS, KIND_LABELS } from "@/components/videos/brief-labels";
 import { creditsLabel } from "@/components/videos/labels";
 import { useReferenceUploads } from "@/components/videos/upload-provider";
+import { requestLink } from "@/components/videos/use-mac";
 import { api, ApiError } from "@/lib/api";
+import { linkLabel } from "@/lib/links";
 import { formatUsd } from "@/lib/money";
 import { cn } from "@/lib/utils";
 import { AutoAnalyzeSwitch, GroupHeader, RiskChip, RowActions } from "./board-parts";
@@ -26,6 +28,7 @@ import {
   pollEvery,
   ready,
   referenceState,
+  rowProblem,
   rowState,
   videoHref,
   type BatchRowJson,
@@ -109,6 +112,42 @@ function KindChip({ row }: { row: BatchRowJson }) {
       <Icon className="size-3" aria-hidden />
       {hookOnly ? `Gancho + ${row.bodies}` : short}
     </span>
+  );
+}
+
+/** De dónde viene la referencia cuando es un enlace pegado: el sitio y el código, con la dirección entera en el título. */
+function LinkSource({ url }: { url: string }) {
+  const { host, code } = linkLabel(url);
+  return (
+    <span title={url} className="inline-flex max-w-full min-w-0 items-center gap-1 text-xs text-muted-foreground">
+      <Link2 className="size-3 shrink-0" aria-hidden />
+      <span className="truncate">
+        {host}
+        {code ? <span className="text-foreground/70"> {code}</span> : null}
+      </span>
+    </span>
+  );
+}
+
+/** «Reintentar enlace»: vuelve a pedir al Mac el enlace que falló. */
+function RetryLink({ row, url, onDone }: { row: BatchRowJson; url: string; onDone: () => void }) {
+  const [busy, setBusy] = useState(false);
+  async function retry() {
+    setBusy(true);
+    try {
+      await requestLink(row.id, url);
+      onDone();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "No se pudo reintentar.");
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <Button variant="outline" className="h-7 gap-1.5 px-2 text-xs" disabled={busy} onClick={() => void retry()}>
+      {busy ? <Loader2 className="animate-spin" data-icon="inline-start" /> : <RefreshCw data-icon="inline-start" />}
+      Reintentar enlace
+    </Button>
   );
 }
 
@@ -328,13 +367,13 @@ export function BatchBoard({ batchId }: { batchId: number }) {
             <section key={group.productId} aria-label={group.name} className="overflow-hidden rounded-xl bg-card ring-1 ring-foreground/10">
               <GroupHeader batchId={batchId} group={group} editable={data.batch.mine} />
               {/* Columnas fijas: las tablas de todos los productos quedan alineadas. */}
-              <Table className="min-w-[60rem] table-fixed">
+              <Table className="min-w-[66rem] table-fixed">
                 <TableHeader>
                   <TableRow className="hover:bg-transparent">
                     <TableHead className="w-14 pl-4" />
                     <TableHead>Vídeo</TableHead>
                     <TableHead className="w-20">Avatar</TableHead>
-                    <TableHead className="w-28">Referencia</TableHead>
+                    <TableHead className="w-52">Referencia</TableHead>
                     <TableHead className="w-28">Desglose</TableHead>
                     <TableHead className="w-28">Imagen</TableHead>
                     <TableHead className="w-24">Clip</TableHead>
@@ -346,12 +385,11 @@ export function BatchBoard({ batchId }: { batchId: number }) {
                   {groupRows.map((row) => {
                     const upload = uploadOf(row);
                     const states = [referenceState(row, upload), analysisState(row), generationState(row.frame, "frame"), generationState(row.clip, "clip")];
-                    // El error de la última acción en bloque y, si no hay, el del paso que falló.
+                    // El error de la última acción en bloque y, si no hay, el del enlace o el del paso que falló.
                     const notice = notices[row.id];
-                    const problem =
-                      (notice && notice.at === rowState(row) ? notice.message : null) ??
-                      states.find((state) => state.tone === "error" && state.detail && !state.quiet)?.detail ??
-                      null;
+                    const failure = rowProblem(row, states);
+                    const problem = (notice && notice.at === rowState(row) ? notice.message : null) ?? failure?.message ?? null;
+                    const retryUrl = problem !== null && problem === failure?.message ? failure.link : null;
                     return (
                       <TableRow key={row.id}>
                         <TableCell className="pl-4">
@@ -367,12 +405,22 @@ export function BatchBoard({ batchId }: { batchId: number }) {
                             <KindChip row={row} />
                             <RiskChip risks={row.risks} />
                           </div>
+                          {row.link ? (
+                            <div className="mt-0.5 flex min-w-0">
+                              <LinkSource url={row.link.url} />
+                            </div>
+                          ) : null}
                           {row.note ? <div className="mt-0.5 line-clamp-2 text-xs whitespace-pre-line text-foreground/80">{row.note}</div> : null}
                           {problem ? (
-                            <p role="alert" className="mt-1 flex items-start gap-1 text-xs text-destructive">
-                              <CircleAlert className="mt-px size-3.5 shrink-0" aria-hidden />
-                              {problem}
-                            </p>
+                            <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1">
+                              <p role="alert" className="flex items-start gap-1 text-xs text-destructive">
+                                <CircleAlert className="mt-px size-3.5 shrink-0" aria-hidden />
+                                {problem}
+                              </p>
+                              {retryUrl ? (
+                                <RetryLink row={row} url={retryUrl} onDone={() => void client.invalidateQueries({ queryKey: ["batch", batchId] })} />
+                              ) : null}
+                            </div>
                           ) : null}
                         </TableCell>
                         <TableCell>

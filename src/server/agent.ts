@@ -5,6 +5,7 @@ import { cancelLinkTasks, LINK_FAILED, linkFailureMessage, TASK_TOO_OLD } from "
 import { getActiveUser, type AuthUser } from "@/server/auth";
 import { HttpError } from "@/server/http";
 import { getProductFor } from "@/server/products";
+import { LINK_HOSTS, linkOf } from "@/lib/links";
 import {
   agentUploadId,
   appendChunk,
@@ -55,10 +56,9 @@ export const MAX_LEASE_AGE_MS = 30 * 60_000;
  * el Mac atienda de uno en uno un lote de muchos enlaces.
  */
 export const MAX_QUEUE_AGE_MS = 6 * 60 * 60_000;
-/** Sitios de los que se admite un enlace, con sus subdominios. */
-export const LINK_HOSTS = ["instagram.com", "tiktok.com", "youtube.com", "youtu.be", "facebook.com", "fb.watch"] as const;
+// Qué enlaces se admiten está en `@/lib/links` (lo comparten las pantallas); se reexporta aquí.
+export { LINK_HOSTS, linkOf };
 
-const MAX_LINK_LENGTH = 2000;
 const MAX_NAME = 60;
 const MAX_INFO = 40;
 const MAX_ERROR = 500;
@@ -209,26 +209,6 @@ export async function agentStatus(user: AuthUser, now: Date = new Date()): Promi
 }
 
 // ───────────────────────── Enlaces ─────────────────────────
-
-/**
- * El enlace tal como se guarda y se le da al Mac, o `null` si no se admite: solo `https`, sin
- * usuario ni puerto, y de uno de los sitios de `LINK_HOSTS` o un subdominio suyo.
- */
-export function linkOf(value: unknown): string | null {
-  if (typeof value !== "string") return null;
-  const text = value.trim();
-  if (!text || text.length > MAX_LINK_LENGTH) return null;
-  let url: URL;
-  try {
-    url = new URL(text);
-  } catch {
-    return null;
-  }
-  if (url.protocol !== "https:" || url.username || url.password || url.port) return null;
-  const host = url.hostname.toLowerCase();
-  if (!LINK_HOSTS.some((allowed) => host === allowed || host.endsWith(`.${allowed}`))) return null;
-  return url.href.length <= MAX_LINK_LENGTH ? url.href : null;
-}
 
 /**
  * Lo que hace falta para pegar un enlace, antes de tocar nada: un enlace admitido (400), el

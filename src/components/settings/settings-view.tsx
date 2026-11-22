@@ -8,6 +8,7 @@ import { api } from "@/lib/api";
 import type { AuthUser } from "@/server/auth";
 import { DiagnosticsPanel, HiggsfieldCard } from "./higgsfield-card";
 import { ImageModelCard } from "./image-model-card";
+import { MacCard } from "./mac-card";
 
 const RESULT_TOASTS: Record<string, (reason: string | null) => void> = {
   conectado: () => toast.success("Higgsfield conectado."),
@@ -15,7 +16,7 @@ const RESULT_TOASTS: Record<string, (reason: string | null) => void> = {
   error: (reason) => toast.error(`No se pudo conectar Higgsfield${reason ? ` (${reason})` : ""}.`),
 };
 
-/** Ajustes de cada persona: su propia conexión de Higgsfield (y, para el dueño, el diagnóstico). */
+/** Ajustes de cada persona: su propia conexión de Higgsfield (y, para el dueño, su Mac, el modelo de imagen y el diagnóstico). */
 export function SettingsView({ result, reason }: { result: string | null; reason: string | null }) {
   const me = useQuery({
     queryKey: ["me"],
@@ -39,6 +40,7 @@ export function SettingsView({ result, reason }: { result: string | null; reason
         <HiggsfieldCard />
         {me.data?.user?.role === "dueno" ? (
           <div className="flex min-w-0 flex-col gap-6">
+            <MacCard />
             <ImageModelCard />
             <DiagnosticsPanel />
           </div>

@@ -7,6 +7,7 @@ import {
   pollEvery,
   ready,
   referenceState,
+  rowProblem,
   rowState,
   type BatchRowJson,
   type BatchViewJson,
@@ -220,6 +221,49 @@ describe("lote v2: «Por revisar» y nombre automático", () => {
     expect(needsReview(row({ analysis: { status: "running", error: null, stale: false, staleReason: null } }))).toBe(false);
     // Las candidatas de un vídeo ajeno no se revisan aquí.
     expect(needsReview(row({ mine: false, frame: gen({}) }))).toBe(false);
+  });
+
+  it("enlaces pegados: la fila dice si el Mac lo tiene en cola o lo está descargando, y el fallo se puede reintentar", () => {
+    const idle = { kind: "idle" } as const;
+    const REEL = "https://www.instagram.com/reel/abc/";
+    const queued = { url: REEL, status: "queued", error: null } as const;
+    const downloading = { url: REEL, status: "downloading", error: null } as const;
+    const failed = { url: REEL, status: "failed", error: "No se pudo descargar el enlace. Sube el archivo del vídeo." } as const;
+
+    // Un vídeo nuevo esperando su enlace no es una subida interrumpida.
+    expect(referenceState(row({ referenceStatus: "uploading", link: queued }), idle)).toEqual({ label: "En cola", tone: "busy" });
+    expect(referenceState(row({ referenceStatus: "uploading", link: downloading }), idle)).toEqual({ label: "Descargando en el Mac…", tone: "busy" });
+    expect(referenceState(row({ referenceStatus: "uploading", link: null }), idle)).toMatchObject({ label: "Interrumpida" });
+    // Sobre una referencia lista también se ve que el Mac está en ello; al fallar, la referencia sigue «Lista».
+    expect(referenceState(row({ link: downloading }), idle).label).toBe("Descargando en el Mac…");
+    expect(referenceState(row({ link: failed }), idle)).toEqual({ label: "Lista", tone: "ok" });
+    expect(referenceState(row({ referenceStatus: "processing", link: null }), idle).label).toBe("Preparando");
+    // La subida de un archivo en este navegador manda sobre el enlace.
+    expect(referenceState(row({ link: queued }), { kind: "uploading", fraction: 0.5 }).label).toBe("Subiendo 50 %");
+
+    // El fallo del enlace sale bajo la fila con «Reintentar enlace», también si la referencia sigue lista.
+    const states = (r: BatchRowJson) => [referenceState(r, idle), analysisState(r), generationState(r.frame, "frame"), generationState(r.clip, "clip")];
+    const overReady = row({ link: failed });
+    expect(rowProblem(overReady, states(overReady))).toEqual({ message: failed.error, link: REEL });
+    const noReference = row({ referenceStatus: "failed", referenceError: failed.error, link: failed, analysis: null });
+    expect(rowProblem(noReference, states(noReference))).toEqual({ message: failed.error, link: REEL });
+    // En un vídeo ajeno se ve el fallo, pero no se ofrece reintentar.
+    const foreign = row({ link: failed, mine: false });
+    expect(rowProblem(foreign, states(foreign))).toEqual({ message: failed.error, link: null });
+    // Sin enlace, el problema es el del paso que falló, sin nada que reintentar.
+    const broken = row({ referenceStatus: "failed", referenceError: "No se pudo preparar el vídeo. Vuelve a subirlo.", analysis: null });
+    expect(rowProblem(broken, states(broken))).toEqual({ message: "No se pudo preparar el vídeo. Vuelve a subirlo.", link: null });
+    expect(rowProblem(row(), states(row()))).toBeNull();
+    expect(rowProblem(row({ link: queued }), states(row({ link: queued })))).toBeNull();
+
+    // «Por revisar» cuenta el enlace fallido; el tablero se vuelve a pedir mientras el Mac trabaja.
+    expect(needsReview(row({ link: failed }))).toBe(true);
+    expect(needsReview(row({ link: downloading }))).toBe(false);
+    const view = (rows: BatchRowJson[]) => ({ rows }) as unknown as BatchViewJson;
+    expect(pollEvery(view([row({ link: queued })]), false)).toBe(5000);
+    expect(pollEvery(view([row({ link: downloading }), row({ referenceStatus: "processing" })]), false)).toBe(3000);
+    expect(pollEvery(view([row({ link: failed })]), false)).toBe(false);
+    expect(rowState(row({ link: queued }))).not.toBe(rowState(row({ link: downloading })));
   });
 
   it("nombre automático: día/mes y los productos, sin repetir y como mucho 100 caracteres", () => {

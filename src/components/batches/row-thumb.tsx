@@ -10,7 +10,7 @@ export function RowThumb({ row, className, busy }: { row: BatchRowJson; classNam
       {row.referenceStatus === "ready" ? (
         // eslint-disable-next-line @next/next/no-img-element
         <img src={frameUrl(row.id, 0, row.updatedAt)} alt="" loading="lazy" className="absolute inset-0 size-full object-cover" />
-      ) : busy || row.referenceStatus === "processing" ? (
+      ) : busy || row.referenceStatus === "processing" || (row.link !== null && row.link.status !== "failed") ? (
         <Loader2 className="size-4 animate-spin" aria-hidden />
       ) : row.referenceStatus === "failed" ? (
         <CircleAlert className="size-4 text-destructive" aria-hidden />
