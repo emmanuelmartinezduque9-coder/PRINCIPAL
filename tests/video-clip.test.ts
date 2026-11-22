@@ -17,6 +17,9 @@ import { analysisStepKey, requestAnalysis, runAnalysis, type Analysis } from "@/
 import {
   buildClipRequest,
   CLIP_MODEL,
+  CLIP_TOO_BIG,
+  CLIP_TOO_SLOW,
+  openClipStream,
   CLIP_RESOLUTIONS,
   clipDownload,
   clipDurationSeconds,
@@ -552,6 +555,60 @@ describe("descarga del clip", () => {
     } finally {
       spy.mockRestore();
     }
+  });
+
+  /** Un cuerpo que se va dando a trozos de `size` bytes; anota si Higgsfield vio cancelada la descarga. */
+  function slowBody(chunks: number, size: number, gapMs: number) {
+    const state = { cancelled: false, sent: 0 };
+    const body = new ReadableStream<Uint8Array>({
+      async pull(controller) {
+        if (state.sent === chunks) return controller.close();
+        if (state.sent > 0) await new Promise((resolve) => setTimeout(resolve, gapMs));
+        state.sent += 1;
+        controller.enqueue(new Uint8Array(size));
+      },
+      cancel() {
+        state.cancelled = true;
+      },
+    });
+    return { body, state };
+  }
+  const read = (stream: ReadableStream<Uint8Array>) => new Response(stream).arrayBuffer();
+
+  it("sin Content-Length, la descarga se corta al pasar del tope y se cancela la de Higgsfield", async () => {
+    const { body, state } = slowBody(10, 1_000, 0);
+    const opened = await openClipStream(`${CDN}/sin-largo.mp4`, { fetch: async () => new Response(body), maxBytes: 4_500 });
+    expect(opened.length).toBeNull();
+    await expect(read(opened.body)).rejects.toThrow(CLIP_TOO_BIG);
+    expect(state.sent).toBeLessThan(10);
+    expect(state.cancelled).toBe(true);
+    // Dentro del tope pasa entero.
+    const small = slowBody(4, 1_000, 0);
+    const whole = await openClipStream(`${CDN}/corto.mp4`, { fetch: async () => new Response(small.body), maxBytes: 4_500 });
+    expect((await read(whole.body)).byteLength).toBe(4_000);
+  });
+
+  it("el tope de la descarga entera corta el flujo a mitad aunque Higgsfield siga mandando", async () => {
+    // Un trozo cada 100 ms, 50 trozos: 5 s; el tope es de 300 ms.
+    const { body, state } = slowBody(50, 10, 100);
+    const opened = await openClipStream(`${CDN}/lento.mp4`, { fetch: async () => new Response(body), deadlineMs: 300 });
+    const started = Date.now();
+    await expect(read(opened.body)).rejects.toThrow(CLIP_TOO_SLOW);
+    expect(Date.now() - started).toBeLessThan(2_000);
+    expect(state.cancelled).toBe(true);
+  });
+
+  it("con Content-Encoding no se reenvía el tamaño (no es el del archivo)", async () => {
+    const opened = await openClipStream(`${CDN}/gz.mp4`, {
+      fetch: async () => new Response(new Uint8Array(mp4), { headers: { "Content-Length": "10", "Content-Encoding": "gzip" } }),
+    });
+    expect(opened.length).toBeNull();
+    const plain = await openClipStream(`${CDN}/plano.mp4`, {
+      fetch: async () => new Response(new Uint8Array(mp4), { headers: { "Content-Length": String(mp4.length) } }),
+    });
+    expect(plain.length).toBe(String(mp4.length));
+    await Promise.all([opened.body.cancel(), plain.body.cancel()]);
+    await expect(openClipStream("https://cdn.test/otro.mp4")).rejects.toMatchObject({ status: 404 });
   });
 
   it("GET …/clip/descargar reenvía el archivo como adjunto (modo local simulado, dirección data:)", async () => {

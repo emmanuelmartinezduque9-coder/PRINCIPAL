@@ -207,3 +207,81 @@ export async function clipDownload(user: AuthUser, videoId: number): Promise<{ u
   if (!chosen?.url) throw new HttpError(404, NO_CLIP);
   return { url: chosen.url, filename: `${slug(product.name)}-video-${video.id}.mp4` };
 }
+
+/** Tope para que Higgsfield empiece a responder. */
+export const CLIP_CONNECT_TIMEOUT_MS = 60_000;
+/** Tope de la descarga entera (también mientras pasa el archivo). */
+export const CLIP_DOWNLOAD_DEADLINE_MS = 10 * 60 * 1000;
+/** Un clip de 30 s a 1080p no llega ni de lejos; más que esto no se reenvía. */
+export const MAX_CLIP_BYTES = 500 * 1024 * 1024;
+const UNAVAILABLE = "No se pudo descargar el clip de Higgsfield. Inténtalo de nuevo.";
+export const CLIP_TOO_BIG = "El clip es demasiado grande para descargarlo.";
+export const CLIP_TOO_SLOW = "La descarga del clip ha tardado demasiado.";
+
+/**
+ * Deja pasar el archivo y lo corta con error si pasa de `max` bytes (por si no dice su tamaño o
+ * miente) o si salta `signal` (el tope de la descarga entera) a mitad. Al cortar se cancela también
+ * la descarga de Higgsfield (el error se propaga hacia atrás por la tubería).
+ */
+function guarded(max: number, signal: AbortSignal): TransformStream<Uint8Array, Uint8Array> {
+  let seen = 0;
+  let onAbort: (() => void) | null = null;
+  const stop = () => {
+    if (onAbort) signal.removeEventListener("abort", onAbort);
+  };
+  return new TransformStream({
+    start(controller) {
+      onAbort = () => controller.error(new Error(CLIP_TOO_SLOW));
+      if (signal.aborted) onAbort();
+      else signal.addEventListener("abort", onAbort, { once: true });
+    },
+    transform(chunk, controller) {
+      seen += chunk.byteLength;
+      if (seen > max) {
+        stop();
+        controller.error(new Error(CLIP_TOO_BIG));
+      } else controller.enqueue(chunk);
+    },
+    flush: stop,
+  });
+}
+
+/**
+ * Pide un clip a su dirección guardada (tiene que pasar `servableClipUrl`): sin seguir
+ * redirecciones, con tope hasta que responda y para la descarga entera, y sin pasar de `maxBytes`
+ * (por su `Content-Length` y, si no lo dice, contando). Devuelve el cuerpo en flujo y el tamaño a
+ * reenviar, solo si viene sin `Content-Encoding` (comprimido, ese tamaño no es el del archivo).
+ * Si Higgsfield falla, 502.
+ */
+export async function openClipStream(
+  url: string,
+  options: { fetch?: typeof fetch; connectTimeoutMs?: number; deadlineMs?: number; maxBytes?: number } = {},
+): Promise<{ body: ReadableStream<Uint8Array>; length: string | null }> {
+  if (!servableClipUrl(url)) throw new HttpError(404, NO_CLIP);
+  const maxBytes = options.maxBytes ?? MAX_CLIP_BYTES;
+  const connect = new AbortController();
+  const timer = setTimeout(() => connect.abort(), options.connectTimeoutMs ?? CLIP_CONNECT_TIMEOUT_MS);
+  const deadline = AbortSignal.timeout(options.deadlineMs ?? CLIP_DOWNLOAD_DEADLINE_MS);
+  let upstream: Response;
+  try {
+    upstream = await (options.fetch ?? fetch)(url, { signal: AbortSignal.any([connect.signal, deadline]), redirect: "error" });
+  } catch {
+    throw new HttpError(502, UNAVAILABLE);
+  } finally {
+    clearTimeout(timer);
+  }
+  if (!upstream.ok || !upstream.body) {
+    await upstream.body?.cancel().catch(() => {});
+    throw new HttpError(502, UNAVAILABLE);
+  }
+  const declared = upstream.headers.get("content-length");
+  const length = declared && /^\d+$/.test(declared) ? declared : null;
+  if (length !== null && Number(length) > maxBytes) {
+    await upstream.body.cancel().catch(() => {});
+    throw new HttpError(502, CLIP_TOO_BIG);
+  }
+  return {
+    body: upstream.body.pipeThrough(guarded(maxBytes, deadline)),
+    length: upstream.headers.get("content-encoding") ? null : length,
+  };
+}

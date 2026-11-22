@@ -8,6 +8,7 @@ import {
   HiggsfieldUnavailableError,
   HiggsfieldUnknownOutcomeError,
   isHiggsfieldError,
+  type HfHistoryCursor,
   type HfHistoryItem,
   type HfImageRequest,
   type HfJob,
@@ -95,6 +96,8 @@ export interface GenDeps {
   now?: () => Date;
   /** Solo para las pruebas: otro plazo para el envío (por defecto `SUBMIT_DEADLINE_MS`). */
   submitDeadlineMs?: number;
+  /** Solo para las pruebas: otra espera para una respuesta tardía del envío (por defecto `LATE_REPLY_WAIT_MS`). */
+  lateReplyWaitMs?: number;
 }
 
 /**
@@ -360,7 +363,7 @@ export async function requestGeneration(
     generationId = await getDb().transaction(async (tx) => {
       await generationLock(tx, video.id);
       if (snapshot && Object.keys(snapshot).length > 0) {
-        const [current] = await tx.select().from(schema.videos).where(eq(schema.videos.id, video.id));
+        const [current] = await tx.select().from(schema.videos).where(eq(schema.videos.id, video.id)).for("update");
         const changed =
           !current ||
           (Object.keys(snapshot) as Array<keyof Video>).some((key) => JSON.stringify(current[key]) !== JSON.stringify(snapshot[key]));
@@ -418,8 +421,9 @@ async function settleNotSent(id: number, values: GenerationChanges): Promise<voi
  * Anota un envío ya hecho (y ya cobrado), con el cerrojo de adopción (el mismo que la
  * reconciliación) y sin quedarse trabajos que ya tenga otra generación:
  * - desde `submitting` o, si el seguimiento ya la dio por dudosa, desde `unknown`;
- * - si la reconciliación ya adoptó parte del historial y la fila aún no se está finalizando,
- *   añade los que falten;
+ * - si la reconciliación ya adoptó parte del historial (la fila sigue enviada, o ya terminó, o su
+ *   finalización caducó), añade los que falten; si ya había terminado, la vuelve a mirar
+ *   (`recheck_until`) para que la finalización recoja el índice nuevo;
  * - si no, lo dice bien alto con los trabajos (para buscarlos a mano).
  * Devuelve si la fila quedó `submitted` con estos trabajos.
  */
@@ -451,12 +455,17 @@ async function recordSubmitted(row: Generation, sent: HfSubmitResult, deps: GenD
         if (moved.length > 0) return "recorded" as const;
       }
       const [current] = await tx.select().from(generations).where(eq(generations.id, row.id)).for("update");
-      if (current?.status === "submitted" && current.finalizingAt === null) {
+      const now = clock(deps);
+      const notFinalizing = current?.finalizingAt === null || (current?.finalizingAt ?? now).getTime() < now.getTime() - FINALIZE_LEASE_MS;
+      const merging = current && notFinalizing && (current.status === "submitted" || RECHECKED.includes(current.status as GenerationStatus));
+      if (merging) {
         const merged = [...new Set([...current.jobIds, ...free])].slice(0, row.count);
         if (merged.length > current.jobIds.length) {
+          // Ya terminada: se vuelve a mirar para que la finalización recoja el trabajo nuevo (índice nuevo).
+          const recheck = current.status === "submitted" ? {} : { recheckUntil: laterOf(current.recheckUntil, new Date(now.getTime() + LATE_RECHECK_MS)) };
           await tx
             .update(generations)
-            .set({ jobIds: merged, creditsSpent: Math.ceil((row.quotedCredits * merged.length) / row.count) })
+            .set({ jobIds: merged, creditsSpent: Math.ceil((row.quotedCredits * merged.length) / row.count), ...recheck })
             .where(eq(generations.id, row.id));
         }
         return "recorded" as const;
@@ -471,6 +480,8 @@ async function recordSubmitted(row: Generation, sent: HfSubmitResult, deps: GenD
   }
   return recorded === "recorded";
 }
+
+const laterOf = (a: Date | null, b: Date) => (a !== null && a.getTime() > b.getTime() ? a : b);
 
 /** Lo que pasó con la llamada que gasta, una vez se sabe (aunque llegue tarde). */
 async function settleSend(row: Generation, outcome: { value: HfSubmitResult } | { error: unknown }, deps: GenDeps): Promise<boolean> {
@@ -546,10 +557,26 @@ export async function submitGeneration(generationId: number, deps: GenDeps = {})
   const outcome = await within(sending, deadline - Date.now());
   if (outcome === "timeout") {
     await retryWrite(() => moveFrom(row.id, "submitting", { status: "unknown", error: UNKNOWN_OUTCOME }));
-    // La respuesta, si llega, se anota igual.
-    void within(sending, LATE_REPLY_WAIT_MS)
-      .then((late) => (late === "timeout" ? false : settleSend(row, late, deps)))
+    // La respuesta, si llega, se anota igual. Si llega después de la espera, al menos queda en el
+    // registro con sus trabajos (para buscarlos a mano), como cuando no hay fila donde anotarla.
+    let gaveUp = false;
+    void within(sending, deps.lateReplyWaitMs ?? LATE_REPLY_WAIT_MS)
+      .then((late) => {
+        if (late !== "timeout") return settleSend(row, late, deps);
+        gaveUp = true;
+        return false;
+      })
       .catch((error: unknown) => console.error(`[generaciones] No se pudo anotar la respuesta tardía del envío ${row.id}:`, error));
+    sending.then(
+      (sent) => {
+        if (!gaveUp) return;
+        const ids = sent.jobIds.slice(0, row.count);
+        console.error(
+          `[generaciones] Envío ${row.id}: respuesta después de la espera, sin anotar. Trabajos de Higgsfield: ${ids.join(", ") || "ninguno"}`,
+        );
+      },
+      () => {},
+    );
     return;
   }
   if (!(await settleSend(row, outcome, deps))) return;
@@ -784,6 +811,20 @@ export async function finalizeGeneration(generationId: number, deps: GenDeps = {
 
 // ───────────────────────── Reconciliar ─────────────────────────
 
+/** Un identificador corto (p. ej. `ref`) aparece en muchas direcciones: no prueba nada. */
+const MIN_URL_ID_CHARS = 16;
+
+/**
+ * ¿La dirección nombra ese identificador? Solo con identificadores largos (≥ 16 caracteres, un UUID
+ * lo es) y como trozo entero de la ruta: tras `/`, `=` o `_` (las direcciones reales son
+ * `…/hf_<fecha>_<hora>_<id>.png`) y antes de `/`, `.`, `_`, `-`, `?`, `#` o el final.
+ */
+export function urlNames(url: string, value: string): boolean {
+  if (value.length < MIN_URL_ID_CHARS) return false;
+  const escaped = value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`[/=_]${escaped}(?:[/._?#-]|$)`).test(url);
+}
+
 /** Mismo modelo o de la misma familia (`nano_banana_2` en el historial para un envío `nano_banana_2_1`). */
 function sameModelFamily(sent: string, seen: string): boolean {
   return seen === sent || sent.startsWith(`${seen}_`) || seen.startsWith(`${sent}_`);
@@ -836,15 +877,18 @@ async function reconcileRow(row: Generation, deps: GenDeps, options: { force?: b
 
   const items: HfHistoryItem[] = [];
   let covered = false;
-  let cursor: number | null = null;
+  let cursor: HfHistoryCursor | null = null;
   try {
     for (let page = 0; page < HISTORY_MAX_PAGES; page += 1) {
       const result = await higgsfieldOf(deps).history(row.userId, historyType(row.kind), HISTORY_PAGE_SIZE, cursor);
       items.push(...result.items);
-      if (result.nextCursor === null || result.items.some((item) => item.createdAt !== null && item.createdAt.getTime() <= since)) {
+      // Cubre la ventana: Higgsfield dijo que no hay más (`null` explícito) o ya llegamos a antes del envío.
+      if (result.end || result.items.some((item) => item.createdAt !== null && item.createdAt.getTime() <= since)) {
         covered = true;
         break;
       }
+      // Sin cursor (y sin decir que es el final) no se sabe si hay más: no prueba nada.
+      if (result.nextCursor === null) break;
       cursor = result.nextCursor;
     }
   } catch (error) {
@@ -855,7 +899,7 @@ async function reconcileRow(row: Generation, deps: GenDeps, options: { force?: b
   const request = row.request as { model: string; prompt: string; resolution?: string; medias?: Array<{ value: string }> };
   const ours = (request.medias ?? []).map((media) => media.value);
   const isOurs = (media: HfHistoryItem["media"][number]) =>
-    (media.id !== null && ours.includes(media.id)) || (media.url !== null && ours.some((value) => media.url!.includes(value)));
+    (media.id !== null && ours.includes(media.id)) || (media.url !== null && ours.some((value) => urlNames(media.url!, value)));
   const inWindow = (item: HfHistoryItem) => item.createdAt === null || item.createdAt.getTime() >= since;
   // Solo cuenta para la credibilidad lo que cae en la ventana (y lo que no trae fecha).
   const credible = items.filter(inWindow).every((item) => item.prompt !== null && item.model !== "");
@@ -1195,7 +1239,9 @@ export async function readResultThumb(user: AuthUser, resultId: number): Promise
 }
 
 /** Estado de un tipo de generación en un vídeo, para la pantalla. */
-export async function generationView(video: Video, kind: GenerationKind): Promise<GenerationView> {
+export async function generationView(video: Video, kind: GenerationKind, viewerId: number): Promise<GenerationView> {
+  // Los candidatos de una duda (miniaturas del Higgsfield de quien creó el vídeo) y resolverla son solo suyos.
+  const creator = viewerId === video.createdBy;
   const rows = await rowsOf(getDb(), video.id, kind);
   const spent = rows.filter((row) => SPENT.includes(row.status as GenerationStatus)).length;
   const current = rows.at(-1) ?? null;
@@ -1221,8 +1267,8 @@ export async function generationView(video: Video, kind: GenerationKind): Promis
           stuck:
             current.status === "unknown"
               ? {
-                  candidates: current.candidates ?? [],
-                  canResolve: (current.submitStartedAt ?? current.intentAt).getTime() < Date.now() - RECONCILE_GIVE_UP_MS,
+                  candidates: creator ? (current.candidates ?? []) : [],
+                  canResolve: creator && (current.submitStartedAt ?? current.intentAt).getTime() < Date.now() - RECONCILE_GIVE_UP_MS,
                   risk: STUCK_RISK,
                 }
               : null,

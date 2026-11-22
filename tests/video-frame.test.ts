@@ -284,7 +284,9 @@ describe("aprobar y rechazar la imagen", () => {
     const sent = { status: 409, message: "Ya se ha generado un clip con esta imagen." };
     const waitingForLock = async () => {
       for (let i = 0; i < 200; i++) {
-        const { rows } = await getPool().query("select count(*)::int as n from pg_locks where locktype = 'advisory' and objid = $1 and not granted", [v.id]);
+        const { rows } = await getPool().query("select count(*)::int as n from pg_locks where locktype = 'advisory' and classid = $1 and objid = $2 and not granted",
+          [0x5647454e, v.id],
+        );
         if (rows[0].n > 0) return;
         await new Promise((resolve) => setTimeout(resolve, 10));
       }

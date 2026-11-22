@@ -478,7 +478,7 @@ describe("generaciones en el adaptador", () => {
   });
 
   it("history → show_generations con todos los estados, leyendo la respuesta real (segundos, entradas, resolución, cursor)", async () => {
-    const { port, mcpCalls } = setup([fixtureReply(showGenerationsFixture), fixtureReply(showGenerationsFixture)]);
+    const { port, mcpCalls } = setup([fixtureReply(showGenerationsFixture), fixtureReply(showGenerationsFixture), fixtureReply(showGenerationsFixture)]);
     const page = await port.history(ANA, "image", 50);
     expect(mcpCalls[0]).toEqual({ name: "show_generations", args: { only_completed: false, type: "image", size: 50 } });
     expect(page).toEqual({
@@ -495,9 +495,12 @@ describe("generaciones en el adaptador", () => {
         },
       ],
       nextCursor: 1795304064.437977,
+      end: false,
     });
     await port.history(ANA, "image", 50, 1795304064.437977);
     expect(mcpCalls[1].args).toEqual({ only_completed: false, type: "image", size: 50, cursor: 1795304064.437977 });
+    await port.history(ANA, "image", 50, "eyJwYWdlIjoyfQ==");
+    expect(mcpCalls[2].args).toEqual({ only_completed: false, type: "image", size: 50, cursor: "eyJwYWdlIjoyfQ==" });
   });
 
   it("un envío con un error de validación o de créditos es un rechazo con el texto de Higgsfield", async () => {
@@ -597,7 +600,22 @@ describe("generaciones en el adaptador", () => {
     expect(readHistory({ items: [{ id: "z", model: "m", params: { prompt: "" }, createdAt: "2026-11-22T08:00:00Z" }] }, "video")).toEqual({
       items: [{ jobId: "z", type: "video", model: "m", prompt: "", createdAt: new Date("2026-11-22T08:00:00Z"), media: [], resolution: null, thumbUrl: null }],
       nextCursor: null,
+      end: false, // sin `next_cursor`: no se sabe si hay más
     });
+    // El cursor se lee del mismo objeto que trae la lista; `null` explícito es el final; un texto es opaco.
+    const entry = { id: "z", params: {} };
+    expect(readHistory({ items: [entry], next_cursor: null }, "video")).toMatchObject({ nextCursor: null, end: true });
+    expect(readHistory({ data: { items: [entry], next_cursor: null } }, "video")).toMatchObject({ nextCursor: null, end: true });
+    expect(readHistory({ next_cursor: null, data: { items: [entry] } }, "video")).toMatchObject({ nextCursor: null, end: false });
+    expect(readHistory({ next_cursor: 5, result: { items: [entry], next_cursor: 7 } }, "video")).toMatchObject({ nextCursor: 7, end: false });
+    expect(readHistory({ items: [entry], next_cursor: "eyJwYWdlIjoyfQ==" }, "video")).toMatchObject({ nextCursor: "eyJwYWdlIjoyfQ==", end: false });
+    expect(readHistory({ items: [entry], next_cursor: {} }, "video")).toMatchObject({ nextCursor: null, end: false });
+    // La miniatura es solo `minUrl`: nunca el resultado entero (`rawUrl`).
+    const withResults = (results: object) => readHistory({ items: [{ ...entry, results }] }, "video")!.items[0].thumbUrl;
+    expect(withResults({ rawUrl: "https://x.cloudfront.net/clip.mp4" })).toBeNull();
+    expect(withResults({ rawUrl: "https://x.cloudfront.net/clip.mp4", minUrl: "https://x.cloudfront.net/clip_min.webp" })).toBe(
+      "https://x.cloudfront.net/clip_min.webp",
+    );
     // Sin prompt en la entrada: `null` (no sirve para descartar nada).
     expect(readHistory({ items: [{ id: "y", params: {} }] }, "image")!.items[0]).toMatchObject({ prompt: null, model: "", createdAt: null });
     expect(readHistory({ nada: 1 }, "video")).toBeNull();

@@ -183,11 +183,16 @@ const text = (value: unknown): string | null => (typeof value === "string" && va
 
 /** La lista de `key` en la respuesta (o un nivel más abajo, en `data`/`result`). */
 function listAt(data: unknown, key: string): unknown[] | null {
+  return listWithHolder(data, key)?.list ?? null;
+}
+
+/** Como `listAt`, pero también devuelve el objeto donde estaba la lista (para leer lo que la acompaña). */
+function listWithHolder(data: unknown, key: string): { list: unknown[]; holder: Record<string, unknown> } | null {
   if (!isObject(data)) return null;
-  if (Array.isArray(data[key])) return data[key] as unknown[];
+  if (Array.isArray(data[key])) return { list: data[key] as unknown[], holder: data };
   for (const wrapper of ["data", "result"]) {
     const inner = data[wrapper];
-    if (isObject(inner) && Array.isArray(inner[key])) return inner[key] as unknown[];
+    if (isObject(inner) && Array.isArray(inner[key])) return { list: inner[key] as unknown[], holder: inner };
   }
   return null;
 }
@@ -346,21 +351,27 @@ function mediaOf(params: Record<string, unknown>): HfHistoryItem["media"] {
   return media;
 }
 
-/** La miniatura del resultado de una generación del historial (`results.minUrl`, o `rawUrl`). */
+/**
+ * La miniatura del resultado de una generación del historial: solo `results.minUrl` (nunca el
+ * resultado entero, `rawUrl`, que puede ser un vídeo de muchos megas).
+ */
 function thumbOf(entry: Record<string, unknown>): string | null {
   const results = isObject(entry.results) ? entry.results : {};
-  const url = text(results.minUrl) ?? text(results.rawUrl);
+  const url = text(results.minUrl);
   return url && /^https:/.test(url) ? url : null;
 }
 
 /**
  * Lee una página de `show_generations`: `{ items: [{ id, type, status, model, params: { prompt,
  * resolution, input_images… }, results, createdAt }], next_cursor }`. Las entradas sin `id` se
- * saltan. `null` si no hay lista.
+ * saltan. `null` si no hay lista. `next_cursor` se lee del mismo objeto que trae la lista: un
+ * número o un texto (opaco, se devuelve tal cual) es la página siguiente; un `null` explícito es el
+ * final (`end`); si no viene o no se entiende, no se sabe (ni hay siguiente ni prueba el final).
  */
 export function readHistory(data: unknown, type: "image" | "video"): HfHistoryPage | null {
-  const entries = listAt(data, "items") ?? listAt(data, "generations");
-  if (!entries) return null;
+  const found = listWithHolder(data, "items") ?? listWithHolder(data, "generations");
+  if (!found) return null;
+  const entries = found.list;
   const items: HfHistoryItem[] = [];
   for (const entry of entries) {
     if (!isObject(entry)) continue;
@@ -379,8 +390,10 @@ export function readHistory(data: unknown, type: "image" | "video"): HfHistoryPa
       thumbUrl: thumbOf(entry),
     });
   }
-  const cursor = isObject(data) ? num(data.next_cursor) : null;
-  return { items, nextCursor: cursor };
+  const raw = found.holder.next_cursor;
+  const end = Object.hasOwn(found.holder, "next_cursor") && raw === null;
+  const nextCursor = typeof raw === "string" && raw.trim() !== "" ? raw : num(raw);
+  return { items, nextCursor, end };
 }
 
 /** La respuesta en crudo para guardar: el JSON si lo hay; si no, el texto, recortado. */
@@ -610,7 +623,7 @@ export function createHiggsfieldPort(
     async history(userId, type, limit, cursor) {
       return withCaller(userId, async (caller) => {
         const args: Record<string, unknown> = { only_completed: false, type, size: limit };
-        if (typeof cursor === "number") args.cursor = cursor;
+        if (typeof cursor === "number" || typeof cursor === "string") args.cursor = cursor;
         const result = await caller.callTool("show_generations", args);
         const page = result.isError ? null : readHistory(result.data, type);
         if (!page) {

@@ -268,8 +268,8 @@ export async function videoView(user: AuthUser, videoId: number): Promise<VideoV
     ...promptIssues(video, photos),
     imageManifest: imageManifest(video, photos),
     clipManifest: clipManifest(video, photos),
-    frame: await generationView(video, "frame"),
-    clip: await generationView(video, "clip"),
+    frame: await generationView(video, "frame", user.id),
+    clip: await generationView(video, "clip", user.id),
     costs: await costsOfVideo(video),
   };
 }

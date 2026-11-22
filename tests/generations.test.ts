@@ -46,6 +46,7 @@ import {
   sweepGenerations,
   TIMED_OUT,
   UNKNOWN_OUTCOME,
+  urlNames,
   type GenDeps,
 } from "@/server/videos/generations";
 import { createVideo, getVideoFor, videoView, type Video } from "@/server/videos/videos";
@@ -67,7 +68,8 @@ vi.mock("next/headers", () => ({
  */
 
 const SAME_PROMPT = "A woman holds the bottle in a bright kitchen.";
-const MEDIA = "m1";
+/** Como un `media_id` real: un UUID (en las direcciones del historial aparece tal cual). */
+const MEDIA = "852dd20b-4f2a-4c1e-9b7d-0a1b2c3d4e5f";
 
 let dir: string;
 let jpeg: Buffer;
@@ -455,6 +457,51 @@ describe("envío único", () => {
     expect(await rowOf(id)).toMatchObject({ status: "submitted", jobIds: ["j1", "j2"], creditsSpent: 4 });
   });
 
+  it.each(["done", "lease"] as const)(
+    "si la parte adoptada ya terminó o su finalización caducó (%s), la respuesta tardía añade los que faltan",
+    async (setup) => {
+      const { generationId: id } = await requestGeneration(ana, v.id, "frame", { expectedCredits: 4 }, deps);
+      await submitGeneration(id, { ...deps, higgsfield: lateReply(["j1", "j2"]), submitDeadlineMs: 200 });
+      fake.state.history = [hist("j1", SAME_PROMPT)];
+      await sweepGenerations(deps);
+      expect(await rowOf(id)).toMatchObject({ status: "submitted", jobIds: ["j1"] });
+      if (setup === "done") {
+        // La parte adoptada ya se finalizó antes de que llegue la respuesta.
+        fake.state.jobs.j1 = { jobId: "j1", status: "done", failure: null, error: null, urls: ["https://cdn.test/j1.png"] };
+        await finalizeGeneration(id, deps);
+        expect(await statusOf(id)).toBe("done");
+      } else {
+        // Una finalización que se cayó a mitad: su reserva ya caducó.
+        await getPool().query("update generations set finalizing_at = now() - interval '11 minutes' where id = $1", [id]);
+      }
+      await waitFor(async () => (await rowOf(id)).jobIds.length === 2);
+      expect(await rowOf(id)).toMatchObject({ jobIds: ["j1", "j2"], creditsSpent: 4 });
+      if (setup === "done") {
+        const { rows } = await getPool().query("select recheck_until > now() as rechecking from generations where id = $1", [id]);
+        expect(rows[0].rechecking).toBe(true);
+        // La finalización recoge el trabajo nuevo como un resultado más.
+        fake.state.jobs.j2 = { jobId: "j2", status: "done", failure: null, error: null, urls: ["https://cdn.test/j2.png"] };
+        await finalizeGeneration(id, deps);
+        const results = await getPool().query("select index, job_id as \"jobId\" from generation_results where generation_id = $1 order by index", [id]);
+        expect(results.rows).toEqual([{ index: 0, jobId: "j1" }, { index: 1, jobId: "j2" }]);
+      }
+    },
+  );
+
+  it("una respuesta que llega después de la espera tardía no se anota, pero sus trabajos quedan en el registro", async () => {
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const { generationId: id } = await requestGeneration(ana, v.id, "frame", { expectedCredits: 4 }, deps);
+      await submitGeneration(id, { ...deps, higgsfield: lateReply(["j1", "j2"]), submitDeadlineMs: 100, lateReplyWaitMs: 100 });
+      expect(await statusOf(id)).toBe("unknown");
+      for (let i = 0; i < 40 && errors.mock.calls.length === 0; i++) await wait(50);
+      expect(errors).toHaveBeenCalledWith(`[generaciones] Envío ${id}: respuesta después de la espera, sin anotar. Trabajos de Higgsfield: j1, j2`);
+      expect(await rowOf(id)).toMatchObject({ status: "unknown", jobIds: [] });
+    } finally {
+      errors.mockRestore();
+    }
+  });
+
   it("al anotar un envío no se queda trabajos que ya tiene otra generación", async () => {
     const otro = await createVideo(ana, producto.id);
     await getPool().query(
@@ -543,12 +590,26 @@ describe("envío único", () => {
     expect(await rowOf(id)).toMatchObject({ status: "not_sent", error: NEVER_ARRIVED });
   });
 
+  it("una página sin `next_cursor` (ni `null` explícito) tampoco prueba que no haya más", async () => {
+    const { generationId: id } = await requestGeneration(ana, v.id, "frame", { expectedCredits: 4 }, deps);
+    await setUnknown(id);
+    const unknownEnd: HiggsfieldPort = {
+      ...fake.port,
+      history: async () => ({ items: [hist("otro", "otro prompt")], nextCursor: null, end: false }),
+    };
+    await sweepGenerations({ ...deps, higgsfield: unknownEnd, now: minutes(11) });
+    expect(await rowOf(id)).toMatchObject({ status: "unknown", error: CANNOT_CONFIRM });
+    const explicitEnd: HiggsfieldPort = { ...unknownEnd, history: async () => ({ items: [hist("otro", "otro prompt")], nextCursor: null, end: true }) };
+    await sweepGenerations({ ...deps, higgsfield: explicitEnd, now: minutes(30) });
+    expect(await rowOf(id)).toMatchObject({ status: "not_sent", error: NEVER_ARRIVED });
+  });
+
   it("una página corta no prueba nada si Higgsfield aún da cursor", async () => {
     const { generationId: id } = await requestGeneration(ana, v.id, "frame", { expectedCredits: 4 }, deps);
     await setUnknown(id);
     const endless: HiggsfieldPort = {
       ...fake.port,
-      history: async () => ({ items: [hist("otro", "otro prompt")], nextCursor: 1 }),
+      history: async () => ({ items: [hist("otro", "otro prompt")], nextCursor: 1, end: false }),
     };
     await sweepGenerations({ ...deps, higgsfield: endless, now: minutes(11) });
     expect(await rowOf(id)).toMatchObject({ status: "unknown", error: CANNOT_CONFIRM });
@@ -562,6 +623,7 @@ describe("envío único", () => {
       history: async () => ({
         items: [hist("reciente", "otro prompt"), hist("vieja", null, { model: "", createdAt: new Date(Date.now() - 60 * 60_000) })],
         nextCursor: 1,
+        end: false,
       }),
     };
     await sweepGenerations({ ...deps, higgsfield: page, now: minutes(11) });
@@ -576,6 +638,16 @@ describe("envío único", () => {
     ];
     await sweepGenerations(deps);
     expect(await rowOf(id)).toMatchObject({ status: "submitted", jobIds: ["j-url"] });
+  });
+
+  it("una dirección solo cuenta con identificadores largos y como trozo entero, no por contener un texto corto", async () => {
+    expect(urlNames(`https://d8j0ntlcm91z4.cloudfront.net/user_XXXX/hf_20261121_233605_${MEDIA}.png`, MEDIA)).toBe(true);
+    expect(urlNames(`https://x.cloudfront.net/${MEDIA}/min.webp`, MEDIA)).toBe(true);
+    expect(urlNames(`https://x.cloudfront.net/a?id=${MEDIA}`, MEDIA)).toBe(true);
+    expect(urlNames("https://x.cloudfront.net/user/hf_m1.png", "m1")).toBe(false); // corto
+    expect(urlNames("https://x.cloudfront.net/ref-media-1234567890.png", "media-1234567890")).toBe(false); // otro id que acaba igual
+    expect(urlNames(`https://x.cloudfront.net/x${MEDIA}.png`, MEDIA)).toBe(false); // pegado a otro texto
+    expect(urlNames(`https://x.cloudfront.net/${MEDIA}0.png`, MEDIA)).toBe(false);
   });
 
   it("resultado desconocido sin rastro: a los 10 minutos queda «no enviado»; antes no deja repetir", async () => {
@@ -986,6 +1058,18 @@ describe("resolver a mano una duda atascada", () => {
         risk: "Si sí estaba, Higgsfield te cobrará las dos.",
         candidates: [{ jobId: "j-cand", createdAt: null, model: "nano_banana_pro", thumbUrl: "https://cdn.test/j-cand_min.webp" }],
       },
+    });
+  });
+
+  it("los candidatos y resolver la duda solo los ve quien creó el vídeo", async () => {
+    await stuck();
+    fake.state.history = [candidate("j-cand")];
+    await sweepGenerations(deps);
+    expect((await videoView(ana, v.id)).frame.current!.stuck).toMatchObject({ canResolve: true, candidates: [{ jobId: "j-cand" }] });
+    expect((await videoView(dueno, v.id)).frame.current!.stuck).toEqual({
+      canResolve: false,
+      candidates: [],
+      risk: "Si sí estaba, Higgsfield te cobrará las dos.",
     });
   });
 

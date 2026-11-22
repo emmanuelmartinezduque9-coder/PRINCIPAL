@@ -139,9 +139,12 @@ export function createFakeHiggsfield(
       record("history", userId, { type, limit, cursor });
       // Como el real: de la más reciente a la más antigua; el cursor es la fecha (en segundos) de la última.
       const seconds = (item: HfHistoryItem) => (item.createdAt ? item.createdAt.getTime() / 1000 : 0);
-      const older = state.history.filter((item) => item.type === type && (cursor === null || seconds(item) < cursor));
+      const before = cursor === null ? null : Number(cursor);
+      const older = state.history.filter((item) => item.type === type && (before === null || seconds(item) < before));
       const items = older.slice(0, limit);
-      return { items, nextCursor: older.length > limit ? seconds(items[items.length - 1]) : null };
+      const more = older.length > limit;
+      // Como el real: `next_cursor: null` explícito en la última página.
+      return { items, nextCursor: more ? seconds(items[items.length - 1]) : null, end: !more };
     },
   };
 

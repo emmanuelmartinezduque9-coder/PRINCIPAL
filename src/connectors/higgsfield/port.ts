@@ -79,14 +79,22 @@ export interface HfHistoryItem {
    */
   media: Array<{ id: string | null; url: string | null }>;
   resolution: string | null;
-  /** Miniatura del resultado (`results.minUrl`, o `rawUrl`), para que la persona lo reconozca. */
+  /** Miniatura del resultado (solo `results.minUrl`), para que la persona lo reconozca. */
   thumbUrl: string | null;
 }
 
-/** Una página del historial; `nextCursor` sirve para pedir la siguiente (más antigua), o `null` si no hay más. */
+/** Cursor de una página del historial tal como lo da Higgsfield (número o texto opaco). */
+export type HfHistoryCursor = number | string;
+
+/**
+ * Una página del historial. `nextCursor` sirve para pedir la siguiente (más antigua); `null` si no
+ * hay o no se sabe. Solo `end` (Higgsfield dijo `next_cursor: null`) prueba que no hay más: un
+ * cursor que falta no lo prueba.
+ */
 export interface HfHistoryPage {
   items: HfHistoryItem[];
-  nextCursor: number | null;
+  nextCursor: HfHistoryCursor | null;
+  end: boolean;
 }
 
 /** Un presupuesto. `quoteRef` permite enviar exactamente lo presupuestado (`params: { ref }`). */
@@ -116,7 +124,7 @@ export interface HiggsfieldPort {
   /** Estado de los trabajos, esperando como mucho `waitSeconds` (0–15). En el orden pedido. */
   jobs(userId: number, jobIds: string[], waitSeconds: number): Promise<HfJob[]>;
   /** Generaciones de la persona en cualquier estado, de la más reciente a la más antigua (para reconciliar un envío dudoso). */
-  history(userId: number, type: "image" | "video", limit: number, cursor?: number | null): Promise<HfHistoryPage>;
+  history(userId: number, type: "image" | "video", limit: number, cursor?: HfHistoryCursor | null): Promise<HfHistoryPage>;
 }
 
 /** La persona no tiene su Higgsfield conectado. */
