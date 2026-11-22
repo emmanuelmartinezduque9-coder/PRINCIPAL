@@ -36,7 +36,7 @@ export function createFakeHiggsfield(initial: Partial<FakeHiggsfield["state"]> =
     },
     async diagnostics(userId) {
       record("diagnostics", userId, {});
-      return { simulado: true, tools: ["balance"], balance: { credits: state.credits, plan: state.plan } };
+      return { tools: ["balance"], balance: { credits: state.credits, plan: state.plan } };
     },
   };
 

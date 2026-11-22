@@ -133,6 +133,15 @@ describe("conectar", () => {
     },
   );
 
+  it("al volver a conectar se revoca el token de refresco anterior", async () => {
+    await connect(ana);
+    await connect(ana);
+    const revokes = hf.requestsTo("https://higgsfield.ai/_clerk/oauth/token/revoke");
+    expect(revokes.map((r) => [r.form.get("token"), r.form.get("token_type_hint")])).toEqual([["hf-ref-1", "refresh_token"]]);
+    const now = await readCredential<{ accessToken: string; refreshToken: string }>(ana.id, "higgsfield");
+    expect(now!.secret).toMatchObject({ accessToken: "hf-acc-2", refreshToken: "hf-ref-2" });
+  });
+
   it("si la vuelta llega con otra dirección pública, se rechaza", async () => {
     const back = hf.approve((await startAuth(ana.id, ORIGIN, deps)).authorizeUrl);
     await expect(completeAuth(ana.id, "https://otra.example", back, deps)).rejects.toThrow(INVALID);
@@ -205,12 +214,41 @@ describe("token de acceso", () => {
     expect(hf.tokenRequests("refresh_token")).toHaveLength(0);
   });
 
-  it("si Higgsfield está caído al refrescar, no da la conexión por perdida", async () => {
+  it("si Higgsfield está caído al refrescar y el token aún vale, se sigue usando", async () => {
     hf.state.expiresIn = 30;
     await connect(ana);
     hf.state.refreshDown = true;
-    await expect(accessTokenFor(ana.id, deps)).rejects.toBeInstanceOf(HiggsfieldUnavailableError);
+    expect(await accessTokenFor(ana.id, deps)).toBe("hf-acc-1");
     expect((await credentialStatus(ana.id, "higgsfield")).meta.needsReconnect).toBe(false);
+  });
+
+  it("si Higgsfield está caído y el token ya caducó, HiggsfieldUnavailableError sin dar la conexión por perdida", async () => {
+    hf.state.expiresIn = 30;
+    await connect(ana);
+    hf.state.refreshDown = true;
+    const later = { ...deps, now: () => new Date(Date.now() + 120_000) };
+    await expect(accessTokenFor(ana.id, later)).rejects.toBeInstanceOf(HiggsfieldUnavailableError);
+    expect((await credentialStatus(ana.id, "higgsfield")).meta.needsReconnect).toBe(false);
+  });
+
+  it("tras un 401, con Higgsfield caído no se vuelve a ofrecer el token rechazado", async () => {
+    await connect(ana);
+    hf.state.refreshDown = true;
+    await expect(refreshNow(ana.id, deps)).rejects.toBeInstanceOf(HiggsfieldUnavailableError);
+  });
+
+  it("un fallo interno durante el refresco sale como HiggsfieldUnavailableError", async () => {
+    hf.state.expiresIn = 30;
+    await connect(ana);
+    // El reloj falla justo después de pedir el token nuevo (al guardar): error que no es de Higgsfield.
+    const broken = {
+      ...deps,
+      now: () => {
+        if (hf.tokenRequests("refresh_token").length > 0) throw new TypeError("reloj roto");
+        return new Date();
+      },
+    };
+    await expect(accessTokenFor(ana.id, broken)).rejects.toBeInstanceOf(HiggsfieldUnavailableError);
   });
 
   it("los errores nunca llevan los permisos en el mensaje", async () => {

@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { checkCloudEnv, isCloud, publicOrigin } from "@/lib/cloud-env";
+import { checkCloudEnv, isCloud, oauthOrigin, publicOrigin } from "@/lib/cloud-env";
 
-const ok = { DATABASE_URL: "postgres://x", VAULT_KEY: Buffer.alloc(32, 1).toString("base64"), ANTHROPIC_API_KEY: "k" };
+const ok = {
+  DATABASE_URL: "postgres://x",
+  VAULT_KEY: Buffer.alloc(32, 1).toString("base64"),
+  ANTHROPIC_API_KEY: "k",
+  PUBLIC_URL: "https://web.up.railway.app",
+};
 
 describe("checkCloudEnv", () => {
   it("una configuración completa no da avisos", () => {
@@ -18,6 +23,13 @@ describe("checkCloudEnv", () => {
       "En la nube no se puede desactivar el inicio de sesión (PRINCIPAL_AUTH=off).",
     );
     expect(checkCloudEnv({ ...ok, PUBLIC_URL: "http://x" }).problems).toContain("PUBLIC_URL debe empezar por https://.");
+    expect(checkCloudEnv({ ...ok, PUBLIC_URL: undefined }).problems).toContain(
+      "Falta PUBLIC_URL (la dirección pública de la web, https://…).",
+    );
+    expect(checkCloudEnv({ ...ok, PUBLIC_URL: "  " }).problems).toContain(
+      "Falta PUBLIC_URL (la dirección pública de la web, https://…).",
+    );
+    expect(checkCloudEnv({ ...ok, PUBLIC_URL: "https://" }).problems).toContain("PUBLIC_URL no es una dirección válida.");
     expect(checkCloudEnv({ ...ok, PRINCIPAL_HIGGSFIELD_FAKE: "1" }).problems).toContain(
       "En la nube no se puede usar el Higgsfield simulado (PRINCIPAL_HIGGSFIELD_FAKE).",
     );
@@ -57,5 +69,18 @@ describe("publicOrigin", () => {
   it("sin PUBLIC_URL, o con una inválida, usa la de la petición", () => {
     expect(publicOrigin(request, {})).toBe("http://0.0.0.0:3000");
     expect(publicOrigin(request, { PUBLIC_URL: "no es una url" })).toBe("http://0.0.0.0:3000");
+  });
+});
+
+describe("oauthOrigin", () => {
+  const request = new Request("https://evil.example/api/higgsfield/conectar", { headers: { Host: "evil.example" } });
+  it("en la nube sale solo de una PUBLIC_URL https válida, nunca de la petición", () => {
+    expect(oauthOrigin(request, { PRINCIPAL_CLOUD: "1", PUBLIC_URL: "https://web.up.railway.app/x" })).toBe("https://web.up.railway.app");
+    expect(oauthOrigin(request, { PRINCIPAL_CLOUD: "1" })).toBeNull();
+    expect(oauthOrigin(request, { RAILWAY_PROJECT_ID: "p", PUBLIC_URL: "no es una url" })).toBeNull();
+    expect(oauthOrigin(request, { PRINCIPAL_CLOUD: "1", PUBLIC_URL: "http://web.up.railway.app" })).toBeNull();
+  });
+  it("en el propio ordenador se comporta como publicOrigin", () => {
+    expect(oauthOrigin(new Request("http://127.0.0.1:3000/x"), {})).toBe("http://127.0.0.1:3000");
   });
 });

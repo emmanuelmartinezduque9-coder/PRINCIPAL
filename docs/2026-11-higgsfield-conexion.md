@@ -59,7 +59,8 @@ Se rellena tras la PUERTA (pasos 7–8 de la Tarea 1). Para cada punto: respuest
 10. **Forma real de `balance`** (campo `balance` del diagnóstico): sustituir
     `tests/fixtures/higgsfield/balance.json` por la captura con `"_origen": "real 2026-…"` y
     ajustar `readBalance` en `src/connectors/higgsfield/adapter.ts` si hace falta.
-11. **Presupuestos y `show_generations`:** el diagnóstico de esta tarea **solo** llama a
-    `balance` (orden de no gastar). Si el coordinador confirma que `estimate_image_cost`,
-    `estimate_video_cost` y `show_generations` son de solo lectura, se añaden a
-    `DIAGNOSTIC_TOOLS` y se captura su forma (¿`show_generations` trae `params.prompt`?).
+11. **Presupuestos y `show_generations`:** el diagnóstico los llama sin medios (gratuitos según el
+    contrato). Capturar del diagnóstico (o de la fila `"tipo": "diagnostico"` de
+    `higgsfield_probe_log`) la forma real de `estimate_image_cost`, `estimate_video_cost` (¿acepta
+    `omni_reference` sin medios?) y `show_generations` (¿trae `params.prompt`?) y guardarlas en
+    `tests/fixtures/higgsfield/*.json` con `"_origen": "real 2026-…"`.

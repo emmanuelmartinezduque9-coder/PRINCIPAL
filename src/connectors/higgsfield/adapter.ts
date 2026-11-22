@@ -15,11 +15,45 @@ import {
  * `tests/fixtures/higgsfield/*.json` (forma supuesta hasta la PUERTA).
  */
 
+const PROBE_PROMPT = "Diagnóstico de PRINCIPAL: solo presupuesto, no generar.";
+
 /**
- * Herramientas que usa el diagnóstico: solo lecturas que no gastan créditos. Se amplía solo con
- * herramientas de lectura confirmadas (p. ej. `show_generations`), nunca con una que genere.
+ * Herramientas que usa el diagnóstico, con sus argumentos exactos del contrato: solo lecturas y
+ * presupuestos, que no gastan créditos (resolución del coordinador). Nunca una que genere.
  */
-const DIAGNOSTIC_TOOLS = ["balance"] as const;
+export const DIAGNOSTIC_TOOLS: ReadonlyArray<{ name: string; args: Record<string, unknown> }> = [
+  { name: "balance", args: {} },
+  {
+    name: "estimate_image_cost",
+    args: {
+      params: {
+        model: "nano_banana_pro",
+        prompt: PROBE_PROMPT,
+        aspect_ratio: "9:16",
+        resolution: "2k",
+        count: 2,
+        use_unlim: false,
+      },
+    },
+  },
+  {
+    name: "estimate_video_cost",
+    args: {
+      params: {
+        model: "seedance_2_5",
+        mode: "omni_reference",
+        prompt: PROBE_PROMPT,
+        aspect_ratio: "9:16",
+        duration: 10,
+        resolution: "480p",
+        generate_audio: false,
+        bitrate_mode: "high",
+        use_unlim: false,
+      },
+    },
+  },
+  { name: "show_generations", args: { only_completed: false, type: "video", size: 50 } },
+];
 
 const num = (value: unknown): number | null => {
   const n = typeof value === "string" && value.trim() !== "" ? Number(value) : value;
@@ -111,10 +145,15 @@ export function createHiggsfieldPort(
     async diagnostics(userId) {
       return withCaller(userId, async (caller) => {
         const report: Record<string, unknown> = { tools: await caller.listTools() };
-        for (const tool of DIAGNOSTIC_TOOLS) {
-          const result = await caller.callTool(tool, {});
-          report[tool] = result.data ?? result.text;
-          report[`${tool}_isError`] = result.isError;
+        for (const { name, args } of DIAGNOSTIC_TOOLS) {
+          try {
+            const result = await caller.callTool(name, args);
+            report[name] = { isError: result.isError, data: result.data ?? result.text };
+          } catch (error) {
+            // Un 401 se trata fuera (refresco y una repetición); otro fallo no tapa las demás.
+            if (error instanceof McpUnauthorizedError) throw error;
+            report[name] = { failed: error instanceof Error ? error.name : "desconocido" };
+          }
         }
         return report;
       });

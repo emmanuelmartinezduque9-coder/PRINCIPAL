@@ -14,14 +14,55 @@ import {
   startAuth,
   type HiggsfieldPort,
 } from "@/connectors/higgsfield";
+import { oauthOrigin } from "@/lib/cloud-env";
 import { getActiveUser, type AuthUser } from "@/server/auth";
 import { credentialStatus, deleteCredential, listCredentialUsers, saveCredential } from "@/server/credentials";
+import { HttpError } from "@/server/http";
 
 /**
  * Conexión de Higgsfield de la persona de la sesión: estado y saldo para la pantalla, conectar,
  * volver, desconectar, diagnóstico (solo dueño) y la sonda periódica. Ninguna función acepta un
  * identificador de persona que no venga de la sesión; nada de lo que devuelven contiene permisos.
  */
+
+/** Mensaje cuando en la nube falta una `PUBLIC_URL` https válida. */
+export const ORIGIN_MISSING = "Configuración incompleta: falta PUBLIC_URL (https). No se puede conectar Higgsfield.";
+
+/**
+ * Origen con el que se construye la dirección de vuelta de Higgsfield. En la nube solo sale de
+ * `PUBLIC_URL` (nunca de la cabecera `Host`); si falta o no vale, 503 y no se llama a Higgsfield.
+ */
+export function higgsfieldOrigin(request: Request): string {
+  const origin = oauthOrigin(request);
+  if (!origin) {
+    console.error("[higgsfield] Falta PUBLIC_URL https en la nube: conexión rechazada.");
+    throw new HttpError(503, ORIGIN_MISSING);
+  }
+  return origin;
+}
+
+/** Datos con aspecto de secreto fuera: claves sensibles, JWT y la consulta de las URL firmadas. */
+const SENSITIVE_KEY = /token|secret|password|authorization|signature|cookie|api[_-]?key|credential/i;
+const JWT = /^[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}$/;
+const MAX_LOG_CHARS = 200_000;
+
+export function stripSecrets(value: unknown, depth = 0): unknown {
+  if (depth > 20) return "[…]";
+  if (typeof value === "string") {
+    if (JWT.test(value)) return "[oculto]";
+    return value.replace(/(https?:\/\/[^\s"?#]+)\?[^\s"#]*/g, "$1?[oculto]");
+  }
+  if (Array.isArray(value)) return value.map((item) => stripSecrets(item, depth + 1));
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>).map(([key, item]) => [
+        key,
+        SENSITIVE_KEY.test(key) && item !== null && typeof item !== "boolean" ? "[oculto]" : stripSecrets(item, depth + 1),
+      ]),
+    );
+  }
+  return value;
+}
 
 export interface HiggsfieldStatus {
   connected: boolean;
@@ -110,7 +151,11 @@ export async function disconnectHiggsfield(user: AuthUser): Promise<void> {
   await disconnect(user.id);
 }
 
-/** Informe para la prueba con el dueño: respuestas en crudo de herramientas que no gastan. Sin permisos. */
+/**
+ * Informe para la prueba con el dueño: respuestas en crudo de herramientas que no gastan, sin
+ * nada con aspecto de secreto. Se guarda también en `higgsfield_probe_log` (para fijar las formas
+ * reales de las respuestas).
+ */
 export async function higgsfieldDiagnostics(
   user: AuthUser,
   deps: { higgsfield?: HiggsfieldPort } = {},
@@ -123,11 +168,20 @@ export async function higgsfieldDiagnostics(
     connection: connected ? meta : null,
   };
   if (!connected) return { ...header, error: "Conecta tu Higgsfield en Ajustes." };
+  let report: Record<string, unknown>;
+  let ok = true;
   try {
-    return { ...header, ...(await (deps.higgsfield ?? getHiggsfield()).diagnostics(user.id)) };
+    report = { ...header, ...(await (deps.higgsfield ?? getHiggsfield()).diagnostics(user.id)) };
   } catch (error) {
-    return { ...header, error: isHiggsfieldError(error) ? error.message : new HiggsfieldUnavailableError().message };
+    ok = false;
+    report = { ...header, error: isHiggsfieldError(error) ? error.message : new HiggsfieldUnavailableError().message };
   }
+  const clean = stripSecrets(report) as Record<string, unknown>;
+  const detail = JSON.stringify({ tipo: "diagnostico", ...clean });
+  await getDb()
+    .insert(schema.higgsfieldProbeLog)
+    .values({ userId: user.id, ok, refreshed: false, detail: detail.length > MAX_LOG_CHARS ? `${detail.slice(0, MAX_LOG_CHARS)}…` : detail });
+  return clean;
 }
 
 /**

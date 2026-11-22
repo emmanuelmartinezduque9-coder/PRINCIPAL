@@ -16,6 +16,9 @@ function check(userId: number, kind: string): void {
   if (!kind) throw new Error("Falta el tipo de credencial");
 }
 
+/** Quien ejecuta la consulta: la base de datos o una transacción abierta (p. ej. la que tiene un cerrojo). */
+export type CredentialExecutor = Pick<ReturnType<typeof getDb>, "select" | "insert" | "delete">;
+
 const where = (userId: number, kind: string) =>
   and(eq(schema.credentials.userId, userId), eq(schema.credentials.kind, kind));
 
@@ -25,10 +28,11 @@ export async function saveCredential(
   kind: string,
   secret: object,
   meta: Record<string, unknown> = {},
+  executor: CredentialExecutor = getDb(),
 ): Promise<void> {
   check(userId, kind);
   const secretEnc = encryptSecret(secret, contextOf(userId, kind));
-  await getDb()
+  await executor
     .insert(schema.credentials)
     .values({ userId, kind, secretEnc, meta })
     .onConflictDoUpdate({
@@ -41,9 +45,10 @@ export async function saveCredential(
 export async function readCredential<T = unknown>(
   userId: number,
   kind: string,
+  executor: CredentialExecutor = getDb(),
 ): Promise<{ secret: T; meta: Record<string, unknown>; updatedAt: Date } | null> {
   check(userId, kind);
-  const [row] = await getDb().select().from(schema.credentials).where(where(userId, kind));
+  const [row] = await executor.select().from(schema.credentials).where(where(userId, kind));
   if (!row) return null;
   return {
     secret: decryptSecret<T>(row.secretEnc, contextOf(userId, kind)),
@@ -77,9 +82,9 @@ export async function listCredentialUsers(kind: string): Promise<number[]> {
   return rows.map((row) => row.userId);
 }
 
-export async function deleteCredential(userId: number, kind: string): Promise<void> {
+export async function deleteCredential(userId: number, kind: string, executor: CredentialExecutor = getDb()): Promise<void> {
   check(userId, kind);
-  await getDb().delete(schema.credentials).where(where(userId, kind));
+  await executor.delete(schema.credentials).where(where(userId, kind));
 }
 
 /** Borra todas las credenciales de una persona, sea cual sea su tipo (p. ej. al desactivarla, dentro de su transacción). */

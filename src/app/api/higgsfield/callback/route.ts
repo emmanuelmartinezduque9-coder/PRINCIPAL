@@ -1,4 +1,4 @@
-import { publicOrigin } from "@/lib/cloud-env";
+import { oauthOrigin } from "@/lib/cloud-env";
 import { currentUser } from "@/server/http";
 import { finishConnection } from "@/server/higgsfield";
 
@@ -7,10 +7,15 @@ const redirect = (location: string) =>
 
 /**
  * Vuelta de la autorización de Higgsfield. Siempre redirige a Ajustes (nunca un 500): el `state`
- * tiene que ser de la persona de la sesión, vigente y sin usar.
+ * tiene que ser de la persona de la sesión, vigente y sin usar. En la nube, sin `PUBLIC_URL`
+ * válida no se completa nada y se redirige con una ruta relativa (nunca a la cabecera Host).
  */
 export async function GET(request: Request) {
-  const origin = publicOrigin(request);
+  const origin = oauthOrigin(request);
+  if (!origin) {
+    console.error("[higgsfield] Falta PUBLIC_URL https en la nube: vuelta rechazada.");
+    return redirect("/ajustes?higgsfield=error");
+  }
   try {
     const user = await currentUser();
     if (!user) return redirect(`${origin}/login?volver=${encodeURIComponent("/ajustes")}`);

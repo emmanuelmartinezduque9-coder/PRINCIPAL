@@ -133,16 +133,18 @@ los vídeos de referencia.
 Cada persona conecta **su propia** cuenta de Higgsfield en **Ajustes**. No hace falta ninguna
 clave de Higgsfield en Railway. Lo que sí importa:
 
-- `PUBLIC_URL` debe ser la dirección pública de la web (`https://…up.railway.app`): con ella se
-  construye la dirección de vuelta `<PUBLIC_URL>/api/higgsfield/callback`. Si cambia, la web se
-  vuelve a registrar sola en Higgsfield y cada persona tiene que conectar otra vez.
+- `PUBLIC_URL` es **obligatoria** y debe ser la dirección pública de la web
+  (`https://…up.railway.app`): sin ella (o mal escrita) la web no arranca en la nube. Con ella se
+  construye la dirección de vuelta `<PUBLIC_URL>/api/higgsfield/callback`; nunca se usa la
+  dirección con la que llega la petición. Si cambia, la web se vuelve a registrar sola en
+  Higgsfield y cada persona tiene que conectar otra vez.
 - `PRINCIPAL_HIGGSFIELD_CLIENT=cimd` (opcional): en lugar de registrarse, la web se identifica con
-  su documento público `<PUBLIC_URL>/api/higgsfield/cliente`. Solo se pone para probarlo; sin ella,
-  registro dinámico.
+  su documento público `<PUBLIC_URL>/api/higgsfield/cliente` (que solo existe con esta variable;
+  sin ella responde 404). Solo se pone para probarlo; sin ella, registro dinámico.
 - `PRINCIPAL_HIGGSFIELD_FAKE` **nunca** en Railway: es el Higgsfield simulado para el propio
   ordenador y la web no arranca en la nube si está puesta.
 - El proceso en segundo plano lee el saldo de cada conexión cada 6 horas (no gasta créditos) y lo
-  anota en la tabla `higgsfield_probe_log`.
+  anota en la tabla `higgsfield_probe_log`, donde también queda cada diagnóstico del dueño.
 
 ## Publicar un cambio más adelante
 
@@ -163,7 +165,9 @@ Abre **Deployments** → **View logs**. Las líneas que empiezan por `[nube]` di
 | `Falta VAULT_KEY (la clave que protege las conexiones guardadas).` | Crea `VAULT_KEY` con el resultado de `openssl rand -base64 32`. |
 | `VAULT_KEY debe ser una clave de 32 bytes en base64.` | Se copió mal (cortada, con espacios o comillas). Genera otra con el mismo comando y pégala entera, tal cual sale. Si ya había conexiones guardadas con la anterior, hay que repetirlas. |
 | `En la nube no se puede desactivar el inicio de sesión (PRINCIPAL_AUTH=off).` | Borra la variable `PRINCIPAL_AUTH`. |
+| `Falta PUBLIC_URL (la dirección pública de la web, https://…).` | Haz el paso 4: crea `PUBLIC_URL` con la dirección de la web. |
 | `PUBLIC_URL debe empezar por https://.` | Corrige `PUBLIC_URL`: tiene que empezar por `https://`. |
+| `PUBLIC_URL no es una dirección válida.` | Copia otra vez la dirección completa, por ejemplo `https://principal-production-xxxx.up.railway.app`. |
 | `Esta base de datos es la de Finanzas: PRINCIPAL necesita la suya propia.` (sale como `[nube] No se pudo preparar la base de datos: ...`) | `DATABASE_URL` apunta a la base de Finanzas. Cámbiala a `${{Postgres-principal.DATABASE_URL}}`, la del cuadro nuevo. |
 | `No se pudo preparar la base de datos: ...` (otro texto) | La base no responde o la dirección está mal. Revisa `DATABASE_URL` y que `Postgres-principal` esté activo. |
 | `No se pudo lanzar la web` / `el proceso en segundo plano` | Pulsa **Redeploy**; si se repite, avisa a quien mantiene el código. |

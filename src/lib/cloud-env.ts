@@ -34,13 +34,42 @@ export function checkCloudEnv(env: Env): { problems: string[]; warnings: string[
   if (env.PRINCIPAL_HIGGSFIELD_FAKE === "1") {
     problems.push("En la nube no se puede usar el Higgsfield simulado (PRINCIPAL_HIGGSFIELD_FAKE).");
   }
-  if (env.PUBLIC_URL?.trim() &&!env.PUBLIC_URL.trim().startsWith("https://")) {
+  const publicUrl = env.PUBLIC_URL?.trim();
+  if (!publicUrl) {
+    problems.push("Falta PUBLIC_URL (la dirección pública de la web, https://…).");
+  } else if (!publicUrl.startsWith("https://")) {
     problems.push("PUBLIC_URL debe empezar por https://.");
+  } else if (!httpsOrigin(publicUrl)) {
+    problems.push("PUBLIC_URL no es una dirección válida.");
   }
   if (!env.ANTHROPIC_API_KEY?.trim()) {
     warnings.push("Falta ANTHROPIC_API_KEY: la IA no funcionará hasta añadirla.");
   }
   return { problems, warnings };
+}
+
+/** Origen `https://…` de una dirección, o `null` si no se entiende o no es https. */
+function httpsOrigin(value: string): string | null {
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" && url.hostname ? url.origin : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Origen para permisos OAuth (la dirección de vuelta de Higgsfield). En la nube sale SOLO de una
+ * `PUBLIC_URL` https válida: nunca de la cabecera `Host` de la petición, que manda quien llama.
+ * `null` si en la nube falta o no vale (quien llama debe negarse). En el propio ordenador, como
+ * `publicOrigin`.
+ */
+export function oauthOrigin(request: Request, env: Env = process.env): string | null {
+  if (isCloud(env)) {
+    const configured = env.PUBLIC_URL?.trim();
+    return configured ? httpsOrigin(configured) : null;
+  }
+  return publicOrigin(request, env);
 }
 
 /** Dirección pública de la web: `PUBLIC_URL` si está definida; si no, la de la petición. */

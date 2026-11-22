@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { createHiggsfieldPort, readBalance } from "@/connectors/higgsfield/adapter";
+import { createHiggsfieldPort, DIAGNOSTIC_TOOLS, readBalance } from "@/connectors/higgsfield/adapter";
 import { McpUnauthorizedError, type McpCaller } from "@/connectors/higgsfield/mcp";
 import { HiggsfieldAuthError, HiggsfieldNotConnectedError, HiggsfieldUnavailableError } from "@/connectors/higgsfield/port";
 import balanceFixture from "./fixtures/higgsfield/balance.json";
@@ -102,11 +102,57 @@ describe("adaptador de Higgsfield", () => {
     expect(closedCount()).toBe(1);
   });
 
-  it("el diagnóstico solo usa herramientas que no gastan créditos", async () => {
-    const { port, mcpCalls } = setup([fixtureReply(balanceFixture)]);
+  it("el diagnóstico solo usa herramientas que no gastan, con los argumentos exactos del contrato", async () => {
+    const reply = fixtureReply(balanceFixture) as { isError: boolean; text: string; data: unknown };
+    const { port, mcpCalls } = setup([reply]);
     const report = await port.diagnostics(ANA);
-    expect(report).toMatchObject({ tools: ["balance", "generate_video"], balance: { credits: 1234, plan: "plus" } });
-    expect(mcpCalls.map((c) => c.name)).toEqual(["balance"]);
+    expect(report).toMatchObject({ tools: ["balance", "generate_video"], balance: { isError: false, data: { credits: 1234, plan: "plus" } } });
+    expect(mcpCalls).toEqual([
+      { name: "balance", args: {} },
+      {
+        name: "estimate_image_cost",
+        args: {
+          params: expect.objectContaining({ model: "nano_banana_pro", aspect_ratio: "9:16", resolution: "2k", count: 2, use_unlim: false }),
+        },
+      },
+      {
+        name: "estimate_video_cost",
+        args: {
+          params: expect.objectContaining({
+            model: "seedance_2_5",
+            mode: "omni_reference",
+            aspect_ratio: "9:16",
+            duration: 10,
+            resolution: "480p",
+            generate_audio: false,
+            bitrate_mode: "high",
+            use_unlim: false,
+          }),
+        },
+      },
+      { name: "show_generations", args: { only_completed: false, type: "video", size: 50 } },
+    ]);
+    expect(mcpCalls.some((c) => /^generate|^upload|^media_|^execute/.test(c.name))).toBe(false);
+    expect(DIAGNOSTIC_TOOLS.map((t) => t.name)).toEqual(["balance", "estimate_image_cost", "estimate_video_cost", "show_generations"]);
+  });
+
+  it("si una herramienta del diagnóstico falla, se anota y siguen las demás", async () => {
+    const calls: string[] = [];
+    const caller: McpCaller = {
+      async callTool(name) {
+        calls.push(name);
+        if (name === "estimate_video_cost") throw new Error("boom");
+        return { isError: false, text: "{}", data: {} };
+      },
+      async listTools() {
+        return [];
+      },
+      async close() {},
+    };
+    const port = createHiggsfieldPort({ open: async () => caller, refresh: vi.fn() });
+    const report = await port.diagnostics(ANA);
+    expect(report.estimate_video_cost).toEqual({ failed: "Error" });
+    expect(calls).toHaveLength(4);
   });
 });
 

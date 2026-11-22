@@ -1,9 +1,15 @@
 import crypto from "node:crypto";
-import { and, eq, lt } from "drizzle-orm";
-import { getDb, getPool, getSetting, schema, setSetting } from "@/db/client";
+import { and, eq, lt, sql } from "drizzle-orm";
+import { getDb, schema } from "@/db/client";
 import { decryptSecret, encryptSecret } from "@/lib/vault";
-import { deleteCredential, readCredential, saveCredential } from "@/server/credentials";
-import { HIGGSFIELD_KIND, HiggsfieldAuthError, HiggsfieldNotConnectedError, HiggsfieldUnavailableError } from "./port";
+import { deleteCredential, readCredential, saveCredential, type CredentialExecutor } from "@/server/credentials";
+import {
+  HIGGSFIELD_KIND,
+  HiggsfieldAuthError,
+  HiggsfieldNotConnectedError,
+  HiggsfieldUnavailableError,
+  isHiggsfieldError,
+} from "./port";
 
 /**
  * Permiso OAuth de cada persona con su propia cuenta de Higgsfield (código de autorización +
@@ -16,9 +22,12 @@ import { HIGGSFIELD_KIND, HiggsfieldAuthError, HiggsfieldNotConnectedError, Higg
  * - Los permisos (acceso y refresco) viven solo en la bóveda. Nunca aparecen en `meta`, en los
  *   registros ni en los mensajes de error.
  * - Refrescar, volver de la autorización y desconectar se hacen de uno en uno por persona: un
- *   cerrojo dentro del proceso (para no ocupar varias conexiones esperando) y un cerrojo
- *   consultivo de PostgreSQL de dos claves (`HIGG`, persona) entre procesos (web y cola). Tras
- *   tomar el cerrojo se vuelve a leer la credencial: así nunca se usa un token de refresco viejo.
+ *   cerrojo dentro del proceso y un cerrojo consultivo de PostgreSQL de dos claves (`HIGG`,
+ *   persona) entre procesos (web y cola), tomado en una transacción; las lecturas y escrituras de
+ *   la credencial van por esa misma transacción (una sola conexión por refresco). Tras tomar el
+ *   cerrojo se vuelve a leer la credencial: así nunca se usa un token de refresco viejo.
+ * - Lo que hay que anotar (p. ej. «hay que reconectar») se escribe y se confirma antes de lanzar
+ *   el error: un error dentro de la transacción la desharía.
  */
 
 export const HIGGSFIELD_MCP_URL = "https://mcp.higgsfield.ai/mcp";
@@ -76,6 +85,8 @@ interface StoredSecret {
   clientId: string;
 }
 
+type Stored = { secret: StoredSecret; meta: Record<string, unknown> };
+
 interface AsMetadata {
   authorization_endpoint: string;
   token_endpoint: string;
@@ -90,6 +101,9 @@ interface TokenResponse {
   scope?: string;
   id_token?: string;
 }
+
+/** Transacción que tiene el cerrojo: lecturas y escrituras de credenciales y ajustes. */
+type Tx = CredentialExecutor;
 
 // ───────────────────────── utilidades ─────────────────────────
 
@@ -131,23 +145,14 @@ async function serialized<T>(key: string, fn: () => Promise<T>): Promise<T> {
   }
 }
 
-/** `fn` con el cerrojo consultivo (`HIGG`, `key`) tomado, en una conexión propia. */
-async function withLock<T>(key: number, fn: () => Promise<T>): Promise<T> {
-  return serialized(`lock:${key}`, async () => {
-    const client = await getPool().connect();
-    try {
-      await client.query("begin");
-      await client.query("select pg_advisory_xact_lock($1::int, $2::int)", [LOCK_NAMESPACE, key]);
-      const result = await fn();
-      await client.query("commit");
-      return result;
-    } catch (error) {
-      await client.query("rollback").catch(() => {});
-      throw error;
-    } finally {
-      client.release();
-    }
-  });
+/** `fn` dentro de una transacción con el cerrojo consultivo (`HIGG`, `key`) tomado. */
+function withLock<T>(key: number, fn: (tx: Tx) => Promise<T>): Promise<T> {
+  return serialized(`lock:${key}`, () =>
+    getDb().transaction(async (tx) => {
+      await tx.execute(sql`select pg_advisory_xact_lock(${LOCK_NAMESPACE}::int, ${key}::int)`);
+      return fn(tx);
+    }),
+  );
 }
 
 async function send(f: typeof fetch, url: string, init: RequestInit): Promise<Response> {
@@ -223,8 +228,9 @@ async function clientIdFor(origin: string, f: typeof fetch): Promise<string> {
   if (cimdMode()) return cimdClientId(origin);
   const redirectUri = redirectUriFor(origin);
   if (clientCache?.redirectUri === redirectUri) return clientCache.clientId;
-  return withLock(CLIENT_LOCK_KEY, async () => {
-    const stored = await getSetting<{ enc: string; redirectUri: string }>(CLIENT_SETTING);
+  return withLock(CLIENT_LOCK_KEY, async (tx) => {
+    const [row] = await tx.select().from(schema.settings).where(eq(schema.settings.key, CLIENT_SETTING));
+    const stored = row?.value as { enc: string; redirectUri: string } | undefined;
     if (stored?.redirectUri === redirectUri) {
       const { clientId } = decryptSecret<{ clientId: string }>(stored.enc, CLIENT_CONTEXT);
       clientCache = { redirectUri, clientId };
@@ -252,7 +258,11 @@ async function clientIdFor(origin: string, f: typeof fetch): Promise<string> {
       if (response.status >= 500) throw new HiggsfieldUnavailableError();
       throw new HiggsfieldOAuthError(code ?? "registration_failed");
     }
-    await setSetting(CLIENT_SETTING, { enc: encryptSecret({ clientId, issuer: HIGGSFIELD_ISSUER }, CLIENT_CONTEXT), redirectUri });
+    const value = { enc: encryptSecret({ clientId, issuer: HIGGSFIELD_ISSUER }, CLIENT_CONTEXT), redirectUri };
+    await tx
+      .insert(schema.settings)
+      .values({ key: CLIENT_SETTING, value })
+      .onConflictDoUpdate({ target: schema.settings.key, set: { value, updatedAt: new Date() } });
     clientCache = { redirectUri, clientId };
     return clientId;
   });
@@ -275,13 +285,26 @@ async function tokenRequest(f: typeof fetch, metadata: AsMetadata, params: Recor
       tokens: {
         access_token: body.access_token,
         refresh_token: typeof body.refresh_token === "string" && body.refresh_token ? body.refresh_token : undefined,
-        expires_in: typeof body.expires_in === "number" && body.expires_in > 0 ? body.expires_in : undefined,
+        expires_in:
+          typeof body.expires_in === "number" && body.expires_in > 0 && body.expires_in < 10 * 365 * 24 * 3600
+            ? body.expires_in
+            : undefined,
         scope: typeof body.scope === "string" ? body.scope : undefined,
         id_token: typeof body.id_token === "string" ? body.id_token : undefined,
       },
     };
   }
   return { ok: false, status: response.status, error: sanitizeOAuthCode(body?.error) };
+}
+
+/** Revoca un token en Higgsfield si se puede; cualquier fallo se ignora. */
+async function revoke(f: typeof fetch, metadata: AsMetadata, token: string, hint: string, clientId: string): Promise<void> {
+  if (!metadata.revocation_endpoint) return;
+  await send(f, metadata.revocation_endpoint, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ token, token_type_hint: hint, client_id: clientId }).toString(),
+  }).catch(() => null);
 }
 
 /** Correo de la cuenta, leído del `id_token` solo para mostrarlo (no se usa para decidir nada). */
@@ -296,32 +319,35 @@ function emailFromIdToken(idToken: string | undefined): string | null {
   }
 }
 
-async function saveTokens(
-  userId: number,
-  tokens: TokenResponse,
-  clientId: string,
-  now: Date,
-  previous?: { secret: StoredSecret; meta: Record<string, unknown> },
-): Promise<void> {
+async function saveTokens(tx: Tx, userId: number, tokens: TokenResponse, clientId: string, now: Date, previous?: Stored) {
   const refreshToken = tokens.refresh_token ?? previous?.secret.refreshToken ?? null;
   const secret: StoredSecret = { accessToken: tokens.access_token, refreshToken, clientId };
-  await saveCredential(userId, HIGGSFIELD_KIND, secret, {
-    email: emailFromIdToken(tokens.id_token) ?? (previous?.meta.email as string | undefined) ?? null,
-    connectedAt: (previous?.meta.connectedAt as string | undefined) ?? now.toISOString(),
-    expiresAt: tokens.expires_in ? new Date(now.getTime() + tokens.expires_in * 1000).toISOString() : null,
-    hasRefreshToken: Boolean(refreshToken),
-    scope: tokens.scope ?? (previous?.meta.scope as string | undefined) ?? null,
-    needsReconnect: false,
-  });
+  await saveCredential(
+    userId,
+    HIGGSFIELD_KIND,
+    secret,
+    {
+      email: emailFromIdToken(tokens.id_token) ?? (previous?.meta.email as string | undefined) ?? null,
+      connectedAt: (previous?.meta.connectedAt as string | undefined) ?? now.toISOString(),
+      expiresAt: tokens.expires_in ? new Date(now.getTime() + tokens.expires_in * 1000).toISOString() : null,
+      hasRefreshToken: Boolean(refreshToken),
+      scope: tokens.scope ?? (previous?.meta.scope as string | undefined) ?? null,
+      needsReconnect: false,
+    },
+    tx,
+  );
 }
 
-async function markNeedsReconnect(userId: number, current: { secret: StoredSecret; meta: Record<string, unknown> }) {
-  await saveCredential(userId, HIGGSFIELD_KIND, current.secret, { ...current.meta, needsReconnect: true });
-}
+const markNeedsReconnect = (tx: Tx, userId: number, current: Stored) =>
+  saveCredential(userId, HIGGSFIELD_KIND, current.secret, { ...current.meta, needsReconnect: true }, tx);
 
 function expiresSoon(meta: Record<string, unknown>, now: Date): boolean {
   if (typeof meta.expiresAt !== "string") return false; // sin caducidad declarada: se confía hasta un 401
   return new Date(meta.expiresAt).getTime() - now.getTime() < REFRESH_MARGIN_MS;
+}
+
+function stillValid(meta: Record<string, unknown>, now: Date): boolean {
+  return typeof meta.expiresAt === "string" && new Date(meta.expiresAt).getTime() > now.getTime();
 }
 
 // ───────────────────────── flujo ─────────────────────────
@@ -361,7 +387,10 @@ export async function startAuth(userId: number, origin: string, deps?: OAuthDeps
   return { authorizeUrl: url.toString() };
 }
 
-/** Vuelta de Higgsfield: comprueba el `state` (una vez, de esta persona, vigente) y guarda los permisos. */
+/**
+ * Vuelta de Higgsfield: comprueba el `state` (una vez, de esta persona, vigente) y guarda los
+ * permisos. Si la persona ya tenía una conexión, revoca su token de refresco anterior.
+ */
 export async function completeAuth(
   userId: number,
   origin: string,
@@ -401,45 +430,76 @@ export async function completeAuth(
     if (result.status >= 500) throw new HiggsfieldUnavailableError();
     throw new HiggsfieldOAuthError(result.error);
   }
-  await withLock(userId, () => saveTokens(userId, result.tokens, pending.clientId, now));
+  await withLock(userId, async (tx) => {
+    const previous = await readCredential<StoredSecret>(userId, HIGGSFIELD_KIND, tx).catch(() => null);
+    await saveTokens(tx, userId, result.tokens, pending.clientId, now);
+    const old = previous?.secret.refreshToken;
+    if (old && old !== result.tokens.refresh_token) {
+      await revoke(f, metadata, old, "refresh_token", previous.secret.clientId);
+    }
+  });
 }
+
+type RefreshOutcome = { token: string } | { error: Error };
 
 /**
  * Refresca bajo el cerrojo de la persona. `stillGood` decide, con la credencial recién leída tras
- * tomar el cerrojo, si otro ya refrescó (y entonces no se llama a Higgsfield).
+ * tomar el cerrojo, si otro ya refrescó (y entonces no se llama a Higgsfield). Con
+ * `keepCurrentOnOutage`, si Higgsfield falla (no rechaza) y el token actual aún no ha caducado,
+ * se sigue usando. Cualquier fallo que no sea de Higgsfield sale como `HiggsfieldUnavailableError`.
  */
 async function refreshLocked(
   userId: number,
   deps: OAuthDeps | undefined,
-  stillGood: (current: { secret: StoredSecret; meta: Record<string, unknown> }) => boolean,
+  stillGood: (current: Stored) => boolean,
+  keepCurrentOnOutage: boolean,
 ): Promise<string> {
   const f = fetchOf(deps);
-  return withLock(userId, async () => {
-    const current = await readCredential<StoredSecret>(userId, HIGGSFIELD_KIND);
-    if (!current) throw new HiggsfieldNotConnectedError();
-    if (current.meta.needsReconnect) throw new HiggsfieldAuthError();
-    if (stillGood(current)) return current.secret.accessToken;
-    if (!current.secret.refreshToken) {
-      await markNeedsReconnect(userId, current);
-      throw new HiggsfieldAuthError();
-    }
-    const metadata = await authServerMetadata(f);
-    const result = await tokenRequest(f, metadata, {
-      grant_type: "refresh_token",
-      refresh_token: current.secret.refreshToken,
-      client_id: current.secret.clientId,
-    });
-    if (!result.ok) {
-      console.warn(`[higgsfield] Refresco rechazado (persona ${userId}): HTTP ${result.status} ${result.error ?? ""}`.trim());
-      if (result.error && REJECTED.has(result.error)) {
-        await markNeedsReconnect(userId, current);
-        throw new HiggsfieldAuthError();
+  let outcome: RefreshOutcome;
+  try {
+    outcome = await withLock(userId, async (tx): Promise<RefreshOutcome> => {
+      const current = await readCredential<StoredSecret>(userId, HIGGSFIELD_KIND, tx);
+      if (!current) return { error: new HiggsfieldNotConnectedError() };
+      if (current.meta.needsReconnect) return { error: new HiggsfieldAuthError() };
+      if (stillGood(current)) return { token: current.secret.accessToken };
+      if (!current.secret.refreshToken) {
+        await markNeedsReconnect(tx, userId, current);
+        return { error: new HiggsfieldAuthError() };
       }
-      throw new HiggsfieldUnavailableError();
-    }
-    await saveTokens(userId, result.tokens, current.secret.clientId, nowOf(deps), current);
-    return result.tokens.access_token;
-  });
+      const outage = (): RefreshOutcome =>
+        keepCurrentOnOutage && stillValid(current.meta, nowOf(deps))
+          ? { token: current.secret.accessToken }
+          : { error: new HiggsfieldUnavailableError() };
+      let result: TokenResult;
+      try {
+        const metadata = await authServerMetadata(f);
+        result = await tokenRequest(f, metadata, {
+          grant_type: "refresh_token",
+          refresh_token: current.secret.refreshToken,
+          client_id: current.secret.clientId,
+        });
+      } catch (error) {
+        if (error instanceof HiggsfieldUnavailableError) return outage();
+        throw error;
+      }
+      if (!result.ok) {
+        console.warn(`[higgsfield] Refresco rechazado (persona ${userId}): HTTP ${result.status} ${result.error ?? ""}`.trim());
+        if (result.error && REJECTED.has(result.error)) {
+          await markNeedsReconnect(tx, userId, current);
+          return { error: new HiggsfieldAuthError() };
+        }
+        return outage();
+      }
+      await saveTokens(tx, userId, result.tokens, current.secret.clientId, nowOf(deps), current);
+      return { token: result.tokens.access_token };
+    });
+  } catch (error) {
+    if (isHiggsfieldError(error)) throw error;
+    console.error(`[higgsfield] Fallo interno al refrescar (persona ${userId}): ${error instanceof Error ? error.name : "desconocido"}`);
+    throw new HiggsfieldUnavailableError();
+  }
+  if ("error" in outcome) throw outcome.error;
+  return outcome.token;
 }
 
 /** Token de acceso vigente; lo refresca si caduca en menos de 60 s. Un refresco a la vez por persona. */
@@ -448,7 +508,7 @@ export async function accessTokenFor(userId: number, deps?: OAuthDeps): Promise<
   if (!current) throw new HiggsfieldNotConnectedError();
   if (current.meta.needsReconnect) throw new HiggsfieldAuthError();
   if (!expiresSoon(current.meta, nowOf(deps))) return current.secret.accessToken;
-  return refreshLocked(userId, deps, (fresh) => !expiresSoon(fresh.meta, nowOf(deps)));
+  return refreshLocked(userId, deps, (fresh) => !expiresSoon(fresh.meta, nowOf(deps)), true);
 }
 
 /** Tras un 401 del servidor: fuerza un refresco (salvo que otro lo acabe de hacer). */
@@ -457,34 +517,27 @@ export async function refreshNow(userId: number, deps?: OAuthDeps): Promise<stri
   if (!current) throw new HiggsfieldNotConnectedError();
   if (current.meta.needsReconnect) throw new HiggsfieldAuthError();
   const rejected = current.secret.accessToken;
-  return refreshLocked(userId, deps, (fresh) => fresh.secret.accessToken !== rejected);
+  // El token actual acaba de ser rechazado: si Higgsfield falla, no se vuelve a ofrecer.
+  return refreshLocked(userId, deps, (fresh) => fresh.secret.accessToken !== rejected, false);
 }
 
 /** Revoca en Higgsfield si se puede y borra siempre la conexión local de esa persona. */
 export async function disconnect(userId: number, deps?: OAuthDeps): Promise<void> {
   const f = fetchOf(deps);
-  await withLock(userId, async () => {
-    const current = await readCredential<StoredSecret>(userId, HIGGSFIELD_KIND).catch(() => null);
+  await withLock(userId, async (tx) => {
+    const current = await readCredential<StoredSecret>(userId, HIGGSFIELD_KIND, tx).catch(() => null);
     if (current) {
       try {
-        const { revocation_endpoint: endpoint } = await authServerMetadata(f);
-        const tokens: Array<[string | null, string]> = [
-          [current.secret.refreshToken, "refresh_token"],
-          [current.secret.accessToken, "access_token"],
-        ];
-        for (const [token, hint] of tokens) {
-          if (!endpoint || !token) continue;
-          await send(f, endpoint, {
-            method: "POST",
-            headers: { "Content-Type": "application/x-www-form-urlencoded" },
-            body: new URLSearchParams({ token, token_type_hint: hint, client_id: current.secret.clientId }).toString(),
-          }).catch(() => null);
+        const metadata = await authServerMetadata(f);
+        if (current.secret.refreshToken) {
+          await revoke(f, metadata, current.secret.refreshToken, "refresh_token", current.secret.clientId);
         }
+        await revoke(f, metadata, current.secret.accessToken, "access_token", current.secret.clientId);
       } catch {
         console.warn(`[higgsfield] No se pudo revocar en Higgsfield (persona ${userId}); se borra en local.`);
       }
     }
-    await deleteCredential(userId, HIGGSFIELD_KIND);
-    await getDb().delete(schema.oauthPending).where(eq(schema.oauthPending.userId, userId));
+    await deleteCredential(userId, HIGGSFIELD_KIND, tx);
+    await tx.delete(schema.oauthPending).where(eq(schema.oauthPending.userId, userId));
   });
 }

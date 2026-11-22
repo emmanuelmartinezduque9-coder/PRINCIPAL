@@ -5,7 +5,7 @@ import { resetOAuthCache, startAuth } from "@/connectors/higgsfield/oauth";
 import { HiggsfieldUnavailableError } from "@/connectors/higgsfield/port";
 import { login, type AuthUser } from "@/server/auth";
 import { credentialStatus, saveCredential } from "@/server/credentials";
-import { higgsfieldStatus, probeConnections } from "@/server/higgsfield";
+import { higgsfieldStatus, probeConnections, stripSecrets } from "@/server/higgsfield";
 import { makeUser, TEST_PASSWORD } from "./helpers/fixtures";
 import { createFakeHiggsfieldAuth } from "./helpers/fake-higgsfield";
 import { truncateAll } from "./helpers/global-setup";
@@ -80,6 +80,25 @@ describe("estado de la conexión", () => {
   });
 });
 
+describe("datos sin secretos para la bitácora", () => {
+  it("oculta claves sensibles, JWT y la consulta de las URL firmadas", () => {
+    const jwt = "eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJ4eHh4eHh4eCJ9.c2lnbmF0dXJlLWxhcmdh";
+    expect(
+      stripSecrets({
+        access_token: "abc",
+        nested: { download_token: "t", hasRefreshToken: true, url: "https://cdn.hf.test/a.mp4?X-Amz-Signature=zzz&e=1" },
+        list: [jwt, "texto normal"],
+        credits: 5,
+      }),
+    ).toEqual({
+      access_token: "[oculto]",
+      nested: { download_token: "[oculto]", hasRefreshToken: true, url: "https://cdn.hf.test/a.mp4?[oculto]" },
+      list: ["[oculto]", "texto normal"],
+      credits: 5,
+    });
+  });
+});
+
 describe("sonda", () => {
   it("deja una fila por persona conectada, sin permisos y sin gastar", async () => {
     const fake = createFakeHiggsfield();
@@ -126,12 +145,68 @@ describe("rutas", () => {
     const body = await response.json();
     expect(body).toMatchObject({ balance: { credits: 1000, plan: "plus" } });
     expect(JSON.stringify(body)).not.toMatch(/hf-acc|hf-ref/);
+    // Se guarda en la bitácora de la sonda para fijar las formas reales, sin permisos.
+    const { rows } = await getPool().query("select user_id, ok, detail from higgsfield_probe_log");
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ user_id: dueno.id, ok: true });
+    expect(JSON.parse(rows[0].detail)).toMatchObject({ tipo: "diagnostico", balance: { credits: 1000 } });
+    expect(rows[0].detail).not.toMatch(/hf-acc|hf-ref/);
   });
 
-  it("el documento de cliente es público y usa PUBLIC_URL", async () => {
-    const body = await (await (await route("cliente")).GET(new Request("http://0.0.0.0:3000/api/higgsfield/cliente"))).json();
-    expect(body.client_id).toBe(`${ORIGIN}/api/higgsfield/cliente`);
-    expect(body.redirect_uris).toEqual([`${ORIGIN}/api/higgsfield/callback`]);
+  it("el documento de cliente solo existe con el interruptor CIMD, y usa PUBLIC_URL", async () => {
+    const get = async () => (await route("cliente")).GET(new Request("http://0.0.0.0:3000/api/higgsfield/cliente"));
+    expect((await get()).status).toBe(404);
+    process.env.PRINCIPAL_HIGGSFIELD_CLIENT = "cimd";
+    try {
+      const body = await (await get()).json();
+      expect(body.client_id).toBe(`${ORIGIN}/api/higgsfield/cliente`);
+      expect(body.redirect_uris).toEqual([`${ORIGIN}/api/higgsfield/callback`]);
+    } finally {
+      delete process.env.PRINCIPAL_HIGGSFIELD_CLIENT;
+    }
+  });
+
+  describe("en la nube sin PUBLIC_URL", () => {
+    beforeEach(() => {
+      process.env.PRINCIPAL_CLOUD = "1";
+      delete process.env.PUBLIC_URL;
+    });
+    afterEach(() => {
+      delete process.env.PRINCIPAL_CLOUD;
+    });
+
+    it("conectar con Host: evil.example se niega (503) y no registra nada en Higgsfield", async () => {
+      const hf = createFakeHiggsfieldAuth();
+      vi.stubGlobal("fetch", hf.fetch);
+      await signIn(ana);
+      const request = new Request("https://evil.example/api/higgsfield/conectar", {
+        method: "POST",
+        headers: { Host: "evil.example" },
+      });
+      const response = await (await route("conectar")).POST(request);
+      expect(response.status).toBe(503);
+      expect((await response.json()).error).toMatch(/Configuración incompleta/);
+      expect(hf.requests).toHaveLength(0);
+      expect((await getPool().query("select * from oauth_pending")).rows).toHaveLength(0);
+    });
+
+    it("la vuelta no completa nada ni redirige a la cabecera Host", async () => {
+      await signIn(ana);
+      const response = await (await route("callback")).GET(
+        new Request("https://evil.example/api/higgsfield/callback?code=c&state=s", { headers: { Host: "evil.example" } }),
+      );
+      expect(response.headers.get("location")).toBe("/ajustes?higgsfield=error");
+    });
+
+    it("el documento CIMD tampoco se sirve con la dirección de la petición", async () => {
+      process.env.PRINCIPAL_HIGGSFIELD_CLIENT = "cimd";
+      try {
+        const response = await (await route("cliente")).GET(new Request("https://evil.example/api/higgsfield/cliente"));
+        expect(response.status).toBe(503);
+      } finally {
+        delete process.env.PRINCIPAL_HIGGSFIELD_CLIENT;
+      }
+    });
   });
 
   it("conectar devuelve la dirección de permiso con la vuelta construida desde PUBLIC_URL", async () => {
