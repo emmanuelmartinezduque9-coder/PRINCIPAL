@@ -71,3 +71,16 @@ E. **Solo gancho + cuerpo existente** y **variaciones de gancho** sobre una **bi
    Higgsfield de la persona, con miniaturas y vista previa).
 F. **Canción por vídeo** (biblioteca con drop) y montaje con el montador vía agente del Mac.
 G. **Proponer lote** (motor de ángulos): por producto, Claude propone ángulos × audiencias y qué concepto adaptar.
+
+### v2-E — Biblioteca de clips y «Solo gancho + cuerpo» (diseño)
+- **Biblioteca** (`/biblioteca`, menú para todos): los vídeos del historial de Higgsfield de la persona
+  (`show_generations`, tipo vídeo, paginado por `cursor`), guardados en caché en la tabla `library_clips`
+  (por persona: job id, miniatura `minUrl`, vídeo `rawUrl`, modelo, fecha) para que cargue al instante; botón
+  «Actualizar» trae lo nuevo. Rejilla de miniaturas; al pasar el ratón o pulsar se reproduce el vídeo. Cada clip se
+  puede marcar como **cuerpo** de un producto (`product_bodies`: producto, clip, nombre corto).
+- **Tipo `solo_gancho`** en el vídeo: «Duración del gancho» (2–8 s, por defecto 4). La referencia se recorta a esa
+  duración al prepararse (se fija antes de subir; cambiarla después pide subir de nuevo), el desglose y el clip son
+  solo del gancho, y el vídeo lleva una lista ordenada de **cuerpos** elegidos de la biblioteca del producto
+  (`videos.body_clip_ids`). La web entrega el gancho y los cuerpos; unirlos con la canción lo hace el montador
+  (después, como tarea del agente del Mac).
+- En el lote: el tipo «Solo gancho» en la tarjeta, con el selector de cuerpos (miniaturas del producto).
