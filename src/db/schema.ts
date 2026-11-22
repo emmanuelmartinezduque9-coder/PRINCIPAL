@@ -698,6 +698,30 @@ export const videoFrames = pgTable(
   (t) => [unique("video_frames_video_index").on(t.videoId, t.index)],
 );
 
+/** Tope de la pista de audio guardada de una referencia (AAC; 60 s a 128 kb/s son ~1 MB). */
+export const MAX_REFERENCE_AUDIO_BYTES = 5 * 1024 * 1024;
+
+/**
+ * La pista de audio del vídeo de referencia (M4A/AAC, desde 0 y 60 s como mucho), sacada al
+ * preparar la referencia: el vídeo no se guarda, y «Audio original» en el montaje es el audio de
+ * la referencia (los clips de Seedance salen mudos). Una por vídeo; sin fila si la referencia no
+ * trae audio o no se pudo sacar. Solo `src/server/videos/` toca esta tabla.
+ */
+export const videoReferenceAudio = pgTable(
+  "video_reference_audio",
+  {
+    videoId: bigint("video_id", { mode: "number" })
+      .primaryKey()
+      .references(() => videos.id, { onDelete: "cascade" }),
+    mime: text("mime").notNull(),
+    size: integer("size").notNull(),
+    durationMs: integer("duration_ms").notNull(),
+    data: bytea("data").notNull(),
+    createdAt: instant("created_at").notNull().defaultNow(),
+  },
+  (t) => [check("video_reference_audio_size", sql`${t.size} between 1 and ${sql.raw(String(MAX_REFERENCE_AUDIO_BYTES))}`)],
+);
+
 /**
  * Desgloses del vídeo de referencia hechos por Claude: cada «Repetir desglose» es una versión
  * nueva y las anteriores no se tocan. Como mucho uno en marcha por vídeo (índice único parcial).

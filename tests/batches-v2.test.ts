@@ -273,6 +273,7 @@ describe("duplicar y quitar filas", () => {
     const v = await batchVideo(lote.id, { kind: "adaptacion_concepto", adaptation: "Idea", note: "Más luz" });
     await updateVideoChoices(ana, v.id, { clipResolution: "720p" });
     await readyReference(v.id);
+    await getPool().query("insert into video_reference_audio (video_id, mime, size, duration_ms, data) values ($1, 'audio/mp4', 3, 6000, $2)", [v.id, Buffer.from("m4a")]);
     // Un desglose de otras indicaciones (replicar, sin nota): no vale y no se copia.
     await getPool().query("insert into video_analyses (video_id, version, status, reference_media_id, created_by) values ($1, 1, 'done', 'media-1', $2)", [
       v.id,
@@ -280,6 +281,8 @@ describe("duplicar y quitar filas", () => {
     ]);
 
     const copy = await duplicateBatchVideo(ana, lote.id, v.id);
+    // También el audio de la referencia («Audio original» del montaje).
+    expect((await getPool().query("select data from video_reference_audio where video_id = $1", [copy.id])).rows[0].data.toString()).toBe("m4a");
     expect(copy).toMatchObject({
       batchId: lote.id,
       productId: lampara.id,

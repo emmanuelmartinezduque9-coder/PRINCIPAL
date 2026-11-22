@@ -276,6 +276,36 @@ export async function normalizeClip(filePath: string, outPath: string, durationM
   }
 }
 
+/** Lo más que se guarda del audio de una referencia (desde 0). */
+export const MAX_REFERENCE_AUDIO_MS = 60_000;
+
+/**
+ * La pista de audio de un vídeo (la primera), desde 0 y `maxMs` como mucho, en M4A AAC 128 kb/s
+ * estéreo 44,1 kHz. `false` si el vídeo no trae audio (no es un error).
+ */
+export async function extractAudio(filePath: string, outPath: string, maxMs: number = MAX_REFERENCE_AUDIO_MS): Promise<boolean> {
+  const demuxer = await fileDemuxer(filePath);
+  assertSafePath(outPath);
+  const { stdout } = await run("ffprobe", ["-v", "error", "-select_streams", "a", "-show_entries", "stream=index", "-of", "csv=p=0", ...inputArgs(demuxer, filePath)], UNREADABLE);
+  if (stdout.toString("utf8").trim() === "") return false;
+  try {
+    await run("ffmpeg", [
+      "-v", "error", "-nostdin", "-y", "-threads", "2",
+      ...inputArgs(demuxer, filePath),
+      "-t", toSeconds(maxMs),
+      "-map", "0:a:0", "-vn",
+      "-c:a", "aac", "-b:a", "128k", "-ac", "2", "-ar", "44100",
+      "-movflags", "+faststart",
+      "-f", "ipod",
+      `file:${outPath}`,
+    ], UNREADABLE);
+  } catch (error) {
+    await fs.rm(outPath, { force: true });
+    throw error;
+  }
+  return true;
+}
+
 /** Miniatura JPEG (sin ampliar; lado largo ≤ `maxSide`). El contenido debe ser del tipo `kind`, comprobado por sus bytes. */
 export async function makeThumbnail(input: Buffer, kind: "image" | "video", maxSide = 540): Promise<Buffer> {
   const head = input.subarray(0, 16);

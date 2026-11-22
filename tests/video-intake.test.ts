@@ -15,7 +15,7 @@ import { saveCredential } from "@/server/credentials";
 import { ensureMedia } from "@/server/higgsfield";
 import { processReference } from "@/server/videos/intake";
 import { videoSweep } from "@/server/videos/sweep";
-import { appendChunk, CHUNK_BYTES, cleanStaleUploads, finishUpload, startUpload, uploadPath } from "@/server/videos/upload";
+import { appendChunk, audioPath, CHUNK_BYTES, cleanStaleUploads, finishUpload, startUpload, uploadPath } from "@/server/videos/upload";
 import { createVideo, getVideoFor, readVideoFrame, updateVideoChoices, videoView, type Video } from "@/server/videos/videos";
 import { makeProduct, makeUser } from "./helpers/fixtures";
 import { truncateAll } from "./helpers/global-setup";
@@ -24,7 +24,7 @@ import { makeSampleVideo } from "./helpers/sample-video";
 /** ffmpeg real con vídeos de muestra; Higgsfield simulado. */
 
 let dir: string;
-const samples: Record<"seis" | "largo" | "corto", string> = { seis: "", largo: "", corto: "" };
+const samples: Record<"seis" | "largo" | "corto" | "mudo", string> = { seis: "", largo: "", corto: "", mudo: "" };
 
 beforeAll(async () => {
   dir = fs.mkdtempSync(path.join(os.tmpdir(), "prueba-referencia-"));
@@ -33,6 +33,8 @@ beforeAll(async () => {
     fs.mkdirSync(sub);
     samples[name] = await makeSampleVideo(sub, { seconds });
   }
+  fs.mkdirSync(path.join(dir, "mudo"));
+  samples.mudo = await makeSampleVideo(path.join(dir, "mudo"), { seconds: 3, audio: false });
 }, 120_000);
 
 afterAll(async () => {
@@ -96,6 +98,20 @@ describe("preparar la referencia", () => {
     const frame = await readVideoFrame(ana, v.id, 3);
     expect(frame.mime).toBe("image/jpeg");
     expect(frame.data.subarray(0, 3)).toEqual(Buffer.from([0xff, 0xd8, 0xff]));
+    // El audio de la referencia queda guardado («Audio original» del montaje), en M4A; el temporal se borra.
+    const [audio] = await getDb().select().from(schema.videoReferenceAudio).where(eq(schema.videoReferenceAudio.videoId, v.id));
+    expect(audio).toMatchObject({ mime: "audio/mp4", durationMs: video.referenceDurationMs });
+    expect(audio.data.subarray(4, 8).toString("latin1")).toBe("ftyp");
+    expect(audio.size).toBe(audio.data.length);
+    expect(fs.existsSync(audioPath(uploadId))).toBe(false);
+  });
+
+  it("una referencia sin audio queda lista, sin audio guardado; una nueva sustituye al audio anterior", async () => {
+    await processReference(v.id, await upload(samples.seis), { higgsfield: fake.port });
+    expect(await getDb().select().from(schema.videoReferenceAudio)).toHaveLength(1);
+    await processReference(v.id, await upload(samples.mudo), { higgsfield: fake.port });
+    expect(await getVideoFor(ana, v.id)).toMatchObject({ referenceStatus: "ready" });
+    expect(await getDb().select().from(schema.videoReferenceAudio)).toEqual([]);
   });
 
   it("con «Solo gancho» el tramo es el gancho: fotogramas, cortes y recorte subido salen de esos segundos", async () => {
@@ -140,6 +156,8 @@ describe("preparar la referencia", () => {
     expect(video.referenceStatus).toBe("ready");
     expect(video.segmentDurationMs).toBe(30_000);
     expect(video.referenceDurationMs!).toBeGreaterThan(33_000);
+    // Del audio, la referencia entera (60 s como mucho).
+    expect((await getDb().select({ durationMs: schema.videoReferenceAudio.durationMs }).from(schema.videoReferenceAudio))[0].durationMs).toBe(video.referenceDurationMs);
     expect((await videoView(ana, v.id)).frames).toHaveLength(24);
     expect(video.cutsMs!.every((ms) => ms > 0 && ms < 30_000)).toBe(true);
     const sent = uploads()[0].args as { bytes: Buffer };

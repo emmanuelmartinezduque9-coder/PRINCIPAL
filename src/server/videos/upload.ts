@@ -72,6 +72,11 @@ export function clipPath(uploadId: string): string {
   return `${uploadPath(uploadId)}.recorte.mp4`;
 }
 
+/** La pista de audio que saca `processReference`, junto al archivo subido. */
+export function audioPath(uploadId: string): string {
+  return `${uploadPath(uploadId)}.audio.m4a`;
+}
+
 const totalChunksOf = (totalBytes: number) => Math.ceil(totalBytes / CHUNK_BYTES);
 /** Los trozos que caben en el máximo: una subida sin tamaño anunciado no admite más. */
 const MAX_CHUNKS = totalChunksOf(MAX_REFERENCE_BYTES);
@@ -92,6 +97,7 @@ async function fileSize(file: string): Promise<number | null> {
 async function removeFiles(uploadId: string): Promise<void> {
   await fs.rm(uploadPath(uploadId), { force: true });
   await fs.rm(clipPath(uploadId), { force: true });
+  await fs.rm(audioPath(uploadId), { force: true });
 }
 
 /** Borra los archivos temporales de subidas cuya fila ya se borró. */

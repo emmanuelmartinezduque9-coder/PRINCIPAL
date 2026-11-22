@@ -597,6 +597,9 @@ export async function duplicateBatchVideo(user: AuthUser, batchId: number, video
     if (ready) {
       await tx.execute(sql`insert into video_frames (video_id, index, time_ms, mime, size, data)
         select ${copy.id}, index, time_ms, mime, size, data from video_frames where video_id = ${video.id}`);
+      // Y su audio («Audio original» en el montaje).
+      await tx.execute(sql`insert into video_reference_audio (video_id, mime, size, duration_ms, data)
+        select ${copy.id}, mime, size, duration_ms, data from video_reference_audio where video_id = ${video.id}`);
     }
     if (valid) {
       await tx.insert(schema.videoAnalyses).values({
