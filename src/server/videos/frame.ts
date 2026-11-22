@@ -1,6 +1,6 @@
 import { and, eq, notInArray } from "drizzle-orm";
 import type { HfMediaRef } from "@/connectors/higgsfield";
-import { getDb, getSetting, schema, setSetting } from "@/db/client";
+import { getSetting, schema, setSetting } from "@/db/client";
 import type { AuthUser } from "@/server/auth";
 import { ensureMedia } from "@/server/higgsfield";
 import { HttpError } from "@/server/http";
@@ -15,7 +15,7 @@ import {
 } from "@/server/videos/generations";
 import { imageManifest, type ManifestItem } from "@/server/videos/manifest";
 import { checkImagePrompt } from "@/server/videos/prompt-check";
-import { readVideoFrame, videoSnapshot, type Video } from "@/server/videos/videos";
+import { BRIEF_CHANGED, latestDoneAnalysis, readVideoFrame, videoSnapshot, type Video } from "@/server/videos/videos";
 
 /**
  * Imagen inicial: la petición a Nano Banana (2 candidatas, 2K, 9:16) con las referencias en el
@@ -65,21 +65,15 @@ export async function setImageModel(owner: AuthUser, model: string): Promise<voi
 
 const EXTENSIONS: Record<string, string> = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp" };
 
-/** ¿Hay un desglose terminado de la referencia que tiene ahora el vídeo, con su prompt de imagen? */
-async function analysisDone(video: Video): Promise<boolean> {
-  if (video.imagePrompt === null || video.referenceMediaId === null) return false;
-  const [done] = await getDb()
-    .select({ id: schema.videoAnalyses.id })
-    .from(schema.videoAnalyses)
-    .where(
-      and(
-        eq(schema.videoAnalyses.videoId, video.id),
-        eq(schema.videoAnalyses.status, "done"),
-        eq(schema.videoAnalyses.referenceMediaId, video.referenceMediaId),
-      ),
-    )
-    .limit(1);
-  return Boolean(done);
+/**
+ * Sin prompt de imagen o sin un último desglose terminado de la referencia actual, 400 «Haz primero
+ * el desglose.»; si es de otras indicaciones (tipo, adaptación, cambios o quién sale), 400 también.
+ */
+async function requireAnalysisDone(video: Video): Promise<void> {
+  if (video.imagePrompt === null || video.referenceMediaId === null) throw new HttpError(400, ANALYSIS_FIRST);
+  const done = await latestDoneAnalysis(video);
+  if (!done || done.staleReason === "reference") throw new HttpError(400, ANALYSIS_FIRST);
+  if (done.staleReason === "brief") throw new HttpError(400, BRIEF_CHANGED);
 }
 
 /** El `media_id` en Higgsfield de una referencia del manifiesto, subiéndola tal como está guardada si hace falta. */
@@ -114,11 +108,14 @@ const FRAME_SNAPSHOT = [
   "imagePrompt",
   "avatarPhotoId",
   "environmentPhotoId",
-  "noPerson",
+  "avatarMode",
+  "kind",
+  "adaptation",
+  "note",
 ] as const satisfies ReadonlyArray<keyof Video>;
 
 export const buildFrameRequest: RequestBuilder = async (user, video, deps) => {
-  if (!(await analysisDone(video))) throw new HttpError(400, ANALYSIS_FIRST);
+  await requireAnalysisDone(video);
   const prompt = video.imagePrompt!;
   const manifest = imageManifest(video, await listProductPhotos(user, video.productId));
   const errors = checkImagePrompt(prompt, manifest).filter((issue) => issue.level === "error");

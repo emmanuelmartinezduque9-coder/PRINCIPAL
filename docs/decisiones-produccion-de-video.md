@@ -439,3 +439,37 @@ Diseño: `docs/superpowers/specs/2026-11-22-lotes-design.md`. Un lote es solo un
 - **«Hecho» en la lista** = la misma regla que `clipReady` (un clip terminado en una dirección que se puede servir).
 - **Revisión**: el número de la tecla de cada candidata cuenta solo las candidatas con imagen (como el atajo).
 - El plan y el envío en bloque son funciones puras (`planSend`, `sendPlan` en `src/components/batches/bulk-plan.ts`), con su prueba: cada fila va con su propio `expectedCredits`.
+
+## Lotes v2 (22/11), primera parte
+
+Diseño: sección «Lotes v2» de `docs/superpowers/specs/2026-11-22-lotes-design.md`; inventario del lote antiguo: `docs/importacion/lote-antiguo-funciones.md` (§1.1, §1.7 y el avatar de §2). Esta parte trae el tipo de vídeo, que «Cambios específicos» llegue a Claude y el modo de avatar. «Solo gancho + cuerpo» espera a la biblioteca de clips.
+
+- **Datos** (migración `0016`):
+  - `videos.kind`: `replicar` (por defecto) o `adaptacion_concepto`.
+  - `videos.adaptation`: «Qué adaptación quieres», como mucho 12.000 caracteres.
+  - `videos.avatar_mode`: `elegido`, `sin_sustitucion` o `nadie`. Sustituye a `no_person`. La migración pasa `no_person = true` a `nadie` en los vídeos y en sus desgloses; lo demás queda `elegido` con su foto, o sin foto si aún no se había elegido. Después borra `no_person`.
+  - `check` en la base de datos: los valores de cada lista, la longitud y que solo `elegido` lleve foto de avatar (`videos_avatar_only_chosen`).
+  - `tests/migration-avatar-mode.test.ts` aplica las migraciones hasta la `0015` en una base aparte, mete datos con `no_person` y comprueba la `0016`.
+- **La adaptación no se borra al pasar a «Replicar»**: se conserva sin usarse, para no perder 12.000 caracteres por un clic, y vuelve al elegir otra vez «Adaptación de concepto». Solo se manda a Claude y solo cuenta para la vigencia del desglose con `adaptacion_concepto` (`briefOf`). Escribir una adaptación con el tipo `replicar` es un 400.
+- **«Cambios específicos» es `videos.note`** (el de Lotes v1): una línea, como mucho 300 caracteres. Ahora se edita en la pantalla del vídeo (`PUT /api/videos/[id]` con `note`) y en cada fila del lote nuevo.
+- **Validación** (`src/server/videos/brief.ts`): `checkKindInput` y `cleanNote` sirven para crear desde un lote (`addVideoToBatch`) y para cambiar el vídeo (`updateVideoChoices`). Un valor fuera de lista, un tipo que no es texto o una longitud de más dan 400 y no se guarda nada de la petición. El `avatarMode` llega sin comprobar de las rutas y se comprueba en el servidor.
+- **Modo de avatar**: con `sin_sustitucion` o `nadie` se quita la foto de avatar; elegir una foto pasa a `elegido`; pedir una foto con otro modo es un 400. Con `elegido` y sin foto no se puede desglosar (el mensaje nombra las tres opciones).
+- **Lo que llega a Claude** (`src/server/videos/analysis.ts`):
+  - `ownerNotes(brief)`: un bloque de texto propio, justo después de la ficha del producto, entre `<indicaciones_del_encargo>` y su cierre, con `<adaptacion>` y `<cambios_especificos>` dentro. Lo que escribe la persona no puede cerrar la etiqueta antes de tiempo: `</` pasa a `< /`. Sin indicaciones, no va ni el bloque ni su instrucción.
+  - Instrucciones del paso (`analysisInstructions(brief)`): una línea de identidad según el modo de avatar, que cambia también la descripción de `image 1` y de `@Video1` y el riesgo `identidad`. Con `sin_sustitucion`, la identidad sale de la referencia: `image 1` aporta también las personas, y en el manifiesto se llama «composición y personas». Con `adaptacion_concepto` se añade un párrafo: se traslada el concepto siguiendo la regla «Adaptación de conceptos» y lo que pide `<adaptacion>`. Las indicaciones son datos del encargo; lo que choque con las reglas se dice en `risks`.
+  - Reglas: `adaptacion-de-conceptos` ya iba siempre en `VIDEO_RULE_SLUGS`, porque replicar también es adaptar al producto. `analysisRuleSlugs(kind)` la garantiza con `adaptacion_concepto` aunque esa lista cambie. No se quita al replicar, para no cambiar lo de v1.
+- **Vigencia del desglose**: `video_analyses` guarda una copia de `kind`, `avatar_mode`, `note` y `adaptation`. Prefiero una copia a un hash porque se puede leer al revisar.
+  - Se apunta al pedir el desglose. Al hacer la llamada se apunta lo que de verdad se mandó: las indicaciones del vídeo en ese momento. Así, lo que se cambia mientras está en cola entra.
+  - `analysisStaleness` da `reference` (otra referencia) o `brief` (otro tipo, otra adaptación vigente, otros cambios u otro modo de avatar). Lo usan la vista del vídeo (`stale` y `staleReason`), el tablero y `latestDoneAnalysis`.
+  - La imagen da 400 y el clip 409 con «Las indicaciones del vídeo cambiaron; repite el desglose.».
+  - Cambiar de una foto de avatar a otra no invalida el desglose (como antes): el manifiesto ya lo refleja y la comprobación de prompts avisa.
+  - Las instantáneas de la imagen y del clip llevan también `kind`, `adaptation` y `note`.
+  - Los desgloses de antes de la `0016` no llevaban «Cambios específicos». Si su vídeo tiene una indicación, quedan para repetir: es la verdad, porque Claude no la vio.
+- **Si las indicaciones cambian mientras Claude responde**: el desglose queda hecho, con su coste y las indicaciones que usó. Sale como «Repetir desglose» y no copia sus prompts al vídeo. Si cambia la referencia, sigue quedando en error como antes.
+- **Manifiestos y comprobación de prompts**: el avatar solo entra con `elegido`. Con «sin sustitución» o «nadie» no va ninguna foto de avatar en la imagen ni en el clip, aunque quedara una guardada. La comprobación de prompts sale del manifiesto, así que no pide una referencia de avatar que no existe.
+- **Pantallas**:
+  - **Vídeo**, paso Referencia: arriba, a todo el ancho, el selector «Replicar vídeo» / «Adaptación de concepto» y «Cambios específicos» en la misma línea. Debajo, con adaptación, el área «Qué adaptación quieres». Se guarda al salir del campo, o con Intro en el de una línea.
+  - **Avatar**: las fotos y dos opciones más, «Sin sustitución» y «No aparece nadie».
+  - **Desglose**: con adaptación, el requisito «Qué adaptación quieres». El aviso de un desglose que ya no vale dice si cambió la referencia o las indicaciones.
+  - **Lote nuevo**: cada fila tiene tipo (en la fila, «Replicar» o «Adaptación»; en la lista, el nombre entero), avatar con «Sin sustitución» y «No aparece nadie», y «Cambios específicos». Con adaptación sale el área debajo de la fila, y la fila no se puede crear vacía.
+  - **Tablero**: una etiqueta con el tipo junto al título. El icono del avatar dice «Sin sustitución» o «No aparece nadie». «Desglosar» no cuenta una adaptación sin texto (`needsAdaptation`).

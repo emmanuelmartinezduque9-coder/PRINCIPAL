@@ -13,7 +13,7 @@ import { getProductFor } from "@/server/products";
 import { registerRequestBuilder, type RequestBuilder } from "@/server/videos/generations";
 import { clipManifest } from "@/server/videos/manifest";
 import { checkVideoPrompt } from "@/server/videos/prompt-check";
-import { getVideoFor, requireVideoOwner, videoSnapshot, type Video } from "@/server/videos/videos";
+import { BRIEF_CHANGED, getVideoFor, latestDoneAnalysis, requireVideoOwner, videoSnapshot, type Video } from "@/server/videos/videos";
 
 export { CLIP_RESOLUTIONS, DEFAULT_CLIP_RESOLUTION, type ClipResolution } from "@/server/videos/videos";
 
@@ -78,7 +78,10 @@ const CLIP_SNAPSHOT = [
   "frameUse",
   "clipResolution",
   "avatarPhotoId",
-  "noPerson",
+  "avatarMode",
+  "kind",
+  "adaptation",
+  "note",
 ] as const satisfies ReadonlyArray<keyof Video>;
 
 /**
@@ -90,14 +93,10 @@ const CLIP_SNAPSHOT = [
 export const buildClipRequest: RequestBuilder = async (user, video, deps) => {
   requireVideoOwner(user, video);
   if (video.referenceStatus !== "ready" || !video.referenceMediaId || !video.segmentDurationMs) throw new HttpError(409, NO_REFERENCE);
-  const [analysis] = await getDb()
-    .select({ referenceMediaId: schema.videoAnalyses.referenceMediaId })
-    .from(schema.videoAnalyses)
-    .where(and(eq(schema.videoAnalyses.videoId, video.id), eq(schema.videoAnalyses.status, "done")))
-    .orderBy(desc(schema.videoAnalyses.version))
-    .limit(1);
+  const analysis = await latestDoneAnalysis(video);
   if (!analysis) throw new HttpError(409, NO_ANALYSIS);
-  if (analysis.referenceMediaId !== video.referenceMediaId) throw new HttpError(409, REFERENCE_CHANGED);
+  if (analysis.staleReason === "reference") throw new HttpError(409, REFERENCE_CHANGED);
+  if (analysis.staleReason === "brief") throw new HttpError(409, BRIEF_CHANGED);
   const approvedJobId = await approvedFrameJobId(video);
   if (!approvedJobId) throw new HttpError(409, NO_FRAME);
 

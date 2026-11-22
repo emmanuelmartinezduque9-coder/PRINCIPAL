@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { generationState, pollEvery, ready, referenceState, rowState, type BatchRowJson, type BatchViewJson } from "@/components/batches/labels";
+import { analysisState, generationState, pollEvery, ready, referenceState, rowState, type BatchRowJson, type BatchViewJson } from "@/components/batches/labels";
 import { planSend, sendPlan } from "@/components/batches/bulk-plan";
 import { createLimiter, runPool } from "@/components/batches/run-pool";
 
@@ -20,14 +20,16 @@ const row = (over: Partial<BatchRowJson> = {}): BatchRowJson => ({
   productId: 1,
   productName: "P",
   note: null,
+  kind: "replicar",
+  needsAdaptation: false,
   mine: true,
   createdAt: "",
   updatedAt: "",
   referenceStatus: "ready",
   referenceError: null,
   avatarPhotoId: 3,
-  noPerson: false,
-  analysis: { status: "done", error: null, stale: false },
+  avatarMode: "elegido",
+  analysis: { status: "done", error: null, stale: false, staleReason: null },
   frame: gen(null),
   clip: gen(null),
   costs: { higgsfieldCredits: 0, claudeMicros: 0 },
@@ -38,19 +40,25 @@ const row = (over: Partial<BatchRowJson> = {}): BatchRowJson => ({
 describe("tablero del lote: qué filas cuenta cada acción", () => {
   it("desglosar: referencia lista, avatar o nadie, y sin desglose vigente; nunca vídeos ajenos", () => {
     expect(ready.breakdown(row({ analysis: null }))).toBe(true);
-    expect(ready.breakdown(row({ analysis: { status: "failed", error: "x", stale: false } }))).toBe(true);
-    expect(ready.breakdown(row({ analysis: { status: "done", error: null, stale: true } }))).toBe(true);
+    expect(ready.breakdown(row({ analysis: { status: "failed", error: "x", stale: false, staleReason: null } }))).toBe(true);
+    expect(ready.breakdown(row({ analysis: { status: "done", error: null, stale: true, staleReason: "reference" } }))).toBe(true);
     expect(ready.breakdown(row())).toBe(false);
-    expect(ready.breakdown(row({ analysis: { status: "running", error: null, stale: true } }))).toBe(false);
+    expect(ready.breakdown(row({ analysis: { status: "running", error: null, stale: true, staleReason: "reference" } }))).toBe(false);
     expect(ready.breakdown(row({ analysis: null, referenceStatus: "processing" }))).toBe(false);
     expect(ready.breakdown(row({ analysis: null, avatarPhotoId: null }))).toBe(false);
-    expect(ready.breakdown(row({ analysis: null, avatarPhotoId: null, noPerson: true }))).toBe(true);
+    expect(ready.breakdown(row({ analysis: null, avatarPhotoId: null, avatarMode: "nadie" }))).toBe(true);
+    expect(ready.breakdown(row({ analysis: null, avatarPhotoId: null, avatarMode: "sin_sustitucion" }))).toBe(true);
+    // Una adaptación sin «Qué adaptación quieres» no se puede desglosar.
+    expect(ready.breakdown(row({ analysis: null, kind: "adaptacion_concepto", needsAdaptation: true }))).toBe(false);
+    expect(ready.breakdown(row({ analysis: null, kind: "adaptacion_concepto" }))).toBe(true);
+    // Un desglose de otras indicaciones se repite, igual que uno de otra referencia.
+    expect(ready.breakdown(row({ analysis: { status: "done", error: null, stale: true, staleReason: "brief" } }))).toBe(true);
     expect(ready.breakdown(row({ analysis: null, mine: false }))).toBe(false);
   });
 
   it("imágenes: desglose vigente y ronda disponible; un clip enviado ata la imagen", () => {
     expect(ready.frame(row())).toBe(true);
-    expect(ready.frame(row({ analysis: { status: "done", error: null, stale: true } }))).toBe(false);
+    expect(ready.frame(row({ analysis: { status: "done", error: null, stale: true, staleReason: "reference" } }))).toBe(false);
     expect(ready.frame(row({ frame: gen({ status: "submitted" }) }))).toBe(false);
     expect(ready.frame(row({ frame: gen({ rejectReason: "feas" }) }))).toBe(true);
     expect(ready.frame(row({ frame: gen({ rejectReason: "feas" }, { regenerationsLeft: 0 }) }))).toBe(false);
@@ -67,6 +75,11 @@ describe("tablero del lote: qué filas cuenta cada acción", () => {
   });
 
   it("estados en palabras", () => {
+    expect(analysisState(row({ analysis: { status: "done", error: null, stale: true, staleReason: "brief" } }))).toMatchObject({
+      label: "Repetir",
+      detail: "Las indicaciones han cambiado.",
+    });
+    expect(analysisState(row({ analysis: { status: "done", error: null, stale: true, staleReason: "reference" } })).detail).toBe("La referencia ha cambiado.");
     expect(referenceState(row({ referenceStatus: "none" }), { kind: "uploading", fraction: 0.42 }).label).toBe("Subiendo 42 %");
     expect(referenceState(row({ referenceStatus: "none" }), { kind: "uploading", fraction: 0, queued: true }).label).toBe("En cola");
     expect(referenceState(row({ referenceStatus: "failed", referenceError: "Formato" }), { kind: "idle" })).toMatchObject({ tone: "error", detail: "Formato" });
@@ -80,7 +93,7 @@ describe("tablero del lote: qué filas cuenta cada acción", () => {
     expect(pollEvery(view([row()]), false)).toBe(false);
     expect(pollEvery(view([row()]), true)).toBe(3000);
     expect(pollEvery(view([row(), row({ frame: gen({ status: "submitted" }) })]), false)).toBe(3000);
-    expect(pollEvery(view([row({ analysis: { status: "queued", error: null, stale: false } })]), false)).toBe(3000);
+    expect(pollEvery(view([row({ analysis: { status: "queued", error: null, stale: false, staleReason: null } })]), false)).toBe(3000);
     expect(pollEvery(view([row({ clip: gen({ status: "unknown" }) })]), false)).toBe(15_000);
   });
 });

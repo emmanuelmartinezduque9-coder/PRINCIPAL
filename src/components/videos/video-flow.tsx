@@ -154,7 +154,10 @@ function FlowBody({
   isOwner: boolean;
 }) {
   const { video, analysis, imageManifest } = data;
-  const referenceDone = video.referenceStatus === "ready" && (video.noPerson || imageManifest.some((item) => item.role === "avatar"));
+  const referenceDone =
+    video.referenceStatus === "ready" &&
+    (video.avatarMode !== "elegido" || imageManifest.some((item) => item.role === "avatar")) &&
+    (video.kind !== "adaptacion_concepto" || !!video.adaptation?.trim());
   const breakdownDone = analysis?.status === "done" && !analysis.stale;
   const [chosen, setChosen] = useState<FlowStep>(() => initialStep ?? firstStep(data, referenceDone));
   const [draft, setDraft] = useState<PromptDraft>({});

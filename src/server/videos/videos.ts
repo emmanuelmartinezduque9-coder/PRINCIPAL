@@ -5,6 +5,7 @@ import { HttpError } from "@/server/http";
 import { listProductPhotos, type PhotoInfo, type PhotoRole } from "@/server/photos";
 import { getProductFor } from "@/server/products";
 import type { Analysis } from "@/server/videos/analysis";
+import { analysisStaleness, checkKindInput, cleanNote, isAvatarMode, type AvatarMode, type VideoKind } from "@/server/videos/brief";
 import { analysisCostMicros, costsOfVideo, type VideoCosts } from "@/server/videos/costs";
 import { clipManifest, imageManifest, type ManifestItem } from "@/server/videos/manifest";
 import { checkImagePrompt, checkVideoPrompt, type PromptIssue } from "@/server/videos/prompt-check";
@@ -42,12 +43,14 @@ export interface NewVideoExtras {
   batchId?: number;
   note?: string | null;
   avatarPhotoId?: number | null;
-  noPerson?: boolean;
+  avatarMode?: AvatarMode;
+  kind?: VideoKind;
+  adaptation?: string | null;
 }
 
 /**
  * Crea un vídeo vacío en un producto visible, titulado «Vídeo N» (N = los que ya tiene + 1). Desde
- * un lote llega además su lote, su indicación y su avatar (o «sin persona»), ya comprobados.
+ * un lote llega además su lote, su tipo, sus cambios específicos y quién sale, ya comprobados.
  */
 export async function createVideo(user: AuthUser, productId: number, extras: NewVideoExtras = {}): Promise<Video> {
   const product = await getProductFor(user, productId);
@@ -135,18 +138,27 @@ function checkPhoto(photos: Array<{ id: number; role: PhotoRole }>, photoId: num
   return photoId;
 }
 
+/** Lo que se puede cambiar de un vídeo con `updateVideoChoices` (sin comprobar aún). */
+export interface VideoChoicesInput {
+  title?: string;
+  avatarPhotoId?: number | null;
+  environmentPhotoId?: number | null;
+  avatarMode?: unknown;
+  clipResolution?: string;
+  kind?: unknown;
+  adaptation?: unknown;
+  note?: unknown;
+}
+
 /**
- * Cambia título, avatar, entorno, «sin persona» o la resolución del clip; lo que no se envía se
- * queda igual. Solo quien creó el vídeo. El avatar y el entorno tienen que ser fotos de ese
- * producto con ese papel; la resolución, una de `CLIP_RESOLUTIONS`.
- * «Sin persona» quita el avatar y elegir un avatar quita «sin persona»; pedir las dos cosas a la
- * vez es un 400.
+ * Cambia título, avatar, entorno, quién sale (`avatarMode`), la resolución del clip, el tipo, la
+ * adaptación o los cambios específicos; lo que no se envía se queda igual. Solo quien creó el
+ * vídeo. El avatar y el entorno tienen que ser fotos de ese producto con ese papel; la resolución,
+ * una de `CLIP_RESOLUTIONS`; el tipo y quién sale, de sus listas (400 si no).
+ * «Sin sustitución» y «nadie» quitan el avatar y elegir un avatar pasa a `elegido`; pedir un avatar
+ * con otro modo es un 400. La adaptación solo se escribe con «Adaptación de concepto».
  */
-export async function updateVideoChoices(
-  user: AuthUser,
-  videoId: number,
-  input: { title?: string; avatarPhotoId?: number | null; environmentPhotoId?: number | null; noPerson?: boolean; clipResolution?: string },
-): Promise<Video> {
+export async function updateVideoChoices(user: AuthUser, videoId: number, input: VideoChoicesInput): Promise<Video> {
   const video = await getVideoFor(user, videoId);
   requireVideoOwner(user, video);
   const changes: Partial<typeof schema.videos.$inferInsert> = {};
@@ -163,8 +175,12 @@ export async function updateVideoChoices(
     changes.title = title;
   }
 
-  if (input.noPerson === true && typeof input.avatarPhotoId === "number") {
-    throw new HttpError(400, "Con «Sin persona» no se elige avatar.");
+  Object.assign(changes, checkKindInput(input, video));
+  if (input.note !== undefined) changes.note = cleanNote(input.note);
+
+  if (input.avatarMode !== undefined && !isAvatarMode(input.avatarMode)) throw new HttpError(400, "Valor no válido.");
+  if (input.avatarMode !== undefined && input.avatarMode !== "elegido" && typeof input.avatarPhotoId === "number") {
+    throw new HttpError(400, "Con «Sin sustitución» o «No aparece nadie» no se elige avatar.");
   }
   if (input.avatarPhotoId !== undefined || input.environmentPhotoId !== undefined) {
     const photos = await listProductPhotos(user, video.productId);
@@ -173,9 +189,9 @@ export async function updateVideoChoices(
       changes.environmentPhotoId = checkPhoto(photos, input.environmentPhotoId, "entorno");
     }
   }
-  if (input.noPerson !== undefined) changes.noPerson = input.noPerson;
-  if (changes.noPerson === true) changes.avatarPhotoId = null;
-  if (typeof changes.avatarPhotoId === "number") changes.noPerson = false;
+  if (input.avatarMode !== undefined) changes.avatarMode = input.avatarMode;
+  if (changes.avatarMode !== undefined && changes.avatarMode !== "elegido") changes.avatarPhotoId = null;
+  if (typeof changes.avatarPhotoId === "number") changes.avatarMode = "elegido";
 
   if (Object.keys(changes).length === 0) return video;
   const [updated] = await getDb()
@@ -217,8 +233,10 @@ export interface VideoView {
     costMicros: number | null;
     /** La referencia de la que salió (recorte subido a Higgsfield). */
     referenceMediaId: string | null;
-    /** `true` si el vídeo ya tiene otra referencia: el desglose no corresponde a la actual. */
+    /** `true` si el desglose ya no corresponde al vídeo (otra referencia u otras indicaciones). */
     stale: boolean;
+    /** Por qué no corresponde: otra referencia (`reference`) u otras indicaciones (`brief`). */
+    staleReason: "reference" | "brief" | null;
   } | null;
   imageIssues: PromptIssue[];
   videoIssues: PromptIssue[];
@@ -230,6 +248,29 @@ export interface VideoView {
   clip: GenerationView;
   /** Lo que lleva costado el vídeo: créditos de Higgsfield enviados y Claude de todos sus desgloses. */
   costs: VideoCosts;
+}
+
+/** Mensaje cuando el desglose es de otras indicaciones (tipo, adaptación, cambios o quién sale). */
+export const BRIEF_CHANGED = "Las indicaciones del vídeo cambiaron; repite el desglose.";
+
+/**
+ * El último desglose terminado del vídeo y, si ya no corresponde, por qué (`reference` o `brief`);
+ * `null` si no hay ninguno. La imagen y el clip solo se piden con uno que corresponda.
+ */
+export async function latestDoneAnalysis(video: Video): Promise<{ id: number; staleReason: "reference" | "brief" | null } | null> {
+  const [done] = await getDb()
+    .select()
+    .from(schema.videoAnalyses)
+    .where(and(eq(schema.videoAnalyses.videoId, video.id), eq(schema.videoAnalyses.status, "done")))
+    .orderBy(desc(schema.videoAnalyses.version))
+    .limit(1);
+  return done ? { id: done.id, staleReason: analysisStaleness(done, video) } : null;
+}
+
+/** `stale` y su motivo, para la vista del vídeo y el tablero del lote. */
+export function staleness(analysis: Parameters<typeof analysisStaleness>[0], video: Video) {
+  const staleReason = analysisStaleness(analysis, video);
+  return { stale: staleReason !== null, staleReason };
 }
 
 /** Avisos de los prompts guardados del vídeo frente a sus manifiestos; un prompt que aún no existe no da avisos. */
@@ -273,7 +314,7 @@ export async function videoView(user: AuthUser, videoId: number): Promise<VideoV
           result: (latest.result as Analysis | null) ?? null,
           costMicros: await analysisCostMicros(video, latest),
           referenceMediaId: latest.referenceMediaId,
-          stale: latest.referenceMediaId !== video.referenceMediaId,
+          ...staleness(latest, video),
         }
       : null,
     ...promptIssues(video, photos),

@@ -19,9 +19,13 @@ const CLIP_RELEASES_FRAME = ["not_sent", "failed"];
  * sigue siendo quien decide): solo cuentan los vídeos propios.
  */
 export const ready = {
-  /** Referencia lista, avatar o «sin persona», y sin desglose (o el último falló o es de otra referencia). */
+  /**
+   * Referencia lista, quién sale (avatar, «sin sustitución» o «nadie»), la adaptación si es una
+   * adaptación, y sin desglose (o el último falló o ya no corresponde).
+   */
   breakdown(row: BatchRowJson): boolean {
-    if (!row.mine || row.referenceStatus !== "ready" || (!row.noPerson && row.avatarPhotoId === null)) return false;
+    if (!row.mine || row.referenceStatus !== "ready" || row.needsAdaptation) return false;
+    if (row.avatarMode === "elegido" && row.avatarPhotoId === null) return false;
     const analysis = row.analysis;
     if (!analysis) return true;
     if (ANALYSIS_ACTIVE.includes(analysis.status)) return false;
@@ -101,7 +105,12 @@ export function analysisState(row: BatchRowJson): StepState {
     case "failed":
       return { label: "Error", tone: "error", detail: analysis.error };
     default:
-      return analysis.stale ? { label: "Repetir", tone: "error", detail: "La referencia ha cambiado." } : { label: "Hecho", tone: "ok" };
+      if (!analysis.stale) return { label: "Hecho", tone: "ok" };
+      return {
+        label: "Repetir",
+        tone: "error",
+        detail: analysis.staleReason === "brief" ? "Las indicaciones han cambiado." : "La referencia ha cambiado.",
+      };
   }
 }
 

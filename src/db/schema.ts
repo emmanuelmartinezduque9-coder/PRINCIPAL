@@ -344,7 +344,18 @@ export const videos = pgTable(
     environmentPhotoId: bigint("environment_photo_id", { mode: "number" }).references(() => productPhotos.id, {
       onDelete: "set null",
     }),
-    noPerson: boolean("no_person").notNull().default(false),
+    /**
+     * Quién sale: `elegido` (el avatar de `avatar_photo_id`), `sin_sustitucion` (se conservan las
+     * personas de la referencia) o `nadie`. Solo con `elegido` hay foto de avatar.
+     */
+    avatarMode: text("avatar_mode").notNull().default("elegido"),
+    /** `replicar` (por defecto) o `adaptacion_concepto`. */
+    kind: text("kind").notNull().default("replicar"),
+    /**
+     * «Qué adaptación quieres» (máx. 12.000 caracteres). Solo cuenta con `kind = adaptacion_concepto`;
+     * si se pasa a `replicar` se conserva sin usarse, para no perderla por un clic.
+     */
+    adaptation: text("adaptation"),
     /** Prompt de la imagen inicial (en inglés): lo propone el desglose y la persona lo puede cambiar. */
     imagePrompt: text("image_prompt"),
     /** Prompt del clip (en inglés, con `@Video1` y `@ImageN`). */
@@ -365,7 +376,7 @@ export const videos = pgTable(
     ),
     /** El lote al que pertenece, si se creó desde un lote. */
     batchId: bigint("batch_id", { mode: "number" }).references(() => batches.id, { onDelete: "set null" }),
-    /** Indicación corta para este vídeo (una línea, máx. 300 caracteres). */
+    /** «Cambios específicos» para este vídeo (una línea, máx. 300 caracteres); llega al desglose. */
     note: text("note"),
     createdAt: instant("created_at").notNull().defaultNow(),
     updatedAt: instant("updated_at").notNull().defaultNow(),
@@ -375,6 +386,10 @@ export const videos = pgTable(
     index("videos_reference_status").on(t.referenceStatus),
     index("videos_batch").on(t.batchId),
     check("videos_note_length", sql`${t.note} is null or char_length(${t.note}) <= 300`),
+    check("videos_kind_valid", sql`${t.kind} in ('replicar', 'adaptacion_concepto')`),
+    check("videos_adaptation_length", sql`${t.adaptation} is null or char_length(${t.adaptation}) <= 12000`),
+    check("videos_avatar_mode_valid", sql`${t.avatarMode} in ('elegido', 'sin_sustitucion', 'nadie')`),
+    check("videos_avatar_only_chosen", sql`${t.avatarMode} = 'elegido' or ${t.avatarPhotoId} is null`),
     check("videos_reference_status_valid", sql`${t.referenceStatus} in ('none', 'uploading', 'processing', 'ready', 'failed')`),
     check("videos_reference_source_valid", sql`${t.referenceSource} is null or ${t.referenceSource} in ('file', 'link')`),
     check("videos_frame_use_valid", sql`${t.frameUse} in ('start_image', 'contextual_reference')`),
@@ -420,6 +435,14 @@ export const videoAnalyses = pgTable(
     /** La referencia (recorte subido a Higgsfield) de la que sale el desglose: si el vídeo cambia de referencia, ya no vale. */
     referenceMediaId: text("reference_media_id"),
     ruleVersions: jsonb("rule_versions").$type<Record<string, number>>(),
+    /**
+     * Las indicaciones del vídeo con las que se hizo (copia de `videos`): si cambian después, el
+     * desglose ya no vale, igual que con la referencia. `adaptation` solo con `adaptacion_concepto`.
+     */
+    kind: text("kind").notNull().default("replicar"),
+    avatarMode: text("avatar_mode").notNull().default("elegido"),
+    note: text("note"),
+    adaptation: text("adaptation"),
     spendEntryId: bigint("spend_entry_id", { mode: "number" }),
     createdBy: bigint("created_by", { mode: "number" }).notNull(),
     createdAt: instant("created_at").notNull().defaultNow(),

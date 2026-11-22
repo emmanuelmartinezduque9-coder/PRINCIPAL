@@ -279,6 +279,19 @@ describe("petición del clip", () => {
     expect(uploads()).toHaveLength(0);
   });
 
+  it("si los cambios específicos o el tipo cambiaron desde el desglose, tampoco", async () => {
+    await readyForClip();
+    for (const change of ["update videos set note = 'Más luz' where id = $1", "update videos set kind = 'adaptacion_concepto' where id = $1"]) {
+      await getPool().query(change, [v.id]);
+      await expect(quoteGeneration(ana, v.id, "clip", deps)).rejects.toMatchObject({
+        status: 409,
+        message: "Las indicaciones del vídeo cambiaron; repite el desglose.",
+      });
+      await getPool().query("update videos set note = null, kind = 'replicar' where id = $1", [v.id]);
+    }
+    expect(fake.calls.some((c) => c.method === "quoteVideo")).toBe(false);
+  });
+
   it("un prompt de clip con errores no deja pedir precio ni sube nada", async () => {
     await readyForClip();
     await getPool().query("update videos set video_prompt = $2 where id = $1", [v.id, PROMPT.replace(" The bottle is @Image3.", "")]);
@@ -402,18 +415,19 @@ describe("cambios en otra pestaña mientras se presupuesta", () => {
     expect(fake.calls.some((c) => c.method === "submitVideo")).toBe(false);
   });
 
-  it("lo mismo si cambian la referencia, el prompt o la resolución; sin cambios se apunta", async () => {
+  it("lo mismo si cambian la referencia, el prompt, la resolución o los cambios específicos; sin cambios se apunta", async () => {
     await readyForClip();
     const changes = [
       "update videos set reference_media_id = 'otra-ref' where id = $1",
       "update videos set video_prompt = video_prompt || ' Slow.' where id = $1",
       "update videos set clip_resolution = '720p' where id = $1",
+      "update videos set note = 'Más luz' where id = $1",
     ];
     const original = await fresh();
     for (const change of changes) {
       const racing = quotingWith(async () => void (await getPool().query(change, [v.id])));
       await expect(requestGeneration(ana, v.id, "clip", { expectedCredits: 30 }, racing)).rejects.toMatchObject({ status: 409 });
-      await getPool().query("update videos set reference_media_id = $2, video_prompt = $3, clip_resolution = '480p' where id = $1", [
+      await getPool().query("update videos set reference_media_id = $2, video_prompt = $3, clip_resolution = '480p', note = null where id = $1", [
         v.id,
         original.referenceMediaId,
         original.videoPrompt,

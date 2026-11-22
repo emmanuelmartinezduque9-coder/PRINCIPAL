@@ -6,7 +6,7 @@ import type { Video } from "@/server/videos/videos";
 const photo = (id: number, role: PhotoRole): PhotoInfo => ({ id, role, mime: "image/jpeg", size: 100 });
 
 const videoWith = (over: Partial<Video>): Video =>
-  ({ id: 1, avatarPhotoId: null, environmentPhotoId: null, noPerson: false, frameUse: "start_image", ...over }) as Video;
+  ({ id: 1, avatarPhotoId: null, environmentPhotoId: null, avatarMode: "elegido", frameUse: "start_image", ...over }) as Video;
 
 const photos = [
   photo(20, "articulo"),
@@ -67,7 +67,7 @@ describe("orden de las referencias", () => {
       ...[7, 8, 9].map((id) => photo(id, "embalaje")),
       photo(10, "avatar"),
     ];
-    const noPerson = videoWith({ noPerson: true });
+    const noPerson = videoWith({ avatarMode: "nadie" });
     expect(imageManifest(noPerson, many).map((m) => [m.tag, m.role])).toEqual([
       ["image 1", "composicion"],
       ["image 2", "articulo"],
@@ -90,6 +90,19 @@ describe("orden de las referencias", () => {
       "@Image6",
       "@Image7",
     ]);
+  });
+
+  it("con «sin sustitución» no va ninguna foto de avatar en ningún manifiesto, aunque quede una elegida", () => {
+    // Por si acaso: la base de datos ya no deja guardar un avatar con otro modo.
+    const keep = videoWith({ avatarMode: "sin_sustitucion", avatarPhotoId: 10, environmentPhotoId: 40 });
+    expect(imageManifest(keep, photos).map((m) => [m.tag, m.role])).toEqual([
+      ["image 1", "composicion"],
+      ["image 2", "articulo"],
+      ["image 3", "articulo"],
+      ["image 4", "embalaje"],
+      ["image 5", "entorno"],
+    ]);
+    expect(clipManifest(keep, photos).map((m) => m.role)).toEqual(["video_referencia", "imagen_aprobada", "articulo", "articulo", "embalaje"]);
   });
 
   it("si el primer fotograma no contara como @Image1, con «start_image» las fotos empiezan en @Image1", () => {

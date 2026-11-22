@@ -23,8 +23,8 @@ export async function GET(_request: Request, { params }: { params: Promise<{ vid
 const isPhotoChoice = (value: unknown) => value === undefined || value === null || (Number.isSafeInteger(value) && (value as number) > 0);
 
 /**
- * Cambia `title`, `avatarPhotoId`, `environmentPhotoId` (id o `null`), `noPerson`, `clipResolution`,
- * `imagePrompt`, `videoPrompt` o `frameUse`. Solo quien creó el vídeo. Con algún prompt o `frameUse`, la
+ * Cambia `title`, `avatarPhotoId`, `environmentPhotoId` (id o `null`), `avatarMode`, `clipResolution`,
+ * `kind`, `adaptation`, `note`, `imagePrompt`, `videoPrompt` o `frameUse`. Solo quien creó el vídeo. Con algún prompt o `frameUse`, la
  * respuesta lleva también los avisos de los prompts (`imageIssues`, `videoIssues`).
  */
 export async function PUT(request: Request, { params }: { params: Promise<{ videoId: string }> }) {
@@ -32,9 +32,8 @@ export async function PUT(request: Request, { params }: { params: Promise<{ vide
     const { videoId } = await params;
     const body = (await request.json().catch(() => null)) as Record<string, unknown> | null;
     const input = body && typeof body === "object" && !Array.isArray(body) ? body : {};
-    const { title, avatarPhotoId, environmentPhotoId, noPerson, clipResolution, imagePrompt, videoPrompt, frameUse } = input;
+    const { title, avatarPhotoId, environmentPhotoId, avatarMode, clipResolution, kind, adaptation, note, imagePrompt, videoPrompt, frameUse } = input;
     if (title !== undefined && typeof title !== "string") return badRequest("Escribe el título del vídeo.");
-    if (noPerson !== undefined && typeof noPerson !== "boolean") return badRequest("Valor no válido.");
     if (!isPhotoChoice(avatarPhotoId)) return badRequest("Elige una foto con papel «Avatar» de este producto.");
     if (!isPhotoChoice(environmentPhotoId)) return badRequest("Elige una foto con papel «Entorno» de este producto.");
     if (clipResolution !== undefined && !isClipResolution(clipResolution)) return badRequest("Resolución no disponible.");
@@ -46,8 +45,11 @@ export async function PUT(request: Request, { params }: { params: Promise<{ vide
       title,
       avatarPhotoId: avatarPhotoId as number | null | undefined,
       environmentPhotoId: environmentPhotoId as number | null | undefined,
-      noPerson,
+      avatarMode,
       clipResolution: clipResolution as string | undefined,
+      kind,
+      adaptation,
+      note,
     });
     if (imagePrompt === undefined && videoPrompt === undefined && frameUse === undefined) return Response.json({ video });
     const issues = await updatePrompts(user!, id, prompts);

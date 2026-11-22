@@ -53,10 +53,13 @@ function firstOf(photos: PhotoInfo[], role: PhotoRole, max: number): PhotoRef[] 
     .map((p) => ({ photoId: p.id, role }));
 }
 
-/** Avatar (si hay y no es «sin persona»), artículo (≤ 4) y embalaje (≤ 2). */
+/**
+ * Avatar (solo con `avatarMode = elegido`; con «sin sustitución» las personas salen de la
+ * referencia y con «nadie» no hay), artículo (≤ 4) y embalaje (≤ 2).
+ */
 function productRefs(video: Video, photos: PhotoInfo[]): PhotoRef[] {
   return [
-    ...(video.noPerson ? [] : chosen(photos, video.avatarPhotoId, "avatar")),
+    ...(video.avatarMode === "elegido" ? chosen(photos, video.avatarPhotoId, "avatar") : []),
     ...firstOf(photos, "articulo", MAX_ARTICLE_REFS),
     ...firstOf(photos, "embalaje", MAX_PACKAGING_REFS),
   ];

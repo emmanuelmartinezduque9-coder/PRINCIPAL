@@ -35,7 +35,7 @@ beforeEach(async () => {
 
 describe("vídeos de un producto", () => {
   it("se numeran por producto y empiezan sin referencia", async () => {
-    expect(videoDeAna).toMatchObject({ title: "Vídeo 1", createdBy: ana.id, productId: producto.id, referenceStatus: "none", noPerson: false });
+    expect(videoDeAna).toMatchObject({ title: "Vídeo 1", createdBy: ana.id, productId: producto.id, referenceStatus: "none", avatarMode: "elegido", kind: "replicar", adaptation: null, note: null });
     const segundo = await createVideo(dueno, producto.id);
     expect(segundo.title).toBe("Vídeo 2");
     const otro = await createVideo(ana, (await makeProduct(ana)).id);
@@ -97,13 +97,50 @@ describe("vídeos de un producto", () => {
     });
 
     const listo = await updateVideoChoices(ana, videoDeAna.id, { title: "  Gancho  ", avatarPhotoId: avatar.id, environmentPhotoId: entorno.id });
-    expect(listo).toMatchObject({ title: "Gancho", avatarPhotoId: avatar.id, environmentPhotoId: entorno.id, noPerson: false });
+    expect(listo).toMatchObject({ title: "Gancho", avatarPhotoId: avatar.id, environmentPhotoId: entorno.id, avatarMode: "elegido" });
 
-    // «Sin persona» quita el avatar; elegir avatar quita «sin persona».
-    expect(await updateVideoChoices(ana, videoDeAna.id, { noPerson: true })).toMatchObject({ noPerson: true, avatarPhotoId: null });
-    expect(await updateVideoChoices(ana, videoDeAna.id, { avatarPhotoId: avatar.id })).toMatchObject({ noPerson: false, avatarPhotoId: avatar.id });
-    await expect(updateVideoChoices(ana, videoDeAna.id, { noPerson: true, avatarPhotoId: avatar.id })).rejects.toMatchObject({ status: 400 });
+    // «Sin sustitución» y «nadie» quitan el avatar; elegir un avatar vuelve a «elegido».
+    for (const mode of ["sin_sustitucion", "nadie"]) {
+      expect(await updateVideoChoices(ana, videoDeAna.id, { avatarMode: mode })).toMatchObject({ avatarMode: mode, avatarPhotoId: null });
+      expect(await updateVideoChoices(ana, videoDeAna.id, { avatarPhotoId: avatar.id })).toMatchObject({ avatarMode: "elegido", avatarPhotoId: avatar.id });
+      await expect(updateVideoChoices(ana, videoDeAna.id, { avatarMode: mode, avatarPhotoId: avatar.id })).rejects.toMatchObject({ status: 400 });
+    }
+    for (const bad of ["no_person", true, null]) {
+      await expect(updateVideoChoices(ana, videoDeAna.id, { avatarMode: bad })).rejects.toMatchObject({ status: 400, message: "Valor no válido." });
+    }
+    expect(await getVideoFor(ana, videoDeAna.id)).toMatchObject({ avatarMode: "elegido", avatarPhotoId: avatar.id });
     expect(await updateVideoChoices(ana, videoDeAna.id, { environmentPhotoId: null })).toMatchObject({ environmentPhotoId: null });
+  });
+
+  it("tipo, «Qué adaptación quieres» y «Cambios específicos»: se guardan y se comprueban", async () => {
+    // Una adaptación con un tipo que no es adaptación es un 400 y no se guarda nada.
+    await expect(updateVideoChoices(ana, videoDeAna.id, { adaptation: "Otra idea" })).rejects.toMatchObject({
+      status: 400,
+      message: "«Qué adaptación quieres» solo va con «Adaptación de concepto».",
+    });
+    const adaptado = await updateVideoChoices(ana, videoDeAna.id, { kind: "adaptacion_concepto", adaptation: "  Que el pelo salga liso  ", note: " Más\nluz " });
+    expect(adaptado).toMatchObject({ kind: "adaptacion_concepto", adaptation: "Que el pelo salga liso", note: "Más luz" });
+    // Al pasar a «Replicar» la adaptación se conserva (no se usa) y vuelve al cambiar de nuevo.
+    expect(await updateVideoChoices(ana, videoDeAna.id, { kind: "replicar" })).toMatchObject({ kind: "replicar", adaptation: "Que el pelo salga liso" });
+    expect(await updateVideoChoices(ana, videoDeAna.id, { kind: "adaptacion_concepto", adaptation: "" })).toMatchObject({ adaptation: null });
+    expect(await updateVideoChoices(ana, videoDeAna.id, { note: "  " })).toMatchObject({ note: null });
+
+    const bad: Array<[Record<string, unknown>, string]> = [
+      [{ kind: "solo_gancho" }, "Valor no válido."],
+      [{ kind: 1 }, "Valor no válido."],
+      [{ adaptation: 5 }, "Valor no válido."],
+      [{ adaptation: "x".repeat(12_001) }, "«Qué adaptación quieres» no puede tener más de 12.000 caracteres."],
+      [{ note: "x".repeat(301) }, "«Cambios específicos» no puede tener más de 300 caracteres."],
+      [{ note: ["x"] }, "Valor no válido."],
+      [{ kind: "replicar", adaptation: "x" }, "«Qué adaptación quieres» solo va con «Adaptación de concepto»."],
+    ];
+    for (const [input, message] of bad) {
+      await expect(updateVideoChoices(ana, videoDeAna.id, { title: "No se guarda", ...input })).rejects.toMatchObject({ status: 400, message });
+    }
+    expect(await updateVideoChoices(ana, videoDeAna.id, { adaptation: "x".repeat(12_000) })).toMatchObject({ kind: "adaptacion_concepto" });
+    expect((await getVideoFor(ana, videoDeAna.id)).title).toBe("Vídeo 1");
+    // Solo quien lo creó.
+    await expect(updateVideoChoices(dueno, videoDeAna.id, { note: "x" })).rejects.toMatchObject({ status: 403 });
   });
 
   it("el título no puede quedar vacío ni ser larguísimo", async () => {

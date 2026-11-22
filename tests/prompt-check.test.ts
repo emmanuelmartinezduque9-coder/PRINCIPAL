@@ -5,7 +5,7 @@ import { checkImagePrompt, checkVideoPrompt, PROMPT_BLACKLIST } from "@/server/v
 import type { Video } from "@/server/videos/videos";
 
 const photo = (id: number, role: PhotoRole): PhotoInfo => ({ id, role, mime: "image/jpeg", size: 100 });
-const video = { id: 1, avatarPhotoId: 10, environmentPhotoId: 40, noPerson: false } as Video;
+const video = { id: 1, avatarPhotoId: 10, environmentPhotoId: 40, avatarMode: "elegido" } as Video;
 
 /** image 1 composición, 2 avatar, 3 y 4 artículo, 5 embalaje, 6 entorno. */
 const manifest = imageManifest(video, [photo(10, "avatar"), photo(20, "articulo"), photo(21, "articulo"), photo(30, "embalaje"), photo(40, "entorno")]);
@@ -136,6 +136,37 @@ describe("prompt del clip", () => {
       .replace("@Image3", "@Image2")
       .replace("@Image4", "@Image3");
     expect(checkVideoPrompt(prompt, unnumbered)).toEqual([]);
+  });
+
+  it("con «sin sustitución» no se pide ninguna referencia de avatar: las personas son las de la referencia", () => {
+    const keep = { ...video, avatarMode: "sin_sustitucion", avatarPhotoId: null } as Video;
+    const photos = [photo(10, "avatar"), photo(20, "articulo"), photo(30, "embalaje")];
+    const keepClip = clipManifest(keep, photos);
+    expect(keepClip.map((m) => [m.tag, m.role])).toEqual([
+      ["@Video1", "video_referencia"],
+      ["@Image1", "imagen_aprobada"],
+      ["@Image2", "articulo"],
+      ["@Image3", "embalaje"],
+    ]);
+    // El prompt de siempre sin la línea del avatar y con las fotos renumeradas no da avisos.
+    const prompt = GOOD_VIDEO.split("\n")
+      .filter((line) => !line.startsWith("@Image2 "))
+      .join("\n")
+      .replace("@Image3", "@Image2")
+      .replace("@Image4", "@Image3");
+    expect(checkVideoPrompt(prompt, keepClip)).toEqual([]);
+    // Y la imagen no echa en falta un avatar.
+    const keepImage = imageManifest(keep, [...photos, photo(40, "entorno")]);
+    expect(keepImage.some((m) => m.role === "avatar")).toBe(false);
+    const image = padTo(
+      [
+        "Image 1 supplies the composition, the camera distance and the people, who keep their faces exactly.",
+        "She holds the bottle from image 2 in her right hand; the box from image 3 rests on the counter.",
+        "The setting is the kitchen from image 4.",
+      ].join(" ") + " ",
+      4_900,
+    );
+    expect(checkImagePrompt(image, keepImage)).toEqual([]);
   });
 
   it("ni direcciones ni identificadores", () => {

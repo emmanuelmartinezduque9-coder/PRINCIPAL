@@ -1,7 +1,7 @@
 "use client";
 
 import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CircleAlert, FileVideo, Loader2, Trash2, Upload, UserX } from "lucide-react";
+import { CircleAlert, FileVideo, Loader2, Trash2, Upload } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
@@ -12,16 +12,21 @@ import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Textarea } from "@/components/ui/textarea";
+import { AVATAR_MODE_LABELS, KIND_LABELS, KINDS, MAX_ADAPTATION, MAX_NOTE } from "@/components/videos/brief-labels";
 import { useReferenceUploads } from "@/components/videos/upload-provider";
 import type { ProductPhoto } from "@/components/videos/labels";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import type { VideoKind } from "@/server/videos/brief";
 
 /** Lo mismo que admite el servidor. */
 const MAX_REFERENCE_BYTES = 100 * 1024 * 1024;
-const MAX_NOTE = 300;
 const VIDEO_TYPES = /\.(mp4|mov|webm)$/i;
-const NONE = "none";
+/** «No aparece nadie» y «Sin sustitución» en el selector de avatar (las fotos van por su id). */
+const NONE = "nadie";
+const KEEP = "sin_sustitucion";
+type AvatarChoice = number | typeof NONE | typeof KEEP;
 
 interface Row {
   key: string;
@@ -31,7 +36,11 @@ interface Row {
   /** El producto se eligió a mano (ya no sigue al del lote). */
   productTouched: boolean;
   /** `null`: el de por defecto (el primer avatar del producto o «no aparece nadie»). */
-  avatar: number | typeof NONE | null;
+  avatar: AvatarChoice | null;
+  kind: VideoKind;
+  /** «Qué adaptación quieres» (solo con adaptación). */
+  adaptation: string;
+  /** «Cambios específicos». */
   note: string;
   error: string | null;
 }
@@ -84,12 +93,12 @@ function AvatarSelect({
 }: {
   avatars: ProductPhoto[];
   loading: boolean;
-  value: number | typeof NONE | null;
-  onChange: (value: number | typeof NONE) => void;
+  value: AvatarChoice | null;
+  onChange: (value: AvatarChoice) => void;
 }) {
   if (loading) return <Loader2 className="size-4 animate-spin text-muted-foreground" aria-label="Cargando avatares" />;
   return (
-    <Select value={value === null ? "" : String(value)} onValueChange={(v) => onChange(v === NONE ? NONE : Number(v))}>
+    <Select value={value === null ? "" : String(value)} onValueChange={(v) => onChange(v === NONE || v === KEEP ? v : Number(v))}>
       <SelectTrigger aria-label="Avatar" className="h-9 w-full min-w-0">
         <SelectValue placeholder="Avatar" />
       </SelectTrigger>
@@ -102,10 +111,43 @@ function AvatarSelect({
               Avatar {index + 1}
             </SelectItem>
           ))}
-          <SelectItem value={NONE}>
-            <UserX className="size-4 text-muted-foreground" aria-hidden />
-            No aparece nadie
-          </SelectItem>
+          {([KEEP, NONE] as const).map((mode) => {
+            const { label, icon: Icon } = AVATAR_MODE_LABELS[mode];
+            return (
+              <SelectItem key={mode} value={mode}>
+                <Icon className="size-4 text-muted-foreground" aria-hidden />
+                {label}
+              </SelectItem>
+            );
+          })}
+        </SelectGroup>
+      </SelectContent>
+    </Select>
+  );
+}
+
+/** Tipo de la fila: en la lista, el nombre entero; en la fila, el corto (cabe en la columna). */
+function KindSelect({ value, onChange }: { value: VideoKind; onChange: (kind: VideoKind) => void }) {
+  const { short, long, icon: Icon } = KIND_LABELS[value];
+  return (
+    <Select value={value} onValueChange={(v) => onChange(v as VideoKind)}>
+      <SelectTrigger aria-label="Tipo de vídeo" title={long} className="h-9 w-full min-w-0">
+        <SelectValue>
+          <Icon className="size-4 text-muted-foreground" aria-hidden />
+          {short}
+        </SelectValue>
+      </SelectTrigger>
+      <SelectContent>
+        <SelectGroup>
+          {KINDS.map((kind) => {
+            const { long, icon: Icon } = KIND_LABELS[kind];
+            return (
+              <SelectItem key={kind} value={kind}>
+                <Icon className="size-4 text-muted-foreground" aria-hidden />
+                {long}
+              </SelectItem>
+            );
+          })}
         </SelectGroup>
       </SelectContent>
     </Select>
@@ -160,7 +202,7 @@ export function NewBatch() {
     return { loading: !query?.data, avatars: (query?.data?.photos ?? []).filter((photo) => photo.role === "avatar") };
   };
   /** El avatar que se mandará: el elegido o, por defecto, el primero del producto o «no aparece nadie». */
-  const avatarOf = (row: Row): number | typeof NONE | null => {
+  const avatarOf = (row: Row): AvatarChoice | null => {
     if (row.avatar !== null) return row.avatar;
     const { loading, avatars } = avatarsOf(row.productId);
     if (loading) return null;
@@ -190,6 +232,8 @@ export function NewBatch() {
           productId: defaultProduct,
           productTouched: false,
           avatar: null,
+          kind: "replicar" as VideoKind,
+          adaptation: "",
           note: "",
           error: file.size > MAX_REFERENCE_BYTES ? "Pesa más de 100 MB." : null,
         };
@@ -211,7 +255,9 @@ export function NewBatch() {
   }
 
   const tooBig = rows.some((row) => row.file.size > MAX_REFERENCE_BYTES);
-  const complete = rows.every((row) => row.productId !== null && avatarOf(row) !== null);
+  const complete = rows.every(
+    (row) => row.productId !== null && avatarOf(row) !== null && (row.kind !== "adaptacion_concepto" || row.adaptation.trim() !== ""),
+  );
   const canCreate = name.trim().length > 0 && rows.length > 0 && complete && !tooBig && !busy;
 
   async function create() {
@@ -232,8 +278,10 @@ export function NewBatch() {
             method: "POST",
             body: JSON.stringify({
               productId: row.productId,
-              avatarPhotoId: avatar === NONE ? null : avatar,
-              noPerson: avatar === NONE,
+              avatarPhotoId: typeof avatar === "number" ? avatar : null,
+              avatarMode: typeof avatar === "number" ? "elegido" : avatar,
+              kind: row.kind,
+              adaptation: row.kind === "adaptacion_concepto" ? row.adaptation.trim() : null,
               note: row.note.trim() || null,
             }),
           });
@@ -338,7 +386,7 @@ export function NewBatch() {
               const { loading, avatars } = avatarsOf(row.productId);
               return (
                 <li key={row.key} className="flex flex-col gap-2 px-4 py-3">
-                  <div className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 lg:grid-cols-[auto_minmax(0,1.1fr)_minmax(0,1fr)_minmax(0,0.8fr)_minmax(0,1.4fr)_auto]">
+                  <div className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 lg:grid-cols-[auto_minmax(0,0.8fr)_minmax(0,4fr)_auto]">
                     <FilePreview src={row.preview} />
                     <div className="flex min-w-0 flex-col">
                       <span className="truncate text-sm font-medium" title={row.file.name}>
@@ -357,28 +405,40 @@ export function NewBatch() {
                     >
                       <Trash2 aria-hidden />
                     </Button>
-                    <div className="col-span-3 grid grid-cols-2 gap-2 lg:col-span-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,0.8fr)_minmax(0,1.4fr)] lg:gap-3">
+                    <div className="col-span-3 grid grid-cols-2 gap-2 lg:col-span-1 lg:grid-cols-[minmax(0,1fr)_minmax(0,0.8fr)_minmax(0,0.95fr)_minmax(0,1.3fr)] lg:gap-3">
                       <ProductSelect
                         label="Producto"
                         products={productList}
                         value={row.productId}
                         onChange={(id) => update(row.key, { productId: id, productTouched: true, avatar: null, error: row.file.size > MAX_REFERENCE_BYTES ? row.error : null })}
                       />
+                      <KindSelect value={row.kind} onChange={(kind) => update(row.key, { kind })} />
                       {row.productId === null ? (
                         <span />
                       ) : (
                         <AvatarSelect avatars={avatars} loading={loading} value={avatarOf(row)} onChange={(avatar) => update(row.key, { avatar })} />
                       )}
                       <Input
-                        aria-label="Indicación"
+                        aria-label="Cambios específicos"
                         value={row.note}
                         maxLength={MAX_NOTE}
-                        placeholder="Indicación (opcional)"
+                        placeholder="Cambios específicos"
                         onChange={(event) => update(row.key, { note: event.target.value.replace(/[\r\n]+/g, " ") })}
-                        className="col-span-2 h-9 lg:col-span-1"
+                        className="h-9"
                       />
                     </div>
                   </div>
+                  {row.kind === "adaptacion_concepto" ? (
+                    <Textarea
+                      aria-label="Qué adaptación quieres"
+                      placeholder="Qué adaptación quieres"
+                      value={row.adaptation}
+                      maxLength={MAX_ADAPTATION}
+                      rows={3}
+                      onChange={(event) => update(row.key, { adaptation: event.target.value })}
+                      className="min-h-20 resize-y lg:ml-12 lg:w-[calc(100%-3rem)]"
+                    />
+                  ) : null}
                   {row.error ? (
                     <p role="alert" className="flex items-center gap-1.5 text-sm text-destructive">
                       <CircleAlert className="size-4 shrink-0" aria-hidden />

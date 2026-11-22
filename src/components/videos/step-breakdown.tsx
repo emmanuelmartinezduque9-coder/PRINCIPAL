@@ -11,6 +11,7 @@ import {
   Package,
   RefreshCw,
   Save,
+  Shuffle,
   Sparkles,
   TriangleAlert,
   Type,
@@ -67,6 +68,7 @@ function useRequestAnalysis(videoId: number) {
                 costMicros: null,
                 referenceMediaId: view.video.referenceMediaId,
                 stale: false,
+                staleReason: null,
               },
             }
           : view,
@@ -107,9 +109,11 @@ function StartPanel({ view, onGoToReference }: { view: VideoViewJson; onGoToRefe
   const { video, imageManifest, mine } = view;
   const request = useRequestAnalysis(video.id);
   const reference = video.referenceStatus === "ready";
-  const person = video.noPerson || imageManifest.some((item) => item.role === "avatar");
+  const person = video.avatarMode !== "elegido" || imageManifest.some((item) => item.role === "avatar");
   const article = imageManifest.some((item) => item.role === "articulo");
-  const ready = reference && person && article;
+  const adapting = video.kind === "adaptacion_concepto";
+  const adaptation = !adapting || !!video.adaptation?.trim();
+  const ready = reference && person && article && adaptation;
 
   return (
     <Panel className="mx-auto w-full max-w-xl items-center py-10 text-center">
@@ -118,8 +122,9 @@ function StartPanel({ view, onGoToReference }: { view: VideoViewJson; onGoToRefe
       </span>
       <ul className="flex flex-col gap-2.5 text-left">
         <Requirement ok={reference} icon={Film} label="Vídeo de referencia" />
-        <Requirement ok={person} icon={UserRound} label="Avatar o «no aparece nadie»" />
+        <Requirement ok={person} icon={UserRound} label="Avatar, «Sin sustitución» o «No aparece nadie»" />
         <Requirement ok={article} icon={Package} label="Foto del artículo" />
+        {adapting ? <Requirement ok={adaptation} icon={Shuffle} label="Qué adaptación quieres" /> : null}
       </ul>
       {mine ? (
         ready ? (
@@ -489,7 +494,9 @@ export function StepBreakdown({
       {stale ? (
         <div role="status" className="flex flex-wrap items-center gap-3 rounded-xl bg-amber-500/10 px-4 py-3 text-sm ring-1 ring-amber-500/25">
           <TriangleAlert className="size-4 shrink-0 text-amber-600" aria-hidden />
-          <span className="min-w-0 flex-1">Este desglose es del vídeo de referencia anterior.</span>
+          <span className="min-w-0 flex-1">
+            {analysis.staleReason === "brief" ? "Las indicaciones del vídeo han cambiado." : "Este desglose es del vídeo de referencia anterior."}
+          </span>
           {repeat}
         </div>
       ) : null}

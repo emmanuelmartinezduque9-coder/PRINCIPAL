@@ -7,7 +7,9 @@ import { listProductsFor } from "@/server/products";
 import { downloadableClipUrl, servableClipUrl } from "@/server/videos/clip";
 import { costsOfVideo, type VideoCosts } from "@/server/videos/costs";
 import { generationView, pollVideoGenerations, type GenerationView } from "@/server/videos/generations";
-import { createVideo, type Video } from "@/server/videos/videos";
+import { checkKindInput, cleanNote, isAvatarMode, type AvatarMode, type VideoKind } from "@/server/videos/brief";
+import { createVideo, staleness, type Video } from "@/server/videos/videos";
+
 
 /**
  * Lotes: muchos vídeos a la vez encima del flujo de cada vídeo. Un lote es solo una lista con
@@ -19,11 +21,10 @@ import { createVideo, type Video } from "@/server/videos/videos";
 export type Batch = typeof schema.batches.$inferSelect;
 
 const MAX_NAME = 100;
-export const MAX_NOTE = 300;
 
 const NOT_FOUND = "Lote no encontrado.";
 const NOT_CREATOR = "Solo quien creó el lote puede añadirle vídeos.";
-const NEED_AVATAR = "Elige un avatar o «No aparece nadie».";
+const NEED_AVATAR = "Elige un avatar, «Sin sustitución» o «No aparece nadie».";
 const BAD_AVATAR = "Elige una foto con papel «Avatar» de este producto.";
 
 const batches = schema.batches;
@@ -115,22 +116,27 @@ export async function listBatchesFor(user: AuthUser): Promise<BatchSummary[]> {
 }
 
 /**
- * Crea un vídeo en el lote por el camino normal (`createVideo`: producto visible, «Vídeo N»), con su
- * avatar (una foto con papel «avatar» de ese producto) o «sin persona», y una indicación opcional de
- * una línea. Solo quien creó el lote.
+ * Crea un vídeo en el lote por el camino normal (`createVideo`: producto visible, «Vídeo N»), con
+ * quién sale (un avatar, una foto con papel «avatar» de ese producto; «sin sustitución»; o
+ * «nadie»), su tipo (con su adaptación si es «Adaptación de concepto») y sus cambios específicos
+ * opcionales de una línea. Solo quien creó el lote. Valores que no valen: 400.
  */
 export async function addVideoToBatch(
   user: AuthUser,
   batchId: number,
-  input: { productId: number; avatarPhotoId: number | null; noPerson: boolean; note?: string | null },
+  input: { productId: number; avatarPhotoId: number | null; avatarMode: unknown; kind?: unknown; adaptation?: unknown; note?: unknown },
 ): Promise<Video> {
   const batch = await getBatchFor(user, batchId);
   if (batch.createdBy !== user.id) throw new HttpError(403, NOT_CREATOR);
 
-  const note = (input.note ?? "").replace(/[\r\n]+/g, " ").trim();
-  if (note.length > MAX_NOTE) throw new HttpError(400, `La indicación no puede tener más de ${MAX_NOTE} caracteres.`);
-  if (input.noPerson && input.avatarPhotoId !== null) throw new HttpError(400, "Con «No aparece nadie» no se elige avatar.");
-  if (!input.noPerson && input.avatarPhotoId === null) throw new HttpError(400, NEED_AVATAR);
+  const note = cleanNote(input.note);
+  const { kind, adaptation } = checkKindInput(input);
+  if (!isAvatarMode(input.avatarMode)) throw new HttpError(400, "Valor no válido.");
+  const avatarMode = input.avatarMode;
+  if (avatarMode !== "elegido" && input.avatarPhotoId !== null) {
+    throw new HttpError(400, "Con «Sin sustitución» o «No aparece nadie» no se elige avatar.");
+  }
+  if (avatarMode === "elegido" && input.avatarPhotoId === null) throw new HttpError(400, NEED_AVATAR);
 
   // También comprueba que el producto es visible (404 «Producto no encontrado.» si no).
   const photos = await listProductPhotos(user, input.productId);
@@ -139,9 +145,11 @@ export async function addVideoToBatch(
   }
   return createVideo(user, input.productId, {
     batchId: batch.id,
-    note: note || null,
+    note,
     avatarPhotoId: input.avatarPhotoId,
-    noPerson: input.noPerson,
+    avatarMode,
+    kind: kind ?? "replicar",
+    adaptation: adaptation ?? null,
   });
 }
 
@@ -150,16 +158,20 @@ export interface BatchRow {
   title: string;
   productId: number;
   productName: string;
+  /** «Cambios específicos». */
   note: string | null;
+  kind: VideoKind;
+  /** «Adaptación de concepto» sin «Qué adaptación quieres» todavía: no se puede desglosar. */
+  needsAdaptation: boolean;
   mine: boolean;
   createdAt: Date;
   updatedAt: Date;
   referenceStatus: string;
   referenceError: string | null;
   avatarPhotoId: number | null;
-  noPerson: boolean;
-  /** El último desglose: su estado, su error y si ya no corresponde a la referencia actual. */
-  analysis: { status: string; error: string | null; stale: boolean } | null;
+  avatarMode: AvatarMode;
+  /** El último desglose: su estado, su error y si ya no corresponde (otra referencia u otras indicaciones). */
+  analysis: { status: string; error: string | null; stale: boolean; staleReason: "reference" | "brief" | null } | null;
   frame: GenerationView;
   clip: GenerationView;
   costs: VideoCosts;
@@ -195,6 +207,10 @@ export async function batchView(user: AuthUser, batchId: number): Promise<BatchV
             status: analyses.status,
             error: analyses.error,
             referenceMediaId: analyses.referenceMediaId,
+            kind: analyses.kind,
+            avatarMode: analyses.avatarMode,
+            note: analyses.note,
+            adaptation: analyses.adaptation,
           })
           .from(analyses)
           .where(inArray(analyses.videoId, list.map((video) => video.id)))
@@ -216,16 +232,16 @@ export async function batchView(user: AuthUser, batchId: number): Promise<BatchV
         productId: video.productId,
         productName: products.get(video.productId) ?? "",
         note: video.note,
+        kind: video.kind as VideoKind,
+        needsAdaptation: video.kind === "adaptacion_concepto" && !video.adaptation,
         mine: video.createdBy === user.id,
         createdAt: video.createdAt,
         updatedAt: video.updatedAt,
         referenceStatus: video.referenceStatus,
         referenceError: video.referenceError,
         avatarPhotoId: video.avatarPhotoId,
-        noPerson: video.noPerson,
-        analysis: analysis
-          ? { status: analysis.status, error: analysis.error, stale: analysis.referenceMediaId !== video.referenceMediaId }
-          : null,
+        avatarMode: video.avatarMode as AvatarMode,
+        analysis: analysis ? { status: analysis.status, error: analysis.error, ...staleness(analysis, video) } : null,
         frame,
         clip,
         costs,

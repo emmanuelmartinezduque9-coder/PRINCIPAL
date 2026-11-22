@@ -3,7 +3,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { format } from "date-fns";
 import { es } from "date-fns/locale";
-import { ChevronRight, CircleAlert, Download, Eye, ImageIcon, Loader2, ScanSearch, SearchX, UserX } from "lucide-react";
+import { ChevronRight, CircleAlert, Download, Eye, ImageIcon, Loader2, ScanSearch, SearchX } from "lucide-react";
 import Link from "next/link";
 import { useRef, useState } from "react";
 import { toast } from "sonner";
@@ -11,6 +11,7 @@ import { PageHeader } from "@/components/shell/page-header";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { AVATAR_MODE_LABELS, KIND_LABELS } from "@/components/videos/brief-labels";
 import { creditsLabel } from "@/components/videos/labels";
 import { useReferenceUploads } from "@/components/videos/upload-provider";
 import { api, ApiError } from "@/lib/api";
@@ -60,10 +61,11 @@ function StepChip({ state }: { state: StepState }) {
 }
 
 function AvatarCell({ row }: { row: BatchRowJson }) {
-  if (row.noPerson) {
+  if (row.avatarMode !== "elegido") {
+    const { label, icon: Icon } = AVATAR_MODE_LABELS[row.avatarMode];
     return (
-      <span className="grid size-8 place-items-center rounded-full bg-muted text-muted-foreground" title="No aparece nadie">
-        <UserX className="size-4" aria-label="No aparece nadie" />
+      <span className="grid size-8 place-items-center rounded-full bg-muted text-muted-foreground" title={label}>
+        <Icon className="size-4" aria-label={label} />
       </span>
     );
   }
@@ -80,6 +82,23 @@ function CostCell({ row }: { row: BatchRowJson }) {
       <span>{creditsLabel(higgsfieldCredits)}</span>
       {claudeMicros > 0 ? <span className="text-xs text-muted-foreground">{formatUsd(claudeMicros)}</span> : null}
     </div>
+  );
+}
+
+/** El tipo del vídeo: icono y palabra corta, con el nombre entero en el título. */
+function KindChip({ row }: { row: BatchRowJson }) {
+  const { short, long, icon: Icon } = KIND_LABELS[row.kind];
+  return (
+    <span
+      title={long}
+      className={cn(
+        "inline-flex h-5 shrink-0 items-center gap-1 rounded px-1.5 text-[11px] font-medium",
+        row.kind === "adaptacion_concepto" ? "bg-violet-500/12 text-violet-800 dark:text-violet-300" : "bg-muted text-muted-foreground",
+      )}
+    >
+      <Icon className="size-3" aria-hidden />
+      {short}
+    </span>
   );
 }
 
@@ -301,9 +320,12 @@ export function BatchBoard({ batchId }: { batchId: number }) {
                       </Link>
                     </TableCell>
                     <TableCell className="max-w-72 min-w-48 whitespace-normal">
-                      <Link href={videoHref(row)} className="rounded font-medium outline-none hover:underline focus-visible:ring-3 focus-visible:ring-ring/50">
-                        {row.title}
-                      </Link>
+                      <div className="flex items-center gap-2">
+                        <Link href={videoHref(row)} className="rounded font-medium outline-none hover:underline focus-visible:ring-3 focus-visible:ring-ring/50">
+                          {row.title}
+                        </Link>
+                        <KindChip row={row} />
+                      </div>
                       <div className="truncate text-xs text-muted-foreground">{row.productName}</div>
                       {row.note ? <div className="mt-0.5 line-clamp-2 text-xs text-foreground/80">{row.note}</div> : null}
                       {problem ? (

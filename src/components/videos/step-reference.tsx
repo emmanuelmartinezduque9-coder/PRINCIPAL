@@ -1,7 +1,7 @@
 "use client";
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { CircleAlert, Clock, Film, Loader2, Plug, RefreshCw, Upload, UserRoundX } from "lucide-react";
+import { CircleAlert, Clock, Film, Loader2, Plug, RefreshCw, Upload } from "lucide-react";
 import Link from "next/link";
 import { useRef, useState } from "react";
 import { toast } from "sonner";
@@ -11,6 +11,9 @@ import { Progress } from "@/components/ui/progress";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import type { HiggsfieldStatus } from "@/server/higgsfield";
+import type { AvatarMode } from "@/server/videos/brief";
+import { AVATAR_MODE_LABELS, avatarModeOf } from "./brief-labels";
+import { BriefPanel } from "./brief-panel";
 import { clockTime, frameUrl, MAX_SEGMENT_MS, secondsLabel, type ProductPhoto, type VideoJson, type VideoViewJson } from "./labels";
 import { PhotoPick } from "./photo-pick";
 import type { ReferenceUpload } from "./upload-provider";
@@ -157,6 +160,48 @@ function ReferenceFacts({ video }: { video: VideoJson }) {
   );
 }
 
+/**
+ * «Sin sustitución» (se conservan las personas de la referencia) y «No aparece nadie»: junto a
+ * las fotos de avatar, son las otras dos formas de decir quién sale. Elegir una foto vuelve a
+ * «Avatar».
+ */
+function AvatarModes({ mode, readOnly, onChange }: { mode: AvatarMode; readOnly: boolean; onChange: (mode: AvatarMode) => void }) {
+  const options = (["sin_sustitucion", "nadie"] as const).filter((option) => !readOnly || option === mode);
+  if (options.length === 0) return null;
+  return (
+    <div role="radiogroup" aria-label="Sin avatar" className="flex flex-col gap-2">
+      {options.map((option) => {
+        const on = mode === option;
+        const { label, icon: Icon } = AVATAR_MODE_LABELS[option];
+        return (
+          <button
+            key={option}
+            type="button"
+            role="radio"
+            aria-checked={on}
+            disabled={readOnly}
+            onClick={() => onChange(on ? "elegido" : option)}
+            className={cn(
+              "flex items-center gap-2.5 rounded-lg border px-3 py-2.5 text-left text-sm outline-none focus-visible:ring-3 focus-visible:ring-ring/50",
+              !readOnly && "hover:bg-muted/50",
+              on && "border-foreground/60 bg-muted/40 font-medium",
+            )}
+          >
+            <span
+              aria-hidden
+              className={cn("grid size-4 shrink-0 place-items-center rounded-full border", on ? "border-foreground" : "border-foreground/30")}
+            >
+              {on ? <span className="size-2 rounded-full bg-foreground" /> : null}
+            </span>
+            <Icon className="size-4 text-muted-foreground" aria-hidden />
+            {label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 // ───────────────────────── Paso ─────────────────────────
 
 /** Lo que va en el panel de la referencia, según la subida del navegador y el estado del vídeo. */
@@ -282,15 +327,15 @@ export function StepReference({
   const canUpload = mine && connected;
   const busy = upload.kind === "uploading" || video.referenceStatus === "processing";
 
-  async function choose(changes: { avatarPhotoId?: number | null; environmentPhotoId?: number | null; noPerson?: boolean }) {
+  async function choose(changes: { avatarPhotoId?: number | null; environmentPhotoId?: number | null; avatarMode?: AvatarMode }) {
     const key = ["video", video.id];
     const before = client.getQueryData<VideoViewJson>(key);
     // Se ve al instante; si el servidor no lo acepta, vuelve a como estaba.
     client.setQueryData<VideoViewJson>(key, (v) => {
       if (!v) return v;
       const next = { ...v.video, ...changes };
-      if (changes.noPerson === true) next.avatarPhotoId = null;
-      if (typeof changes.avatarPhotoId === "number") next.noPerson = false;
+      if (changes.avatarMode !== undefined && changes.avatarMode !== "elegido") next.avatarPhotoId = null;
+      if (typeof changes.avatarPhotoId === "number") next.avatarMode = "elegido";
       return { ...v, video: next };
     });
     try {
@@ -304,70 +349,56 @@ export function StepReference({
   }
 
   const needsConnection = mine && higgsfield.isSuccess && !connected && !busy;
+  const avatarMode = avatarModeOf(video.avatarMode);
 
   return (
-    <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_22rem]">
-      <Panel
-        title="Vídeo de referencia"
-        actions={canUpload && video.referenceStatus === "ready" && upload.kind !== "uploading" ? <ReplaceButton onFile={onUpload} /> : null}
-      >
-        {needsConnection ? (
-          <Notice
-            tone="warn"
-            icon={Plug}
-            action={
-              <Link href="/ajustes" className={cn(buttonVariants({ variant: "outline" }), "h-8 bg-background")}>
-                Ir a Ajustes
-              </Link>
-            }
-          >
-            {status?.needsReconnect ? "Vuelve a conectar tu Higgsfield para subir el vídeo." : "Conecta tu Higgsfield para subir el vídeo."}
-          </Notice>
-        ) : null}
-        <ReferenceBody view={view} upload={upload} canUpload={canUpload} onFile={onUpload} />
-      </Panel>
-
-      <div className="flex flex-col gap-6">
-        <Panel title="Avatar">
-          <PhotoPick
-            productId={video.productId}
-            role="avatar"
-            photos={photos}
-            selectedId={video.noPerson ? null : video.avatarPhotoId}
-            onSelect={(id) => void choose({ avatarPhotoId: id })}
-            readOnly={!mine}
-            dimmed={video.noPerson}
-          />
-          {mine || video.noPerson ? (
-            <label
-              className={cn(
-                "flex items-center gap-2.5 rounded-lg border px-3 py-2.5 text-sm",
-                mine && "cursor-pointer hover:bg-muted/50",
-                video.noPerson && "border-foreground/60 bg-muted/40",
-              )}
+    <div className="flex flex-col gap-6">
+      <BriefPanel view={view} />
+      <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_22rem]">
+        <Panel
+          title="Vídeo de referencia"
+          actions={canUpload && video.referenceStatus === "ready" && upload.kind !== "uploading" ? <ReplaceButton onFile={onUpload} /> : null}
+        >
+          {needsConnection ? (
+            <Notice
+              tone="warn"
+              icon={Plug}
+              action={
+                <Link href="/ajustes" className={cn(buttonVariants({ variant: "outline" }), "h-8 bg-background")}>
+                  Ir a Ajustes
+                </Link>
+              }
             >
-              <input
-                type="checkbox"
-                className="size-4 accent-foreground"
-                checked={video.noPerson}
-                disabled={!mine}
-                onChange={(event) => void choose({ noPerson: event.target.checked })}
-              />
-              <UserRoundX className="size-4 text-muted-foreground" aria-hidden />
-              En este vídeo no aparece nadie
-            </label>
+              {status?.needsReconnect ? "Vuelve a conectar tu Higgsfield para subir el vídeo." : "Conecta tu Higgsfield para subir el vídeo."}
+            </Notice>
           ) : null}
+          <ReferenceBody view={view} upload={upload} canUpload={canUpload} onFile={onUpload} />
         </Panel>
-        <Panel title="Entorno" actions={<span className="text-xs text-muted-foreground">Opcional</span>}>
-          <PhotoPick
-            productId={video.productId}
-            role="entorno"
-            photos={photos}
-            selectedId={video.environmentPhotoId}
-            onSelect={(id) => void choose({ environmentPhotoId: id })}
-            readOnly={!mine}
-          />
-        </Panel>
+
+        <div className="flex flex-col gap-6">
+          <Panel title="Avatar">
+            <PhotoPick
+              productId={video.productId}
+              role="avatar"
+              photos={photos}
+              selectedId={avatarMode === "elegido" ? video.avatarPhotoId : null}
+              onSelect={(id) => void choose({ avatarPhotoId: id })}
+              readOnly={!mine}
+              dimmed={avatarMode !== "elegido"}
+            />
+            <AvatarModes mode={avatarMode} readOnly={!mine} onChange={(mode) => void choose({ avatarMode: mode })} />
+          </Panel>
+          <Panel title="Entorno" actions={<span className="text-xs text-muted-foreground">Opcional</span>}>
+            <PhotoPick
+              productId={video.productId}
+              role="entorno"
+              photos={photos}
+              selectedId={video.environmentPhotoId}
+              onSelect={(id) => void choose({ environmentPhotoId: id })}
+              readOnly={!mine}
+            />
+          </Panel>
+        </div>
       </div>
     </div>
   );

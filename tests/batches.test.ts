@@ -75,32 +75,83 @@ describe("lotes", () => {
 
   it("añadir un vídeo: producto visible, avatar con papel «avatar» o «no aparece nadie», indicación de una línea", async () => {
     const lote = await createBatch(ana, "A");
-    const video = await addVideoToBatch(ana, lote.id, { productId: deAna.id, avatarPhotoId: avatarAna, noPerson: false, note: " Gancho\nmás corto " });
-    expect(video).toMatchObject({ batchId: lote.id, productId: deAna.id, avatarPhotoId: avatarAna, noPerson: false, note: "Gancho más corto", title: "Vídeo 1" });
-    const sinNadie = await addVideoToBatch(ana, lote.id, { productId: deAna.id, avatarPhotoId: null, noPerson: true });
-    expect(sinNadie).toMatchObject({ noPerson: true, avatarPhotoId: null, note: null, title: "Vídeo 2" });
+    const video = await addVideoToBatch(ana, lote.id, { productId: deAna.id, avatarPhotoId: avatarAna, avatarMode: "elegido", note: " Gancho\nmás corto " });
+    expect(video).toMatchObject({ batchId: lote.id, productId: deAna.id, avatarPhotoId: avatarAna, avatarMode: "elegido", note: "Gancho más corto", title: "Vídeo 1" });
+    const sinNadie = await addVideoToBatch(ana, lote.id, { productId: deAna.id, avatarPhotoId: null, avatarMode: "nadie" });
+    expect(sinNadie).toMatchObject({ avatarMode: "nadie", avatarPhotoId: null, note: null, title: "Vídeo 2" });
 
     const articulo = (await addProductPhoto(ana, deAna.id, JPEG, "articulo")).id;
     const bad = [
-      { productId: deAna.id, avatarPhotoId: articulo, noPerson: false },
-      { productId: deAna.id, avatarPhotoId: null, noPerson: false },
-      { productId: deAna.id, avatarPhotoId: avatarAna, noPerson: true },
-      { productId: deAna.id, avatarPhotoId: null, noPerson: true, note: "x".repeat(301) },
+      { productId: deAna.id, avatarPhotoId: articulo, avatarMode: "elegido" },
+      { productId: deAna.id, avatarPhotoId: null, avatarMode: "elegido" },
+      { productId: deAna.id, avatarPhotoId: avatarAna, avatarMode: "nadie" },
+      { productId: deAna.id, avatarPhotoId: null, avatarMode: "nadie", note: "x".repeat(301) },
+      { productId: deAna.id, avatarPhotoId: avatarAna, avatarMode: "sin_sustitucion" },
+      { productId: deAna.id, avatarPhotoId: null, avatarMode: "no_person" },
+      { productId: deAna.id, avatarPhotoId: null, avatarMode: undefined },
+      { productId: deAna.id, avatarPhotoId: null, avatarMode: "nadie", kind: "solo_gancho" },
+      { productId: deAna.id, avatarPhotoId: null, avatarMode: "nadie", adaptation: "Otra idea" },
+      { productId: deAna.id, avatarPhotoId: null, avatarMode: "nadie", kind: "adaptacion_concepto", adaptation: "x".repeat(12_001) },
     ];
     for (const input of bad) await expect(addVideoToBatch(ana, lote.id, input)).rejects.toMatchObject({ status: 400 });
     // Un producto que no ve: 404 y nada creado.
-    await expect(addVideoToBatch(ana, lote.id, { productId: deLuis.id, avatarPhotoId: null, noPerson: true })).rejects.toMatchObject({ status: 404 });
+    await expect(addVideoToBatch(ana, lote.id, { productId: deLuis.id, avatarPhotoId: null, avatarMode: "nadie" })).rejects.toMatchObject({ status: 404 });
     // En el lote de otra persona no se añade (el dueño lo ve, pero no es suyo).
-    await expect(addVideoToBatch(dueno, lote.id, { productId: deAna.id, avatarPhotoId: null, noPerson: true })).rejects.toMatchObject({ status: 403 });
-    await expect(addVideoToBatch(luis, lote.id, { productId: deLuis.id, avatarPhotoId: null, noPerson: true })).rejects.toMatchObject({ status: 404 });
+    await expect(addVideoToBatch(dueno, lote.id, { productId: deAna.id, avatarPhotoId: null, avatarMode: "nadie" })).rejects.toMatchObject({ status: 403 });
+    await expect(addVideoToBatch(luis, lote.id, { productId: deLuis.id, avatarPhotoId: null, avatarMode: "nadie" })).rejects.toMatchObject({ status: 404 });
     expect((await batchView(ana, lote.id)).rows).toHaveLength(2);
+  });
+
+  it("añadir un vídeo con su tipo, su adaptación y «sin sustitución»; el tablero enseña el tipo y quién sale", async () => {
+    const lote = await createBatch(ana, "A");
+    const adaptado = await addVideoToBatch(ana, lote.id, {
+      productId: deAna.id,
+      avatarPhotoId: null,
+      avatarMode: "sin_sustitucion",
+      kind: "adaptacion_concepto",
+      adaptation: "  Que la lámpara cambie de color al tocarla  ",
+      note: "Sin texto",
+    });
+    expect(adaptado).toMatchObject({
+      avatarMode: "sin_sustitucion",
+      avatarPhotoId: null,
+      kind: "adaptacion_concepto",
+      adaptation: "Que la lámpara cambie de color al tocarla",
+      note: "Sin texto",
+    });
+    const sinAdaptacion = await addVideoToBatch(ana, lote.id, { productId: deAna.id, avatarPhotoId: avatarAna, avatarMode: "elegido", kind: "adaptacion_concepto" });
+    const replica = await addVideoToBatch(ana, lote.id, { productId: deAna.id, avatarPhotoId: avatarAna, avatarMode: "elegido" });
+    expect(replica).toMatchObject({ kind: "replicar", adaptation: null });
+
+    const rows = (await batchView(ana, lote.id)).rows;
+    expect(rows.map((r) => [r.id, r.kind, r.avatarMode, r.needsAdaptation])).toEqual([
+      [adaptado.id, "adaptacion_concepto", "sin_sustitucion", false],
+      [sinAdaptacion.id, "adaptacion_concepto", "elegido", true],
+      [replica.id, "replicar", "elegido", false],
+    ]);
+  });
+
+  it("el tablero da por repetir un desglose de otras indicaciones y dice por qué", async () => {
+    const lote = await createBatch(ana, "A");
+    const v = await addVideoToBatch(ana, lote.id, { productId: deAna.id, avatarPhotoId: avatarAna, avatarMode: "elegido", note: "Más luz" });
+    const pool = getPool();
+    await pool.query("update videos set reference_status = 'ready', reference_media_id = 'm1' where id = $1", [v.id]);
+    await pool.query(
+      "insert into video_analyses (video_id, version, status, reference_media_id, note, created_by) values ($1, 1, 'done', 'm1', 'Más luz', $2)",
+      [v.id, ana.id],
+    );
+    expect((await batchView(ana, lote.id)).rows[0].analysis).toEqual({ status: "done", error: null, stale: false, staleReason: null });
+    await pool.query("update videos set note = 'Menos luz' where id = $1", [v.id]);
+    expect((await batchView(ana, lote.id)).rows[0].analysis).toMatchObject({ stale: true, staleReason: "brief" });
+    await pool.query("update videos set reference_media_id = 'm2' where id = $1", [v.id]);
+    expect((await batchView(ana, lote.id)).rows[0].analysis).toMatchObject({ stale: true, staleReason: "reference" });
   });
 
   it("dentro de un lote, un colaborador solo ve los vídeos de los productos que ve", async () => {
     const lote = await createBatch(ana, "A");
     await setAssignments(dueno, ana.id, [deAna.id, deLuis.id]);
-    const visible = await addVideoToBatch(ana, lote.id, { productId: deAna.id, avatarPhotoId: avatarAna, noPerson: false });
-    const luego = await addVideoToBatch(ana, lote.id, { productId: deLuis.id, avatarPhotoId: null, noPerson: true });
+    const visible = await addVideoToBatch(ana, lote.id, { productId: deAna.id, avatarPhotoId: avatarAna, avatarMode: "elegido" });
+    const luego = await addVideoToBatch(ana, lote.id, { productId: deLuis.id, avatarPhotoId: null, avatarMode: "nadie" });
     expect((await batchView(ana, lote.id)).rows.map((r) => r.id)).toEqual([visible.id, luego.id]);
     expect((await listBatchesFor(ana))[0]).toMatchObject({ videos: 2, done: 0 });
 
@@ -118,7 +169,7 @@ describe("lotes", () => {
 
   it("el tablero junta por vídeo la referencia, el avatar, el desglose, las generaciones, el coste y si hay clip", async () => {
     const lote = await createBatch(ana, "A");
-    const v = await addVideoToBatch(ana, lote.id, { productId: deAna.id, avatarPhotoId: avatarAna, noPerson: false, note: "Más luz" });
+    const v = await addVideoToBatch(ana, lote.id, { productId: deAna.id, avatarPhotoId: avatarAna, avatarMode: "elegido", note: "Más luz" });
     // Un vídeo del mismo producto fuera del lote no aparece.
     await createVideo(ana, deAna.id);
 
@@ -130,7 +181,9 @@ describe("lotes", () => {
       mine: true,
       referenceStatus: "none",
       avatarPhotoId: avatarAna,
-      noPerson: false,
+      avatarMode: "elegido",
+      kind: "replicar",
+      needsAdaptation: false,
       analysis: null,
       frame: { round: 0, approvedResultId: null, current: null },
       clip: { round: 0, current: null },
@@ -141,7 +194,7 @@ describe("lotes", () => {
     const pool = getPool();
     await pool.query("update videos set reference_status = 'ready', reference_media_id = 'm2' where id = $1", [v.id]);
     await pool.query(
-      "insert into video_analyses (video_id, version, status, reference_media_id, created_by) values ($1, 1, 'done', 'm1', $2), ($1, 2, 'done', 'm2', $2)",
+      "insert into video_analyses (video_id, version, status, reference_media_id, note, created_by) values ($1, 1, 'done', 'm1', 'Más luz', $2), ($1, 2, 'done', 'm2', 'Más luz', $2)",
       [v.id, ana.id],
     );
     const frame = await pool.query(
@@ -176,7 +229,7 @@ describe("lotes", () => {
     expect((await getVideoFor(ana, v.id)).batchId).toBe(lote.id);
     // La lista cuenta como hecho el vídeo con un clip que se puede descargar (la misma regla que `clipReady`):
     // un clip terminado en una dirección que no se sirve no cuenta.
-    const otro = await addVideoToBatch(ana, lote.id, { productId: deAna.id, avatarPhotoId: null, noPerson: true });
+    const otro = await addVideoToBatch(ana, lote.id, { productId: deAna.id, avatarPhotoId: null, avatarMode: "nadie" });
     const raro = await pool.query(
       `insert into generations (video_id, kind, round, status, user_id, request, count, quoted_credits, credits_spent)
        values ($1, 'clip', 1, 'done', $2, '{}', 1, 90, 90) returning id`,
@@ -202,22 +255,27 @@ describe("lotes", () => {
     expect((await createRoute(post({ name: "" }))).status).toBe(400);
 
     const add = (id: number | string, body: unknown) => addRoute(post(body), ctx(id));
-    const added = await add(batch.id, { productId: deAna.id, avatarPhotoId: avatarAna, noPerson: false, note: "Uno" });
+    const added = await add(batch.id, { productId: deAna.id, avatarPhotoId: avatarAna, avatarMode: "elegido", note: "Uno" });
     expect(added.status).toBe(201);
     expect((await added.json()).video).toMatchObject({ batchId: batch.id, note: "Uno" });
-    expect((await add(batch.id, { productId: "1", avatarPhotoId: null, noPerson: true })).status).toBe(400);
-    expect((await add(batch.id, { productId: deAna.id, avatarPhotoId: "1", noPerson: false })).status).toBe(400);
+    expect((await add(batch.id, { productId: "1", avatarPhotoId: null, avatarMode: "nadie" })).status).toBe(400);
+    expect((await add(batch.id, { productId: deAna.id, avatarPhotoId: "1", avatarMode: "elegido" })).status).toBe(400);
     expect((await add(batch.id, { productId: deAna.id, avatarPhotoId: null })).status).toBe(400);
-    expect((await add("1e3", { productId: deAna.id, avatarPhotoId: null, noPerson: true })).status).toBe(404);
+    expect((await add(batch.id, { productId: deAna.id, avatarPhotoId: null, avatarMode: "nadie", kind: "otro" })).status).toBe(400);
+    expect((await add(batch.id, { productId: deAna.id, avatarPhotoId: null, avatarMode: "nadie", note: 7 })).status).toBe(400);
+    const keep = await add(batch.id, { productId: deAna.id, avatarPhotoId: null, avatarMode: "sin_sustitucion", kind: "adaptacion_concepto", adaptation: "Idea" });
+    expect(keep.status).toBe(201);
+    expect((await keep.json()).video).toMatchObject({ avatarMode: "sin_sustitucion", kind: "adaptacion_concepto", adaptation: "Idea" });
+    expect((await add("1e3", { productId: deAna.id, avatarPhotoId: null, avatarMode: "nadie" })).status).toBe(404);
 
-    expect((await (await listRoute()).json()).batches).toMatchObject([{ id: batch.id, name: "Pedido 54", videos: 1, done: 0, mine: true }]);
+    expect((await (await listRoute()).json()).batches).toMatchObject([{ id: batch.id, name: "Pedido 54", videos: 2, done: 0, mine: true }]);
     const view = await viewRoute(new Request("http://localhost"), ctx(batch.id));
     expect(view.status).toBe(200);
-    expect((await view.json()).rows).toHaveLength(1);
+    expect((await view.json()).rows).toHaveLength(2);
 
     await as(luis);
     expect((await viewRoute(new Request("http://localhost"), ctx(batch.id))).status).toBe(404);
-    expect((await add(batch.id, { productId: deLuis.id, avatarPhotoId: null, noPerson: true })).status).toBe(404);
+    expect((await add(batch.id, { productId: deLuis.id, avatarPhotoId: null, avatarMode: "nadie" })).status).toBe(404);
     expect((await (await listRoute()).json()).batches).toEqual([]);
   });
 });

@@ -220,6 +220,38 @@ describe("petición de la imagen inicial", () => {
     expect(fake.calls).toHaveLength(0);
   });
 
+  it("si las indicaciones cambian después del desglose (tipo, cambios, adaptación o quién sale), no hay imagen hasta repetirlo", async () => {
+    const message = "Las indicaciones del vídeo cambiaron; repite el desglose.";
+    const changes: Array<Record<string, unknown>> = [
+      { note: "Más luz" },
+      { kind: "adaptacion_concepto", adaptation: "Otra idea" },
+      { avatarMode: "nadie" },
+    ];
+    for (const change of changes) {
+      await updateVideoChoices(ana, v.id, change);
+      await expect(quoteGeneration(ana, v.id, "frame", deps)).rejects.toMatchObject({ status: 400, message });
+      await getPool().query("update videos set note = null, kind = 'replicar', adaptation = null, avatar_mode = 'elegido', avatar_photo_id = $2 where id = $1", [
+        v.id,
+        ids.avatar,
+      ]);
+    }
+    expect(fake.calls).toHaveLength(0);
+    // Una adaptación guardada con «Replicar» no cuenta: no se usa.
+    await getPool().query("update videos set adaptation = 'guardada' where id = $1", [v.id]);
+    await expect(quoteGeneration(ana, v.id, "frame", deps)).resolves.toBeDefined();
+  });
+
+  it("con «sin sustitución» no va ninguna foto de avatar: solo composición, artículo y entorno", async () => {
+    await updateVideoChoices(ana, v.id, { avatarMode: "sin_sustitucion" });
+    await getPool().query("update video_analyses set avatar_mode = 'sin_sustitucion' where video_id = $1", [v.id]);
+    v = await getVideoFor(ana, v.id);
+    await getPool().query("update videos set image_prompt = $2 where id = $1", [v.id, PROMPT.replace(/image 2/gi, "the scene")]);
+    v = await getVideoFor(ana, v.id);
+    const { request } = await buildFrameRequest(ana, v, deps);
+    expect(request.medias).toHaveLength(3);
+    expect(uploads().map((u) => u.filename)).toEqual([`fotograma-${v.id}.jpg`, `foto-${ids.articulo}.jpg`, `foto-${ids.entorno}.png`]);
+  });
+
   it("si el prompt o el avatar cambian mientras se presupuesta (otra pestaña), 409 y no se apunta nada", async () => {
     const changes = [
       "update videos set image_prompt = image_prompt || ' More light.' where id = $1",
