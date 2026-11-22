@@ -759,6 +759,8 @@ export const agentTasks = pgTable(
     /** El Mac que la tiene reservada (o el último que la tuvo). */
     agentId: bigint("agent_id", { mode: "number" }).references(() => agents.id),
     leaseExpiresAt: instant("lease_expires_at"),
+    /** Cuándo se reservó por última vez: una reserva no dura más de 30 minutos, con latidos o sin ellos. */
+    leasedAt: instant("leased_at"),
     /** Veces que se ha reservado. */
     attempts: integer("attempts").notNull().default(0),
     error: text("error"),

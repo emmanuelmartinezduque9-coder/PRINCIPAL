@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import { and, asc, eq, gte, inArray, isNull, lt, max, notExists, sql, type SQL } from "drizzle-orm";
+import { and, asc, eq, gte, isNull, lt, max, notExists, sql, type SQL } from "drizzle-orm";
 import { getDb, schema } from "@/db/client";
 import { cancelLinkTasks, LINK_FAILED, linkFailureMessage, TASK_TOO_OLD } from "@/server/agent-tasks";
 import { getActiveUser, type AuthUser } from "@/server/auth";
@@ -30,10 +30,11 @@ import { createVideo, getVideoFor, MAX_REFERENCE_BYTES, requireVideoOwner, type 
  *   la sesión de Instagram de ese Mac. Quien no tiene Mac sube el archivo.
  * - El enlace que un vídeo espera está apuntado en el vídeo (`linkTaskId`). Una referencia que ya
  *   estaba lista sigue lista hasta que el archivo del Mac llega entero, y también si el enlace falla.
- * - Una tarea reservada sin latido en 5 minutos vuelve a la cola; a los 3 intentos falla. También
- *   falla si lleva 10 minutos en la cola sin señales de su Mac, o 30 minutos desde que se creó,
- *   pase lo que pase. El detalle técnico se queda en la tarea, para el dueño; a la persona se le
- *   enseña un texto fijo.
+ * - Una tarea reservada sin latido en 5 minutos vuelve a la cola; a los 3 intentos falla. Ninguna
+ *   reserva dura más de 30 minutos, con latidos o sin ellos. En la cola espera hasta 6 horas
+ *   mientras su Mac siga dando señales (un lote de muchos enlaces se atiende de uno en uno); si su
+ *   Mac calla 10 minutos, falla. El detalle técnico se queda en la tarea, para el dueño; a la
+ *   persona se le enseña un texto fijo.
  *
  * Orden de los cerrojos: el vídeo, después la tarea, después la sesión de subida. Las tablas de
  * vídeo solo las toca `src/server/videos/`; aquí, las de agentes y tareas.
@@ -47,11 +48,13 @@ export const MAX_TASK_ATTEMPTS = 3;
  * Mac no ha dado señales. Con el Mac vivo y ocupado en otros enlaces, sigue esperando.
  */
 export const QUEUE_WAIT_MS = 10 * 60_000;
+/** Lo más que dura una reserva desde que el Mac se la llevó, aunque siga dando latidos (una descarga colgada). */
+export const MAX_LEASE_AGE_MS = 30 * 60_000;
 /**
- * Edad máxima de una tarea, desde que se pegó el enlace: pasada, falla aunque el Mac siga dando
- * señales (una descarga colgada) o siga ocupado con otras (una cola demasiado larga).
+ * Lo más que espera una tarea en la cola desde que se pegó el enlace, con el Mac vivo: da para que
+ * el Mac atienda de uno en uno un lote de muchos enlaces.
  */
-export const MAX_TASK_AGE_MS = 30 * 60_000;
+export const MAX_QUEUE_AGE_MS = 6 * 60 * 60_000;
 /** Sitios de los que se admite un enlace, con sus subdominios. */
 export const LINK_HOSTS = ["instagram.com", "tiktok.com", "youtube.com", "youtu.be", "facebook.com", "fb.watch"] as const;
 
@@ -62,7 +65,6 @@ const MAX_ERROR = 500;
 const TOKEN_PREFIX = "pra_";
 /** `Bearer <ficha>`: el nombre del esquema no distingue mayúsculas; la ficha, sí (por su huella). */
 const BEARER = /^Bearer +(pra_[A-Za-z0-9_-]{43})$/i;
-const ACTIVE = ["queued", "leased"];
 /** Veces que `claimTask` prueba con la siguiente tarea si otra petición se le adelanta. */
 const CLAIM_ROUNDS = 5;
 
@@ -328,7 +330,14 @@ export async function claimTask(agentId: number, now: Date = new Date()): Promis
       }
       await tx
         .update(agentTasks)
-        .set({ status: "leased", agentId, leaseExpiresAt: new Date(now.getTime() + LEASE_MS), attempts: sql`${agentTasks.attempts} + 1`, updatedAt: now })
+        .set({
+          status: "leased",
+          agentId,
+          leasedAt: now,
+          leaseExpiresAt: new Date(now.getTime() + LEASE_MS),
+          attempts: sql`${agentTasks.attempts} + 1`,
+          updatedAt: now,
+        })
         .where(eq(agentTasks.id, task.id));
       return { taskId: task.id, url: task.url, ...upload, maxBytes: MAX_REFERENCE_BYTES };
     });
@@ -434,9 +443,10 @@ async function failTask(task: { id: number; videoId: number }, condition: SQL | 
 
 /**
  * Seguimiento de las tareas (dentro de `videoSweep`, cada minuto). Fallan, y el vídeo lo dice: la
- * tarea de más de 30 minutos, la reserva caducada en su tercer intento y la que lleva 10 minutos
- * en la cola sin señales de ningún Mac de quien la pidió. Una reserva sin latido en 5 minutos, con
- * intentos por delante, vuelve a la cola.
+ * reserva de más de 30 minutos (aunque lata), la tarea que lleva 6 horas en la cola (aunque su
+ * Mac siga vivo), la reserva caducada en su tercer intento y la que lleva 10 minutos en la cola
+ * sin señales de ningún Mac de quien la pidió. Una reserva sin latido en 5 minutos, con intentos
+ * por delante, vuelve a la cola.
  */
 export async function expireLeases(now: Date = new Date()): Promise<void> {
   const db = getDb();
@@ -447,7 +457,8 @@ export async function expireLeases(now: Date = new Date()): Promise<void> {
     .from(agents)
     .where(and(eq(agents.createdBy, agentTasks.createdBy), isNull(agents.revokedAt), gte(agents.lastSeenAt, waitLimit)));
   const failures: Array<{ condition: SQL | undefined; reason: string }> = [
-    { condition: and(inArray(agentTasks.status, ACTIVE), lt(agentTasks.createdAt, new Date(now.getTime() - MAX_TASK_AGE_MS))), reason: TASK_TOO_OLD },
+    { condition: and(eq(agentTasks.status, "leased"), lt(agentTasks.leasedAt, new Date(now.getTime() - MAX_LEASE_AGE_MS))), reason: TASK_TOO_OLD },
+    { condition: and(eq(agentTasks.status, "queued"), lt(agentTasks.createdAt, new Date(now.getTime() - MAX_QUEUE_AGE_MS))), reason: TASK_TOO_OLD },
     { condition: and(expired, gte(agentTasks.attempts, MAX_TASK_ATTEMPTS)), reason: NO_HEARTBEAT },
     { condition: and(eq(agentTasks.status, "queued"), lt(agentTasks.updatedAt, waitLimit), notExists(macSeen)), reason: UNCLAIMED },
   ];

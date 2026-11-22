@@ -23,7 +23,8 @@ import {
   LINK_HOSTS,
   linkOf,
   listAgents,
-  MAX_TASK_AGE_MS,
+  MAX_LEASE_AGE_MS,
+  MAX_QUEUE_AGE_MS,
   MAX_TASK_ATTEMPTS,
   QUEUE_WAIT_MS,
   requestLinkDownload,
@@ -34,7 +35,9 @@ import {
 import { login, resetLoginAttempts, type AuthUser } from "@/server/auth";
 import { saveCredential } from "@/server/credentials";
 import { setPersonDisabled } from "@/server/people";
-import { addVideoToBatch, createBatch } from "@/server/videos/batches";
+import { addProductPhoto } from "@/server/photos";
+import { seedRules } from "@/server/rules";
+import { addVideoToBatch, batchView, createBatch } from "@/server/videos/batches";
 import "@/server/videos/clip";
 import { quoteGeneration } from "@/server/videos/generations";
 import { processReference } from "@/server/videos/intake";
@@ -914,8 +917,8 @@ describe("reserva y latido", () => {
     expect(await getVideoFor(dueno, otro.id)).toMatchObject({ referenceStatus: "failed", referenceError: LINK_FAILED });
   });
 
-  it("ninguna tarea vive más de 30 minutos: ni reservada con latidos ni en cola con el Mac vivo", async () => {
-    expect(MAX_TASK_AGE_MS).toBe(30 * MINUTE);
+  it("una reserva no dura más de 30 minutos aunque el Mac siga latiendo, y la cola sigue adelante", async () => {
+    expect(MAX_LEASE_AGE_MS).toBe(30 * MINUTE);
     const { agentId } = await mac();
     const otro = await createVideo(dueno, v.productId);
     const hung = await requestLinkDownload(dueno, v.id, REEL, T0);
@@ -931,21 +934,68 @@ describe("reserva y latido", () => {
     expect((await tasks()).map((row) => row.status)).toEqual(["leased", "queued"]);
     await agentHeartbeat(agentId, { version: "1.0.0", ytDlp: null }, later(30 * MINUTE));
     await expireLeases(later(30 * MINUTE + 1000));
+    // Solo cae la reserva colgada: la que espera en la cola sigue esperando.
     expect(await tasks()).toMatchObject([
       { id: hung.taskId, status: "failed", error: "La tarea superó el tiempo máximo." },
-      { id: waiting.taskId, status: "failed", error: "La tarea superó el tiempo máximo." },
+      { id: waiting.taskId, status: "queued", attempts: 0 },
     ]);
     // A la persona se le dice claro qué pasó y qué puede hacer.
-    for (const [video, url] of [[v, REEL], [otro, TIKTOK]] as const) {
-      expect(await getVideoFor(dueno, video.id)).toMatchObject({ referenceStatus: "failed", referenceError: LINK_TOO_SLOW });
-      expect(await linkOfVideo(video)).toEqual({ url, status: "failed", error: LINK_TOO_SLOW });
-    }
+    expect(await getVideoFor(dueno, v.id)).toMatchObject({ referenceStatus: "failed", referenceError: LINK_TOO_SLOW });
+    expect(await linkOfVideo(v)).toEqual({ url: REEL, status: "failed", error: LINK_TOO_SLOW });
     // El Mac se entera en su siguiente paso, y lo que había llegado se borra.
     await expect(extendLease(agentId, hung.taskId, later(31 * MINUTE))).rejects.toMatchObject(TASK_LOST);
     await expect(send(agentId, task, 1, mp4(100), later(31 * MINUTE))).rejects.toMatchObject(TASK_LOST);
     expect(await sessionRows()).toEqual([]);
-    expect(await claimTask(agentId, later(31 * MINUTE))).toBeNull();
+    // Y sigue con la siguiente, que ya llevaba más de media hora en la cola: los 30 minutos cuentan desde que se reserva.
+    const next = await claim(agentId, later(31 * MINUTE));
+    expect(next).toMatchObject({ taskId: waiting.taskId, url: TIKTOK });
+    await agentHeartbeat(agentId, { version: "1.0.0", ytDlp: null }, later(60 * MINUTE));
+    await extendLease(agentId, waiting.taskId, later(60 * MINUTE));
+    await expireLeases(later(60 * MINUTE));
+    expect(await taskOf(waiting.taskId)).toMatchObject({ status: "leased" });
+    await expireLeases(later(61 * MINUTE + 1000));
+    expect(await taskOf(waiting.taskId)).toMatchObject({ status: "failed" });
   });
+
+  it("con el Mac vivo, una tarea espera en la cola hasta 6 horas (un lote largo), y entonces falla", async () => {
+    expect(MAX_QUEUE_AGE_MS).toBe(6 * 60 * MINUTE);
+    const { agentId } = await mac();
+    const { taskId } = await requestLinkDownload(dueno, v.id, REEL, T0);
+    // El Mac sigue dando señales (está con otros enlaces) durante casi 6 horas.
+    for (let minute = 5; minute <= 355; minute += 5) {
+      await agentHeartbeat(agentId, { version: "1.0.0", ytDlp: null }, later(minute * MINUTE));
+      await expireLeases(later(minute * MINUTE + 1000));
+    }
+    expect(await taskOf(taskId)).toMatchObject({ status: "queued", attempts: 0 });
+    expect(await linkOfVideo(v)).toEqual({ url: REEL, status: "queued", error: null });
+    await agentHeartbeat(agentId, { version: "1.0.0", ytDlp: null }, later(360 * MINUTE));
+    await expireLeases(later(360 * MINUTE + 1000));
+    expect(await taskOf(taskId)).toMatchObject({ status: "failed", error: "La tarea superó el tiempo máximo." });
+    expect(await getVideoFor(dueno, v.id)).toMatchObject({ referenceStatus: "failed", referenceError: LINK_TOO_SLOW });
+    expect(await claimTask(agentId, later(361 * MINUTE))).toBeNull();
+  });
+
+  it("un lote de 30 enlaces no caduca mientras el Mac los va trayendo de uno en uno", async () => {
+    const { agentId } = await mac(dueno, new Date());
+    const batch = await createBatch(dueno, "Semana 48");
+    const base = Date.now();
+    const created: Video[] = [];
+    for (let i = 0; i < 30; i++) {
+      created.push(await addVideoToBatch(dueno, batch.id, { productId: v.productId, avatarPhotoId: null, avatarMode: "nadie", linkUrl: `https://www.instagram.com/reel/r${i}/` }));
+    }
+    // Dos minutos por enlace: el último sale de la cola casi una hora después de pegarlo.
+    for (const [i, video] of created.entries()) {
+      const now = new Date(base + (i + 1) * 2 * MINUTE);
+      await agentHeartbeat(agentId, { version: "1.0.0", ytDlp: null }, now);
+      await expireLeases(now);
+      const task = await claim(agentId, now);
+      expect(task.url).toBe(`https://www.instagram.com/reel/r${i}/`);
+      await send(agentId, task, 0, mp4(100), now);
+      await succeed(agentId, task, 100, now);
+      expect((await getVideoFor(dueno, video.id)).referenceStatus).toBe("processing");
+    }
+    expect((await tasks()).map((task) => task.status)).toEqual(Array.from({ length: 30 }, () => "done"));
+  }, 60_000);
 
   it("el seguimiento de cada minuto caduca las reservas", async () => {
     const { agentId } = await mac();
@@ -1121,6 +1171,47 @@ describe("crear el vídeo ya con su enlace", () => {
     expect(await claimTask(agentId)).toBeNull();
     expect((await tasks()).map((task) => task.status)).toEqual(["done", "done", "done"]);
   });
+
+  it("el tablero del lote enseña el enlace de cada fila: en cola, descargando o fallido", async () => {
+    const { agentId } = await mac(dueno, new Date());
+    const batch = await createBatch(dueno, "Semana 48");
+    const urls = [REEL, TIKTOK, "https://youtu.be/abc"];
+    const created: Video[] = [];
+    for (const url of urls) created.push(await addVideoToBatch(dueno, batch.id, batchInput(v.productId, url)));
+    created.push(await addVideoToBatch(dueno, batch.id, batchInput(v.productId)));
+    // El primero falla, el segundo lo tiene el Mac, el tercero espera y el cuarto no tiene enlace.
+    await fail(agentId, await claim(agentId, new Date()), "yt-dlp: ERROR privado", new Date());
+    await claim(agentId, new Date());
+    const rows = (await batchView(dueno, batch.id)).rows;
+    expect(rows.map((row) => [row.id, row.referenceStatus, row.link])).toEqual([
+      [created[0].id, "failed", { url: REEL, status: "failed", error: LINK_FAILED }],
+      [created[1].id, "uploading", { url: TIKTOK, status: "downloading", error: null }],
+      [created[2].id, "uploading", { url: "https://youtu.be/abc", status: "queued", error: null }],
+      [created[3].id, "none", null],
+    ]);
+    expect(JSON.stringify(rows)).not.toContain("yt-dlp");
+  });
+
+  it("con «Desglosar al subir», el desglose se pide solo cuando la referencia traída por enlace queda lista", async () => {
+    await seedRules();
+    const JPEG = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(60, 1)]);
+    await addProductPhoto(dueno, v.productId, JPEG, "articulo");
+    const fake = createFakeHiggsfield();
+    const { agentId } = await mac(dueno, new Date());
+    const batch = await createBatch(dueno, "Semana 48");
+    expect(batch.autoAnalyze).toBe(true);
+    const video = await addVideoToBatch(dueno, batch.id, batchInput(v.productId, REEL));
+    const analyses = () => getDb().select().from(schema.videoAnalyses).where(eq(schema.videoAnalyses.videoId, video.id));
+
+    const task = await claim(agentId, new Date());
+    await send(agentId, task, 0, samples.tres, new Date());
+    await succeed(agentId, task, samples.tres.length, new Date());
+    expect(await analyses()).toEqual([]);
+    await processReference(video.id, task.uploadId, { higgsfield: fake.port });
+    expect(await getVideoFor(dueno, video.id)).toMatchObject({ referenceStatus: "ready", referenceSource: "link", referenceUrl: REEL });
+    // Pedido sin que nadie pulse nada, sobre la referencia que trajo el Mac.
+    expect(await analyses()).toMatchObject([{ version: 1, status: "queued", referenceMediaId: "media-1", createdBy: dueno.id }]);
+  }, 60_000);
 
   it("un enlace que no vale o un Mac desconectado no dejan un vídeo a medias en el lote", async () => {
     const batch = await createBatch(dueno, "Semana 48");

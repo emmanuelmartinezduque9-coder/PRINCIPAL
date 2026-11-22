@@ -10,7 +10,7 @@ import { getDb, schema } from "@/db/client";
 
 /** Lo que ve la persona cuando el Mac no consigue traer un enlace. Nunca el detalle técnico. */
 export const LINK_FAILED = "No se pudo descargar el enlace. Sube el archivo del vídeo.";
-/** Lo que ve la persona cuando la tarea se pasó del tiempo máximo. */
+/** Lo que ve la persona cuando la tarea se pasó del tiempo máximo (reservada o esperando en la cola). */
 export const LINK_TOO_SLOW = "El Mac no trajo el enlace a tiempo. Pégalo otra vez o sube el archivo del vídeo.";
 /** Motivo (interno, en la tarea) de una tarea que se pasó del tiempo máximo. */
 export const TASK_TOO_OLD = "La tarea superó el tiempo máximo.";
@@ -46,18 +46,32 @@ export interface LinkState {
   error: string | null;
 }
 
-/** El estado del enlace de la tarea `taskId` (el `linkTaskId` de un vídeo), o `null` si no hay nada que enseñar. */
-export async function linkStateOf(taskId: number | null): Promise<LinkState | null> {
-  if (taskId === null) return null;
-  const [task] = await getDb()
-    .select({ url: agentTasks.url, status: agentTasks.status, error: agentTasks.error })
-    .from(agentTasks)
-    .where(eq(agentTasks.id, taskId));
-  if (!task) return null;
+function stateOf(task: { url: string; status: string; error: string | null }): LinkState | null {
   if (task.status === "queued") return { url: task.url, status: "queued", error: null };
   if (task.status === "leased") return { url: task.url, status: "downloading", error: null };
   if (task.status === "failed") return { url: task.url, status: "failed", error: linkFailureMessage(task.error) };
   return null;
+}
+
+/** El estado del enlace de varias tareas a la vez (para el tablero de un lote), por identificador de tarea. */
+export async function linkStatesOf(taskIds: number[]): Promise<Map<number, LinkState>> {
+  const states = new Map<number, LinkState>();
+  if (taskIds.length === 0) return states;
+  const rows = await getDb()
+    .select({ id: agentTasks.id, url: agentTasks.url, status: agentTasks.status, error: agentTasks.error })
+    .from(agentTasks)
+    .where(inArray(agentTasks.id, taskIds));
+  for (const row of rows) {
+    const state = stateOf(row);
+    if (state) states.set(row.id, state);
+  }
+  return states;
+}
+
+/** El estado del enlace de la tarea `taskId` (el `linkTaskId` de un vídeo), o `null` si no hay nada que enseñar. */
+export async function linkStateOf(taskId: number | null): Promise<LinkState | null> {
+  if (taskId === null) return null;
+  return (await linkStatesOf([taskId])).get(taskId) ?? null;
 }
 
 /** La dirección del enlace de una tarea, para apuntarla en la referencia que trajo. */

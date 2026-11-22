@@ -1,6 +1,7 @@
 import { and, asc, count, desc, eq, inArray, sql } from "drizzle-orm";
 import { getDb, schema } from "@/db/client";
 import { createVideoFromLink } from "@/server/agent";
+import { linkStatesOf, type LinkState } from "@/server/agent-tasks";
 import type { AuthUser } from "@/server/auth";
 import { HttpError } from "@/server/http";
 import { coverPhotoIds, listProductPhotos } from "@/server/photos";
@@ -241,6 +242,9 @@ export interface BatchRow {
   referenceError: string | null;
   /** La referencia se preparó con otro tramo (cambió el gancho): hay que volver a subirla. */
   referenceOutdated: boolean;
+
+  /** El enlace pegado que el Mac está trayendo, o el último que falló (como en la vista del vídeo). */
+  link: LinkState | null;
   avatarPhotoId: number | null;
   avatarMode: AvatarMode;
   /** El último desglose: su estado, su error y si ya no corresponde (otra referencia u otras indicaciones). */
@@ -324,6 +328,7 @@ export async function batchView(user: AuthUser, batchId: number): Promise<BatchV
           .where(inArray(schema.generations.videoId, list.map((video) => video.id)));
   const withGenerations = new Set(generated.map((row) => row.videoId));
   const bodiesOf = await bodiesOfVideos(list);
+  const links = await linkStatesOf(list.flatMap((video) => (video.linkTaskId === null ? [] : [video.linkTaskId])));
 
   const rows = await Promise.all(
     list.map(async (video): Promise<BatchRow> => {
@@ -350,6 +355,8 @@ export async function batchView(user: AuthUser, batchId: number): Promise<BatchV
         referenceStatus: video.referenceStatus,
         referenceError: video.referenceError,
         referenceOutdated: referenceOutdated(video),
+
+        link: video.linkTaskId === null ? null : (links.get(video.linkTaskId) ?? null),
         avatarPhotoId: video.avatarPhotoId,
         avatarMode: video.avatarMode as AvatarMode,
         analysis: analysis
