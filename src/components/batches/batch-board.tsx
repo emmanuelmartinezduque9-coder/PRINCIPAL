@@ -3,7 +3,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { format } from "date-fns";
 import { es } from "date-fns/locale";
-import { ChevronRight, CircleAlert, Download, Eye, ImageIcon, Loader2, ScanSearch, SearchX } from "lucide-react";
+import { ChevronRight, CircleAlert, Download, Eye, ImageIcon, ListFilter, Loader2, ScanSearch, SearchX } from "lucide-react";
 import Link from "next/link";
 import { useRef, useState } from "react";
 import { toast } from "sonner";
@@ -17,10 +17,12 @@ import { useReferenceUploads } from "@/components/videos/upload-provider";
 import { api, ApiError } from "@/lib/api";
 import { formatUsd } from "@/lib/money";
 import { cn } from "@/lib/utils";
+import { AutoAnalyzeSwitch, GroupHeader, RiskChip, RowActions } from "./board-parts";
 import { BulkGenerate } from "./bulk-generate";
 import {
   analysisState,
   generationState,
+  needsReview,
   pollEvery,
   ready,
   referenceState,
@@ -146,6 +148,8 @@ export function BatchBoard({ batchId }: { batchId: number }) {
   const [running, setRunning] = useState<null | "breakdown" | "download" | "generate">(null);
   const inFlight = useRef(false);
   const [downloaded, setDownloaded] = useState(0);
+  /** «Por revisar»: solo las filas con algo que mirar. */
+  const [onlyReview, setOnlyReview] = useState(false);
 
   const back = { href: "/lotes", label: "Lotes" };
   if (query.isLoading) {
@@ -194,6 +198,8 @@ export function BatchBoard({ batchId }: { batchId: number }) {
       return next;
     });
   const done = rows.filter((row) => row.clipReady).length;
+  const toReview = rows.filter((row) => needsReview(row, uploadOf(row)));
+  const shown = onlyReview ? toReview : rows;
 
   async function breakdownAll() {
     if (inFlight.current) return;
@@ -236,7 +242,11 @@ export function BatchBoard({ batchId }: { batchId: number }) {
 
   return (
     <div className="flex flex-col gap-5">
-      <PageHeader back={back} title={data.batch.name}>
+      <PageHeader
+        back={back}
+        title={data.batch.name}
+        actions={data.batch.mine ? <AutoAnalyzeSwitch batchId={batchId} value={data.batch.autoAnalyze} editable={data.batch.mine} /> : null}
+      >
         <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted-foreground tabular-nums">
           <span>{rows.length === 1 ? "1 vídeo" : `${rows.length} vídeos`}</span>
           <span aria-hidden>·</span>
@@ -264,6 +274,17 @@ export function BatchBoard({ batchId }: { batchId: number }) {
       {/* Siempre montada: un envío en bloque sigue enseñando sus resultados aunque ya no quede ninguna fila lista. */}
       {rows.length > 0 ? (
         <div role="toolbar" aria-label="Acciones del lote" className="flex flex-wrap items-center gap-2 empty:hidden">
+          {toReview.length > 0 || onlyReview ? (
+            <Button
+              variant={onlyReview ? "secondary" : "ghost"}
+              className={cn("h-9 gap-1.5 px-3", onlyReview && "ring-1 ring-foreground/20")}
+              aria-pressed={onlyReview}
+              onClick={() => setOnlyReview((on) => !on)}
+            >
+              <ListFilter data-icon="inline-start" />
+              Por revisar ({toReview.length})
+            </Button>
+          ) : null}
           {forBreakdown.length > 0 ? (
             <Button variant="outline" className="h-9 gap-1.5 px-3" disabled={running !== null} onClick={() => void breakdownAll()}>
               {running === "breakdown" ? <Loader2 className="animate-spin" data-icon="inline-start" /> : <ScanSearch data-icon="inline-start" />}
@@ -289,78 +310,94 @@ export function BatchBoard({ batchId }: { batchId: number }) {
 
       {rows.length === 0 ? (
         <div className="rounded-xl border border-dashed px-6 py-16 text-center text-sm text-muted-foreground">Este lote no tiene vídeos que puedas ver.</div>
+      ) : shown.length === 0 ? (
+        <div className="rounded-xl border border-dashed px-6 py-16 text-center text-sm text-muted-foreground">Nada por revisar.</div>
       ) : (
-        <div className="overflow-hidden rounded-xl bg-card ring-1 ring-foreground/10">
-          <Table>
-            <TableHeader>
-              <TableRow className="hover:bg-transparent">
-                <TableHead className="w-14 pl-4" />
-                <TableHead>Vídeo</TableHead>
-                <TableHead>Avatar</TableHead>
-                <TableHead>Referencia</TableHead>
-                <TableHead>Desglose</TableHead>
-                <TableHead>Imagen</TableHead>
-                <TableHead>Clip</TableHead>
-                <TableHead className="text-right">Coste</TableHead>
-                <TableHead className="w-10 pr-4" />
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {rows.map((row) => {
-                const upload = uploadOf(row);
-                const states = [referenceState(row, upload), analysisState(row), generationState(row.frame, "frame"), generationState(row.clip, "clip")];
-                // El error de la última acción en bloque y, si no hay, el del paso que falló.
-                const notice = notices[row.id];
-                const problem = (notice && notice.at === rowState(row) ? notice.message : null) ?? states.find((state) => state.tone === "error" && state.detail && !state.quiet)?.detail ?? null;
-                return (
-                  <TableRow key={row.id}>
-                    <TableCell className="pl-4">
-                      <Link href={videoHref(row)} tabIndex={-1} aria-hidden>
-                        <RowThumb row={row} busy={upload.kind === "uploading"} className="h-16 w-9" />
-                      </Link>
-                    </TableCell>
-                    <TableCell className="max-w-72 min-w-48 whitespace-normal">
-                      <div className="flex items-center gap-2">
-                        <Link href={videoHref(row)} className="rounded font-medium outline-none hover:underline focus-visible:ring-3 focus-visible:ring-ring/50">
-                          {row.title}
-                        </Link>
-                        <KindChip row={row} />
-                      </div>
-                      <div className="truncate text-xs text-muted-foreground">{row.productName}</div>
-                      {row.note ? <div className="mt-0.5 line-clamp-2 text-xs text-foreground/80">{row.note}</div> : null}
-                      {problem ? (
-                        <p role="alert" className="mt-1 flex items-start gap-1 text-xs text-destructive">
-                          <CircleAlert className="mt-px size-3.5 shrink-0" aria-hidden />
-                          {problem}
-                        </p>
-                      ) : null}
-                    </TableCell>
-                    <TableCell>
-                      <AvatarCell row={row} />
-                    </TableCell>
-                    {states.map((state, index) => (
-                      <TableCell key={index}>
-                        <StepChip state={state} />
-                      </TableCell>
-                    ))}
-                    <TableCell className="text-right">
-                      <CostCell row={row} />
-                    </TableCell>
-                    <TableCell className="pr-4">
-                      <Link
-                        href={videoHref(row)}
-                        aria-label={`Abrir ${row.title}`}
-                        className="grid size-8 place-items-center rounded-md text-muted-foreground outline-none hover:bg-muted hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50"
-                      >
-                        <ChevronRight className="size-4" aria-hidden />
-                      </Link>
-                    </TableCell>
+        data.groups.map((group) => {
+          const groupRows = shown.filter((row) => row.productId === group.productId);
+          if (groupRows.length === 0) return null;
+          return (
+            <section key={group.productId} aria-label={group.name} className="overflow-hidden rounded-xl bg-card ring-1 ring-foreground/10">
+              <GroupHeader batchId={batchId} group={group} editable={data.batch.mine} />
+              {/* Columnas fijas: las tablas de todos los productos quedan alineadas. */}
+              <Table className="min-w-[60rem] table-fixed">
+                <TableHeader>
+                  <TableRow className="hover:bg-transparent">
+                    <TableHead className="w-14 pl-4" />
+                    <TableHead>Vídeo</TableHead>
+                    <TableHead className="w-20">Avatar</TableHead>
+                    <TableHead className="w-28">Referencia</TableHead>
+                    <TableHead className="w-28">Desglose</TableHead>
+                    <TableHead className="w-28">Imagen</TableHead>
+                    <TableHead className="w-24">Clip</TableHead>
+                    <TableHead className="w-24 text-right">Coste</TableHead>
+                    <TableHead className="w-32 pr-4" />
                   </TableRow>
-                );
-              })}
-            </TableBody>
-          </Table>
-        </div>
+                </TableHeader>
+                <TableBody>
+                  {groupRows.map((row) => {
+                    const upload = uploadOf(row);
+                    const states = [referenceState(row, upload), analysisState(row), generationState(row.frame, "frame"), generationState(row.clip, "clip")];
+                    // El error de la última acción en bloque y, si no hay, el del paso que falló.
+                    const notice = notices[row.id];
+                    const problem =
+                      (notice && notice.at === rowState(row) ? notice.message : null) ??
+                      states.find((state) => state.tone === "error" && state.detail && !state.quiet)?.detail ??
+                      null;
+                    return (
+                      <TableRow key={row.id}>
+                        <TableCell className="pl-4">
+                          <Link href={videoHref(row)} tabIndex={-1} aria-hidden>
+                            <RowThumb row={row} busy={upload.kind === "uploading"} className="h-16 w-9" />
+                          </Link>
+                        </TableCell>
+                        <TableCell className="whitespace-normal">
+                          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                            <Link href={videoHref(row)} className="rounded font-medium outline-none hover:underline focus-visible:ring-3 focus-visible:ring-ring/50">
+                              {row.title}
+                            </Link>
+                            <KindChip row={row} />
+                            <RiskChip risks={row.risks} />
+                          </div>
+                          {row.note ? <div className="mt-0.5 line-clamp-2 text-xs whitespace-pre-line text-foreground/80">{row.note}</div> : null}
+                          {problem ? (
+                            <p role="alert" className="mt-1 flex items-start gap-1 text-xs text-destructive">
+                              <CircleAlert className="mt-px size-3.5 shrink-0" aria-hidden />
+                              {problem}
+                            </p>
+                          ) : null}
+                        </TableCell>
+                        <TableCell>
+                          <AvatarCell row={row} />
+                        </TableCell>
+                        {states.map((state, index) => (
+                          <TableCell key={index}>
+                            <StepChip state={state} />
+                          </TableCell>
+                        ))}
+                        <TableCell className="text-right">
+                          <CostCell row={row} />
+                        </TableCell>
+                        <TableCell className="pr-4">
+                          <div className="flex items-center justify-end">
+                            {data.batch.mine && row.mine ? <RowActions batchId={batchId} row={row} /> : null}
+                            <Link
+                              href={videoHref(row)}
+                              aria-label={`Abrir ${row.title}`}
+                              className="grid size-8 place-items-center rounded-md text-muted-foreground outline-none hover:bg-muted hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50"
+                            >
+                              <ChevronRight className="size-4" aria-hidden />
+                            </Link>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            </section>
+          );
+        })
       )}
     </div>
   );

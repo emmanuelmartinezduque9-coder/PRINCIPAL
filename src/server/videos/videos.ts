@@ -5,6 +5,7 @@ import { HttpError } from "@/server/http";
 import { listProductPhotos, type PhotoInfo, type PhotoRole } from "@/server/photos";
 import { getProductFor } from "@/server/products";
 import type { Analysis } from "@/server/videos/analysis";
+import { startingAvatar } from "@/lib/default-avatar";
 import { analysisStaleness, checkKindInput, cleanNote, isAvatarMode, type AvatarMode, type VideoKind } from "@/server/videos/brief";
 import { analysisCostMicros, costsOfVideo, type VideoCosts } from "@/server/videos/costs";
 import { clipManifest, imageManifest, type ManifestItem } from "@/server/videos/manifest";
@@ -50,10 +51,15 @@ export interface NewVideoExtras {
 
 /**
  * Crea un vídeo vacío en un producto visible, titulado «Vídeo N» (N = los que ya tiene + 1). Desde
- * un lote llega además su lote, su tipo, sus cambios específicos y quién sale, ya comprobados.
+ * un lote llega además su lote, su tipo, sus cambios específicos y quién sale, ya comprobados. Si
+ * no se dice quién sale, empieza con el avatar habitual del producto (`startingAvatar`).
  */
 export async function createVideo(user: AuthUser, productId: number, extras: NewVideoExtras = {}): Promise<Video> {
   const product = await getProductFor(user, productId);
+  if (extras.avatarMode === undefined) {
+    const avatars = (await listProductPhotos(user, product.id)).filter((photo) => photo.role === "avatar").map((photo) => photo.id);
+    extras = { ...extras, ...startingAvatar(product, avatars) };
+  }
   return getDb().transaction(async (tx) => {
     await tx.execute(titleLock(product.id));
     const [{ n }] = await tx.select({ n: count() }).from(schema.videos).where(eq(schema.videos.productId, product.id));
@@ -218,6 +224,8 @@ export async function readVideoFrame(user: AuthUser, videoId: number, index: num
 
 export interface VideoView {
   video: Video;
+  /** «Indicaciones» del lote para el producto de este vídeo (llegan al desglose), o `null`. */
+  productNotes: string | null;
   mine: boolean;
   /** Nombre de quien lo creó (para el aviso de solo lectura); `null` si esa cuenta no existe. */
   creatorName: string | null;
@@ -264,11 +272,26 @@ export async function latestDoneAnalysis(video: Video): Promise<{ id: number; st
     .where(and(eq(schema.videoAnalyses.videoId, video.id), eq(schema.videoAnalyses.status, "done")))
     .orderBy(desc(schema.videoAnalyses.version))
     .limit(1);
-  return done ? { id: done.id, staleReason: analysisStaleness(done, video) } : null;
+  return done ? { id: done.id, staleReason: analysisStaleness(done, await withProductNotes(video)) } : null;
+}
+
+/** Las «Indicaciones» del lote del vídeo para su producto, o `null` (sin lote o sin indicaciones). */
+export async function productNotesOf(video: Pick<Video, "batchId" | "productId">): Promise<string | null> {
+  if (video.batchId === null) return null;
+  const [row] = await getDb()
+    .select({ notes: schema.batchProducts.notes })
+    .from(schema.batchProducts)
+    .where(and(eq(schema.batchProducts.batchId, video.batchId), eq(schema.batchProducts.productId, video.productId)));
+  return row?.notes ?? null;
+}
+
+/** El vídeo con las indicaciones de su lote: lo que cuenta para el desglose (`briefOf`). */
+export async function withProductNotes(video: Video): Promise<Video & { productNotes: string | null }> {
+  return { ...video, productNotes: await productNotesOf(video) };
 }
 
 /** `stale` y su motivo, para la vista del vídeo y el tablero del lote. */
-export function staleness(analysis: Parameters<typeof analysisStaleness>[0], video: Video) {
+export function staleness(analysis: Parameters<typeof analysisStaleness>[0], video: Video & { productNotes: string | null }) {
   const staleReason = analysisStaleness(analysis, video);
   return { stale: staleReason !== null, staleReason };
 }
@@ -300,8 +323,10 @@ export async function videoView(user: AuthUser, videoId: number): Promise<VideoV
     .orderBy(desc(schema.videoAnalyses.version))
     .limit(1);
   const photos = await listProductPhotos(user, video.productId);
+  const productNotes = await productNotesOf(video);
   return {
     video,
+    productNotes,
     mine: video.createdBy === user.id,
     creatorName: await creatorNameOf(video),
     frames,
@@ -314,7 +339,7 @@ export async function videoView(user: AuthUser, videoId: number): Promise<VideoV
           result: (latest.result as Analysis | null) ?? null,
           costMicros: await analysisCostMicros(video, latest),
           referenceMediaId: latest.referenceMediaId,
-          ...staleness(latest, video),
+          ...staleness(latest, { ...video, productNotes }),
         }
       : null,
     ...promptIssues(video, photos),

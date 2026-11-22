@@ -194,7 +194,7 @@ const results = schema.generationResults;
 type Generation = typeof generations.$inferSelect;
 type GenerationChanges = Partial<typeof generations.$inferInsert>;
 type Db = ReturnType<typeof getDb>;
-type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
+export type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
 
 /**
  * Comprobación extra que corre dentro de la transacción de aprobar o rechazar, ya con el cerrojo del
@@ -212,7 +212,7 @@ const historyType = (kind: string): "image" | "video" => (kind === "frame" ? "im
 const nameOf = (error: unknown) => (error instanceof Error ? error.message : "desconocido");
 
 /** Cerrojo de aviso por vídeo para las generaciones ("VGEN", vídeo). El 0 se usa para adoptar trabajos del historial. */
-const generationLock = (tx: Tx, videoId: number) =>
+export const generationLock = (tx: Tx, videoId: number) =>
   tx.execute(sql`select pg_advisory_xact_lock(${0x5647454e}::int, ${videoId}::int)`);
 
 /** La respuesta en crudo tal como se guarda: como mucho 20 000 caracteres de JSON. */

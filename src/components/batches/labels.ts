@@ -157,3 +157,33 @@ export function rowState(row: BatchRowJson): string {
 
 /** Ruta de la pantalla de un vídeo. */
 export const videoHref = (row: Pick<BatchRowJson, "productId" | "id">) => `/productos/${row.productId}/videos/${row.id}`;
+
+/**
+ * «Por revisar»: filas con algo que mirar antes de seguir: un paso con error (también la subida en
+ * este navegador), un desglose que ya no vale, candidatas esperando aprobación o una generación en duda.
+ */
+export function needsReview(row: BatchRowJson, upload: LocalUpload = { kind: "idle" }): boolean {
+  if (ready.review(row)) return true;
+  if ([row.frame.current?.status, row.clip.current?.status].includes("unknown")) return true;
+  const states = [referenceState(row, upload), analysisState(row), generationState(row.frame, "frame"), generationState(row.clip, "clip")];
+  return states.some((state) => state.tone === "error" && !state.quiet);
+}
+
+/** Nombre automático de un lote sin nombre: «dd/mm · Producto1, Producto2» (como mucho 100 caracteres). */
+export function autoBatchName(date: Date, productNames: string[]): string {
+  const day = `${String(date.getDate()).padStart(2, "0")}/${String(date.getMonth() + 1).padStart(2, "0")}`;
+  const names = [...new Set(productNames.filter(Boolean))].join(", ");
+  const name = names ? `${day} · ${names}` : day;
+  return name.length > 100 ? `${name.slice(0, 99)}…` : name;
+}
+
+/** Nombre de cada riesgo del desglose, para el aviso de la fila. */
+export const RISK_LABELS: Record<BatchRowJson["risks"][number]["kind"], string> = {
+  funcion_inexistente: "Función que no tiene",
+  reveal_adelantado: "Reveal adelantado",
+  escala: "Escala",
+  identidad: "Identidad",
+  texto_en_pantalla: "Texto en pantalla",
+  marca_ajena: "Marca ajena",
+  otro: "Otro",
+};

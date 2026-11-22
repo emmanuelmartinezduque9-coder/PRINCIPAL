@@ -22,7 +22,7 @@ import { loadRules, RULE_SLUGS, VIDEO_RULE_SLUGS } from "@/server/rules";
 import { analysisStaleness, briefOf, type AvatarMode, type Brief, type VideoKind } from "@/server/videos/brief";
 import { clipManifest, FRAME_USES, imageManifest, type FrameUse, type ManifestItem } from "@/server/videos/manifest";
 import { PROMPT_BLACKLIST, type PromptIssue } from "@/server/videos/prompt-check";
-import { getVideoFor, promptIssues, requireVideoOwner, type Video } from "@/server/videos/videos";
+import { getVideoFor, productNotesOf, promptIssues, requireVideoOwner, withProductNotes, type Video } from "@/server/videos/videos";
 
 /**
  * Desglose del vídeo de referencia con Claude (trabajo `video.desglose`): la lógica del concepto,
@@ -176,7 +176,7 @@ Ninguno de los dos prompts lleva direcciones, identificadores de archivos ni est
 Las explicaciones (conceptLogic, shots, adaptation, risks) van en español; los dos prompts, en inglés.`,
   ];
   if (brief.kind === "adaptacion_concepto") sections.push(ADAPTATION_KIND);
-  if (brief.note !== null || brief.adaptation !== null) sections.push(OWNER_NOTES);
+  if (ownerNotes(brief) !== null) sections.push(OWNER_NOTES);
   return sections.join("\n\n");
 }
 
@@ -214,14 +214,18 @@ const roleLabel = (role: ManifestItem["role"], brief: Brief) =>
 const fenced = (text: string) => text.replace(/<\s*\//g, "< /");
 
 /**
- * Las indicaciones de la persona que encarga el vídeo, delimitadas: «Qué adaptación quieres» (solo
- * con «Adaptación de concepto») y «Cambios específicos». `null` si no hay ninguna.
+ * Las indicaciones de la persona que encarga el vídeo, delimitadas: las del lote para todos los
+ * vídeos del producto, «Qué adaptación quieres» (solo con «Adaptación de concepto») y «Cambios
+ * específicos» de este vídeo. `null` si no hay ninguna.
  */
 export function ownerNotes(brief: Brief): string | null {
-  if (brief.note === null && brief.adaptation === null) return null;
+  if (brief.note === null && brief.adaptation === null && brief.productNotes === null) return null;
   const lines = ["<indicaciones_del_encargo>"];
+  if (brief.productNotes !== null) {
+    lines.push("Para todos los vídeos de este producto en el lote:", "<indicaciones_del_producto>", fenced(brief.productNotes), "</indicaciones_del_producto>");
+  }
   if (brief.adaptation !== null) lines.push("Qué adaptación quiere:", "<adaptacion>", fenced(brief.adaptation), "</adaptacion>");
-  if (brief.note !== null) lines.push("Cambios específicos:", "<cambios_especificos>", fenced(brief.note), "</cambios_especificos>");
+  if (brief.note !== null) lines.push("Cambios específicos de este vídeo:", "<cambios_especificos>", fenced(brief.note), "</cambios_especificos>");
   lines.push("</indicaciones_del_encargo>");
   return lines.join("\n");
 }
@@ -370,28 +374,45 @@ const isGatewayFailure = (error: unknown): error is Error =>
 // ───────────────────────── Funciones públicas ─────────────────────────
 
 /**
- * Pide un desglose nuevo (versión siguiente) y encola `video.desglose`. Solo quien creó el vídeo,
- * con la referencia lista, un avatar (o «sin sustitución» o «nadie»), al menos una foto de
- * artículo y, si es una adaptación, «Qué adaptación quieres»; si ya hay uno en marcha (o en
- * pausa), 409. Apunta en el desglose las indicaciones del vídeo (`briefOf`); al hacer la llamada
- * se vuelven a apuntar las que de verdad se mandan.
+ * Lo que falta para poder desglosar el vídeo (el mensaje para la persona), o `null` si se puede:
+ * la referencia lista, un avatar (o «sin sustitución» o «nadie»), al menos una foto de artículo
+ * y, si es una adaptación, «Qué adaptación quieres».
  */
-export async function requestAnalysis(user: AuthUser, videoId: number): Promise<{ analysisId: number }> {
-  const video = await getVideoFor(user, videoId);
-  requireVideoOwner(user, video);
-  if (video.referenceStatus !== "ready") throw new HttpError(400, NO_REFERENCE);
+async function missingForAnalysis(user: AuthUser, video: Video, brief: Brief): Promise<string | null> {
+  if (video.referenceStatus !== "ready") return NO_REFERENCE;
   const manifest = imageManifest(video, await listProductPhotos(user, video.productId));
-  if (video.avatarMode === "elegido" && !manifest.some((item) => item.role === "avatar")) throw new HttpError(400, NO_AVATAR);
-  if (!manifest.some((item) => item.role === "articulo")) throw new HttpError(400, NO_ARTICLE);
-  const brief = briefOf(video);
-  if (brief.kind === "adaptacion_concepto" && brief.adaptation === null) throw new HttpError(400, NO_ADAPTATION);
+  if (video.avatarMode === "elegido" && !manifest.some((item) => item.role === "avatar")) return NO_AVATAR;
+  if (!manifest.some((item) => item.role === "articulo")) return NO_ARTICLE;
+  if (brief.kind === "adaptacion_concepto" && brief.adaptation === null) return NO_ADAPTATION;
+  return null;
+}
 
+/**
+ * Apunta un desglose nuevo (versión siguiente) con las indicaciones del vídeo y encola
+ * `video.desglose`, con el cerrojo del vídeo. Si ya hay uno en marcha (o en pausa), 409. Con
+ * `onlyNewReference`, no apunta nada (devuelve `null`) si ya hay algún desglose de esta misma
+ * referencia, del estado que sea: es lo que usa el desglose automático para no pedir dos veces.
+ */
+async function insertAnalysis(
+  user: AuthUser,
+  video: Video,
+  brief: Brief,
+  options: { onlyNewReference?: boolean } = {},
+): Promise<{ analysisId: number } | null> {
   const analysisId = await getDb().transaction(async (tx) => {
     await tx.execute(analysisLock(video.id));
     const [active] = await tx
       .select({ status: analyses.status })
       .from(analyses)
       .where(and(eq(analyses.videoId, video.id), inArray(analyses.status, ACTIVE)));
+    if (options.onlyNewReference) {
+      const [same] = await tx
+        .select({ id: analyses.id })
+        .from(analyses)
+        .where(and(eq(analyses.videoId, video.id), eq(analyses.referenceMediaId, video.referenceMediaId!)))
+        .limit(1);
+      if (same || active) return null;
+    }
     if (active) throw new HttpError(409, active.status === "paused" ? BUSY_PAUSED : BUSY);
     const [{ last }] = await tx.select({ last: max(analyses.version) }).from(analyses).where(eq(analyses.videoId, video.id));
     const [row] = await tx
@@ -400,6 +421,7 @@ export async function requestAnalysis(user: AuthUser, videoId: number): Promise<
       .returning({ id: analyses.id });
     return row.id;
   });
+  if (analysisId === null) return null;
 
   try {
     await enqueueJob(ANALYSIS_JOB, { userId: video.createdBy, productId: video.productId }, { analysisId });
@@ -408,6 +430,81 @@ export async function requestAnalysis(user: AuthUser, videoId: number): Promise<
     throw error;
   }
   return { analysisId };
+}
+
+/**
+ * Pide un desglose nuevo y encola `video.desglose`. Solo quien creó el vídeo, y solo si no falta
+ * nada (`missingForAnalysis`, 400); si ya hay uno en marcha (o en pausa), 409. Apunta en el
+ * desglose las indicaciones del vídeo (`briefOf`); al hacer la llamada se vuelven a apuntar las
+ * que de verdad se mandan.
+ */
+export async function requestAnalysis(user: AuthUser, videoId: number): Promise<{ analysisId: number }> {
+  const video = await getVideoFor(user, videoId);
+  requireVideoOwner(user, video);
+  const brief = briefOf(await withProductNotes(video));
+  const missing = await missingForAnalysis(user, video, brief);
+  if (missing) throw new HttpError(400, missing);
+  return (await insertAnalysis(user, video, brief))!;
+}
+
+/**
+ * «Desglosar al subir»: pide el desglose de un vídeo de un lote con el interruptor encendido en
+ * cuanto su referencia está lista y no le falta nada, una sola vez por referencia (si ya hubo un
+ * desglose de esta referencia, del estado que sea, no pide otro: repetirlo es cosa de la
+ * persona). Lo pide en nombre de quien creó el vídeo, así que cuentan su tope de gasto y su
+ * acceso. Devuelve si lo ha pedido. No lanza por lo que falta: lo vuelve a mirar el seguimiento.
+ */
+export async function autoRequestAnalysis(videoId: number): Promise<boolean> {
+  const [row] = await getDb()
+    .select({ createdBy: schema.videos.createdBy, autoAnalyze: schema.batches.autoAnalyze })
+    .from(schema.videos)
+    .innerJoin(schema.batches, eq(schema.batches.id, schema.videos.batchId))
+    .where(eq(schema.videos.id, videoId));
+  if (!row?.autoAnalyze) return false;
+  const user = await getActiveUser(row.createdBy);
+  if (!user) return false;
+  let video: Video;
+  try {
+    video = await getVideoFor(user, videoId);
+  } catch (error) {
+    if (error instanceof HttpError) return false;
+    throw error;
+  }
+  const brief = briefOf(await withProductNotes(video));
+  if ((await missingForAnalysis(user, video, brief)) !== null) return false;
+  return (await insertAnalysis(user, video, brief, { onlyNewReference: true })) !== null;
+}
+
+/** Cuántos vídeos mira como mucho el seguimiento en cada pasada para el desglose automático. */
+const AUTO_BATCH_LIMIT = 50;
+
+/**
+ * Para el seguimiento: vídeos de lotes con «Desglosar al subir» con la referencia lista y sin
+ * ningún desglose de esa referencia (p. ej. la foto del artículo llegó después). Devuelve cuántos pidió.
+ */
+export async function autoAnalyzePending(): Promise<number> {
+  const rows = await getDb()
+    .select({ id: schema.videos.id })
+    .from(schema.videos)
+    .innerJoin(schema.batches, eq(schema.batches.id, schema.videos.batchId))
+    .where(
+      and(
+        eq(schema.batches.autoAnalyze, true),
+        eq(schema.videos.referenceStatus, "ready"),
+        sql`not exists (select 1 from video_analyses a where a.video_id = ${schema.videos.id} and a.reference_media_id = ${schema.videos.referenceMediaId})`,
+      ),
+    )
+    .orderBy(asc(schema.videos.id))
+    .limit(AUTO_BATCH_LIMIT);
+  let requested = 0;
+  for (const { id } of rows) {
+    try {
+      if (await autoRequestAnalysis(id)) requested += 1;
+    } catch (error) {
+      console.error(`[videos] No se pudo pedir el desglose automático del vídeo ${id}:`, error);
+    }
+  }
+  return requested;
 }
 
 interface StepResult {
@@ -457,7 +554,7 @@ export async function runAnalysis(analysisId: number, deps: { gateway?: LlmGatew
         throw new StepFailedError(REFERENCE_CHANGED);
       }
       const product = await getProductFor(user, video.productId);
-      const brief = briefOf(video);
+      const brief = briefOf(await withProductNotes(video));
       const content = await buildContent(user, video, brief, product, await listProductPhotos(user, video.productId));
       try {
         const answer = await (deps.gateway ?? getGateway()).call({
@@ -496,6 +593,8 @@ export async function runAnalysis(analysisId: number, deps: { gateway?: LlmGatew
         avatarMode: schema.videos.avatarMode,
         note: schema.videos.note,
         adaptation: schema.videos.adaptation,
+        batchId: schema.videos.batchId,
+        productId: schema.videos.productId,
       })
       .from(schema.videos)
       .where(eq(schema.videos.id, row.videoId))
@@ -523,7 +622,8 @@ export async function runAnalysis(analysisId: number, deps: { gateway?: LlmGatew
     if (!saved) return;
     // Si las indicaciones cambiaron mientras Claude respondía, el desglose queda hecho con las que
     // usó (y se ve como «Repetir desglose»), pero sus prompts no pisan los del vídeo.
-    if (analysisStaleness({ ...step.brief, referenceMediaId: row.referenceMediaId }, video) !== null) return;
+    const now = { ...video, productNotes: await productNotesOf(video) };
+    if (analysisStaleness({ ...step.brief, referenceMediaId: row.referenceMediaId }, now) !== null) return;
     await tx
       .update(schema.videos)
       .set({ imagePrompt: step.result.imagePrompt, videoPrompt: step.result.videoPrompt, frameUse: step.result.frameUse, updatedAt: new Date() })

@@ -12,7 +12,10 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
   });
 }
 
-/** Cambia nombre, frase, idioma o países. Un producto ajeno: el mismo 404 que al leerlo. */
+/**
+ * Cambia nombre, frase, idioma, países o el avatar habitual (`defaultAvatarMode`,
+ * `defaultAvatarPhotoId`). Un producto ajeno: el mismo 404 que al leerlo.
+ */
 export async function PATCH(request: Request, { params }: { params: Promise<{ id: string }> }) {
   return handle(async (user) => {
     const { id } = await params;
@@ -26,6 +29,8 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
       language: text(input.language),
       countries:
         input.countries === undefined ? undefined : Array.isArray(input.countries) ? input.countries.map((c) => text(c) ?? "") : [],
+      defaultAvatarMode: input.defaultAvatarMode,
+      defaultAvatarPhotoId: input.defaultAvatarPhotoId,
     });
     return Response.json({ product });
   });

@@ -1,5 +1,16 @@
 import { describe, expect, it } from "vitest";
-import { analysisState, generationState, pollEvery, ready, referenceState, rowState, type BatchRowJson, type BatchViewJson } from "@/components/batches/labels";
+import {
+  analysisState,
+  autoBatchName,
+  generationState,
+  needsReview,
+  pollEvery,
+  ready,
+  referenceState,
+  rowState,
+  type BatchRowJson,
+  type BatchViewJson,
+} from "@/components/batches/labels";
 import { planSend, sendPlan } from "@/components/batches/bulk-plan";
 import { createLimiter, runPool } from "@/components/batches/run-pool";
 
@@ -30,6 +41,8 @@ const row = (over: Partial<BatchRowJson> = {}): BatchRowJson => ({
   avatarPhotoId: 3,
   avatarMode: "elegido",
   analysis: { status: "done", error: null, stale: false, staleReason: null },
+  risks: [],
+  removable: true,
   frame: gen(null),
   clip: gen(null),
   costs: { higgsfieldCredits: 0, claudeMicros: 0 },
@@ -174,5 +187,29 @@ describe("createLimiter", () => {
     const all = await Promise.all([task(10), task(5), task(1), task(3), task(2), task(4)]);
     expect(all).toEqual([10, 5, 1, 3, 2, 4]);
     expect(peak).toBe(2);
+  });
+});
+
+describe("lote v2: «Por revisar» y nombre automático", () => {
+  it("por revisar: error, desglose que ya no vale, candidatas sin aprobar o generación en duda", () => {
+    expect(needsReview(row())).toBe(false);
+    expect(needsReview(row({ analysis: { status: "failed", error: "x", stale: false, staleReason: null } }))).toBe(true);
+    expect(needsReview(row({ analysis: { status: "done", error: null, stale: true, staleReason: "brief" } }))).toBe(true);
+    expect(needsReview(row({ frame: gen({}) }))).toBe(true);
+    expect(needsReview(row({ frame: gen({ status: "unknown" }) }))).toBe(true);
+    expect(needsReview(row({ clip: gen({ status: "failed" }) }))).toBe(true);
+    expect(needsReview(row({ referenceStatus: "failed", referenceError: "Formato" }))).toBe(true);
+    expect(needsReview(row({ referenceStatus: "none" }), { kind: "failed", message: "Sin red" })).toBe(true);
+    // Un rechazo con su motivo no cuenta como fallo; en marcha, tampoco.
+    expect(needsReview(row({ frame: gen({ rejectReason: "feas" }) }))).toBe(false);
+    expect(needsReview(row({ analysis: { status: "running", error: null, stale: false, staleReason: null } }))).toBe(false);
+    // Las candidatas de un vídeo ajeno no se revisan aquí.
+    expect(needsReview(row({ mine: false, frame: gen({}) }))).toBe(false);
+  });
+
+  it("nombre automático: día/mes y los productos, sin repetir y como mucho 100 caracteres", () => {
+    expect(autoBatchName(new Date(2026, 10, 2), ["Lámpara Luna", "Botella", "Lámpara Luna"])).toBe("02/11 · Lámpara Luna, Botella");
+    expect(autoBatchName(new Date(2026, 0, 15), [])).toBe("15/01");
+    expect(autoBatchName(new Date(2026, 0, 15), ["x".repeat(200)])).toHaveLength(100);
   });
 });

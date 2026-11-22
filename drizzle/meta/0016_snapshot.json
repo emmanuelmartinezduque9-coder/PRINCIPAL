@@ -4,6 +4,84 @@
   "version": "7",
   "dialect": "postgresql",
   "tables": {
+    "public.batch_products": {
+      "name": "batch_products",
+      "schema": "",
+      "columns": {
+        "batch_id": {
+          "name": "batch_id",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "product_id": {
+          "name": "product_id",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "notes": {
+          "name": "notes",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "batch_products_batch_id_batches_id_fk": {
+          "name": "batch_products_batch_id_batches_id_fk",
+          "tableFrom": "batch_products",
+          "tableTo": "batches",
+          "columnsFrom": [
+            "batch_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "batch_products_product_id_products_id_fk": {
+          "name": "batch_products_product_id_products_id_fk",
+          "tableFrom": "batch_products",
+          "tableTo": "products",
+          "columnsFrom": [
+            "product_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "batch_products_batch_id_product_id_pk": {
+          "name": "batch_products_batch_id_product_id_pk",
+          "columns": [
+            "batch_id",
+            "product_id"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "batch_products_notes_length": {
+          "name": "batch_products_notes_length",
+          "value": "char_length(\"batch_products\".\"notes\") between 1 and 4000"
+        }
+      },
+      "isRLSEnabled": false
+    },
     "public.batches": {
       "name": "batches",
       "schema": "",
@@ -32,6 +110,13 @@
           "primaryKey": false,
           "notNull": true,
           "default": "now()"
+        },
+        "auto_analyze": {
+          "name": "auto_analyze",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": true
         }
       },
       "indexes": {
@@ -1150,14 +1235,50 @@
           "primaryKey": false,
           "notNull": true,
           "default": "now()"
+        },
+        "default_avatar_mode": {
+          "name": "default_avatar_mode",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'elegido'"
+        },
+        "default_avatar_photo_id": {
+          "name": "default_avatar_photo_id",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": false
         }
       },
       "indexes": {},
-      "foreignKeys": {},
+      "foreignKeys": {
+        "products_default_avatar_photo_id_product_photos_id_fk": {
+          "name": "products_default_avatar_photo_id_product_photos_id_fk",
+          "tableFrom": "products",
+          "tableTo": "product_photos",
+          "columnsFrom": [
+            "default_avatar_photo_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        }
+      },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
-      "checkConstraints": {},
+      "checkConstraints": {
+        "products_default_avatar_mode_valid": {
+          "name": "products_default_avatar_mode_valid",
+          "value": "\"products\".\"default_avatar_mode\" in ('elegido', 'sin_sustitucion', 'nadie')"
+        },
+        "products_default_avatar_only_chosen": {
+          "name": "products_default_avatar_only_chosen",
+          "value": "\"products\".\"default_avatar_mode\" = 'elegido' or \"products\".\"default_avatar_photo_id\" is null"
+        }
+      },
       "isRLSEnabled": false
     },
     "public.rule_docs": {
@@ -1761,6 +1882,12 @@
           "primaryKey": false,
           "notNull": false
         },
+        "product_notes": {
+          "name": "product_notes",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
         "spend_entry_id": {
           "name": "spend_entry_id",
           "type": "bigint",
@@ -2259,7 +2386,7 @@
       "checkConstraints": {
         "videos_note_length": {
           "name": "videos_note_length",
-          "value": "\"videos\".\"note\" is null or char_length(\"videos\".\"note\") <= 300"
+          "value": "\"videos\".\"note\" is null or char_length(\"videos\".\"note\") <= 6000"
         },
         "videos_kind_valid": {
           "name": "videos_kind_valid",

@@ -73,10 +73,10 @@ describe("lotes", () => {
     await expect(batchView(luis, deAnaLote.id)).rejects.toMatchObject({ status: 404 });
   });
 
-  it("añadir un vídeo: producto visible, avatar con papel «avatar» o «no aparece nadie», indicación de una línea", async () => {
+  it("añadir un vídeo: producto visible, avatar con papel «avatar» o «no aparece nadie», cambios específicos", async () => {
     const lote = await createBatch(ana, "A");
     const video = await addVideoToBatch(ana, lote.id, { productId: deAna.id, avatarPhotoId: avatarAna, avatarMode: "elegido", note: " Gancho\nmás corto " });
-    expect(video).toMatchObject({ batchId: lote.id, productId: deAna.id, avatarPhotoId: avatarAna, avatarMode: "elegido", note: "Gancho más corto", title: "Vídeo 1" });
+    expect(video).toMatchObject({ batchId: lote.id, productId: deAna.id, avatarPhotoId: avatarAna, avatarMode: "elegido", note: "Gancho\nmás corto", title: "Vídeo 1" });
     const sinNadie = await addVideoToBatch(ana, lote.id, { productId: deAna.id, avatarPhotoId: null, avatarMode: "nadie" });
     expect(sinNadie).toMatchObject({ avatarMode: "nadie", avatarPhotoId: null, note: null, title: "Vídeo 2" });
 
@@ -85,7 +85,7 @@ describe("lotes", () => {
       { productId: deAna.id, avatarPhotoId: articulo, avatarMode: "elegido" },
       { productId: deAna.id, avatarPhotoId: null, avatarMode: "elegido" },
       { productId: deAna.id, avatarPhotoId: avatarAna, avatarMode: "nadie" },
-      { productId: deAna.id, avatarPhotoId: null, avatarMode: "nadie", note: "x".repeat(301) },
+      { productId: deAna.id, avatarPhotoId: null, avatarMode: "nadie", note: "x".repeat(6_001) },
       { productId: deAna.id, avatarPhotoId: avatarAna, avatarMode: "sin_sustitucion" },
       { productId: deAna.id, avatarPhotoId: null, avatarMode: "no_person" },
       { productId: deAna.id, avatarPhotoId: null, avatarMode: undefined },

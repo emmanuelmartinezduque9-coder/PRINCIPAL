@@ -78,7 +78,18 @@ export const products = pgTable("products", {
   /** Sin clave ajena: el dueño en el propio ordenador (id 0) no tiene fila en `users`. */
   createdBy: bigint("created_by", { mode: "number" }).notNull(),
   createdAt: instant("created_at").notNull().defaultNow(),
-});
+  /**
+   * Avatar habitual de los vídeos nuevos: `elegido` (la foto de `default_avatar_photo_id` o, si
+   * no hay, la primera foto con papel avatar), `sin_sustitucion` o `nadie`.
+   */
+  defaultAvatarMode: text("default_avatar_mode").notNull().default("elegido"),
+  defaultAvatarPhotoId: bigint("default_avatar_photo_id", { mode: "number" }).references((): AnyPgColumn => productPhotos.id, {
+    onDelete: "set null",
+  }),
+}, (t) => [
+  check("products_default_avatar_mode_valid", sql`${t.defaultAvatarMode} in ('elegido', 'sin_sustitucion', 'nadie')`),
+  check("products_default_avatar_only_chosen", sql`${t.defaultAvatarMode} = 'elegido' or ${t.defaultAvatarPhotoId} is null`),
+]);
 
 /** Qué colaborador puede ver qué producto. El dueño los ve todos sin necesidad de asignación. */
 export const productAssignments = pgTable(
@@ -304,8 +315,32 @@ export const batches = pgTable(
     name: text("name").notNull(),
     createdBy: bigint("created_by", { mode: "number" }).notNull(),
     createdAt: instant("created_at").notNull().defaultNow(),
+    /** «Desglosar al subir»: pedir el desglose de cada vídeo en cuanto su referencia está lista. */
+    autoAnalyze: boolean("auto_analyze").notNull().default(true),
   },
   (t) => [index("batches_created_by").on(t.createdBy, t.createdAt)],
+);
+
+/**
+ * «Indicaciones para los vídeos de {producto}» de un lote: llegan al desglose de cada vídeo de ese
+ * producto en ese lote. Solo `src/server/videos/` toca esta tabla.
+ */
+export const batchProducts = pgTable(
+  "batch_products",
+  {
+    batchId: bigint("batch_id", { mode: "number" })
+      .notNull()
+      .references(() => batches.id, { onDelete: "cascade" }),
+    productId: bigint("product_id", { mode: "number" })
+      .notNull()
+      .references(() => products.id, { onDelete: "cascade" }),
+    notes: text("notes").notNull(),
+    updatedAt: instant("updated_at").notNull().defaultNow(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.batchId, t.productId] }),
+    check("batch_products_notes_length", sql`char_length(${t.notes}) between 1 and 4000`),
+  ],
 );
 
 /**
@@ -376,7 +411,7 @@ export const videos = pgTable(
     ),
     /** El lote al que pertenece, si se creó desde un lote. */
     batchId: bigint("batch_id", { mode: "number" }).references(() => batches.id, { onDelete: "set null" }),
-    /** «Cambios específicos» para este vídeo (una línea, máx. 300 caracteres); llega al desglose. */
+    /** «Cambios específicos» para este vídeo (máx. 6.000 caracteres, varias líneas); llega al desglose. */
     note: text("note"),
     createdAt: instant("created_at").notNull().defaultNow(),
     updatedAt: instant("updated_at").notNull().defaultNow(),
@@ -385,7 +420,7 @@ export const videos = pgTable(
     index("videos_product").on(t.productId, t.createdAt),
     index("videos_reference_status").on(t.referenceStatus),
     index("videos_batch").on(t.batchId),
-    check("videos_note_length", sql`${t.note} is null or char_length(${t.note}) <= 300`),
+    check("videos_note_length", sql`${t.note} is null or char_length(${t.note}) <= 6000`),
     check("videos_kind_valid", sql`${t.kind} in ('replicar', 'adaptacion_concepto')`),
     check("videos_adaptation_length", sql`${t.adaptation} is null or char_length(${t.adaptation}) <= 12000`),
     check("videos_avatar_mode_valid", sql`${t.avatarMode} in ('elegido', 'sin_sustitucion', 'nadie')`),
@@ -443,6 +478,8 @@ export const videoAnalyses = pgTable(
     avatarMode: text("avatar_mode").notNull().default("elegido"),
     note: text("note"),
     adaptation: text("adaptation"),
+    /** «Indicaciones» del lote para el producto del vídeo, si las había. */
+    productNotes: text("product_notes"),
     spendEntryId: bigint("spend_entry_id", { mode: "number" }),
     createdBy: bigint("created_by", { mode: "number" }).notNull(),
     createdAt: instant("created_at").notNull().defaultNow(),

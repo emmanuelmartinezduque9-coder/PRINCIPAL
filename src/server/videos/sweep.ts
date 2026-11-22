@@ -1,6 +1,6 @@
 import { and, eq, inArray, lt } from "drizzle-orm";
 import { getDb, schema } from "@/db/client";
-import { ANALYSIS_INTERRUPTED, ANALYSIS_STALE_MS, failOrphanedPausedAnalyses } from "@/server/videos/analysis";
+import { ANALYSIS_INTERRUPTED, ANALYSIS_STALE_MS, autoAnalyzePending, failOrphanedPausedAnalyses } from "@/server/videos/analysis";
 import { sweepGenerations, type GenDeps } from "@/server/videos/generations";
 import { cleanStaleUploads, PREPARE_FAILED } from "@/server/videos/upload";
 
@@ -64,6 +64,11 @@ export async function videoSweep(now: Date = new Date(), deps: GenDeps = {}): Pr
     if (stale > 0) console.warn(`[videos] ${stale} desglose(s) llevaban más de una hora sin terminar: quedan en error.`);
   } catch (error) {
     console.error("[videos] No se pudieron revisar los desgloses atascados:", error);
+  }
+  try {
+    await autoAnalyzePending();
+  } catch (error) {
+    console.error("[videos] No se pudieron pedir los desgloses automáticos:", error);
   }
   try {
     const orphaned = await failOrphanedPausedAnalyses();

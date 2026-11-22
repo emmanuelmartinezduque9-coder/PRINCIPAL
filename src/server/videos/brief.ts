@@ -2,8 +2,8 @@ import { HttpError } from "@/server/http";
 
 /**
  * Las indicaciones de un vídeo que llegan al desglose de Claude: el tipo (replicar la referencia o
- * adaptar su concepto), «Qué adaptación quieres», «Cambios específicos» y quién sale (el avatar
- * elegido, las personas de la referencia o nadie). Un desglose guarda las que usó: si cambian
+ * adaptar su concepto), «Qué adaptación quieres», «Cambios específicos», las «Indicaciones» del
+ * lote para su producto y quién sale (el avatar elegido, las personas de la referencia o nadie). Un desglose guarda las que usó: si cambian
  * después, ya no vale (`analysisStaleness`), igual que si cambia la referencia.
  */
 
@@ -14,15 +14,19 @@ export const AVATAR_MODES = ["elegido", "sin_sustitucion", "nadie"] as const;
 export type AvatarMode = (typeof AVATAR_MODES)[number];
 
 export const MAX_ADAPTATION = 12_000;
-export const MAX_NOTE = 300;
+export const MAX_NOTE = 6_000;
+export const MAX_PRODUCT_NOTES = 4_000;
 
 export const isVideoKind = (value: unknown): value is VideoKind => VIDEO_KINDS.includes(value as VideoKind);
 export const isAvatarMode = (value: unknown): value is AvatarMode => AVATAR_MODES.includes(value as AvatarMode);
 
 const BAD_VALUE = "Valor no válido.";
-const ADAPTATION_TOO_LONG = `«Qué adaptación quieres» no puede tener más de ${MAX_ADAPTATION.toLocaleString("es-ES")} caracteres.`;
+/** Miles con punto, como se escriben en España (también los de cuatro cifras: 4.000). */
+const thousands = (n: number) => String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ".");
+const ADAPTATION_TOO_LONG = `«Qué adaptación quieres» no puede tener más de ${thousands(MAX_ADAPTATION)} caracteres.`;
 const ADAPTATION_ONLY = "«Qué adaptación quieres» solo va con «Adaptación de concepto».";
-const NOTE_TOO_LONG = `«Cambios específicos» no puede tener más de ${MAX_NOTE} caracteres.`;
+const NOTE_TOO_LONG = `«Cambios específicos» no puede tener más de ${thousands(MAX_NOTE)} caracteres.`;
+const PRODUCT_NOTES_TOO_LONG = `Las indicaciones no pueden tener más de ${thousands(MAX_PRODUCT_NOTES)} caracteres.`;
 
 /** Lo que cuenta de un vídeo para su desglose. */
 export interface BriefSource {
@@ -30,6 +34,8 @@ export interface BriefSource {
   avatarMode: string;
   note: string | null;
   adaptation: string | null;
+  /** «Indicaciones para los vídeos de {producto}» del lote del vídeo. */
+  productNotes: string | null;
 }
 
 /** Lo que se manda a Claude y se guarda en el desglose. La adaptación solo con `adaptacion_concepto`. */
@@ -38,6 +44,7 @@ export interface Brief {
   avatarMode: AvatarMode;
   note: string | null;
   adaptation: string | null;
+  productNotes: string | null;
 }
 
 export function briefOf(video: BriefSource): Brief {
@@ -46,6 +53,7 @@ export function briefOf(video: BriefSource): Brief {
     avatarMode: video.avatarMode as AvatarMode,
     note: video.note,
     adaptation: video.kind === "adaptacion_concepto" ? video.adaptation : null,
+    productNotes: video.productNotes,
   };
 }
 
@@ -60,18 +68,29 @@ export function analysisStaleness(
   if (analysis.referenceMediaId !== video.referenceMediaId) return "reference";
   const used = briefOf(analysis);
   const now = briefOf(video);
-  const same = used.kind === now.kind && used.avatarMode === now.avatarMode && used.note === now.note && used.adaptation === now.adaptation;
+  const same =
+    used.kind === now.kind &&
+    used.avatarMode === now.avatarMode &&
+    used.note === now.note &&
+    used.adaptation === now.adaptation &&
+    used.productNotes === now.productNotes;
   return same ? null : "brief";
 }
 
-/** «Cambios específicos»: una línea, sin espacios de sobra; vacío es `null`. 400 si es largo o no es texto. */
-export function cleanNote(value: unknown): string | null {
+/** Texto de varias líneas sin espacios de sobra al principio ni al final; vacío es `null`. 400 si es largo o no es texto. */
+function cleanText(value: unknown, max: number, tooLong: string): string | null {
   if (value === null || value === undefined) return null;
   if (typeof value !== "string") throw new HttpError(400, BAD_VALUE);
-  const note = value.replace(/[\r\n]+/g, " ").trim();
-  if (note.length > MAX_NOTE) throw new HttpError(400, NOTE_TOO_LONG);
-  return note || null;
+  const text = value.replace(/\r\n?/g, "\n").trim();
+  if (text.length > max) throw new HttpError(400, tooLong);
+  return text || null;
 }
+
+/** «Cambios específicos» (varias líneas, hasta 6.000 caracteres). */
+export const cleanNote = (value: unknown) => cleanText(value, MAX_NOTE, NOTE_TOO_LONG);
+
+/** «Indicaciones para los vídeos de {producto}» (hasta 4.000 caracteres). */
+export const cleanProductNotes = (value: unknown) => cleanText(value, MAX_PRODUCT_NOTES, PRODUCT_NOTES_TOO_LONG);
 
 /**
  * Comprueba el tipo y la adaptación que se quieren guardar sobre `current` (lo que ya tiene el

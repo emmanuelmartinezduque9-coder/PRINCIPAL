@@ -35,7 +35,9 @@ beforeEach(async () => {
 
 describe("vídeos de un producto", () => {
   it("se numeran por producto y empiezan sin referencia", async () => {
-    expect(videoDeAna).toMatchObject({ title: "Vídeo 1", createdBy: ana.id, productId: producto.id, referenceStatus: "none", avatarMode: "elegido", kind: "replicar", adaptation: null, note: null });
+    expect(videoDeAna).toMatchObject({ title: "Vídeo 1", createdBy: ana.id, productId: producto.id, referenceStatus: "none", kind: "replicar", adaptation: null, note: null });
+    // Sin avatar habitual ni fotos de avatar, empieza con «No aparece nadie».
+    expect(videoDeAna).toMatchObject({ avatarMode: "nadie", avatarPhotoId: null });
     const segundo = await createVideo(dueno, producto.id);
     expect(segundo.title).toBe("Vídeo 2");
     const otro = await createVideo(ana, (await makeProduct(ana)).id);
@@ -119,7 +121,7 @@ describe("vídeos de un producto", () => {
       message: "«Qué adaptación quieres» solo va con «Adaptación de concepto».",
     });
     const adaptado = await updateVideoChoices(ana, videoDeAna.id, { kind: "adaptacion_concepto", adaptation: "  Que el pelo salga liso  ", note: " Más\nluz " });
-    expect(adaptado).toMatchObject({ kind: "adaptacion_concepto", adaptation: "Que el pelo salga liso", note: "Más luz" });
+    expect(adaptado).toMatchObject({ kind: "adaptacion_concepto", adaptation: "Que el pelo salga liso", note: "Más\nluz" });
     // Al pasar a «Replicar» la adaptación se conserva (no se usa) y vuelve al cambiar de nuevo.
     expect(await updateVideoChoices(ana, videoDeAna.id, { kind: "replicar" })).toMatchObject({ kind: "replicar", adaptation: "Que el pelo salga liso" });
     expect(await updateVideoChoices(ana, videoDeAna.id, { kind: "adaptacion_concepto", adaptation: "" })).toMatchObject({ adaptation: null });
@@ -130,7 +132,7 @@ describe("vídeos de un producto", () => {
       [{ kind: 1 }, "Valor no válido."],
       [{ adaptation: 5 }, "Valor no válido."],
       [{ adaptation: "x".repeat(12_001) }, "«Qué adaptación quieres» no puede tener más de 12.000 caracteres."],
-      [{ note: "x".repeat(301) }, "«Cambios específicos» no puede tener más de 300 caracteres."],
+      [{ note: "x".repeat(6_001) }, "«Cambios específicos» no puede tener más de 6.000 caracteres."],
       [{ note: ["x"] }, "Valor no válido."],
       [{ kind: "replicar", adaptation: "x" }, "«Qué adaptación quieres» solo va con «Adaptación de concepto»."],
     ];

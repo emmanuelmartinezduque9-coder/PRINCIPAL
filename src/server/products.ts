@@ -80,10 +80,49 @@ export interface ProductChanges {
   summary?: string;
   language?: string;
   countries?: string[];
+  /** Avatar habitual de los vídeos nuevos: `elegido` (con una foto de avatar del producto o `null`), `sin_sustitucion` o `nadie`. */
+  defaultAvatarMode?: unknown;
+  defaultAvatarPhotoId?: unknown;
+}
+
+const AVATAR_MODES = ["elegido", "sin_sustitucion", "nadie"];
+
+/** Comprueba el avatar habitual (400 si no vale) y devuelve las columnas que cambian. */
+async function checkDefaultAvatar(
+  current: Product,
+  changes: ProductChanges,
+): Promise<{ defaultAvatarMode?: string; defaultAvatarPhotoId?: number | null }> {
+  if (changes.defaultAvatarMode === undefined && changes.defaultAvatarPhotoId === undefined) return {};
+  // Elegir una foto sin decir el modo pasa a «elegido».
+  const pickingPhoto = changes.defaultAvatarMode === undefined && changes.defaultAvatarPhotoId !== undefined && changes.defaultAvatarPhotoId !== null;
+  const mode = changes.defaultAvatarMode ?? (pickingPhoto ? "elegido" : current.defaultAvatarMode);
+  if (typeof mode !== "string" || !AVATAR_MODES.includes(mode)) throw new HttpError(400, "Valor no válido.");
+  // Otro modo quita la foto.
+  let photoId = changes.defaultAvatarPhotoId === undefined ? (mode === "elegido" ? current.defaultAvatarPhotoId : null) : changes.defaultAvatarPhotoId;
+  if (photoId !== null && (!Number.isSafeInteger(photoId) || (photoId as number) <= 0)) throw new HttpError(400, "Valor no válido.");
+  if (photoId !== null && changes.defaultAvatarMode !== undefined && mode !== "elegido") {
+    throw new HttpError(400, "Con «Sin sustitución» o «No aparece nadie» no se elige avatar.");
+  }
+  if (photoId !== null) {
+    const [photo] = await getDb()
+      .select({ id: schema.productPhotos.id })
+      .from(schema.productPhotos)
+      .where(
+        and(
+          eq(schema.productPhotos.id, photoId as number),
+          eq(schema.productPhotos.productId, current.id),
+          eq(schema.productPhotos.role, "avatar"),
+        ),
+      );
+    if (!photo) throw new HttpError(400, "Elige una foto con papel «Avatar» de este producto.");
+  }
+  if (mode !== "elegido") photoId = null;
+  return { defaultAvatarMode: photoId !== null ? "elegido" : mode, defaultAvatarPhotoId: photoId as number | null };
 }
 
 /**
- * Cambia los datos de un producto que `user` puede ver; lo que no se envía se queda igual.
+ * Cambia los datos de un producto que `user` puede ver (también su avatar habitual); lo que no se
+ * envía se queda igual.
  * El ámbito se aplica también en la propia escritura: un producto ajeno (o que deja de estar
  * asignado entre la lectura y el cambio) responde 404 y no se toca.
  */
@@ -95,9 +134,10 @@ export async function updateProduct(user: AuthUser, productId: number, changes: 
     language: changes.language ?? current.language,
     countries: changes.countries ?? current.countries,
   });
+  const avatar = await checkDefaultAvatar(current, changes);
   const [product] = await getDb()
     .update(schema.products)
-    .set(values)
+    .set({ ...values, ...avatar })
     .where(and(eq(schema.products.id, current.id), productScope(user)))
     .returning();
   if (!product) throw new HttpError(404, NOT_FOUND);

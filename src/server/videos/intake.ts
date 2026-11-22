@@ -14,6 +14,7 @@ import {
   normalizeClip,
   probeVideo,
 } from "@/server/media/ffmpeg";
+import { autoRequestAnalysis } from "@/server/videos/analysis";
 import { clipPath, discardUpload, PREPARE_FAILED, REFERENCE_JOB, UPLOAD_GONE, uploadPath } from "@/server/videos/upload";
 import { getVideoFor } from "@/server/videos/videos";
 
@@ -137,7 +138,9 @@ async function prepare(ctx: JobContext, videoId: number, uploadId: string, deps:
 /**
  * Prepara la referencia subida en `uploadId` como un paso del trabajo, con el Higgsfield de quien
  * creó el vídeo. Si el vídeo ya no existe, solo limpia. Cualquier fallo deja la referencia en
- * error y lanza `StepFailedError`.
+ * error y lanza `StepFailedError`. Con la referencia lista, si el vídeo es de un lote con
+ * «Desglosar al subir», pide su desglose (`autoRequestAnalysis`; si no puede, lo vuelve a mirar el
+ * seguimiento).
  */
 export async function processReference(videoId: number, uploadId: string, deps: IntakeDeps = {}): Promise<void> {
   const [owner] = await getDb()
@@ -169,5 +172,11 @@ export async function processReference(videoId: number, uploadId: string, deps: 
       await discardUpload(uploadId);
     }
     throw error;
+  }
+  try {
+    await autoRequestAnalysis(videoId);
+  } catch (error) {
+    // La referencia ya está lista: un fallo aquí no la estropea; el seguimiento lo vuelve a intentar.
+    console.error(`[videos] No se pudo pedir el desglose automático del vídeo ${videoId}:`, error);
   }
 }

@@ -1,15 +1,15 @@
-import { and, asc, count, desc, eq, inArray } from "drizzle-orm";
+import { and, asc, count, desc, eq, inArray, sql } from "drizzle-orm";
 import { getDb, schema } from "@/db/client";
 import type { AuthUser } from "@/server/auth";
 import { HttpError } from "@/server/http";
-import { listProductPhotos } from "@/server/photos";
+import { coverPhotoIds, listProductPhotos } from "@/server/photos";
 import { listProductsFor } from "@/server/products";
 import { downloadableClipUrl, servableClipUrl } from "@/server/videos/clip";
 import { costsOfVideo, type VideoCosts } from "@/server/videos/costs";
-import { generationView, pollVideoGenerations, type GenerationView } from "@/server/videos/generations";
-import { checkKindInput, cleanNote, isAvatarMode, type AvatarMode, type VideoKind } from "@/server/videos/brief";
-import { createVideo, staleness, type Video } from "@/server/videos/videos";
-
+import { generationLock, generationView, pollVideoGenerations, type GenerationView } from "@/server/videos/generations";
+import type { Analysis } from "@/server/videos/analysis";
+import { checkKindInput, cleanNote, cleanProductNotes, isAvatarMode, type AvatarMode, type VideoKind } from "@/server/videos/brief";
+import { createVideo, getVideoFor, staleness, type Video } from "@/server/videos/videos";
 
 /**
  * Lotes: muchos vídeos a la vez encima del flujo de cada vídeo. Un lote es solo una lista con
@@ -24,6 +24,9 @@ const MAX_NAME = 100;
 
 const NOT_FOUND = "Lote no encontrado.";
 const NOT_CREATOR = "Solo quien creó el lote puede añadirle vídeos.";
+const ONLY_CREATOR = "Solo quien creó el lote puede cambiarlo.";
+const VIDEO_NOT_IN_BATCH = "Vídeo no encontrado.";
+const HAS_GENERATIONS = "Este vídeo ya tiene imágenes o clips: no se puede quitar.";
 const NEED_AVATAR = "Elige un avatar, «Sin sustitución» o «No aparece nadie».";
 const BAD_AVATAR = "Elige una foto con papel «Avatar» de este producto.";
 
@@ -35,13 +38,58 @@ async function visibleProducts(user: AuthUser): Promise<Map<number, string>> {
   return new Map((await listProductsFor(user)).map((product) => [product.id, product.name]));
 }
 
-/** Crea un lote vacío con nombre (1–100 caracteres). */
-export async function createBatch(user: AuthUser, name: string): Promise<Batch> {
+/**
+ * Crea un lote vacío con nombre (1–100 caracteres; la pantalla pone uno automático si se deja
+ * vacío) y «Desglosar al subir» (encendido si no se dice).
+ */
+export async function createBatch(user: AuthUser, name: string, options: { autoAnalyze?: unknown } = {}): Promise<Batch> {
   const clean = typeof name === "string" ? name.trim() : "";
   if (!clean) throw new HttpError(400, "Escribe el nombre del lote.");
   if (clean.length > MAX_NAME) throw new HttpError(400, `El nombre no puede tener más de ${MAX_NAME} caracteres.`);
-  const [batch] = await getDb().insert(batches).values({ name: clean, createdBy: user.id }).returning();
+  if (options.autoAnalyze !== undefined && typeof options.autoAnalyze !== "boolean") throw new HttpError(400, "Valor no válido.");
+  const [batch] = await getDb()
+    .insert(batches)
+    .values({ name: clean, createdBy: user.id, autoAnalyze: options.autoAnalyze ?? true })
+    .returning();
   return batch;
+}
+
+/** Un lote de `user` (404 si no lo ve, 403 si lo ve pero no lo creó: el dueño en uno ajeno). */
+async function ownBatch(user: AuthUser, batchId: number, message = ONLY_CREATOR): Promise<Batch> {
+  const batch = await getBatchFor(user, batchId);
+  if (batch.createdBy !== user.id) throw new HttpError(403, message);
+  return batch;
+}
+
+/** Enciende o apaga «Desglosar al subir». Solo quien creó el lote. */
+export async function setBatchAutoAnalyze(user: AuthUser, batchId: number, autoAnalyze: unknown): Promise<Batch> {
+  const batch = await ownBatch(user, batchId);
+  if (typeof autoAnalyze !== "boolean") throw new HttpError(400, "Valor no válido.");
+  const [updated] = await getDb().update(batches).set({ autoAnalyze }).where(eq(batches.id, batch.id)).returning();
+  return updated;
+}
+
+/**
+ * Guarda las «Indicaciones para los vídeos de {producto}» del lote (hasta 4.000 caracteres; vacío
+ * las quita). Llegan al desglose de cada vídeo de ese producto en el lote, y cambiarlas deja sus
+ * desgloses por repetir. Solo quien creó el lote y con un producto que ve.
+ */
+export async function setBatchProductNotes(user: AuthUser, batchId: number, productId: number, notes: unknown): Promise<string | null> {
+  const batch = await ownBatch(user, batchId);
+  const clean = cleanProductNotes(notes);
+  // También comprueba que el producto es visible (404 «Producto no encontrado.» si no).
+  await listProductPhotos(user, productId);
+  const db = getDb();
+  const where = and(eq(schema.batchProducts.batchId, batch.id), eq(schema.batchProducts.productId, productId));
+  if (clean === null) {
+    await db.delete(schema.batchProducts).where(where);
+    return null;
+  }
+  await db
+    .insert(schema.batchProducts)
+    .values({ batchId: batch.id, productId, notes: clean })
+    .onConflictDoUpdate({ target: [schema.batchProducts.batchId, schema.batchProducts.productId], set: { notes: clean, updatedAt: new Date() } });
+  return clean;
 }
 
 /** Un lote que `user` puede ver (suyo, o cualquiera si es el dueño). Si no: 404 «Lote no encontrado.». */
@@ -126,8 +174,7 @@ export async function addVideoToBatch(
   batchId: number,
   input: { productId: number; avatarPhotoId: number | null; avatarMode: unknown; kind?: unknown; adaptation?: unknown; note?: unknown },
 ): Promise<Video> {
-  const batch = await getBatchFor(user, batchId);
-  if (batch.createdBy !== user.id) throw new HttpError(403, NOT_CREATOR);
+  const batch = await ownBatch(user, batchId, NOT_CREATOR);
 
   const note = cleanNote(input.note);
   const { kind, adaptation } = checkKindInput(input);
@@ -172,6 +219,10 @@ export interface BatchRow {
   avatarMode: AvatarMode;
   /** El último desglose: su estado, su error y si ya no corresponde (otra referencia u otras indicaciones). */
   analysis: { status: string; error: string | null; stale: boolean; staleReason: "reference" | "brief" | null } | null;
+  /** Los riesgos que encontró el último desglose, si está hecho (texto en pantalla, función inexistente…). */
+  risks: Analysis["risks"];
+  /** Sin ninguna generación todavía: se puede quitar del lote. */
+  removable: boolean;
   frame: GenerationView;
   clip: GenerationView;
   costs: VideoCosts;
@@ -179,8 +230,19 @@ export interface BatchRow {
   clipReady: boolean;
 }
 
+/** Un producto del lote: su portada, sus «Indicaciones» y cuántos vídeos suyos ve quien mira. */
+export interface BatchGroup {
+  productId: number;
+  name: string;
+  coverPhotoId: number | null;
+  notes: string | null;
+  videos: number;
+}
+
 export interface BatchView {
-  batch: { id: number; name: string; createdAt: Date; createdBy: number; mine: boolean };
+  batch: { id: number; name: string; createdAt: Date; createdBy: number; mine: boolean; autoAnalyze: boolean };
+  /** Los productos del lote, en el orden de su primer vídeo. */
+  groups: BatchGroup[];
   rows: BatchRow[];
 }
 
@@ -211,11 +273,29 @@ export async function batchView(user: AuthUser, batchId: number): Promise<BatchV
             avatarMode: analyses.avatarMode,
             note: analyses.note,
             adaptation: analyses.adaptation,
+            productNotes: analyses.productNotes,
+            risks: sql<Analysis["risks"] | null>`${analyses.result}->'risks'`,
           })
           .from(analyses)
           .where(inArray(analyses.videoId, list.map((video) => video.id)))
           .orderBy(analyses.videoId, desc(analyses.version));
   const analysisOf = new Map(latest.map((row) => [row.videoId, row]));
+
+  const groupIds = [...new Set(list.map((video) => video.productId))];
+  const notes = await db
+    .select({ productId: schema.batchProducts.productId, notes: schema.batchProducts.notes })
+    .from(schema.batchProducts)
+    .where(eq(schema.batchProducts.batchId, batch.id));
+  const notesOf = new Map(notes.map((row) => [row.productId, row.notes]));
+  const covers = await coverPhotoIds(user, groupIds);
+  const generated =
+    list.length === 0
+      ? []
+      : await db
+          .selectDistinct({ videoId: schema.generations.videoId })
+          .from(schema.generations)
+          .where(inArray(schema.generations.videoId, list.map((video) => video.id)));
+  const withGenerations = new Set(generated.map((row) => row.videoId));
 
   const rows = await Promise.all(
     list.map(async (video): Promise<BatchRow> => {
@@ -241,7 +321,11 @@ export async function batchView(user: AuthUser, batchId: number): Promise<BatchV
         referenceError: video.referenceError,
         avatarPhotoId: video.avatarPhotoId,
         avatarMode: video.avatarMode as AvatarMode,
-        analysis: analysis ? { status: analysis.status, error: analysis.error, ...staleness(analysis, video) } : null,
+        analysis: analysis
+          ? { status: analysis.status, error: analysis.error, ...staleness(analysis, { ...video, productNotes: notesOf.get(video.productId) ?? null }) }
+          : null,
+        risks: analysis?.status === "done" ? (analysis.risks ?? []) : [],
+        removable: !withGenerations.has(video.id),
         frame,
         clip,
         costs,
@@ -249,7 +333,88 @@ export async function batchView(user: AuthUser, batchId: number): Promise<BatchV
       };
     }),
   );
-  return { batch: { ...batch, mine: batch.createdBy === user.id }, rows };
+  const groups = groupIds.map(
+    (productId): BatchGroup => ({
+      productId,
+      name: products.get(productId) ?? "",
+      coverPhotoId: covers.get(productId) ?? null,
+      notes: notesOf.get(productId) ?? null,
+      videos: list.filter((video) => video.productId === productId).length,
+    }),
+  );
+  return { batch: { ...batch, mine: batch.createdBy === user.id }, groups, rows };
+}
+
+/** Un vídeo de este lote que `user` puede cambiar: lote suyo (403 si no) y vídeo suyo dentro de él (404 si no). */
+async function ownBatchVideo(user: AuthUser, batchId: number, videoId: number): Promise<{ batch: Batch; video: Video }> {
+  const batch = await ownBatch(user, batchId);
+  const video = await getVideoFor(user, videoId);
+  if (video.batchId !== batch.id || video.createdBy !== user.id) throw new HttpError(404, VIDEO_NOT_IN_BATCH);
+  return { batch, video };
+}
+
+/**
+ * «Duplicar»: un vídeo nuevo en el mismo lote con lo mismo (producto, tipo, adaptación, cambios,
+ * quién sale, entorno, resolución). Si la referencia ya está lista se reutiliza tal cual (el mismo
+ * recorte en Higgsfield y una copia de sus fotogramas): no hay que volver a subirla. Si no, el
+ * duplicado empieza sin referencia. No copia desgloses, prompts ni generaciones.
+ */
+export async function duplicateBatchVideo(user: AuthUser, batchId: number, videoId: number): Promise<Video> {
+  const { batch, video } = await ownBatchVideo(user, batchId, videoId);
+  const copy = await createVideo(user, video.productId, {
+    batchId: batch.id,
+    note: video.note,
+    avatarPhotoId: video.avatarPhotoId,
+    avatarMode: video.avatarMode as AvatarMode,
+    kind: video.kind as VideoKind,
+    adaptation: video.adaptation,
+  });
+  const ready = video.referenceStatus === "ready";
+  const reference = ready
+    ? {
+        referenceStatus: "ready",
+        referenceSource: video.referenceSource,
+        referenceUrl: video.referenceUrl,
+        referenceDurationMs: video.referenceDurationMs,
+        referenceWidth: video.referenceWidth,
+        referenceHeight: video.referenceHeight,
+        referenceMediaId: video.referenceMediaId,
+        segmentDurationMs: video.segmentDurationMs,
+        cutsMs: video.cutsMs,
+      }
+    : {};
+  return getDb().transaction(async (tx) => {
+    const [updated] = await tx
+      .update(videos)
+      .set({ environmentPhotoId: video.environmentPhotoId, clipResolution: video.clipResolution, ...reference, updatedAt: new Date() })
+      .where(eq(videos.id, copy.id))
+      .returning();
+    if (ready) {
+      await tx.execute(sql`insert into video_frames (video_id, index, time_ms, mime, size, data)
+        select ${copy.id}, index, time_ms, mime, size, data from video_frames where video_id = ${video.id}`);
+    }
+    return updated;
+  });
+}
+
+/**
+ * «Quitar»: borra el vídeo del lote mientras no tenga ninguna generación (409 si la tiene: ya
+ * hay créditos de por medio). Sus desgloses se van con él; su coste en Claude sigue en el libro
+ * de gasto.
+ */
+export async function removeBatchVideo(user: AuthUser, batchId: number, videoId: number): Promise<void> {
+  const { video } = await ownBatchVideo(user, batchId, videoId);
+  await getDb().transaction(async (tx) => {
+    // El mismo cerrojo que apuntar una generación: o se apunta antes y aquí se ve, o se borra antes.
+    await generationLock(tx, video.id);
+    const [generation] = await tx
+      .select({ id: schema.generations.id })
+      .from(schema.generations)
+      .where(eq(schema.generations.videoId, video.id))
+      .limit(1);
+    if (generation) throw new HttpError(409, HAS_GENERATIONS);
+    await tx.delete(videos).where(eq(videos.id, video.id));
+  });
 }
 
 /**

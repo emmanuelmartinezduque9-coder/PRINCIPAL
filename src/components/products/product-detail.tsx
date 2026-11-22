@@ -17,6 +17,7 @@ import { countryLabels, isProductTab, languageLabel, type ProductTab, type Produ
 import { PhotoCount, PhotoManager } from "./photo-uploader";
 import { ProductFields, type ProductValues } from "./product-fields";
 import { VideoList } from "@/components/videos/video-list";
+import { DefaultAvatar } from "./default-avatar";
 
 const CHIP = "inline-flex h-7 items-center gap-1.5 rounded-md border bg-card px-2.5 text-sm";
 
@@ -176,7 +177,10 @@ export function ProductDetail({ id, initialTab = "fotos" }: { id: string; initia
     <div className="flex flex-col gap-6">
       <PageHeader back={back} title={product.name} actions={<EditProductDialog product={product} />}>
         <p className="max-w-[70ch] text-[15px] text-pretty text-muted-foreground">{product.summary}</p>
-        <MarketChips product={product} />
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+          <MarketChips product={product} />
+          <DefaultAvatar product={product} />
+        </div>
       </PageHeader>
 
       <Tabs

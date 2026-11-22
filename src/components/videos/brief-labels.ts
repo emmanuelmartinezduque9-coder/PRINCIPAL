@@ -3,7 +3,8 @@ import type { AvatarMode, VideoKind } from "@/server/videos/brief";
 
 /** Lo mismo que admite el servidor (`src/server/videos/brief.ts`). */
 export const MAX_ADAPTATION = 12_000;
-export const MAX_NOTE = 300;
+export const MAX_NOTE = 6_000;
+export const MAX_PRODUCT_NOTES = 4_000;
 
 export const KINDS: readonly VideoKind[] = ["replicar", "adaptacion_concepto"];
 
