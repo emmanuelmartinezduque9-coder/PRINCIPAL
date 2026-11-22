@@ -9,6 +9,7 @@ import {
   pgTable,
   primaryKey,
   text,
+  unique,
   timestamp,
 } from "drizzle-orm/pg-core";
 
@@ -114,4 +115,24 @@ export const productPhotos = pgTable(
     createdAt: instant("created_at").notNull().defaultNow(),
   },
   (t) => [index("product_photos_product").on(t.productId, t.id)],
+);
+
+/**
+ * Credenciales de terceros por persona (p. ej. Higgsfield). `secret_enc` es cifrado en sobre
+ * (`src/lib/vault.ts`) ligado a `user_id:kind`. Solo `src/server/credentials.ts` la toca.
+ * Sin clave ajena, igual que `products.created_by`: el dueño local (id 0) no tiene fila en `users`.
+ */
+export const credentials = pgTable(
+  "credentials",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    userId: bigint("user_id", { mode: "number" }).notNull(),
+    kind: text("kind").notNull(),
+    secretEnc: text("secret_enc").notNull(),
+    /** Datos no secretos que sí pueden verse (p. ej. el nombre de la cuenta conectada). */
+    meta: jsonb("meta").notNull().default(sql`'{}'::jsonb`),
+    createdAt: instant("created_at").notNull().defaultNow(),
+    updatedAt: instant("updated_at").notNull().defaultNow(),
+  },
+  (t) => [unique("credentials_user_kind").on(t.userId, t.kind)],
 );

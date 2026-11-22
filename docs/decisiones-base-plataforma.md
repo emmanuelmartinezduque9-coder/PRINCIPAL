@@ -41,3 +41,11 @@
 - **Interfaz.** Barra inferior fija en móvil y menú lateral desde 1024 px. Todos ven Productos y Gasto; el dueño además Reglas y Personas (los destinos de Gasto, Reglas y Personas llegan en tareas posteriores y hoy dan 404). Textos del formulario a 16 px y controles de 44 px de alto para el móvil. El menú se pide a `/api/auth/me`.
 - **Sin `LiveProvider` ni tema oscuro.** `providers.tsx` solo lleva TanStack Query y el aviso `Toaster`; el tema oscuro y las actualizaciones en vivo de Finanzas no hacen falta todavía.
 - **Componentes de `ui/`.** Copiados de Finanzas (button, input, label, card, badge, dialog, select, sonner, skeleton) cambiando solo la importación de `cn`; `textarea` escrito a mano con el mismo estilo (Finanzas no lo tiene).
+
+## Tarea 5: bóveda de credenciales
+
+- **Cifrado en sobre.** Cada secreto lleva su propia clave de datos aleatoria de 32 bytes (AES-256-GCM); la clave maestra (`VAULT_KEY`, o `vault.key` en local; la carga copia `loadKey()` de Finanzas) solo envuelve esa clave. Finanzas, en cambio, cifra directamente con la maestra. Formato `v1.<claveEnvuelta>.<iv>.<etiqueta>.<cuerpo>` en base64; la clave envuelta es `iv(12) + etiqueta(16) + clave cifrada(32)`.
+- **El contexto autentica las dos capas.** `context` (`userId:kind`) es dato autenticado del cuerpo y también de la clave envuelta: una fila copiada a otra persona o a otro tipo falla ya al desenvolver la clave. Se comprueban también las longitudes de iv y etiqueta (etiquetas truncadas no valen) y el número de partes.
+- **Rotar `VAULT_KEY` invalida lo guardado** (no hay identificador de clave todavía); habría que volver a envolver las claves de datos. Queda fuera de este plan.
+- **`credentials` sin clave ajena a `users`**, como `products.created_by`: el dueño local (id 0) no tiene fila. Único (`user_id`, `kind`); `saveCredential` usa `insert … on conflict do update` (atómico, sin bloqueos de asesoría).
+- **Solo `credentialStatus` es apto para el navegador.** `readCredential` devuelve el secreto y es solo de servidor; el SELECT de `credentialStatus` ni siquiera pide `secret_enc`.
