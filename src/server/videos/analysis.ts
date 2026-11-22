@@ -40,6 +40,14 @@ export const ANALYSIS_JOB = "video.desglose";
 export const ANALYSIS_STALE_MS = 60 * 60 * 1000;
 export const ANALYSIS_INTERRUPTED = "El desglose se interrumpió. Repítelo.";
 
+/**
+ * Clave del paso de un desglose (la misma va en sus cargos del libro de gasto). La persona no forma
+ * parte de la clave (`stepKey`), así que basta con el producto del vídeo y el desglose.
+ */
+export function analysisStepKey(productId: number, analysisId: number): string {
+  return stepKey({ jobName: ANALYSIS_JOB, userId: 0, productId }, "desglose", { analysisId });
+}
+
 const MAX_TOKENS = 16_000;
 /** Lado largo de las fotos del producto que se mandan a Claude. */
 const PHOTO_MAX_SIDE = 1024;
@@ -359,7 +367,7 @@ export async function runAnalysis(analysisId: number, deps: { gateway?: LlmGatew
   }
 
   const ctx: JobContext = { jobName: ANALYSIS_JOB, userId: row.createdBy, productId: row.productId };
-  const key = stepKey(ctx, "desglose", { analysisId });
+  const key = analysisStepKey(row.productId, analysisId);
   let step: StepResult;
   try {
     step = await runStep(ctx, key, async (): Promise<StepResult> => {

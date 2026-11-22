@@ -4,8 +4,8 @@ import type { AuthUser } from "@/server/auth";
 import { HttpError } from "@/server/http";
 import { listProductPhotos, type PhotoInfo, type PhotoRole } from "@/server/photos";
 import { getProductFor } from "@/server/products";
-import { costOfEntries } from "@/server/spend";
 import type { Analysis } from "@/server/videos/analysis";
+import { analysisCostMicros, costsOfVideo, type VideoCosts } from "@/server/videos/costs";
 import { clipManifest, imageManifest, type ManifestItem } from "@/server/videos/manifest";
 import { checkImagePrompt, checkVideoPrompt, type PromptIssue } from "@/server/videos/prompt-check";
 import { generationView, type GenerationView } from "@/server/videos/generations";
@@ -19,6 +19,16 @@ import { generationView, type GenerationView } from "@/server/videos/generations
 export type Video = typeof schema.videos.$inferSelect;
 
 export const MAX_REFERENCE_BYTES = 100 * 1024 * 1024;
+
+/** Resoluciones del clip (Seedance 2.5). Aquí y no en `clip.ts` para no importar el clip desde aquí. */
+export const CLIP_RESOLUTIONS = ["480p", "720p", "1080p"] as const;
+export type ClipResolution = (typeof CLIP_RESOLUTIONS)[number];
+export const DEFAULT_CLIP_RESOLUTION: ClipResolution = "480p";
+const BAD_RESOLUTION = "Resolución no disponible.";
+
+export const isClipResolution = (value: unknown): value is ClipResolution =>
+  typeof value === "string" && (CLIP_RESOLUTIONS as readonly string[]).includes(value);
+
 const MAX_TITLE = 100;
 
 const NOT_FOUND = "Vídeo no encontrado.";
@@ -107,19 +117,25 @@ function checkPhoto(photos: Array<{ id: number; role: PhotoRole }>, photoId: num
 }
 
 /**
- * Cambia título, avatar, entorno o «sin persona»; lo que no se envía se queda igual. Solo quien
- * creó el vídeo. El avatar y el entorno tienen que ser fotos de ese producto con ese papel.
+ * Cambia título, avatar, entorno, «sin persona» o la resolución del clip; lo que no se envía se
+ * queda igual. Solo quien creó el vídeo. El avatar y el entorno tienen que ser fotos de ese
+ * producto con ese papel; la resolución, una de `CLIP_RESOLUTIONS`.
  * «Sin persona» quita el avatar y elegir un avatar quita «sin persona»; pedir las dos cosas a la
  * vez es un 400.
  */
 export async function updateVideoChoices(
   user: AuthUser,
   videoId: number,
-  input: { title?: string; avatarPhotoId?: number | null; environmentPhotoId?: number | null; noPerson?: boolean },
+  input: { title?: string; avatarPhotoId?: number | null; environmentPhotoId?: number | null; noPerson?: boolean; clipResolution?: string },
 ): Promise<Video> {
   const video = await getVideoFor(user, videoId);
   requireVideoOwner(user, video);
   const changes: Partial<typeof schema.videos.$inferInsert> = {};
+
+  if (input.clipResolution !== undefined) {
+    if (!isClipResolution(input.clipResolution)) throw new HttpError(400, BAD_RESOLUTION);
+    changes.clipResolution = input.clipResolution;
+  }
 
   if (input.title !== undefined) {
     const title = input.title.trim();
@@ -178,7 +194,7 @@ export interface VideoView {
     status: string;
     error: string | null;
     result: Analysis | null;
-    /** Lo que costó en Claude, en micro-dólares; `null` si no consta su cargo. */
+    /** Lo que costó en Claude (todos sus intentos), en micro-dólares; `null` si no consta ningún cargo. */
     costMicros: number | null;
     /** La referencia de la que salió (recorte subido a Higgsfield). */
     referenceMediaId: string | null;
@@ -193,6 +209,8 @@ export interface VideoView {
   frame: GenerationView;
   /** El clip, igual que `frame`. */
   clip: GenerationView;
+  /** Lo que lleva costado el vídeo: créditos de Higgsfield enviados y Claude de todos sus desgloses. */
+  costs: VideoCosts;
 }
 
 /** Avisos de los prompts guardados del vídeo frente a sus manifiestos; un prompt que aún no existe no da avisos. */
@@ -234,7 +252,7 @@ export async function videoView(user: AuthUser, videoId: number): Promise<VideoV
           status: latest.status,
           error: latest.error,
           result: (latest.result as Analysis | null) ?? null,
-          costMicros: latest.spendEntryId === null ? null : await costOfEntries([latest.spendEntryId]),
+          costMicros: await analysisCostMicros(video, latest),
           referenceMediaId: latest.referenceMediaId,
           stale: latest.referenceMediaId !== video.referenceMediaId,
         }
@@ -244,5 +262,6 @@ export async function videoView(user: AuthUser, videoId: number): Promise<VideoV
     clipManifest: clipManifest(video, photos),
     frame: await generationView(video, "frame"),
     clip: await generationView(video, "clip"),
+    costs: await costsOfVideo(video),
   };
 }

@@ -335,6 +335,8 @@ export const videos = pgTable(
     videoPrompt: text("video_prompt"),
     /** Cómo usa el clip la imagen aprobada: `start_image` (primer fotograma) o `contextual_reference`. */
     frameUse: text("frame_use").notNull().default("start_image"),
+    /** Resolución del clip: `480p` (por defecto), `720p` o `1080p`. */
+    clipResolution: text("clip_resolution").notNull().default("480p"),
     /** La imagen inicial aprobada (un resultado de una generación `frame` de este vídeo). */
     approvedFrameResultId: bigint("approved_frame_result_id", { mode: "number" }).references(
       (): AnyPgColumn => generationResults.id,
@@ -354,6 +356,7 @@ export const videos = pgTable(
     check("videos_reference_status_valid", sql`${t.referenceStatus} in ('none', 'uploading', 'processing', 'ready', 'failed')`),
     check("videos_reference_source_valid", sql`${t.referenceSource} is null or ${t.referenceSource} in ('file', 'link')`),
     check("videos_frame_use_valid", sql`${t.frameUse} in ('start_image', 'contextual_reference')`),
+    check("videos_clip_resolution_valid", sql`${t.clipResolution} in ('480p', '720p', '1080p')`),
   ],
 );
 

@@ -1,0 +1,496 @@
+import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { createFakeHiggsfield, SAMPLE_VIDEO_URL, type FakeHiggsfield } from "@/connectors/higgsfield/fake";
+import { getPool } from "@/db/client";
+import { stopWorker } from "@/jobs/boss";
+import "@/jobs/video-jobs";
+import { createGateway } from "@/llm/gateway";
+import { login, resetLoginAttempts, type AuthUser } from "@/server/auth";
+import { addProductPhoto } from "@/server/photos";
+import type { Product } from "@/server/products";
+import { seedRules } from "@/server/rules";
+import { releaseSpend, reserveSpend, settleInterruptedSpend, settleSpend, spendSummary } from "@/server/spend";
+import { analysisStepKey, requestAnalysis, runAnalysis, type Analysis } from "@/server/videos/analysis";
+import {
+  buildClipRequest,
+  CLIP_MODEL,
+  CLIP_RESOLUTIONS,
+  clipDownload,
+  clipDurationSeconds,
+  DEFAULT_CLIP_RESOLUTION,
+} from "@/server/videos/clip";
+import { videoCosts } from "@/server/videos/costs";
+import {
+  approveResult,
+  finalizeGeneration,
+  quoteGeneration,
+  registerRequestBuilder,
+  rejectRound,
+  requestGeneration,
+  submitGeneration,
+  type GenDeps,
+} from "@/server/videos/generations";
+import { createVideo, getVideoFor, updateVideoChoices, videoView, type Video } from "@/server/videos/videos";
+import { POST as presupuestoRoute } from "@/app/api/videos/[videoId]/clip/presupuesto/route";
+import { POST as generarRoute } from "@/app/api/videos/[videoId]/clip/generar/route";
+import { POST as aprobarRoute } from "@/app/api/videos/[videoId]/clip/aprobar/route";
+import { POST as rechazarRoute } from "@/app/api/videos/[videoId]/clip/rechazar/route";
+import { GET as descargarRoute } from "@/app/api/videos/[videoId]/clip/descargar/route";
+import { PUT as putVideo } from "@/app/api/videos/[videoId]/route";
+import { fakeMessages } from "./helpers/fake-llm";
+import { makeProduct, makeUser, TEST_PASSWORD } from "./helpers/fixtures";
+import { truncateAll } from "./helpers/global-setup";
+
+const cookie = vi.hoisted(() => ({ value: undefined as string | undefined }));
+vi.mock("next/headers", () => ({
+  cookies: async () => ({
+    get: (name: string) => (name === "pr_sesion" && cookie.value ? { name, value: cookie.value } : undefined),
+  }),
+}));
+
+/**
+ * Clip con Higgsfield simulado. La imagen inicial se genera con un constructor de prueba (la de
+ * verdad es de la Tarea 9) para tener una imagen aprobada de verdad. Las descargas de resultados
+ * van por un `fetch` falso que devuelve un JPEG o un MP4 hechos con ffmpeg.
+ */
+
+const PROMPT =
+  "@Video1 gives only the camera movement, the rhythm and the action. @Image1 is the first frame. " +
+  "The woman is @Image2. The bottle is @Image3.";
+
+let dir: string;
+let red: Buffer;
+let green: Buffer;
+let mp4: Buffer;
+let fake: FakeHiggsfield;
+let deps: GenDeps;
+
+let dueno: AuthUser;
+let ana: AuthUser;
+let luis: AuthUser;
+let producto: Product;
+let v: Video;
+
+function ffmpeg(args: string[]): void {
+  const made = spawnSync("ffmpeg", ["-v", "error", "-y", ...args]);
+  if (made.status !== 0) throw new Error(made.stderr.toString());
+}
+
+beforeAll(() => {
+  dir = fs.mkdtempSync(path.join(os.tmpdir(), "prueba-clip-"));
+  const file = (name: string) => path.join(dir, name);
+  ffmpeg(["-f", "lavfi", "-i", "color=c=red:s=720x1280", "-frames:v", "1", file("rojo.jpg")]);
+  ffmpeg(["-f", "lavfi", "-i", "color=c=green:s=720x1280", "-frames:v", "1", file("verde.jpg")]);
+  ffmpeg(["-f", "lavfi", "-i", "color=c=blue:s=360x640:r=30:d=1", "-c:v", "libx264", "-pix_fmt", "yuv420p", file("clip.mp4")]);
+  red = fs.readFileSync(file("rojo.jpg"));
+  green = fs.readFileSync(file("verde.jpg"));
+  mp4 = fs.readFileSync(file("clip.mp4"));
+
+  registerRequestBuilder("frame", async () => ({
+    request: { model: "nano_banana_pro", prompt: "Image 1 is the composition.", aspectRatio: "9:16", resolution: "2k", medias: [] },
+    count: 2,
+  }));
+});
+
+afterAll(async () => {
+  fs.rmSync(dir, { recursive: true, force: true });
+  delete process.env.PRINCIPAL_HIGGSFIELD_FAKE;
+  await stopWorker();
+});
+
+beforeEach(async () => {
+  await truncateAll();
+  resetLoginAttempts();
+  delete process.env.PRINCIPAL_AUTH;
+  delete process.env.PRINCIPAL_HIGGSFIELD_FAKE;
+  cookie.value = undefined;
+  fake = createFakeHiggsfield();
+  const fakeFetch = (async (input: RequestInfo | URL) => {
+    const url = String(input);
+    const bytes = url.endsWith(".mp4") || url.startsWith("data:video/") ? mp4 : red;
+    return new Response(new Uint8Array(bytes), { status: 200 });
+  }) as typeof fetch;
+  deps = { higgsfield: fake.port, fetch: fakeFetch };
+  dueno = await makeUser("dueno");
+  ana = await makeUser("colaborador");
+  luis = await makeUser("colaborador");
+  producto = await makeProduct(ana, { name: "BrilloMax Ñandú" });
+  v = await createVideo(ana, producto.id);
+});
+
+// ───────────────────────── Ayudas ─────────────────────────
+
+const uploads = () => fake.calls.filter((c) => c.method === "uploadMedia");
+const fresh = () => getVideoFor(ana, v.id);
+
+/** Avatar (rojo) y artículo (verde), referencia lista de `seconds` s subida como `ref-media`. */
+async function readyReference(seconds = 6): Promise<void> {
+  await addProductPhoto(ana, producto.id, green, "articulo");
+  const avatar = await addProductPhoto(ana, producto.id, red, "avatar");
+  await updateVideoChoices(ana, v.id, { avatarPhotoId: avatar.id });
+  await getPool().query(
+    "update videos set reference_status = 'ready', reference_media_id = 'ref-media', reference_duration_ms = $2, segment_duration_ms = $2 where id = $1",
+    [v.id, seconds * 1000],
+  );
+  for (let index = 0; index < 4; index++) {
+    await getPool().query("insert into video_frames (video_id, index, time_ms, mime, size, data) values ($1, $2, $3, 'image/jpeg', $4, $5)", [
+      v.id,
+      index,
+      index * 1500,
+      red.length,
+      red,
+    ]);
+  }
+}
+
+/** Lo que dejaría un desglose hecho: su fila y el prompt del clip en el vídeo. */
+async function analysed(prompt = PROMPT, frameUse = "start_image"): Promise<void> {
+  await getPool().query(
+    "insert into video_analyses (video_id, version, status, reference_media_id, created_by) values ($1, 1, 'done', 'ref-media', $2)",
+    [v.id, ana.id],
+  );
+  await getPool().query("update videos set video_prompt = $2, frame_use = $3 where id = $1", [v.id, prompt, frameUse]);
+}
+
+/** Termina en el simulado los trabajos de una generación con esas direcciones y la finaliza (lo que haría `video.finalizar`). */
+async function finish(generationId: number, urls: (i: number) => string): Promise<void> {
+  const { rows } = await getPool().query("select job_ids as \"jobIds\" from generations where id = $1", [generationId]);
+  (rows[0].jobIds as string[]).forEach((jobId, i) => {
+    fake.state.jobs[jobId] = { jobId, status: "done", failure: null, error: null, urls: [urls(i)] };
+  });
+  await finalizeGeneration(generationId, deps);
+}
+
+/** Imagen inicial de 4 créditos, terminada y con la primera candidata aprobada; devuelve su `jobId`. */
+async function approvedFrame(): Promise<string> {
+  const { generationId } = await requestGeneration(ana, v.id, "frame", { expectedCredits: 4 }, deps);
+  await submitGeneration(generationId, deps);
+  await finish(generationId, (i) => `https://cdn.test/imagen-${i}.png`);
+  const result = (await videoView(ana, v.id)).frame.current!.results[0];
+  await approveResult(ana, v.id, "frame", result.id);
+  const { rows } = await getPool().query("select job_id as \"jobId\" from generation_results where id = $1", [result.id]);
+  return rows[0].jobId;
+}
+
+/** Todo listo para pedir el clip: referencia, desglose y la imagen aprobada. */
+async function readyForClip(): Promise<string> {
+  await readyReference();
+  await analysed();
+  return approvedFrame();
+}
+
+/** Pide y envía un clip con el precio que diga el presupuesto; devuelve la generación. */
+async function sendClip(): Promise<number> {
+  const { credits } = await quoteGeneration(ana, v.id, "clip", deps);
+  const { generationId } = await requestGeneration(ana, v.id, "clip", { expectedCredits: credits }, deps);
+  await submitGeneration(generationId, deps);
+  return generationId;
+}
+
+const as = async (user: AuthUser) => {
+  cookie.value = (await login(user.email, TEST_PASSWORD))!.token;
+};
+const params = (id: number | string) => ({ params: Promise.resolve({ videoId: String(id) }) });
+const post = (body: unknown) =>
+  new Request("http://localhost/x", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+
+// ───────────────────────── Petición ─────────────────────────
+
+describe("petición del clip", () => {
+  it("la duración es la del tramo redondeada a segundos, entre 4 y 30", () => {
+    expect([2_400, 9_600, 14_400, 30_000, 45_000].map(clipDurationSeconds)).toEqual([4, 10, 14, 30, 30]);
+    expect(CLIP_MODEL).toBe("seedance_2_5");
+    expect(CLIP_RESOLUTIONS).toEqual(["480p", "720p", "1080p"]);
+    expect(DEFAULT_CLIP_RESOLUTION).toBe("480p");
+  });
+
+  it("la petición es Seedance 2.5 omni_reference a 480p, sin audio, con la referencia, la imagen aprobada y las fotos", async () => {
+    const approvedJobId = await readyForClip();
+    const video = await fresh();
+    const { request, count } = await buildClipRequest(ana, video, deps);
+    expect(count).toBe(1);
+    // Las fotos se suben en el orden del manifiesto: avatar (media-1) y artículo (media-2).
+    expect(request).toEqual({
+      model: "seedance_2_5",
+      mode: "omni_reference",
+      prompt: video.videoPrompt,
+      aspectRatio: "9:16",
+      duration: 6,
+      resolution: "480p",
+      generateAudio: false,
+      bitrateMode: "high",
+      medias: [
+        { role: "video_references", value: "ref-media" },
+        { role: "start_image", value: approvedJobId },
+        { role: "image_references", value: "media-1" },
+        { role: "image_references", value: "media-2" },
+      ],
+    });
+    expect(uploads().map((c) => (c.args as { filename: string }).filename)).toEqual([
+      expect.stringMatching(/^foto-\d+\.jpg$/),
+      expect.stringMatching(/^foto-\d+\.jpg$/),
+    ]);
+    // Se sube con el Higgsfield de quien creó el vídeo y solo una vez aunque se vuelva a construir.
+    await buildClipRequest(ana, video, deps);
+    expect(uploads()).toHaveLength(2);
+    expect(uploads().every((c) => c.userId === ana.id)).toBe(true);
+  });
+
+  it("como referencia de la escena, la imagen aprobada va la primera de image_references y no hay start_image", async () => {
+    await readyReference();
+    await analysed(PROMPT.replace("is the first frame", "is the scene"), "contextual_reference");
+    const approvedJobId = await approvedFrame();
+    const { request } = await buildClipRequest(ana, await fresh(), deps);
+    const medias = (request as { medias: Array<{ role: string; value: string }> }).medias;
+    expect(medias[1]).toEqual({ role: "image_references", value: approvedJobId });
+    expect(medias.some((m) => m.role === "start_image")).toBe(false);
+    expect(medias.map((m) => m.role)).toEqual(["video_references", "image_references", "image_references", "image_references"]);
+  });
+
+  it("sin imagen aprobada no hay clip", async () => {
+    await readyReference();
+    await analysed();
+    await expect(quoteGeneration(ana, v.id, "clip", deps)).rejects.toMatchObject({ status: 409, message: "Aprueba primero la imagen inicial." });
+    // Rechazar la imagen aprobada la quita: tampoco hay clip.
+    await approvedFrame();
+    await rejectRound(ana, v.id, "frame", "La luz no se parece");
+    await expect(quoteGeneration(ana, v.id, "clip", deps)).rejects.toMatchObject({ status: 409, message: "Aprueba primero la imagen inicial." });
+    expect(fake.calls.some((c) => c.method === "quoteVideo")).toBe(false);
+  });
+
+  it("si la referencia cambió desde el desglose, no se pide precio", async () => {
+    await readyForClip();
+    await getPool().query("update videos set reference_media_id = 'otra-ref' where id = $1", [v.id]);
+    await expect(quoteGeneration(ana, v.id, "clip", deps)).rejects.toMatchObject({
+      status: 409,
+      message: "La referencia cambió; vuelve a pedir el desglose.",
+    });
+    expect(uploads()).toHaveLength(0);
+  });
+
+  it("un prompt de clip con errores no deja pedir precio ni sube nada", async () => {
+    await readyForClip();
+    await getPool().query("update videos set video_prompt = $2 where id = $1", [v.id, PROMPT.replace(" The bottle is @Image3.", "")]);
+    await expect(quoteGeneration(ana, v.id, "clip", deps)).rejects.toMatchObject({ status: 400, message: "Falta decir para qué sirve @Image3." });
+    expect(uploads()).toHaveLength(0);
+    expect(fake.calls.some((c) => c.method === "quoteVideo")).toBe(false);
+  });
+
+  it("la resolución elegida va en la petición; una que no existe se rechaza", async () => {
+    await readyForClip();
+    expect((await fresh()).clipResolution).toBe("480p");
+    await updateVideoChoices(ana, v.id, { clipResolution: "720p" });
+    const { request } = await buildClipRequest(ana, await fresh(), deps);
+    expect(request).toMatchObject({ resolution: "720p", duration: 6 });
+    expect(await quoteGeneration(ana, v.id, "clip", deps)).toMatchObject({ credits: 6 * 5 });
+
+    await expect(updateVideoChoices(ana, v.id, { clipResolution: "8k" })).rejects.toMatchObject({ status: 400, message: "Resolución no disponible." });
+    await expect(updateVideoChoices(luis, v.id, { clipResolution: "1080p" })).rejects.toMatchObject({ status: 404 });
+
+    await as(ana);
+    const bad = await putVideo(new Request("http://localhost/x", { method: "PUT", body: JSON.stringify({ clipResolution: "8k" }) }), params(v.id));
+    expect(bad.status).toBe(400);
+    expect(await bad.json()).toEqual({ error: "Resolución no disponible." });
+    const ok = await putVideo(new Request("http://localhost/x", { method: "PUT", body: JSON.stringify({ clipResolution: "1080p" }) }), params(v.id));
+    expect(ok.status).toBe(200);
+    expect((await ok.json()).video.clipResolution).toBe("1080p");
+  });
+
+  it("créditos justos para la imagen pero no para el clip: lo dice y la imagen aprobada sigue ahí", async () => {
+    fake.state.credits = 14;
+    await readyForClip(); // la imagen gasta 4: quedan 10
+    const approved = (await fresh()).approvedFrameResultId;
+    expect(approved).not.toBeNull();
+    expect(await quoteGeneration(ana, v.id, "clip", deps)).toMatchObject({ credits: 18, balance: 10, enough: false });
+    await expect(requestGeneration(ana, v.id, "clip", { expectedCredits: 18 }, deps)).rejects.toMatchObject({
+      status: 409,
+      message: "No tienes créditos suficientes en Higgsfield: hacen falta 18 y tienes 10.",
+    });
+    expect((await fresh()).approvedFrameResultId).toBe(approved);
+    const { rows } = await getPool().query("select count(*)::int as n from generations where kind = 'clip'");
+    expect(rows[0].n).toBe(0);
+    expect(fake.calls.some((c) => c.method === "submitVideo")).toBe(false);
+  });
+});
+
+// ───────────────────────── Coste ─────────────────────────
+
+const REPLY: Analysis = {
+  conceptLogic: "Alguien descubre que el producto resuelve en un gesto lo que antes costaba un rato.",
+  shots: [{ startS: 0, endS: 6, seen: "Mujer con una botella", action: "Levanta la botella", onScreenText: "" }],
+  adaptation: [
+    {
+      original: "Spray",
+      equivalent: "Botella del producto",
+      physicalAction: "Pulverizar",
+      visibleResult: "La mancha desaparece",
+      kept: "El gesto",
+      changed: "El producto",
+      why: "La demostración es la misma",
+    },
+  ],
+  risks: [],
+  frameUse: "start_image",
+  imagePrompt: "Image 1 supplies the composition.",
+  videoPrompt: PROMPT,
+};
+const reply = () => ({ text: JSON.stringify(REPLY), usage: { inputTokens: 40_000, outputTokens: 3_000 } });
+
+describe("coste por vídeo", () => {
+  beforeEach(async () => {
+    await seedRules();
+  });
+
+  it("el coste del vídeo suma los créditos de lo enviado y el coste de Claude de sus desgloses", async () => {
+    await readyReference();
+    const { analysisId } = await requestAnalysis(ana, v.id);
+    await runAnalysis(analysisId, { gateway: createGateway({ client: fakeMessages([reply()]).client }) });
+    const analysisCost = (await videoView(ana, v.id)).analysis!.costMicros!;
+    expect(analysisCost).toBeGreaterThan(0);
+
+    await approvedFrame();
+    const clipId = await sendClip();
+    await finish(clipId, () => "https://cdn.test/clip.mp4");
+
+    expect(await videoCosts(ana, v.id)).toEqual({ higgsfieldCredits: 4 + 18, claudeMicros: analysisCost });
+    expect((await videoView(ana, v.id)).costs).toEqual({ higgsfieldCredits: 22, claudeMicros: analysisCost });
+    // Lo ve también quien ve el producto; quien no, 404.
+    expect(await videoCosts(dueno, v.id)).toEqual({ higgsfieldCredits: 22, claudeMicros: analysisCost });
+    await expect(videoCosts(luis, v.id)).rejects.toMatchObject({ status: 404, message: "Vídeo no encontrado." });
+  });
+
+  it("un desglose fallido y su repetición cuentan los dos cargos", async () => {
+    await readyReference();
+    const first = await requestAnalysis(ana, v.id);
+    // Claude responde sin el formato pedido: el desglose falla, pero se cobró.
+    await expect(
+      runAnalysis(first.analysisId, { gateway: createGateway({ client: fakeMessages([{ text: "no es json", usage: { inputTokens: 40_000, outputTokens: 500 } }]).client }) }),
+    ).rejects.toThrow();
+    const failedCost = (await spendSummary(ana)).spentMicros;
+    expect(failedCost).toBeGreaterThan(0);
+
+    const second = await requestAnalysis(ana, v.id);
+    await runAnalysis(second.analysisId, { gateway: createGateway({ client: fakeMessages([reply()]).client }) });
+    const total = (await spendSummary(ana)).spentMicros;
+    expect(total).toBeGreaterThan(failedCost);
+    expect((await videoCosts(ana, v.id)).claudeMicros).toBe(total);
+  });
+
+  it("un desglose cortado a mitad y reintentado cuenta los dos intentos, aunque el desglose solo guarde el último cargo", async () => {
+    await readyReference();
+    const { analysisId } = await requestAnalysis(ana, v.id);
+    // El primer intento reservó y el proceso se cayó: la reserva queda como gastada, con la misma clave.
+    const key = analysisStepKey(producto.id, analysisId);
+    const { entryId } = await reserveSpend({ userId: ana.id, productId: producto.id, provider: "claude", stepKey: key, estimateMicros: 70_000 });
+    expect(await settleInterruptedSpend([key])).toBe(1);
+    await runAnalysis(analysisId, { gateway: createGateway({ client: fakeMessages([reply()]).client }) });
+
+    const { rows } = await getPool().query("select spend_entry_id as \"spendEntryId\" from video_analyses where id = $1", [analysisId]);
+    expect(rows[0].spendEntryId).not.toBe(entryId);
+    const total = (await spendSummary(ana)).spentMicros;
+    expect(total).toBeGreaterThan(70_000);
+    expect((await videoCosts(ana, v.id)).claudeMicros).toBe(total);
+    expect((await videoView(ana, v.id)).analysis!.costMicros).toBe(total);
+  });
+
+  it("lo liberado no cuenta y los cargos de otro vídeo tampoco", async () => {
+    await readyReference();
+    const { analysisId } = await requestAnalysis(ana, v.id);
+    await runAnalysis(analysisId, { gateway: createGateway({ client: fakeMessages([reply()]).client }) });
+    const own = (await videoCosts(ana, v.id)).claudeMicros;
+    const key = analysisStepKey(producto.id, analysisId);
+    const released = await reserveSpend({ userId: ana.id, productId: producto.id, provider: "claude", stepKey: key, estimateMicros: 5_000 });
+    await releaseSpend(released.entryId);
+    const other = await reserveSpend({ userId: ana.id, productId: producto.id, provider: "claude", stepKey: analysisStepKey(producto.id, analysisId + 1000), estimateMicros: 9_000 });
+    await settleSpend(other.entryId, { costMicros: 9_000 });
+    expect((await videoCosts(ana, v.id)).claudeMicros).toBe(own);
+  });
+});
+
+// ───────────────────────── Descarga ─────────────────────────
+
+describe("descarga del clip", () => {
+  it("la descarga solo sirve la dirección guardada del clip, a quien ve el vídeo", async () => {
+    await readyForClip();
+    await expect(clipDownload(ana, v.id)).rejects.toMatchObject({ status: 404, message: "Todavía no hay clip." });
+
+    const clipId = await sendClip();
+    await finish(clipId, () => "https://cdn.test/clip-1.mp4");
+    const expected = { url: "https://cdn.test/clip-1.mp4", filename: `brillomax-nandu-video-${v.id}.mp4` };
+    expect(await clipDownload(ana, v.id)).toEqual(expected);
+    expect(await clipDownload(dueno, v.id)).toEqual(expected);
+    await expect(clipDownload(luis, v.id)).rejects.toMatchObject({ status: 404, message: "Vídeo no encontrado." });
+    await expect(clipDownload(ana, 999_999)).rejects.toMatchObject({ status: 404, message: "Vídeo no encontrado." });
+  });
+
+  it("sirve el clip aprobado antes que el último terminado; nunca una dirección que no sea https", async () => {
+    await readyForClip();
+    const first = await sendClip();
+    await finish(first, () => "https://cdn.test/primero.mp4");
+    const firstResult = (await videoView(ana, v.id)).clip.current!.results[0].id;
+    await rejectRound(ana, v.id, "clip", "Se mueve demasiado");
+    const second = await sendClip();
+    await finish(second, () => "https://cdn.test/segundo.mp4");
+    expect((await clipDownload(ana, v.id)).url).toBe("https://cdn.test/segundo.mp4");
+    // Un clip aprobado que no es el último (por la API no se puede aprobar uno rechazado; aquí se fuerza).
+    await getPool().query("update videos set approved_clip_result_id = $2 where id = $1", [v.id, firstResult]);
+    expect((await clipDownload(ana, v.id)).url).toBe("https://cdn.test/primero.mp4");
+
+    await getPool().query("update generation_results set url = 'http://cdn.test/inseguro.mp4' where id = $1", [firstResult]);
+    expect((await clipDownload(ana, v.id)).url).toBe("https://cdn.test/segundo.mp4");
+    await getPool().query("update generation_results set url = 'data:video/mp4;base64,AAAA'");
+    await expect(clipDownload(ana, v.id)).rejects.toMatchObject({ status: 404, message: "Todavía no hay clip." });
+  });
+
+  it("GET …/clip/descargar reenvía el archivo como adjunto (modo local simulado, dirección data:)", async () => {
+    await readyForClip();
+    const clipId = await sendClip();
+    await finish(clipId, () => SAMPLE_VIDEO_URL);
+    await as(ana);
+    // Fuera del modo simulado, una dirección `data:` no se sirve.
+    expect((await descargarRoute(new Request("http://localhost/x"), params(v.id))).status).toBe(404);
+
+    process.env.PRINCIPAL_HIGGSFIELD_FAKE = "1";
+    const response = await descargarRoute(new Request("http://localhost/x"), params(v.id));
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe("video/mp4");
+    expect(response.headers.get("content-disposition")).toBe(
+      `attachment; filename="brillomax-nandu-video-${v.id}.mp4"; filename*=UTF-8''brillomax-nandu-video-${v.id}.mp4`,
+    );
+    const body = Buffer.from(await response.arrayBuffer());
+    expect(body).toEqual(Buffer.from(SAMPLE_VIDEO_URL.split(",")[1], "base64"));
+
+    await as(luis);
+    expect((await descargarRoute(new Request("http://localhost/x"), params(v.id))).status).toBe(404);
+  });
+});
+
+// ───────────────────────── Rutas ─────────────────────────
+
+describe("rutas del clip", () => {
+  it("presupuesto, generar, aprobar y rechazar con el constructor del clip", async () => {
+    await readyForClip();
+    await as(luis);
+    expect((await presupuestoRoute(new Request("http://localhost/x", { method: "POST" }), params(v.id))).status).toBe(404);
+
+    await as(ana);
+    // Sin `deps`: el simulado del modo local.
+    process.env.PRINCIPAL_HIGGSFIELD_FAKE = "1";
+    const quote = await presupuestoRoute(new Request("http://localhost/x", { method: "POST" }), params(v.id));
+    expect(quote.status).toBe(200);
+    expect(await quote.json()).toMatchObject({ credits: 18, enough: true, round: 1 });
+
+    expect((await generarRoute(post({}), params(v.id))).status).toBe(400);
+    const generated = await generarRoute(post({ expectedCredits: 18 }), params(v.id));
+    expect(generated.status).toBe(202);
+    const { generationId } = await generated.json();
+    const { rows } = await getPool().query("select kind, status, request from generations where id = $1", [generationId]);
+    expect(rows[0]).toMatchObject({ kind: "clip", status: "intent", request: { model: "seedance_2_5", mode: "omni_reference", generateAudio: false } });
+
+    expect((await aprobarRoute(post({ resultId: 123456 }), params(v.id))).status).toBe(404);
+    expect((await rechazarRoute(post({ reason: "Se mueve demasiado" }), params(v.id))).status).toBe(409);
+  });
+});

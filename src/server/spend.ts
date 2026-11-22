@@ -454,6 +454,22 @@ export async function costOfEntries(entryIds: number[]): Promise<number> {
   return row?.micros ?? 0;
 }
 
+/**
+ * Lo que cuentan los cargos de esos pasos, en micro-dólares, por clave de paso (solo las claves con
+ * algún cargo que cuente). Suma todos los intentos de cada paso (fallidos, interrumpidos,
+ * rechazados y repetidos: todos llevan la misma clave), con el mismo criterio que `costOfEntries`.
+ */
+export async function costOfSteps(stepKeys: string[]): Promise<Map<string, number>> {
+  const keys = [...new Set(stepKeys)].filter((key) => typeof key === "string" && key.length > 0);
+  if (keys.length === 0) return new Map();
+  const rows = await getDb()
+    .select({ stepKey: entries.stepKey, micros: countedMicros })
+    .from(entries)
+    .where(and(inArray(entries.stepKey, keys), inArray(entries.status, COUNTED_STATUSES)))
+    .groupBy(entries.stepKey);
+  return new Map(rows.map((row) => [row.stepKey, row.micros]));
+}
+
 /** Coste liquidado de un cargo, o `null` si no existe o aún no está liquidado. Para comprobar el libro. */
 export async function settledCostMicros(entryId: number): Promise<number | null> {
   const [row] = await getDb()

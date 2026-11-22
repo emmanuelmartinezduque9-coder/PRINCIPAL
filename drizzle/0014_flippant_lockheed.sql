@@ -1,0 +1,2 @@
+ALTER TABLE "videos" ADD COLUMN "clip_resolution" text DEFAULT '480p' NOT NULL;--> statement-breakpoint
+ALTER TABLE "videos" ADD CONSTRAINT "videos_clip_resolution_valid" CHECK ("videos"."clip_resolution" in ('480p', '720p', '1080p'));
