@@ -11,6 +11,7 @@ const row = (over: Partial<Row>): Row => ({
   hookSeconds: 4,
   bodies: [],
   note: "",
+  editReference: "",
   song: null,
   open: false,
   error: null,
@@ -38,8 +39,9 @@ describe("borrador de «Nuevo lote»", () => {
           notes: "Más luz",
           kind: "solo_gancho",
           hookSeconds: 6,
+          variant: 5,
           rows: [
-            row({ key: "a", kind: "solo_gancho", hookSeconds: 6, bodies: [3, 4], note: "Más corto", avatar: 9, song, open: true }),
+            row({ key: "a", kind: "solo_gancho", hookSeconds: 6, bodies: [3, 4], note: "Más corto", avatar: 9, song, open: true, editReference: "https://www.tiktok.com/@a/video/1" }),
             row({ key: "b", kind: "adaptacion_concepto", adaptation: "Para perros", avatar: "nadie" }),
           ],
         },
@@ -80,9 +82,9 @@ describe("borrador de «Nuevo lote»", () => {
     expect(parsed.name).toBe("");
     expect(parsed.autoAnalyze).toBe(true);
     expect(parsed.batchId).toBeNull();
-    expect(parsed.groups[0]).toMatchObject({ productId: null, notes: "Algo", kind: "replicar", hookSeconds: 4 });
+    expect(parsed.groups[0]).toMatchObject({ productId: null, notes: "Algo", kind: "replicar", hookSeconds: 4, variant: null });
     expect(parsed.groups[0].rows).toHaveLength(1);
-    expect(parsed.groups[0].rows[0]).toMatchObject({ avatar: null, bodies: [1], kind: "solo_gancho" });
+    expect(parsed.groups[0].rows[0]).toMatchObject({ avatar: null, bodies: [1], kind: "solo_gancho", editReference: "" });
   });
 
   it("un lote ya creado a medias se conserva para seguir con «Añadir y subir»", () => {

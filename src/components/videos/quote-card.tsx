@@ -78,7 +78,7 @@ export function QuoteCard({
   const missing = data ? data.credits - data.balance : 0;
 
   return (
-    <section aria-label="Precio" className="flex flex-col gap-4 rounded-xl bg-card p-5 ring-1 ring-foreground/10">
+    <section aria-label="Precio" className="panel flex flex-col gap-4 p-5">
       {children}
       {quote.isLoading ? (
         <div className="flex flex-col gap-3" aria-label="Calculando el precio">

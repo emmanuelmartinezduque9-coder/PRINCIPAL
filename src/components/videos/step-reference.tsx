@@ -94,10 +94,10 @@ function Notice({ tone, icon: Icon, children, action }: { tone: "warn" | "error"
       role={tone === "error" ? "alert" : "status"}
       className={cn(
         "flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg px-3 py-2.5 text-sm",
-        tone === "error" ? "bg-destructive/10" : "bg-amber-500/10",
+        tone === "error" ? "bg-destructive/10" : "bg-warning/10",
       )}
     >
-      <Icon className={cn("size-4 shrink-0", tone === "error" ? "text-destructive" : "text-amber-600")} aria-hidden />
+      <Icon className={cn("size-4 shrink-0", tone === "error" ? "text-destructive" : "text-warning-ink")} aria-hidden />
       <span className="min-w-0 flex-1">{children}</span>
       {action}
     </div>
@@ -202,8 +202,8 @@ function LinkPending({ link, compact }: { link: NonNullable<VideoViewJson["link"
   const text = link.status === "queued" ? "En cola: el Mac lo traerá enseguida…" : "El Mac está descargando el vídeo…";
   if (compact) {
     return (
-      <div role="status" className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg bg-amber-500/10 px-3 py-2.5 text-sm">
-        <Loader2 className="size-4 shrink-0 animate-spin text-amber-600" aria-hidden />
+      <div role="status" className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg bg-warning/10 px-3 py-2.5 text-sm">
+        <Loader2 className="size-4 shrink-0 animate-spin text-warning-ink" aria-hidden />
         <span className="min-w-0 flex-1">{text}</span>
         <span className="truncate text-xs text-muted-foreground" title={link.url}>
           {host} {code}

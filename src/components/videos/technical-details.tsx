@@ -43,7 +43,7 @@ export function TechnicalDetails({ videoId }: { videoId: number }) {
 
   return (
     <details
-      className="group rounded-xl bg-card ring-1 ring-foreground/10"
+      className="panel group"
       onToggle={(event) => setOpen((event.currentTarget as HTMLDetailsElement).open)}
     >
       <summary className="flex cursor-pointer list-none items-center gap-2 rounded-xl px-5 py-3.5 text-sm font-medium outline-none select-none focus-visible:ring-3 focus-visible:ring-ring/50 [&::-webkit-details-marker]:hidden">

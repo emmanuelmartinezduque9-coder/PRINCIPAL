@@ -72,7 +72,7 @@ function StuckResolver({ videoId, kind, stuck }: { videoId: number; kind: Genera
   const { adopt, dismiss } = useGenerationActions(videoId, kind);
   const busy = adopt.isPending || dismiss.isPending;
   return (
-    <div className="flex flex-col gap-3 border-t border-amber-500/25 pt-3">
+    <div className="flex flex-col gap-3 border-t border-warning/25 pt-3">
       {stuck.candidates.length > 0 ? (
         <ul className="flex flex-wrap gap-3" aria-label="Parecidos en tu Higgsfield">
           {stuck.candidates.map((candidate, index) => {
@@ -125,9 +125,9 @@ export function GenerationNotice({ videoId, kind, current }: { videoId: number; 
   if (!current || RUNNING_STATUSES.includes(current.status) || current.status === "done") return null;
   if (current.status === "unknown") {
     return (
-      <div role="status" className="flex flex-col gap-3 rounded-xl bg-amber-500/10 px-4 py-3 text-sm ring-1 ring-amber-500/25">
+      <div role="status" className="flex flex-col gap-3 rounded-xl bg-warning/10 px-4 py-3 text-sm ring-1 ring-warning/25">
         <p className="flex gap-2.5">
-          <TriangleAlert className="mt-0.5 size-4 shrink-0 text-amber-600" aria-hidden />
+          <TriangleAlert className="mt-0.5 size-4 shrink-0 text-warning-ink" aria-hidden />
           <span className="text-pretty">{UNKNOWN_TEXT}</span>
         </p>
         {current.stuck?.canResolve ? <StuckResolver videoId={videoId} kind={kind} stuck={current.stuck} /> : null}

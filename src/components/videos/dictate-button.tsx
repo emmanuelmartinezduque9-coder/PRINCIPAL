@@ -32,7 +32,7 @@ const noSubscribe = () => () => {};
  * «Dictar»: escucha en español y va pasando cada frase reconocida a `onText`. Sin reconocimiento
  * de voz en el navegador, no se enseña.
  */
-export function DictateButton({ onText, disabled, className }: { onText: (text: string) => void; disabled?: boolean; className?: string }) {
+export function DictateButton({ onText, disabled, className, iconOnly = false }: { onText: (text: string) => void; disabled?: boolean; className?: string; /** Solo el micrófono (dentro de un campo). */ iconOnly?: boolean }) {
   const supported = useSyncExternalStore(noSubscribe, () => recognitionClass() !== null, () => false);
   const [listening, setListening] = useState(false);
   const current = useRef<Recognition | null>(null);
@@ -84,13 +84,15 @@ export function DictateButton({ onText, disabled, className }: { onText: (text: 
     <Button
       type="button"
       variant="ghost"
-      className={cn("h-7 gap-1.5 px-2 text-xs", listening && "text-destructive hover:text-destructive", className)}
+      className={cn("h-7 gap-1.5 px-2 text-xs", iconOnly && "size-7 px-0 text-muted-foreground", listening && "text-destructive hover:text-destructive", className)}
       aria-pressed={listening}
+      aria-label={iconOnly ? (listening ? "Parar el dictado" : "Dictar") : undefined}
+      title={iconOnly ? (listening ? "Parar" : "Dictar") : undefined}
       disabled={disabled}
       onClick={toggle}
     >
       {listening ? <Square className="size-3 fill-current" aria-hidden /> : <Mic className="size-3.5" aria-hidden />}
-      {listening ? "Parar" : "Dictar"}
+      {iconOnly ? null : listening ? "Parar" : "Dictar"}
     </Button>
   );
 }

@@ -74,7 +74,7 @@ function Row({
 
 function Block({ title, empty, children }: { title: string; empty: boolean; children: React.ReactNode }) {
   return (
-    <section className="overflow-hidden rounded-xl bg-card ring-1 ring-foreground/10">
+    <section className="panel overflow-hidden">
       <h2 className="border-b px-5 py-3 text-sm font-semibold tracking-tight">{title}</h2>
       {empty ? <p className="px-5 py-6 text-sm text-muted-foreground">Sin gasto este mes</p> : <ul className="divide-y">{children}</ul>}
     </section>
@@ -87,11 +87,11 @@ function PausedNotice({ paused, capMicros, spentMicros }: { paused: PausedRow[];
   return (
     <section
       role="alert"
-      className="overflow-hidden rounded-xl bg-amber-500/10 ring-1 ring-amber-500/40"
+      className="overflow-hidden rounded-xl bg-warning/10 ring-1 ring-warning/40"
     >
       <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-4">
         <p className="flex items-start gap-2.5 text-sm">
-          <OctagonAlert className="mt-0.5 size-4 shrink-0 text-amber-600" aria-hidden />
+          <OctagonAlert className="mt-0.5 size-4 shrink-0 text-warning-ink" aria-hidden />
           <span>
             Hay {jobs} porque se ha llegado al tope. Se reanudan solos al subirlo o al empezar el mes.
           </span>
@@ -106,7 +106,7 @@ function PausedNotice({ paused, capMicros, spentMicros }: { paused: PausedRow[];
             ) : null}
         </div>
       </div>
-      <ul className="divide-y divide-amber-500/20 border-t border-amber-500/20 bg-card/60">
+      <ul className="divide-y divide-warning/20 border-t border-warning/20 bg-card/60">
         {paused.map((job) => (
           <li
             key={`${job.jobName}-${job.userId}-${job.productId}-${job.since}`}
@@ -171,13 +171,13 @@ export function SpendView() {
       <PageHeader title="Gasto" actions={<CapDialog capMicros={summary.capMicros} spentMicros={summary.spentMicros} />} />
 
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]">
-        <section className="flex flex-col justify-between gap-5 rounded-xl bg-card p-5 ring-1 ring-foreground/10 md:p-6">
+        <section className="panel flex flex-col justify-between gap-5 p-5 md:p-6">
           <div className="flex items-baseline justify-between gap-3">
             <h2 className="text-sm font-medium text-muted-foreground first-letter:uppercase">{monthLabel(summary.month)}</h2>
             <span
               className={cn(
                 "text-sm font-semibold tabular-nums",
-                tone === "full" ? "text-red-600 dark:text-red-500" : tone === "warn" ? "text-amber-600" : "text-muted-foreground",
+                tone === "full" ? "text-destructive" : tone === "warn" ? "text-warning-ink" : "text-muted-foreground",
               )}
             >
               {percent} %

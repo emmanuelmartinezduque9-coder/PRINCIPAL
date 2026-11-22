@@ -29,8 +29,8 @@ export const referenceStatus = (status: string) => REFERENCE_STATUS[status as Re
 
 export const TONE_DOT: Record<"off" | "busy" | "ok" | "error", string> = {
   off: "bg-foreground/25",
-  busy: "bg-amber-500",
-  ok: "bg-emerald-500",
+  busy: "bg-warning",
+  ok: "bg-success",
   error: "bg-destructive",
 };
 

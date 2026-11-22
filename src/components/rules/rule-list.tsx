@@ -123,7 +123,7 @@ export function RulesWorkspace({ children }: { children: React.ReactNode }) {
           className={cn(
             // El contenido va posicionado sobre el panel: una lista larga se desplaza dentro
             // y no estira la página.
-            "rounded-xl bg-card ring-1 ring-foreground/10 md:relative md:min-h-0 md:flex-1",
+            "panel md:relative md:min-h-0 md:flex-1",
             activeSlug ? "hidden lg:block" : undefined,
           )}
         >

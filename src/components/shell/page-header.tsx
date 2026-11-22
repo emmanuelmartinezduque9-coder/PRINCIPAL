@@ -36,7 +36,7 @@ export function PageHeader({
       </div>
       <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div className="flex min-w-0 flex-col gap-2">
-          <h1 className="text-2xl leading-10 font-semibold tracking-tight text-balance break-words">{title}</h1>
+          <h1 className="text-[1.75rem] leading-10 font-semibold tracking-[-0.02em] text-balance break-words">{title}</h1>
           {children}
         </div>
         {actions ? <div className="flex shrink-0 flex-wrap items-center gap-2">{actions}</div> : null}

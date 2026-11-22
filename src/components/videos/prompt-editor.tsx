@@ -57,7 +57,7 @@ export function PromptEditor({
           {label}
         </label>
         <span
-          className={cn("text-xs tabular-nums", outside ? "font-medium text-amber-700 dark:text-amber-400" : "text-muted-foreground")}
+          className={cn("text-xs tabular-nums", outside ? "font-medium text-warning-ink" : "text-muted-foreground")}
           title={range[0] > 0 ? `Entre ${thousands(range[0])} y ${thousands(range[1])} caracteres` : `Hasta ${thousands(range[1])} caracteres`}
           data-testid="char-count"
         >
@@ -95,7 +95,7 @@ export function PromptEditor({
               {issue.level === "error" ? (
                 <CircleAlert className="mt-0.5 size-4 shrink-0 text-destructive" role="img" aria-label="Error" />
               ) : (
-                <TriangleAlert className="mt-0.5 size-4 shrink-0 text-amber-600" role="img" aria-label="Aviso" />
+                <TriangleAlert className="mt-0.5 size-4 shrink-0 text-warning-ink" role="img" aria-label="Aviso" />
               )}
               <span>{issue.message}</span>
             </li>

@@ -38,6 +38,8 @@ export interface Row {
   bodies: number[];
   /** «Cambios específicos». */
   note: string;
+  /** «Edición de referencia»: un vídeo cuyo estilo de edición se copia (vacío: ninguno). */
+  editReference: string;
   /** «Música»: una canción de la biblioteca o `null` (audio original). */
   song: SongJson | null;
   /** «Más opciones» abierto. */
@@ -54,6 +56,8 @@ export interface Group {
   kind: VideoKind;
   /** Con «Solo gancho», la duración que reciben las tarjetas nuevas. */
   hookSeconds: number;
+  /** La variante que reciben las tarjetas nuevas (`null`: las fotos de siempre). */
+  variant: number | null;
   rows: Row[];
 }
 
@@ -77,6 +81,7 @@ export const newGroup = (productId: number | null = null): Group => ({
   notes: "",
   kind: "replicar",
   hookSeconds: DEFAULT_HOOK,
+  variant: null,
   rows: [],
 });
 
@@ -151,6 +156,7 @@ function parseRow(value: unknown): Row | null {
     hookSeconds: hookOf(value.hookSeconds),
     bodies: Array.isArray(value.bodies) ? value.bodies.filter(isId) : [],
     note: text(value.note),
+    editReference: text(value.editReference).slice(0, 2000),
     song: parseSong(value.song),
     open: value.open === true,
     error: null,
@@ -165,6 +171,7 @@ function parseGroup(value: unknown): Group | null {
     notes: text(value.notes),
     kind: kindOf(value.kind),
     hookSeconds: hookOf(value.hookSeconds),
+    variant: isId(value.variant) ? value.variant : null,
     rows: Array.isArray(value.rows) ? value.rows.map(parseRow).filter((row): row is Row => row !== null) : [],
   };
 }

@@ -8,6 +8,7 @@ import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { productLabel, type ProductView } from "@/components/products/labels";
+import { EmptyState } from "@/components/shell/empty-state";
 import { PageHeader } from "@/components/shell/page-header";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -57,13 +58,7 @@ function ClipTile({ clip, filterProductId, onOpen }: { clip: LibraryClipJson; fi
 
 function Empty({ icon: Icon, title, children, spin }: { icon: typeof Film; title: string; children?: React.ReactNode; spin?: boolean }) {
   return (
-    <div className="flex flex-col items-center gap-4 rounded-xl border border-dashed px-6 py-16 text-center">
-      <span className="grid size-12 place-items-center rounded-full bg-muted text-muted-foreground">
-        <Icon className={cn("size-5", spin && "animate-spin")} aria-hidden />
-      </span>
-      <p className="font-medium">{title}</p>
-      {children}
-    </div>
+    <EmptyState icon={Icon} title={title} tone={spin ? "busy" : "default"} action={children} />
   );
 }
 
@@ -197,8 +192,8 @@ export function LibraryScreen({ initialProductId }: { initialProductId: number |
       </PageHeader>
 
       {needsConnection && clips.length > 0 ? (
-        <div role="status" className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg bg-amber-500/10 px-3 py-2.5 text-sm">
-          <Plug className="size-4 shrink-0 text-amber-600" aria-hidden />
+        <div role="status" className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg bg-warning/10 px-3 py-2.5 text-sm">
+          <Plug className="size-4 shrink-0 text-warning-ink" aria-hidden />
           <span className="min-w-0 flex-1">Conecta tu Higgsfield para traer los clips nuevos.</span>
           <SettingsLink className="h-8 bg-background" />
         </div>

@@ -154,6 +154,10 @@ describe("lotes", () => {
     const luego = await addVideoToBatch(ana, lote.id, { productId: deLuis.id, avatarPhotoId: null, avatarMode: "nadie" });
     expect((await batchView(ana, lote.id)).rows.map((r) => r.id)).toEqual([visible.id, luego.id]);
     expect((await listBatchesFor(ana))[0]).toMatchObject({ videos: 2, done: 0 });
+    // Las portadas de sus productos, en el orden del primer vídeo (el de Luis no tiene fotos).
+    const cover = (await batchView(ana, lote.id)).groups[0].coverPhotoId;
+    expect(cover).not.toBeNull();
+    expect((await listBatchesFor(ana))[0].covers).toEqual([cover]);
 
     await setAssignments(dueno, ana.id, [deAna.id]);
     expect((await batchView(ana, lote.id)).rows.map((r) => r.id)).toEqual([visible.id]);

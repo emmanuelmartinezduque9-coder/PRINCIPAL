@@ -26,40 +26,45 @@ const ORDER: Status[] = ["borrador", "preguntas", "imagenes", "revision_imagenes
 /** El paso en el que está (en pausa: el paso en el que se paró). */
 const currentOf = (auto: AutoViewJson): Status => (auto.status === "pausado" ? ((auto.pause?.from as Status) ?? "imagenes") : auto.status);
 
-/** Preguntas · Imágenes · Revisión · Clips · Listo, con cuántos vídeos lleva cada paso. */
+/**
+ * Preguntas · Imágenes · Revisión · Clips · Listo, como una pista con nodos: lo hecho en verde, el
+ * paso actual resaltado (girando si el lote va solo, ámbar si está en pausa) y bajo cada paso
+ * cuántos vídeos lleva.
+ */
 export function AutoStepper({ auto }: { auto: AutoViewJson }) {
   const current = currentOf(auto);
   const at = ORDER.indexOf(current);
   const paused = auto.status === "pausado";
   return (
-    <ol aria-label="Pasos del lote" className="grid grid-cols-5 overflow-hidden rounded-xl bg-card ring-1 ring-foreground/10">
+    <ol aria-label="Pasos del lote" className="panel grid grid-cols-5 px-2 py-4">
       {STEPS.map((step, index) => {
         const position = ORDER.indexOf(step.status);
         const done = position < at || (step.status === "listo" && current === "listo");
         const now = position === at && current !== "listo";
         const Icon = now && paused ? Pause : done ? Check : step.icon;
         const count = step.count(auto);
+        const spinning = now && !paused && current !== "preguntas" && current !== "revision_imagenes";
         return (
-          <li
-            key={step.status}
-            aria-current={now ? "step" : undefined}
-            className={cn(
-              "flex min-w-0 items-center gap-2.5 px-3 py-3 sm:px-4",
-              index > 0 && "border-l",
-              now && (paused ? "bg-amber-500/10" : "bg-foreground/[0.04]"),
-            )}
-          >
+          <li key={step.status} aria-current={now ? "step" : undefined} className="relative flex min-w-0 flex-col items-center gap-2 px-2 text-center">
+            {index > 0 ? (
+              <span
+                aria-hidden
+                className={cn("absolute top-4 right-[calc(50%+1.25rem)] left-[calc(-50%+1.25rem)] h-0.5 rounded-full", position <= at ? "bg-success/60" : "bg-border")}
+              />
+            ) : null}
             <span
               className={cn(
-                "grid size-7 shrink-0 place-items-center rounded-full",
-                done ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400" : now ? (paused ? "bg-amber-500/20 text-amber-800 dark:text-amber-300" : "bg-foreground text-background") : "bg-muted text-muted-foreground",
+                "relative grid size-8 shrink-0 place-items-center rounded-full transition-colors duration-200",
+                done
+                  ? "bg-success text-white"
+                  : now
+                    ? paused
+                      ? "bg-warning/20 text-warning-ink ring-2 ring-warning/50"
+                      : "bg-brand text-brand-foreground shadow-[0_0_0_4px_color-mix(in_oklch,var(--brand)_18%,transparent)]"
+                    : "bg-muted text-muted-foreground",
               )}
             >
-              {now && !paused && current !== "preguntas" && current !== "revision_imagenes" ? (
-                <Loader2 className="size-3.5 animate-spin" aria-hidden />
-              ) : (
-                <Icon className="size-3.5" aria-hidden />
-              )}
+              {spinning ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <Icon className="size-4" aria-hidden />}
             </span>
             <span className="flex min-w-0 flex-col leading-tight">
               <span className={cn("truncate text-sm font-medium", !now && !done && "text-muted-foreground")}>{step.label}</span>
@@ -91,7 +96,7 @@ export function SendBatchButton({ batchId, disabled }: { batchId: number; disabl
     }
   }
   return (
-    <Button className="h-9 gap-1.5 px-4" disabled={busy || disabled} onClick={() => void send()}>
+    <Button className="h-10 gap-2 px-5" disabled={busy || disabled} onClick={() => void send()}>
       {busy ? <Loader2 className="animate-spin" data-icon="inline-start" /> : <Send data-icon="inline-start" />}
       Enviar lote
     </Button>
@@ -102,7 +107,7 @@ export function SendBatchButton({ batchId, disabled }: { batchId: number; disabl
 export function AutoAction({ batchId, auto, toReview }: { batchId: number; auto: AutoViewJson; toReview: number }) {
   if (auto.status === "preguntas" && (auto.questions > 0 || auto.readyToConfirm)) {
     return (
-      <Link href={`/lotes/${batchId}/preguntas`} className={cn(buttonVariants(), "h-9 gap-1.5 px-4")}>
+      <Link href={`/lotes/${batchId}/preguntas`} className={cn(buttonVariants(), "h-10 gap-2 px-5")}>
         {auto.readyToConfirm ? <Play className="size-4" aria-hidden /> : <CircleHelp className="size-4" aria-hidden />}
         {auto.readyToConfirm ? "Confirmar y generar" : `Preguntas del lote (${auto.questions})`}
       </Link>
@@ -110,7 +115,7 @@ export function AutoAction({ batchId, auto, toReview }: { batchId: number; auto:
   }
   if (auto.status === "revision_imagenes" && toReview > 0) {
     return (
-      <Link href={`/lotes/${batchId}/revisar`} className={cn(buttonVariants(), "h-9 gap-1.5 px-4")}>
+      <Link href={`/lotes/${batchId}/revisar`} className={cn(buttonVariants(), "h-10 gap-2 px-5")}>
         <ScanEye className="size-4" aria-hidden />
         Revisar imágenes ({toReview})
       </Link>
@@ -141,9 +146,9 @@ export function PauseBanner({ batchId, auto, rows }: { batchId: number; auto: Au
   }
 
   return (
-    <div role="alert" className="flex flex-wrap items-center gap-3 rounded-xl bg-amber-500/10 px-4 py-3 ring-1 ring-amber-500/30">
-      <span className="grid size-8 shrink-0 place-items-center rounded-full bg-amber-500/20 text-amber-800 dark:text-amber-300">
-        <Pause className="size-4" aria-hidden />
+    <div role="alert" className="flex flex-wrap items-center gap-4 rounded-xl bg-warning/10 px-5 py-4 ring-1 ring-warning/30">
+      <span className="grid size-10 shrink-0 place-items-center rounded-full bg-warning/25 text-warning-ink">
+        <Pause className="size-5" aria-hidden />
       </span>
       <p className="min-w-0 flex-1 text-sm font-medium text-pretty">{pause.reason}</p>
       <div className="flex shrink-0 items-center gap-2">

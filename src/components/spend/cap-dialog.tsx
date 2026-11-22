@@ -91,8 +91,8 @@ export function CapDialog({
           </div>
           <p className="text-sm text-muted-foreground tabular-nums">Gastado este mes: {formatUsd(spentMicros)}</p>
           {warning ? (
-            <p role="status" className="flex gap-2 rounded-lg bg-amber-500/10 px-3 py-2 text-sm">
-              <CircleAlert className="mt-0.5 size-4 shrink-0 text-amber-600" /> {warning}
+            <p role="status" className="flex gap-2 rounded-lg bg-warning/10 px-3 py-2 text-sm">
+              <CircleAlert className="mt-0.5 size-4 shrink-0 text-warning-ink" /> {warning}
             </p>
           ) : null}
           {error ? (
