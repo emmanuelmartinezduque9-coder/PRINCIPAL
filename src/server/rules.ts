@@ -15,7 +15,13 @@ export const RULE_SLUGS = {
   angulos: "angulos-de-venta",
   ejemplos: "angulos-ejemplos",
   metodo: "angulos-metodo-juanma",
+  adaptacion: "adaptacion-de-conceptos",
+  imagen: "imagen-nano-banana",
+  video: "video-seedance",
 } as const;
+
+/** Reglas de producción de vídeo que se entregan juntas al desglose, a la imagen y al clip. */
+export const VIDEO_RULE_SLUGS = [RULE_SLUGS.adaptacion, RULE_SLUGS.imagen, RULE_SLUGS.video];
 
 /** Tamaño máximo del texto de una regla, en caracteres. */
 export const MAX_RULE_CHARS = 200_000;

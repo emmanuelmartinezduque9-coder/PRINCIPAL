@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { login, type AuthUser } from "@/server/auth";
-import { getRule, getRuleVersion, listRules, loadRules, MAX_RULE_CHARS, RULE_SLUGS, saveRuleVersion, seedRules } from "@/server/rules";
+import { getRule, getRuleVersion, listRules, loadRules, MAX_RULE_CHARS, RULE_SLUGS, saveRuleVersion, seedRules, VIDEO_RULE_SLUGS } from "@/server/rules";
 import { GET as getReglasRoute } from "@/app/api/reglas/route";
 import { GET as getReglaRoute, POST as postReglaRoute } from "@/app/api/reglas/[slug]/route";
 import { makeUser, TEST_PASSWORD } from "./helpers/fixtures";
@@ -27,13 +27,27 @@ beforeEach(async () => {
 });
 
 describe("reglas versionadas", () => {
-  it("la siembra crea la versión 1 de las tres reglas y repetirla no cambia nada", async () => {
+  it("la siembra crea la versión 1 de las seis reglas y repetirla no cambia nada", async () => {
     await seedRules();
     expect((await listRules()).map((r) => [r.slug, r.version])).toEqual([
       ["angulos-de-venta", 1],
       ["angulos-ejemplos", 1],
       ["angulos-metodo-juanma", 1],
+      ["adaptacion-de-conceptos", 1],
+      ["imagen-nano-banana", 1],
+      ["video-seedance", 1],
     ]);
+  });
+
+  it("loadRules(VIDEO_RULE_SLUGS) devuelve las tres reglas sembradas en versión 1", async () => {
+    expect(VIDEO_RULE_SLUGS).toEqual(["adaptacion-de-conceptos", "imagen-nano-banana", "video-seedance"]);
+    const rules = await loadRules(VIDEO_RULE_SLUGS);
+    expect(rules.map((r) => [r.slug, r.version])).toEqual([
+      ["adaptacion-de-conceptos", 1],
+      ["imagen-nano-banana", 1],
+      ["video-seedance", 1],
+    ]);
+    for (const rule of rules) expect(rule.body.length).toBeGreaterThan(5_000);
   });
 
   it("guardar crea la versión 2 y conserva la 1", async () => {
@@ -101,7 +115,7 @@ describe("reglas versionadas", () => {
 
   it("el dueño lee, ve una versión antigua y guarda por la API", async () => {
     cookie.value = await tokenOf(dueno);
-    expect((await (await getReglasRoute()).json()).rules).toHaveLength(3);
+    expect((await (await getReglasRoute()).json()).rules).toHaveLength(6);
     const post = new Request(`http://localhost/api/reglas/${A}`, {
       method: "POST",
       body: JSON.stringify({ body: "por la API", note: "prueba" }),

@@ -19,5 +19,51 @@
     "description": "Método y ejemplos del vídeo de Juan Ma Ecom, usados como entrenamiento del razonamiento.",
     "file": "angulos-metodo-juanma.md",
     "source": "docs/reglas-origen/skills-codex/angulos-de-venta/references/metodo-juanma-L_jJ3ivApwo.md"
+  },
+  {
+    "slug": "adaptacion-de-conceptos",
+    "title": "Adaptación de conceptos",
+    "description": "Cómo trasladar el concepto de un vídeo viral a otro producto reconstruyendo la demostración, y cómo pasar de una idea a tomas y prompts comprobables.",
+    "file": "adaptacion-de-conceptos.md",
+    "source": "docs/reglas-origen/skills-codex/adaptacion-de-conceptos/SKILL.md",
+    "sources": [
+      "docs/reglas-origen/skills-codex/adaptacion-de-conceptos/SKILL.md",
+      "docs/reglas-origen/skills-codex/adaptacion-de-conceptos/references/ejemplos-reales.md",
+      "docs/reglas-origen/skills-codex/adaptacion-de-conceptos/references/idea-a-prompt.md",
+      "docs/reglas-origen/skills-codex/generacion-de-videos-por-idea/SKILL.md"
+    ]
+  },
+  {
+    "slug": "imagen-nano-banana",
+    "title": "Imágenes con Nano Banana Pro",
+    "description": "Cómo se escribe y se juzga la imagen inicial: prosa sin lista negra, realismo de móvil, luz del entorno, identidad solo del avatar elegido y ejemplos validados.",
+    "file": "imagen-nano-banana.md",
+    "source": "docs/reglas-origen/skills-codex/nanobanana-pro-imagenes/SKILL.md",
+    "sources": [
+      "docs/reglas-origen/skills-codex/nanobanana-pro-imagenes/SKILL.md",
+      "docs/reglas-origen/skills-codex/nanobanana-pro-imagenes/references/realismo-20261003.md",
+      "docs/reglas-origen/skills-codex/nanobanana-pro-imagenes/references/fewshot-emmanuel-1.txt",
+      "docs/reglas-origen/skills-codex/nanobanana-pro-imagenes/references/fewshot-emmanuel-2.txt",
+      "docs/reglas-origen/skills-codex/nanobanana-pro-imagenes/references/fewshot-emmanuel-3.txt",
+      "docs/reglas-origen/skills-codex/nanobanana-pro-imagenes/references/fewshot-emmanuel-4.txt",
+      "docs/reglas-origen/cerebro/reglas/como-se-hace-una-imagen-que-vale.md",
+      "docs/reglas-origen/cerebro/reglas/no-adelantar-el-reveal.md",
+      "docs/reglas-origen/raiz/AGENTS.md"
+    ]
+  },
+  {
+    "slug": "video-seedance",
+    "title": "Vídeo con Seedance 2.5",
+    "description": "Cómo se prepara y se escribe el clip: escala del producto con mano, sin texto en pantalla, imagen como primer fotograma o referencia contextual, etiquetas, planos y plantilla del prompt.",
+    "file": "video-seedance.md",
+    "source": "docs/reglas-origen/reglas-edicion-t7/SEEDANCE_ESCALA_MANO_20261105.md",
+    "sources": [
+      "docs/reglas-origen/reglas-edicion-t7/SEEDANCE_ESCALA_MANO_20261105.md",
+      "docs/reglas-origen/reglas-edicion-t7/SIN_OVERLAYS_GENERADOS.md",
+      "docs/reglas-origen/cerebro/reglas/seedance-largo-referencia-contextual.md",
+      "docs/reglas-origen/cerebro/reglas/calidad-de-video.md",
+      "docs/reglas-origen/raiz/AGENTS.md",
+      "docs/research_notes/Superpoderes marketing y vídeo/seedance_fidelidad_y_superpoderes_video.md"
+    ]
   }
 ]
