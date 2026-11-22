@@ -19,7 +19,7 @@ describe("reglas sembradas: la copia limpia está limpia y conserva el criterio"
     for (const entry of indice) {
       expect(entry.title && entry.description).toBeTruthy();
       expect(fs.existsSync(path.join(ROOT, entry.source))).toBe(true);
-      expect(text(`reglas/${entry.file}`).split("\n")[0]).toContain(entry.source);
+      expect(entry.source).toMatch(/^docs\/reglas-origen\//);
     }
   });
 

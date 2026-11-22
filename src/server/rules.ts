@@ -17,6 +17,9 @@ export const RULE_SLUGS = {
   metodo: "angulos-metodo-juanma",
 } as const;
 
+/** Tamaño máximo del texto de una regla, en caracteres. */
+export const MAX_RULE_CHARS = 200_000;
+
 export interface RuleSnapshot {
   slug: string;
   version: number;
@@ -123,6 +126,9 @@ export async function getRuleVersion(slug: string, version: number): Promise<Rul
 export async function saveRuleVersion(owner: AuthUser, slug: string, body: string, note: string): Promise<RuleSnapshot> {
   if (owner.role !== "dueno") throw new HttpError(403, "Solo el dueño puede hacer esto.");
   if (typeof body !== "string" || body.trim() === "") throw new HttpError(400, "La regla no puede quedar vacía.");
+  if (body.length > MAX_RULE_CHARS) {
+    throw new HttpError(400, "La regla es demasiado larga (máximo 200 000 caracteres).");
+  }
   const cleanNote = typeof note === "string" ? note.trim().slice(0, 500) : "";
   return getDb().transaction(async (tx) => {
     await lockSlug(tx, slug);

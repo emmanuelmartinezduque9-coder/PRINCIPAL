@@ -116,6 +116,8 @@ GitHub pasa las pruebas automáticas (CI) → si salen bien, Railway publica sol
 (gracias a **Wait for CI**) → si la nueva versión no arranca, Railway sigue sirviendo la anterior.
 Tú no tienes que hacer nada.
 
+Un texto corregido en `reglas/` no sustituye las reglas que ya están guardadas en la base de datos: para cambiarlas, edítalas en la pantalla Reglas.
+
 ## Si algo falla
 
 Abre **Deployments** → **View logs**. Las líneas que empiezan por `[nube]` dicen qué falta:

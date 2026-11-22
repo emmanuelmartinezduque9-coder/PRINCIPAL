@@ -1,5 +1,3 @@
-> Copia limpia de `docs/reglas-origen/skills-codex/angulos-de-venta/references/ejemplos.md`. Solo se ha sustituido «skill» por «regla»; el resto es el texto original.
-
 # Ejemplos para aprender el criterio de Emmanuel
 
 ## Caso aportado por Emmanuel: peluche que respira

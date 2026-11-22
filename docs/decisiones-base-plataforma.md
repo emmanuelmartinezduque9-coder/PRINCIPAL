@@ -73,7 +73,7 @@
 
 ## Tarea 9: reglas versionadas
 
-- **Qué se quitó de los originales** (los de `docs/reglas-origen/` no se tocan; las copias limpias están en `reglas/`, cada una con una nota inicial que nombra su original; el dueño puede revisarlo comparando ambos):
+- **Qué se quitó de los originales** (los de `docs/reglas-origen/` no se tocan; las copias limpias están en `reglas/`, con su original en `source` de `reglas/indice.json`; el dueño puede revisarlo comparando ambos):
   - `angulos-de-venta.md` (de `SKILL.md`): la cabecera YAML de skill (`name`, `description`; la descripción pasa a `reglas/indice.json`); la ruta `/Volumes/T7/AUTOMATIZACION SEGA` y la orden de comprobar que el SSD esté montado; la orden de guardar investigación, fuentes y decisiones "en el expediente del producto del motor existente, sin crear pedidos o colas alternativos"; la orden de usar `generacion-de-videos-por-idea` y `fondos-pinterest-por-toma` (se conserva el orden "producto, intención del vídeo, escenario"); "preparados con las skills vigentes de imagen y generación por idea"; "Aplicar skills de imagen/vídeo y edición vigentes" (se conserva "no fijar aquí modelos o tipografías que puedan quedar obsoletos"); los dos enlaces relativos a `references/`, sustituidos por el título de la otra regla; "esta skill" → "esta regla".
   - `angulos-ejemplos.md` (de `references/ejemplos.md`): solo "esta skill" → "esta regla".
   - `angulos-metodo-juanma.md` (de `references/metodo-juanma-L_jJ3ivApwo.md`): la ruta `/Volumes/T7/…` de la transcripción local; "skill operativa" → "regla operativa".
@@ -83,3 +83,21 @@
 - **Siembra.** `seed()` llama a `seedRules()` en cada arranque: crea el documento y la versión 1 solo si el `slug` no tiene versiones; título y descripción del índice sí se actualizan. Lee `reglas/` desde `process.cwd()` (el servicio arranca en la raíz del repositorio).
 - **Autor.** `created_by` es nulo para la versión sembrada y para el dueño local (id 0, sin fila en `users`); el historial muestra el nombre cuando existe.
 - **API.** `GET /api/reglas`, `GET /api/reglas/[slug]` (con `?version=N` devuelve además ese texto) y `POST /api/reglas/[slug]`; todas con `role: "dueno"`. La pantalla de un colaborador muestra "Solo el dueño puede ver y cambiar las reglas."
+
+### Tarea 9, ronda de revisión 1
+
+- **Sin nota de origen en el texto.** Las copias de `reglas/*.md` ya no llevan la nota inicial (llegaba al modelo y al editor del dueño). El origen queda en `source` de `reglas/indice.json` y en esta lista; la prueba comprueba que cada `source` existe.
+- **Frases reformuladas** en `reglas/angulos-de-venta.md` (restos del sistema anterior; la aplicación entrega la ficha del producto, así que el modelo no debe pedir al usuario lo que ya está):
+  - "Leer la regla «Ejemplos para aprender el criterio de Emmanuel» al aplicar esta regla para conservar el criterio de Emmanuel." → "Aplicar también la regla «Ejemplos para aprender el criterio de Emmanuel», que se entrega junto a esta, para conservar el criterio de Emmanuel."
+  - "leer también la regla «Mismo producto, distintos motivos de compra» (método y ejemplos del vídeo de Juan Ma Ecom), incorporada por petición de Emmanuel." → "aplicar también la regla «Mismo producto, distintos motivos de compra», que se entrega junto a esta (método y ejemplos del vídeo de Juan Ma Ecom, incorporada por petición de Emmanuel)."
+  - "Obtenerlas del expediente antes de preguntar." → "Obtenerlas de la ficha del producto y de las fuentes que la aplicación entrega con el encargo antes de preguntar."
+  - "desde las fuentes conectadas y expedientes." → "desde la ficha del producto y las fuentes que la aplicación entrega con el encargo."
+  - "dentro de esa autorización y del flujo de aprobación de frames existente." → "dentro de esa autorización y de las aprobaciones que la aplicación exige."
+  - "Respetar referencias y trabajos ya aprobados." → "Respetar las referencias y los trabajos que el dueño ya aprobó."
+  (Esto sustituye lo dicho antes sobre mantener "expediente(s)" y "fuentes conectadas".)
+- **Tamaño máximo.** Una regla no puede pasar de 200 000 caracteres (`MAX_RULE_CHARS`); si no, 400 con mensaje en español.
+- **Sembrar no sustituye lo guardado.** Un texto corregido en `reglas/` no cambia reglas ya guardadas en la base de datos; está dicho en `docs/despliegue-railway.md`.
+
+## Pendiente para el plan 1b
+
+- El motor de ángulos debe cargar siempre juntas las tres reglas (`RULE_SLUGS.angulos`, `ejemplos`, `metodo`) con `loadRules`, porque se remiten unas a otras («que se entrega junto a esta»).

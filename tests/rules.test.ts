@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { login, type AuthUser } from "@/server/auth";
-import { getRule, getRuleVersion, listRules, loadRules, RULE_SLUGS, saveRuleVersion, seedRules } from "@/server/rules";
+import { getRule, getRuleVersion, listRules, loadRules, MAX_RULE_CHARS, RULE_SLUGS, saveRuleVersion, seedRules } from "@/server/rules";
 import { GET as getReglasRoute } from "@/app/api/reglas/route";
 import { GET as getReglaRoute, POST as postReglaRoute } from "@/app/api/reglas/[slug]/route";
 import { makeUser, TEST_PASSWORD } from "./helpers/fixtures";
@@ -61,6 +61,14 @@ describe("reglas versionadas", () => {
       status: 400,
       message: "La regla no puede quedar vacía.",
     });
+  });
+
+  it("rechaza un texto de más de 200 000 caracteres y admite uno justo en el límite", async () => {
+    await expect(saveRuleVersion(dueno, A, "a".repeat(MAX_RULE_CHARS + 1), "")).rejects.toMatchObject({
+      status: 400,
+      message: "La regla es demasiado larga (máximo 200 000 caracteres).",
+    });
+    expect((await saveRuleVersion(dueno, A, "a".repeat(MAX_RULE_CHARS), "")).version).toBe(2);
   });
 
   it("recuperar una versión antigua es guardar su texto como versión nueva", async () => {

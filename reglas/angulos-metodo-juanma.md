@@ -1,5 +1,3 @@
-> Copia limpia de `docs/reglas-origen/skills-codex/angulos-de-venta/references/metodo-juanma-L_jJ3ivApwo.md`. Se ha quitado la ruta del Mac de la transcripción y «skill» se sustituye por «regla»; el resto es el texto original.
-
 # Mismo producto, distintos motivos de compra
 
 Fuente: Juan Ma Ecom, «El Producto Ganador NO EXISTE En Dropshipping (LO HACES TÚ)», https://www.youtube.com/watch?v=L_jJ3ivApwo . Incorporado el 07/11/2026 por petición expresa de Emmanuel.
