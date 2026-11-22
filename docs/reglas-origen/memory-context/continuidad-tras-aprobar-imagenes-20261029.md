@@ -1,0 +1,12 @@
+# Continuidad tras aprobar imágenes — orden expresa 29/10/2026
+
+Emmanuel aprueba las imágenes y se va a dormir. Esa aprobación autoriza continuar el lote encargado hasta tener TODOS los clips y TODAS las ediciones exportadas y listas para descargar, sin otra pregunta, revisión humana de clips ni pausa creativa antes de editar. Las correcciones que quiera se deciden después de recibir la tanda completa.
+
+- Antes de pedir aprobación de imágenes, revisar el lote completo y resolver en un único bloque las dudas esenciales de fuentes, referencias exactas de producto/embalaje, cuerpos, textos, música, idioma y edición. Recuperar la información disponible antes de preguntar.
+- Después de aprobar imágenes, aplicar selecciones expresas y reglas vigentes; resolver decisiones ordinarias con el contexto y registrar las asumidas. No volver a preguntar por canción, texto, cuerpo o aprobación de clips. La revisión de clips pasa a ser interna, no una parada humana.
+- Ante un clip válido con defectos, conservarlo, terminar su edición y anotar la incidencia en la entrega conjunta. No pedir permiso para regenerarlo a mitad de lote ni gastar regeneraciones adicionales por esta regla; Emmanuel decidirá las correcciones después de ver las ediciones.
+- Mantener revisión técnica y visual real de los finales. Corregir problemas de integración y edición dentro del encargo. No declarar una revisión o aprobación inexistente. Diferenciar edición terminada con incidencia de final verificado sin incidencias.
+- Un fallo real sin salida utilizable se recupera por la ruta autorizada; continuar todos los elementos independientes. No inventar archivos ni ocultar errores. Solo una imposibilidad externa real puede dejar un elemento pendiente; no convertir una duda rutinaria en bloqueo del lote completo.
+- Conservar originales, hashes, recibos, deduplicación, referencias obligatorias, límites de créditos y protecciones. No comprar créditos, saltar moderación ni ampliar permisos. No ejecutar nuevos lotes sin encargo ni alterar snapshots históricos.
+
+Esta orden sustituye la segunda revisión humana obligatoria y las reglas antiguas de detenerse antes de editar/exportar para el lote encargado. Se aplica también a lotes mixtos con edición de vídeos existentes. No es por sí sola evidencia de modificación ni despliegue del motor: si aparece una puerta técnica incompatible, resolver su integración dentro del encargo sin falsificar aprobación humana.

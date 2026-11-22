@@ -1,0 +1,3 @@
+# Frames y clips sin overlays; edición sin parches opacos
+
+Orden de Emmanuel tras revisar WichtelWitz: «que no vuelva a pasar». Leer /Volumes/T7/AUTOMATIZACION SEGA/REGLAS_EDICION/SIN_OVERLAYS_GENERADOS.md antes de nuevos tests y ediciones. No copiar captions/subtítulos/emojis de las fuentes en frames ni clips. Revisar imágenes y vídeo generado; un prompt negativo no demuestra cumplimiento. Textos editoriales solo en capas posteriores transparentes. No ocultar letras incrustadas con paneles negros ni aprobar un final por esa cobertura. Preservar originales y documentar defectos. Registro documental, no garantía del proveedor ni prueba de despliegue global.

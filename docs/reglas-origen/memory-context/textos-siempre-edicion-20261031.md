@@ -1,0 +1,3 @@
+# Textos siempre en edición — 31/10/2026
+
+Orden expresa de Emmanuel: todas las entregas deben llevar textos y edición posterior; frames y clips generados limpios sin overlays. El text_mode=none heredado de generación NO cancela textos finales ni justifica preguntar. No ofrecer exclusión de textos finales en nuevos lotes o duplicados. Adaptar textos de referencia real al idioma, marca, tienda y emojis según reglas; conservar snapshots y aprobaciones históricas. Corrección implementada en post_edit_text_policy, normalización video_edit_policy y local-lotes.js, expediente SSD TextosSiempreEdicion-20261031. Despliegue y reinicio se acreditan por recibos, no por esta nota.

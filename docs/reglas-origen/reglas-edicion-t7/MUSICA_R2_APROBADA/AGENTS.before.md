@@ -998,3 +998,291 @@ Cuando Emmanuel pasa una **imagen de referencia** para "crear un frame", esa ima
 **Si la referencia NO muestra el producto**, se conserva la misma bandeja/madera/superficie de la referencia y solo se aplican los cambios de realismo/rediseño/luz.
 
 > Los cambios que Emmanuel busca al crear un frame son SIEMPRE: realismo + rediseño de objetos de fondo + luz realista + textura realista + reemplazo del producto por el suyo. Nada más, y sin llenarle de preguntas.
+> Template validado de este patrón (ejemplo "mujer + palet en almacén"): ver `ADAPTACIONES_PROMPT.md` › "FRAME DESDE REFERENCIA (almacén/palet)".
+
+## SUBIDA DE IMÁGENES POR LA MAÑANA (convención de Emmanuel)
+- Emmanuel sube las imágenes **agrupadas por cuenta** (todas las de una cuenta, luego las de otra), SIN renombrarlas.
+- Al pedir, nombra la **cuenta** y la **tarea**, y las imágenes ya están en el orden que corresponde. Ej: `eiswerk` → `regenerar c1 variante galleta con nuevo frame`.
+- Yo mapeo las imágenes subidas (en su orden) a las tareas que él liste, por cuenta. NO le pido que explique cada imagen ni que cuide más el orden.
+- **"nuevo frame" = imagen YA LISTA** (un frame terminado, no una referencia). → usarla DIRECTO como start_image y regenerar el vídeo. NO crear frame, NO aplicar patrón FRAME DESDE REFERENCIA, NO pedir OK del frame.
+- Distinción clave de palabras: si Emmanuel dice **"nuevo frame"** → imagen lista, directo a vídeo. Si dice **"referencia" / "crea el frame con esta imagen"** → imagen ajena, aplicar patrón FRAME DESDE REFERENCIA (reemplazar producto, rediseño de fondo, etc.).
+
+## 🔢 LOS NÚMEROS DEL PANEL SON FIJOS (arreglado 2026-08-31)
+Antes el número de un frame salía de su POSICIÓN al ordenar: al entrar un frame nuevo se
+recolocaban todos y «frame galletas 5» pasaba a ser otra imagen distinta. Emmanuel se refiere
+a los frames POR NÚMERO, así que eso rompía sus referencias en silencio.
+Ahora el número se asigna **una sola vez** y vive en `PANEL/numeros.json`. **Los frames nuevos
+entran siempre por detrás y ningún número existente se mueve nunca.**
+
+**Al aprobar frames hay que montarlos en el panel EN EL MISMO MOMENTO**, no después:
+```
+bash PANEL/refresh.sh          # o: python3 PANEL/generate_panel.py
+```
+y etiquetarlos en `PANEL/overrides.json` › `retag` (grupo) y mandar a `hidden` las versiones
+descartadas del día, para que no ensucien.
+
+## REGENERAR CONCEPTO CON FRAME DEL PANEL (parcial)
+- **"regenera el C# de [cuenta], clip# frame N"** → SOLO ese clip cambia de frame: uso el **frame N del panel** (leer `PANEL/catalog.json` → grupo+número → media_id) como start_image de ese clip y lo regenero.
+- **Los clips que NO menciona se regeneran TAL CUAL** (su frame y prompt guardados, sin cambios).
+- Puede nombrar varios: "clip1 frame 3, clip3 frame 7" → cada uno con su frame; el resto igual.
+- "frame N" se refiere al número que se ve en el panel; si el grupo es ambiguo, tomar el del tipo/cuenta del concepto (o confirmar en una línea).
+
+## VARIANTE DE COLOR (rosa / azul) — adaptar SOLO el color
+- Cuando Emmanuel sube un frame cuya variante de producto es **azul** o **rosa**, adaptar el prompt cambiando **SOLO el color** del producto (ningún otro cambio). Es lo único distinto entre variantes.
+- La imagen que corresponde la pone el sistema sola a partir del color del frame: no se elige a mano.
+- ⚠️ El producto **AZUL** de EisWerk/Gelatovivo se ve verde menta en foto: en el prompt se describe como *mint*,
+  pero la imagen que se adjunta es la **azul**. No confundirlo con el **menta** de EisMeister, que es otro producto.
+
+## REGENERAR UN FRAME YA VALIDADO DEL PANEL (con cambios)
+- **"regenera el frame [grupo] N"** (un frame que ya está en la app = validado) = hacer lo MISMO que con una imagen de referencia con cambios: **rediseño de objetos de fondo + cambios de luz + más realismo** (y lo que Emmanuel pida). Se toma ese frame como base y se re-genera mejorado.
+
+## RESOLVER CLIP → FRAME + ELEMENTOS (automático, no preguntar)
+- **"genera el clip# de C# [cuenta]"** → el frame ya existe. Por defecto **clipN usa frameN** de ese concepto; si el `registro.json` asigna otro frame a ese clip, mandar el registro. NUNCA preguntar qué frame.
+- **Elementos secundarios se añaden solos** según cuenta + qué hace el clip (leer registro.json › cuentas):
+  - reveal de caja → reference element de la caja de la cuenta (ej. `caja-producto-discomagia`).
+  - abrir caja / mostrar contenido → reference element correspondiente (ej. `discos`).
+  - recetas → el artículo en la variante del frame (lo resuelve `en_pantalla`, no se elige a mano).
+  - la caja/producto del clip es SIEMPRE el de la cuenta.
+- Si de verdad falta un dato imposible de inferir (ej. duración no definida), preguntar SOLO eso, en una línea.
+
+## CONFIGURACIÓN DE GENERACIÓN (aplicar por defecto, sin preguntar)
+
+### Imágenes
+- Modelo `nano_banana_pro`, **2K**, aspect ratio **9:16**.
+- SIEMPRE aplicar aunque no se pida: cambios de fondo con checklist de elementos concretos y nombrados +
+  luz que cambia SOLO dirección/ángulo (nunca temperatura de color, nunca filtro cálido/amarillo, balance neutro) +
+  bloque anti-collage/anti-Canva (una sola fuente de luz coherente, sombras de contacto reales, grano de sensor) +
+  MÁXIMO realismo de piel (poros, imperfecciones, sin suavizado/plástico). Empujar el realismo un poco más cada vez.
+
+### Video "con Kling"
+- Modelo `kling3_0`, **1080p**, **9:16**, duración la que indique Emmanuel. (Estándar original.)
+
+### Video "con Seedance" (por defecto si no se especifica)
+- Modelo `seedance_2_5` (Seedance 2.5 desde el 2026-09-03; antes era el 2.0), **720p**, **9:16**, **MÁXIMO 15s** (si el vídeo de referencia dura más, comprimir los tiempos de las escenas proporcionalmente a 15s), duración la que indique Emmanuel. (Estándar original acordado.)
+- ✅ CALIDAD (misterio resuelto 2026-09-01): la web enviaba `bitrate_mode=high` (8,1 Mbps) y la API por defecto `standard` (5,1 Mbps) al MISMO 720p. `lanzar.py` ya manda SIEMPRE `--bitrate_mode high`. La resolución sigue en 720p: no se toca.
+- ⚠️ En el **2.5** el frame de partida SOLO funciona con `--mode omni_reference`: su modo por
+  defecto es `t2v`, que no acepta media de referencia. `lanzar.py` lo manda solo.
+  (En el 2.0 no hacía falta: aceptaba `start_image` sin más.)
+- Seedance SÍ ejecuta múltiples cortes/escenas en un solo video (prompts tipo receta escena-por-escena son válidos tal cual).
+- Con dos imágenes: la 1ª (start_image) es el frame, la 2ª (image_references) es la imagen de producto o su embalaje.
+
+### Preset molesto
+- "IN THE DARK" (`24bae836-2c4a-48e0-89b6-49fcc0b21612`) se dispara solo con estos prompts →
+  pasar SIEMPRE `declined_preset_id: "24bae836-2c4a-48e0-89b6-49fcc0b21612"` para generar literal.
+
+## REGLAS DE COMPORTAMIENTO (críticas)
+1. **Generar directo en Higgsfield** cuando Emmanuel pasa referencia y describe cambios — sin pedir confirmación. Solo abrir widget si faltan assets.
+2. **Prompts de biblioteca = literal.** Nunca reescribir "porque quedaría mejor". Solo variar si un elemento/avatar/idioma no coincide con el contexto.
+3. **No contradecir** a Emmanuel sobre sus herramientas. Solo opinar si él expresa duda o lo pide.
+4. **Idioma/mercado automático** según la cuenta (EisWerk→alemán, Discomagia/Gelatovivo→italiano). Traducir texto en escena solo si existe, nunca forzar.
+5. **Caja de producto en un frame** → reemplazar por la caja de la cuenta.
+6. **Condiciones de piel/narrativa** (irritación, etc.) se reproducen exactas de la referencia si son parte del mensaje.
+7. **Nunca generar bebés/niños** en cuentas de producto infantil.
+8. **"elimina la cuenta X"** = dejar de tratarla como activa, NUNCA borrar archivos/assets.
+9. **NUNCA regenerar/generar un vídeo del que no se tiene claridad total** (qué frame, qué prompt exacto). Si el prompt original no está guardado o hay cualquier duda de cuál es, NO inventar ni aproximar → PREGUNTAR primero a Emmanuel en lenguaje simple.
+10. **Hablar SIEMPRE en lenguaje humano**, sin IDs/UUIDs/nombres de archivo/jerga. Los tecnicismos son problema interno de Codex; a Emmanuel solo se le dice lo que debe decidir o darme.
+
+## SKILLS DEL PROYECTO
+- **`nuevo-producto`** (`.Codex/skills/nuevo-producto/`): dar de alta un producto a testear (imagen + qué es + país) → nombres de marca → logo/caja/avatar → sección en el panel. También la baja (sacar del panel SIN borrar nada).
+- **`nano-video`** (`.Codex/skills/nano-video/`): generar un CLIP simple desde una línea + motor + segundos.
+  Se dispara cuando Emmanuel dice **"toma el frame#, [lo que quiero], [kling|seedance] [Xs]"**.
+  Crece sola: cada acción validada se guarda en `acciones.md`. NO es para recetas/prompts escena-por-escena (esos = biblioteca literal).
+
+## EFICIENCIA DE TOKENS (coste de Codex — minimizar siempre)
+El gasto de Codex (no el de Higgsfield) sube por salidas largas y texto repetido, no por descargar. Reglas:
+1. **Salidas de terminal cortas**: usar `head`/`tail`/`--json | parse a 1 línea`. Nunca volcados enormes (ej. `ps aux` completo).
+2. **No abrir (Read) imágenes** salvo que haya que analizarlas de verdad (ej. leer una referencia antes de escribir el prompt). Un frame aprobado se descarga SIN abrirlo — Emmanuel ya lo ve en el widget.
+3. **Prompts largos viven en archivos**, no se re-pegan en el chat. Referenciar por ruta/nombre.
+4. **Generar por CLI cuando no haga falta el widget**: `higgsfield generate create ... --json` reducido al job_id (barato) en vez del MCP que devuelve el prompt entero. Usar el widget MCP solo cuando Emmanuel quiera ver el resultado al instante.
+5. **Agrupar operaciones** en un solo paso/script (generar→descargar→archivar) en vez de muchas idas y vueltas.
+6. **Respuestas concisas**. Descargar/archivar sí (es gratis y protege el trabajo); lo que se recorta es verbosidad y aperturas de imagen innecesarias.
+
+## VENTAJAS Codex (usar activamente)
+- **Descargar** cada generación aprobada al disco en su carpeta con nomenclatura `CUENTA-C#-clip#-YYYYMMDD.mp4`,
+  guardando al lado el frame de partida y un `prompt.txt`.
+- **Leer referencias desde disco** (`NanoBanana/_referencias/`) y subirlas yo — sin doble subida.
+- **Mantener vivos** los .md y el registro — actualizarlos yo, sin que Emmanuel resuba nada.
+- **Regenerar conceptos completos en paralelo** (subagentes) y descargar/organizar todo solo.
+- NO gastar créditos en crear/editar documentos durante trabajo normal salvo que aporte (esto es local, no gasta créditos de Higgsfield).
+
+## ESTRUCTURA EN DISCO
+```
+NanoBanana/
+  EISWERK/ DISCOMAGIA/ GELATOVIVO/     → [CONCEPTO]/[clip]/ con .mp4 + frame + prompt.txt (ARCHIVO canónico)
+  _referencias/                         → imágenes de referencia que pasa Emmanuel
+  _registro/registro.json               → mapa vivo (lo mantengo yo)
+  _registro/registro.md                 → estado legible
+  _ENTREGA_DIARIA/YYYY-MM-DD/[CUENTA]/  → COPIA de los vídeos generados ese día, por cuenta (lista para CapCut)
+```
+> **Regla entrega diaria:** cada mp4 va a su carpeta de archivo Y a `_ENTREGA_DIARIA/<fecha>/<CUENTA>/`, y `entregar.py` genera sola **`ENTREGA.html`** en la carpeta del día: cada vídeo reproducible con su «pedido» (las palabras de Emmanuel), cuenta, concepto y el frame de origen con su nombre del panel («Caramelo 3»). Emmanuel no tiene que recordar qué es cada vídeo: lo abre y lo ve.
+
+## 🚫 NO ADELANTAR EL REVEAL EN EL FRAME (error 2026-08-31)
+Si en el vídeo **el producto se revela** (quitar la sábana/manta, girar la cámara al estante,
+abrir la caja), el **frame de inicio NO puede enseñar ya el producto**. Las estanterías/pasillos
+del frame llevan **stock genérico y variado** (electrodomésticos surtidos de marcas distintas),
+nunca un muro de cajas iguales de la cuenta.
+> Ejemplos donde aplica: C6 (selfie → gira al estante), C4/1,2,3 (sábana), abrir caja.
+> Llenar el fondo de cajas del producto **mata la sorpresa** y no tiene sentido narrativo.
+
+## 🥤 EL PRODUCTO DE EISMEISTER ES OTRA MÁQUINA, NO UN EISWERK PINTADO DE MENTA
+Al adaptar cualquier frame a EisMeister hay que **describir su construcción entera**, no decir
+"lo mismo en menta". Estructura real (de abajo a arriba):
+1. **Taza/vaso menta con ASA LATERAL grande** (tipo taza de sopa) — NO un bol liso con forma de huevo.
+2. **Collar/aro BLANCO grueso** alrededor de la boca de la taza.
+3. **Aro TRANSPARENTE con pestaña plana ancha** que sobresale como una visera.
+4. **Cúpula motor menta** con **nervios verticales** suaves y **botón GRIS redondo arriba del todo**.
+   NO hay tolva inclinada transparente ni botón oval blanco lateral (eso es EisWerk).
+Pasar SIEMPRE como referencias: la imagen de producto de EisMeister **y** el frame validado `EisMeister 1`
+(muestra cómo se ve en las manos). Meter en NEGATIVE el producto de EisWerk explícitamente.
+
+## 🏬 LOGOS DE TIENDA REALES — ESCRIBIRLOS BIEN
+- **MediaMarkt**: banda **roja lisa** con el nombre en **blanco, en UNA sola palabra "MediaMarkt"**
+  (M mayúscula en Media y en Markt, sin espacio). **Sin mitad negra, sin barra diagonal, sin segundo color.**
+- **ACTION**: se conserva tal cual como cartel físico de la tienda, bien escrito y legible.
+> Describir el logo elemento por elemento en el prompt; si se deja "su look de siempre" el modelo lo inventa.
+
+## REGLAS DE FONDO POR CUENTA (aplicar junto a los cambios estándar)
+- **EISWERK:** mood cozy nocturno "viendo serie en cama/sofá" EXCEPTO tomas de reveal/supermercado.
+- **EISZWILLING:** misma dirección cozy nocturna de EisWerk EXCEPTO reveal/supermercado, pero con su artículo doble y embalaje propios. Nunca reutilizar ni recolorear el artículo de EisWerk: deben verse dos recipientes independientes con asa bajo una tapa y motor comunes.
+- **EISMEISTER (mood):** **cozy NOCHE DE NETFLIX de chica**. Elementos FIJOS que **NO se rediseñan nunca**:
+  **manta/edredón BLANCO esponjoso** como superficie · **dormitorio desenfocado con TV encendida** mostrando una serie ·
+  **luces de hadas (string lights)** visibles · **luz ambiente cálida y suave** · cámara **cenital ligeramente inclinada**.
+  El rediseño de fondo se aplica SOLO a los demás elementos (muebles, pared, decoración suelta).
+  ⚠️ Error a no repetir: quitar la manta blanca / las luces de hadas / la TV **rompe la estética** — son parte del estilo, no del fondo a cambiar.
+
+## CUENTAS ACTIVAS
+**12 activas:** EISWERK (alemán), GELATOVIVO (italiano), EISZWILLING (alemán, máquina de helados de dos porciones), RUFZEIT (alemán, auricular retro rojo con cable para móvil), HERZPFOTE (alemán, peluche con latido), FLAUSCHNEST (alemán, sudadera con bolsillo para perro pequeño), ZIELALARM (alemán), TARGETALARM (USA), PLATTENZAUBER (alemán, disco magnético de villancicos para la nevera), RENTIERGLANZ (alemán, luces decorativas de reno para pared; alta 2026-09-08), NIKOLAUSLICHT (alemán, lámpara colgante de gorro navideño; alta 2026-09-08) y NAILUNA (alemán, set de uñas con aplicador rosa y luz blanca; alta 2026-09-18). ZIELALARM y TARGETALARM comparten despertador y embalaje y **no tienen avatar fijo: cada vídeo lleva la persona que pase Emmanuel**.
+**RETIRADAS** (fuera del panel, archivos/assets INTACTOS): DISCOMAGIA (retirada 2026-08-29; su producto se relanzó en Alemania como PLATTENZAUBER, reactivada, y sus 4 conceptos son adaptables); EISMEISTER (retirada 2026-09-07; conservar recursos, conceptos, prompts y lecciones).
+> Alta/baja de productos: usar la skill **`nuevo-producto`**. La lista viva de cuentas del panel está en `PANEL/generate_panel.py` › `ACTIVAS`.
+
+> Los media_id y el estado de conceptos viven en `registro.json` / `registro.md` y en el maestro.
+
+## 🔁 ADAPTAR UN CONCEPTO = ADAPTAR TODOS SUS CLIPS (error 2026-09-01)
+«Regenera el C_ de X adaptado a Y» significa: coger la **ÚLTIMA versión** del concepto y adaptar
+**un frame por CADA clip**, incluidas las reutilizaciones («= CONCEPTO_1 variacion caramelo»), que
+son las que se caen. De esa última versión salen **también los prompts** — no se le pregunta a Emmanuel
+qué receta era: si la última actualización usó galletas, es galletas.
+```
+python3 EDITOR/adaptar.py <CUENTA_ORIGEN> <Nº> <CUENTA_DESTINO>
+```
+Devuelve clip a clip: qué es, qué frame hay que adaptar (con su nombre del panel), qué prompt lleva,
+motor y segundos. **Se hace ANTES de generar nada** y se generan TODOS los frames que liste, no menos.
+
+## 🧠 CEREBRO (CEREBRO/ · vault de Obsidian) — LA MEMORIA QUE GOBIERNA LOS MUROS
+No es documentación: **las puertas lo leen** (`EDITOR/cerebro.py`). Cada nota de cuenta lleva un
+bloque ```datos``` (idioma, color, checklist de frames, regex vetados, refs de producto) que
+`lanzar.py` y `verificar.py` consultan en cada generación. Escribir una línea ahí cambia el
+comportamiento del sistema; la cuenta 20 hereda todas las lecciones sin que Emmanuel repita nada.
+
+- **Consultar una cuenta:** `python3 EDITOR/cerebro.py EISMEISTER`
+- **CONTRATO DE ESCENA (obligatorio al adaptar):** todo trabajo con `sustituciones` declara
+  `"escena": {"personas": N, "lugar": "...", "objeto": "..."}` y la puerta coteja el prompt final.
+  *(Nace del 1,2,3: dejé "both employees" y un palet en un dormitorio con una mujer.)*
+- **LECCIONES = aprendizaje forzado:** cada corrección de Emmanuel debe convertirse en
+  `EDITOR/lecciones.py nueva ... --prohibido/--check` — **el hook Stop bloquea el turno si no.**
+  Las lecciones entran solas en las comprobaciones de TODAS las cuentas, presentes y futuras.
+- La skill `nuevo-producto` crea la nota de cuenta desde `CEREBRO/plantillas/cuenta-nueva.md`.
+
+## 💸 COSTE — techos duros (2026-09-01: 200k por verificar una imagen = inaceptable)
+- Verificadores visuales: SIEMPRE subagente con **model: haiku** (comparar imágenes no requiere
+  razonar caro) y SOLO en casos de riesgo (producto conflictivo, cambio de cuenta, frame ya rechazado).
+- Un frame rutinario: lo miro yo contra la referencia. Sin subagentes.
+- No releer los .md grandes: buscar con `rg` y leer solo las secciones necesarias.
+- Imágenes siempre reducidas (sips -Z) antes de abrirlas.
+
+## Graphify retirado — orden 19/09/2026
+No consultar, ejecutar, reinstalar ni reconstruir Graphify. Esta orden sustituye
+todas las instrucciones históricas que obligaban a consultar el grafo. Utilizar
+`rg` y lecturas acotadas de fuentes reales. Sus índices archivados no son una
+fuente operativa y no deben volver a cargarse.
+
+## 🌅 PIPELINE DE LA MAÑANA (app + skill)
+Emmanuel pega links de vídeos de referencia en la pestaña **Mañana** del panel (cuenta + método) y luego dice
+**"prepara el lote"**. Motor: `EDITOR/pipeline.py`. Montaje: `EDITOR/montar.py` (ffmpeg en `~/.local/bin`).
+Descarga de links: `yt-dlp` (Instagram/YouTube; si el link es privado → pedirle que lo suba a mano).
+
+**Reparto:** el script hace lo determinista (descargar, subir, extraer fotogramas, montar, estado);
+Codex hace lo de IA (analizar el vídeo, generar frames y clips).
+
+**Métodos** (se elige en la app; "auto" = decide Codex, y **>4 escenas → B** por regla de Emmanuel):
+- **A (multi-clip):** por CADA escena se extrae el fotograma del **INICIO EXACTO del cambio de escena** (es el punto
+  de partida del clip) → se convierte en FRAME (patrón FRAME DESDE REFERENCIA, con el producto de la cuenta) →
+  se genera el CLIP con **la acción que hace esa escena en la referencia** y **su misma duración** →
+  al final, montaje con el ritmo del original.
+> ⚠️ **DOS REGLAS DEL PIPELINE (correcciones de Emmanuel 2026-08-29):**
+> 1. **Al generar el FRAME hay que pasar SIEMPRE la imagen del producto de la cuenta como 2ª referencia**
+>    (su embalaje o su imagen de producto, según lo que se vea). Sin ella el producto sale aproximado.
+> 2. **El análisis se hace con `EDITOR/PROMPT_ANALISIS.md`** (los 10 puntos de Emmanuel), no con el resumen
+>    corto de Higgsfield. Codex lo redacta combinando las escenas+tiempos de Higgsfield con los fotogramas
+>    extraídos. Ese desglose es el que se convierte en prompt de Seedance, **quitando los captions**.
+
+- **B (prompt largo):** se extrae la imagen de referencia del **segundo 0** del vídeo → se analiza el vídeo →
+  ese fotograma se convierte en FRAME inicial → **frame + la imagen de producto** a Seedance con
+  el prompt escena-por-escena, los parámetros por defecto de la cuenta y **la duración del vídeo de referencia**
+  → un solo vídeo con todas las escenas.
+
+**Secuencia:** `nuevo` → `preparar` (descarga+sube) → *Codex analiza* → `escenas <id> <json>` →
+`fotogramas <id>` → *Codex genera frames* → **Emmanuel aprueba en bloque** → *Codex genera clips* → `montar <id>`.
+> ⚠️ SIEMPRE parar a que Emmanuel apruebe los frames antes de gastar los vídeos.
+
+## Corrección 2026-09-08: persona propia en próximas referencias
+En los próximos frames desde referencia ajena, sin avatar aportado, cambiar ligeramente pelo/rasgos de la persona además de ropa y 4–5 elementos concretos del entorno. Con avatar aportado, conservar su identidad e integrarla con la luz de la escena. Una orden explícita de conservar o reutilizar tiene prioridad. NO regenerar imágenes anteriores por esta regla. El criterio se carga en el verificador desde `CEREBRO/lecciones/2026-09-08-persona-propia-y-redisenio-visible.md`.
+
+## Decisión posterior 2026-09-08: avatares aportados por Emmanuel y escala real
+- QUEDA RETIRADA la generación automática de avatares en las próximas altas. Emmanuel aporta la foto por cuenta o por encargo. Esta decisión sustituye cualquier paso antiguo de generar CARA/cara_fija en las guías de alta. Si falta una referencia de identidad necesaria, se pide; no se inventa un nuevo avatar para suplirla. Se conserva la integración de luz/textura y los cambios de entorno, no se retoca la identidad aportada.
+- Conservar los avatares y frames existentes: no borrar ni regenerar retroactivamente. Las reutilizaciones aprobadas siguen siendo válidas hasta que Emmanuel aporte un sustituto.
+- Próximas referencias de producto: incluir una mano al lado para comunicar escala, apoyándose en medidas verificadas o una foto real con escala conocida; no inventar centímetros ni una proporción mano/producto. La mano es guía de tamaño, no orden de insertarla en todas las escenas. Adjuntar artículo/embalaje solo según lo que se verá. No rehacer assets existentes sin encargo.
+- Revisión del flujo de edición del 8 septiembre: por ahora se evalúa preparar un proyecto editable por vídeo, con sus clips finales en orden. No está implementado ni hay editor nuevo conectado. La orden posterior sobre 4K y referencias por escena se aplica abajo; no reescribir prompts guardados ni reprocesar entregas anteriores.
+
+## Orden posterior 2026-09-08: 4K, escenas finales y producto con escala
+- NUEVOS vídeos Seedance: generar a 480p y escalar con Topaz a 4K (2160p), conservando el audio original. Sustituye los valores antiguos 720p/1080p de estas instrucciones. Kling permanece en 1080p. `EDITOR/upscale.py` fija el destino; la entrega registra la resolución real validada. No volver a cobrar ni reetiquetar trabajos históricos: conservan su destino original.
+- Réplicas largas: planificar y generar también frames propios de referencia para las escenas finales/posteriores, partiendo del inicio exacto de esas escenas del ORIGINAL. No usar solo el primer frame ni un intento fallido como sustituto del original. Aplicar realismo iPhone, identidad suministrada y producto correcto a cada escena; someter los nuevos frames a aprobación antes de los vídeos.
+- El papel de esas imágenes es ESCENA, nunca ARTICULO. Antes de lanzar, comprobar cómo admite esas referencias el motor y la puerta existente. Si no existe soporte, detener el lanzamiento y explicar la integración necesaria; no ignorarlas ni saltarse la puerta. Esta instrucción no equivale a tener ya implementada esa integración.
+- Emmanuel aporta las fotos reales de producto con una mano que fija el tamaño. Convertirlas en referencia de producto limpia/mockup conservando geometría y proporción mano/artículo. No inventar dimensiones ni generar una mano que falsee la escala. La mano es referencia, no obligación de aparecer en todos los vídeos. No rehacer assets anteriores sin encargo.
+
+
+## HaarZauber y StillWohl — alta 10/10/2026
+
+HAARZAUBER y STILLWOHL: Alemania, alta directa de Emmanuel. Assets y fichas registrados; revisión visual pendiente. Avatares existentes mujer 12 y mujer 11, respectivamente. Logos horizontales solo en `_web/`, no referencias. Sin conceptos de vídeo todavía.
+
+
+## LaserBande — alta 12/10/2026
+
+LASERBANDE: Alemania, set infantil laser tag de cuatro pistolas y cuatro sensores. Alta directa de Emmanuel. Assets generados, revisión visual pendiente; avatar existente mujer 12 como presentadora adulta. Logo horizontal solo en `_web/`. Sin conceptos de vídeo todavía. No inventar especificaciones ni certificaciones.
+
+
+## WärmePlatz — alta 13/10/2026
+
+WAERMEPLATZ: Alemania, asiento calefactor portátil negro acolchado con respaldo y reposabrazos. Alta directa de Emmanuel. Assets generados, revisión visual pendiente; avatar existente mujer 11 como presentadora adulta. Logo horizontal solo en `_web/`. Sin conceptos de vídeo todavía. No inventar especificaciones ni certificaciones.
+
+
+## FastLuxus — alta 15/10/2026
+
+FASTLUXUS: Alemania, bolso tote con impresión de bolso caro como broma visual. Alta directa de Emmanuel. Assets generados, revisión visual pendiente; avatar existente mujer 12 como presentadora adulta. Logo horizontal solo en `_web/`. Sin conceptos de vídeo todavía. No inventar especificaciones ni certificaciones.
+
+
+## WolkenWonne — alta 18/10/2026
+
+WOLKENWONNE: Alemania, edredón acolchado de Lullor, alta directa de Emmanuel. Assets y ficha registrados; revisión visual pendiente. Avatar mujer 8. Emmanuel realiza el test; sin Drive. Logos horizontales solo en `_web/`, no referencias. Sin conceptos de vídeo todavía.
+
+
+## NagelFunkel — alta 22/10/2026
+
+NAGELFUNKEL: Alemania, rotuladores de doble punta para decorar uñas. Avatar mujer 1 por elección expresa del 22/10/2026; mujer 6 queda conservada solo en el historial. Responsable de publicación: Luz Adriana. Tras editar y verificar los finales, subirlos a «Videos Luz Adriana» mediante Drive, con recibo y sin duplicados. Consultar `NanoBanana/NAGELFUNKEL/delivery.json`: falta enlace/ID verificable de carpeta; no inventarlo. Assets pendientes de revisión visual. Primer test aplazado al próximo lote de Emmanuel; no generar vídeos ahora. Logo horizontal solo en `_web/`. Sin conceptos de vídeo todavía.
+
+
+## FaltLiebling — alta 22/10/2026
+
+FALTLIEBLING: Alemania, bolso plegable de nailon en llavero con mosquetón, alta directa de Emmanuel. Assets y ficha registrados; revisión visual pendiente. Avatar mujer 1. Primer test expresamente aplazado al próximo lote de Emmanuel; no generar vídeos ahora. Logos horizontales solo en `_web/`, no referencias. Sin conceptos de vídeo todavía.
+
+
+## Música continua y drop al cuerpo — 25/10/2026
+Leer CRITERIOS_OBLIGATORIOS.md en SSD y memory/context/ritmo-musica-voz-edicion.md. Canción seleccionada desde t0 del vídeo, un fragmento continuo sin saltos ni reinicios; ajustar inicio del fragmento para que el drop coincida con entrada del segundo clip/cuerpo. Subidas tras voz progresivas. Mantener voz completa sin otra canción residual; revisión independiente real del final. Sustituye excepción sonido mezclado del gancho seguido de MP3 para V1/V2/V3 y V6 del lote34, cuya reedición está autorizada. No regenerar clips. Registro documental no acredita implementación ni aprobación final.
+
+
+## Test de cuatro vídeos y preguntas de edición — 25/10/2026
+Orden posterior para futuros tests: leer `/Volumes/T7/AUTOMATIZACION SEGA/TestProductos4-20261025/PLANTILLA_Y_PREFLIGHT.md`. V1 réplica del más viral verificado; V2–V4 solo ganchos validados y mismo cuerpo generado V1 sin regenerarlo. Plantillas de texto por variante adaptadas a producto/nicho; canciones manuales por vídeo de biblioteca. Un único bloque inicial incluye dudas esenciales de frames, clips y edición antes de generar. Pendientes de configurar ganchos/textos exactos; no inventarlos. No alterar históricos ni lanzar antes de envío humano; registro no acredita despliegue.
+
+
+## Textos de tests por rendimiento — 25/10/2026
+En tests de cuatro vídeos, V2–V4 usan textos ganadores observables de la cuenta de referencia adaptados al producto/nicho y acción del gancho; no plantilla fija aportada por Emmanuel. Registrar métricas/fuente/adaptación con variaciones-textos-ganadores. No inferir ventas ni aprobación por métricas. Canciones manuales por slot. Ver TestProductos4-20261025/PLANTILLA_Y_PREFLIGHT.md en SSD; integración aún pendiente.

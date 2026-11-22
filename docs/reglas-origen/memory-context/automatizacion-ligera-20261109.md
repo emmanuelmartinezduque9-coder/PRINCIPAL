@@ -1,0 +1,27 @@
+# Flujo ligero — orden de Emmanuel09/11/2026
+
+Objetivo: reducir consumo de Codex sin perder continuidad ni calidad de instrucciones. Emmanuel pide quitar procesos repetitivos, crear un chat limpio y eliminar revisiones de frames antes de presentarlos: él decide si los aprueba.
+
+## Cambios de trabajo desde ahora
+- Un responsable principal; no abrir agentes para preparar/revisar cada frame, comparar de nuevo el mismo prompt o esperar trabajos. No revisión creativa independiente de prompts de frame ni de imágenes generadas antes de mostrarlas. Leer/entender referencias y redactar correctamente sigue siendo parte de producir, no una ronda adicional de QA.
+- Mostrar todos los frames reales juntos pendientes de aprobación humana. No regenerar automáticamente por gusto del agente ni firmar una aprobación ficticia. Solo comprobaciones mecánicas de archivo decodificable, cantidad/posición, referencias requeridas y recibos. Emmanuel pide las correcciones.
+- Una lectura de las instrucciones aplicables por tarea. Guardar decisiones compactas y reutilizarlas cuando archivos/hashes no cambian. Buscar con rg y leer fragmentos necesarios. No cargar todo el historial ni todas las skills ni enumerar todos los conectores.
+- Recuperar jobs aceptados/inciertos antes de cualquier envío. Los inciertos no se reenvían. Un solo propietario de ejecución y el motor/cola existentes. No duplicar consultas entre coordinador y agente.
+- En generación larga, usar el trabajador existente/eventos de finalización. Si solo hay sondeo, espaciar consultas de proveedor a120–180s, adaptando a la duración prevista. No reactivar al modelo cada10s para confirmar que sigue esperando; usar esperas de herramienta acotadas según instrucciones del entorno. No crear un cronómetro, chat o ejecutor extra por cada vídeo.
+- Agrupar consultas independientes y devolver resúmenes pequeños de resultados. No imprimir manifiestos/historiales enormes. Reutilizar resultados técnicos vinculados a hashes; repetir solo si cambian sus entradas o existe un fallo concreto.
+- No añadir modificaciones del motor por cada detalle creativo. Usar rutas generales existentes. Si un bloqueo real exige un arreglo, reparar una vez, probar específicamente y documentar; no inventar excepciones de calidad ni quitar controles técnicos.
+- Tras aprobar frames, continuar generación/upscale/edición autorizados. Mantener una revisión final necesaria del MP4 y sus cortes/audio/textos. Cuando la regla exige independencia, una revisión agrupada del lote en vez de un agente por cada paso. No quitar escucha requerida sin autorización expresa y no fingirla.
+- Mantener límite de reintentos vigente (máximo dos regeneraciones por fallo salvo orden posterior), selecciones expresas, original y entrega por cuenta/idioma.
+
+## Cambios comprobados en código
+`EDITOR/frame_human_review_policy.py` aplica únicamente en contexto autenticado activo del propietario emmanuel y pedido coincidente. `integridad_previa.verificar` mantiene la construcción/validación del expediente y elimina la exigencia de veredicto creativo independiente para frames de ese contexto, registrando human_approved=false. `frame.py` no abre revisión independiente de salida ni marca requiere_verificacion para esos nuevos frames. La aprobación humana de frames antes de clips sigue intacta. No cambia otros propietarios, vídeos ni históricos.
+
+Prueba focal ejecutada: política correcta para Emmanuel; otro pedido/propietario/contexto inactivo no se beneficia; un error de hash sigue bloqueando; fase vídeo sigue exigiendo su control; nunca registra aprobación humana. Compilación de los tres archivos correcta. No se ha generado un frame pagado para probar estos cambios ni se afirma despliegue de otra copia/servidor.
+
+## Hallazgos del repaso
+El flujo reciente repetía revisiones de prompt y de salida, generaba agentes que cargaban contexto amplio y mantenía muchas esperas de10s. Se conserva la necesidad de investigar referencia/producto y verificar el final, pero se eliminan rondas creativas de frames. El motor ya prevé esperas largas en trabajador, no en el LLM (`production_engine.command`). La política de menor sondeo es operativa del agente, no una nueva automatización programada.
+
+Archivo histórico intacto: `memory/archive/AGENTS-antes-flujo-ligero-20261109.md`. Consultar solo secciones pertinentes si falta un detalle, no leerlo entero por defecto.
+
+## Actualización expresa de Emmanuel — 10/11/2026: preguntas solo antes de frames
+Todas las preguntas esenciales del lote (imágenes, generación, edición, música, voz, textos y cortes) se reúnen al recibir el encargo completo y se resuelven ANTES de generar frames. Tras aprobar los frames, continuar vídeos y edición sin nuevas preguntas ni solicitudes rutinarias de aprobación o escucha. No pedir al usuario que haga la revisión auditiva final como condición para entregar: la verificación corresponde al responsable y al motor. Esta orden corrige el error de haber pedido confirmar el audio de los tres montajes del lote app-01d9c7c947cb45aca4ea24b00fa5b216-6 y su V4 adicional. Esa pregunta no debe reiterarse ni tratarse como una obligación del usuario. No equivale a una aprobación de audio ni permite inventar escucha o resultados; resolver la comprobación con medios disponibles y documentar cualquier limitación real. Un bloqueo técnico irresoluble se registra con su dependencia concreta y no detiene los elementos independientes.

@@ -1,0 +1,2 @@
+
+Tras recibir un lote y resolver el único bloque inicial de dudas, continuar por todos sus productos hasta generar, revisar y presentar juntos todos los frames. Guardar los avances en los expedientes sin interrumpir a Emmanuel con rankings, acuses, preguntas rutinarias ni entregas parciales. Solo escalar una dependencia externa imprescindible después de agotar las vías autorizadas y avanzar todo lo independiente.

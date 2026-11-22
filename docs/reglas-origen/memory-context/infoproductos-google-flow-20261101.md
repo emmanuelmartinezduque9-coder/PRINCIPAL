@@ -1,0 +1,20 @@
+# Proveedor de vídeo de infoproductos
+
+Decisión de Emmanuel, 01/11/2026: usar Google Flow en los nuevos vídeos de infoproductos. HeyGen queda como histórico. Esta preferencia no acredita conexión, acceso a proyectos, facturación API ni generación. Mantener avatar visible durante la demostración y textos 06B fijos en edición.
+
+Actualización 02/11: para los infoproductos prevalece el estilo de /Volumes/T7/AUTOMATIZACION SEGA/REGLAS_EDICION/INFOPRODUCTOS_VISUAL_APROBADO.md sobre el texto 06B anterior.
+
+Guion y ritmo de infoproductos (02/11/2026): traducir el guion completo en su orden, con el mismo gancho, argumentos, demostración y CTA. Adaptar solo idioma, unidades y datos propios de la cuenta; si la referencia menciona su ebook por nombre, usar el título propio. Si no lo nombra, conservar la oferta original. En el MP4 no puede haber más de 0,50 s seguidos sin voz, también al inicio, al final, dentro de una toma y sumando ambos lados de cada empalme. Medir actividad de voz, recortar imagen y audio juntos sin cortar sílabas y comprobar el exportado. La música o el ruido ambiente no cuentan como voz.
+
+Moneda local en infoproductos: identificar el país destinatario antes de traducir el guion. Para comparaciones narrativas, conservar los importes del guion y expresarlos en la moneda local (Alemania: 30 dólares y 3 dólares pasan a 30 euros y 3 euros). Aplicarlo a cada mención en voz, subtítulos y gráficos. Si se cita el precio real de venta del producto, usar el precio aprobado para ese mercado. Comprobar las menciones en el MP4 exportado.
+
+Plantilla tipográfica predeterminada de infoproductos (02/11/2026): revisar la tipografía del reel de referencia frase por frase. En DfLiqF6FWrG hay frases enteras en sans y palabras en cursiva serif más grande, a veces dentro de la misma línea. Mantener las formas y proporciones propias de las letras, alternar por énfasis y sincronizar la aparición con la voz. Texto blanco sin caja; evitar subrayado sistemático. Aproximación local Helvetica Neue y Didot Italic. Renderizador compartido: /Volumes/T7/AUTOMATIZACION SEGA/Infoproductos-HealthyGut-20261031/caption_style.py. Referencia: https://www.instagram.com/reel/DfLiqF6FWrG/.
+
+### Escenarios y demostración visual · 02/11/2026
+El retrato aprobado fija la identidad del avatar. Cada toma requiere una imagen propia según la acción observada en la referencia. Cambiar de ubicación cuando corresponda (por ejemplo, exterior para enseñar una pierna, cocina para preparar la infusión). Definir quién aparece, qué se ve al decir cada frase y qué gesto conecta ambos. Mostrar el detalle en una toma nativa a pantalla completa; no insertar recortes de la competencia ni montar una pantalla dividida para sustituir la demostración. Dentro de una escena conservar sujetos, vestuario, luz y objetos; verificar la continuidad visual antes de entregar.
+
+### Cámara y color para infoproductos y productos con avatar
+Referencia estética: vídeo estándar de un iPhone 17 Pro Max sostenido por otra persona. Usar el gran angular principal a 1× como punto de partida. Mantener legibles paredes, hojas, juntas y muebles situados detrás del avatar; sin desenfoque artificial de retrato. Piel y blancos naturales, contraste local moderado, altas luces controladas y sombras propias del lugar. La mano del operador produce pequeñas correcciones de encuadre y paralaje real; no añadir una vibración periódica en montaje. Comprobar en movimiento, a velocidad normal, que cámara, color y profundidad funcionan tanto en interior como en exterior.
+
+## Ritmo de voz en todos los infoproductos — 04/11/2026
+En cada test nuevo y en cada vídeo de una cuenta activa, pedir desde la generación que el avatar hable un poco más rápido, con ritmo conversacional ágil, pronunciación clara y frases enlazadas. Mantener el guion completo y las acciones a velocidad natural. Ajustar el montaje al habla real, sincronizar los subtítulos palabra por palabra y recortar los silencios que superen medio segundo, sin cortar sílabas. Escuchar el resultado a velocidad normal antes de entregar.

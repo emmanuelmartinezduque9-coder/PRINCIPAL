@@ -1,0 +1,2 @@
+# WinterTasse — resultado aprobado y ritmo, 08/11/2026
+Emmanuel aprueba WinterTasse_DE_Milka_POV_R2_20261108.mp4. Para próximos vídeos: reducir claramente el tiempo de remover; no encadenar tomas largas/repetitivas de la cuchara. Mostrar brevemente el cambio de sólido a fundido y avanzar al snack/dip, manteniendo comprensión del funcionamiento, POV y velocidad natural. No modificar ni regenerar el final aprobado por esta nota.

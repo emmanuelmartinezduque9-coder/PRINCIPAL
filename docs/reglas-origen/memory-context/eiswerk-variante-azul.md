@@ -1,0 +1,3 @@
+
+## Variante azul de Emmanuel — 31/10/2026
+Para pedidos nuevos de EISWERK, «variante azul» o «EisWerk azul» selecciona articulo_azul_turquesa. Cuenco azul turquesa acanalado, aro blanco, tapa transparente y motor blanco con interruptor marfil I/O. Adjuntar el mockup /Volumes/T7/AUTOMATIZACION SEGA/Assets/EISWERK/variante-azul/mockup.png (SHA256 7d17dc3faca14161a509312deb99a1c33f9a655dd14dd7d77ed0a4d99fec0563, ID 59f2f72e-c3ec-46d7-9f94-876f3f515269). La captura original está en /Volumes/T7/AUTOMATIZACION SEGA/Assets/EISWERK/variante-azul/referencia.png. articulo_azul es el identificador histórico de menta y no se usa para esta nueva selección.
