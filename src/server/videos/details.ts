@@ -18,6 +18,10 @@ const HIDDEN = "[oculto]";
 const SECRET_KEY = /token|secret|passw|authorization|cookie|api[_-]?key|credential|signature|private[_-]?key/i;
 const JWT = /eyJ[\w-]{6,}\.[\w-]{6,}\.[\w-]{6,}/g;
 const BEARER = /\b(Bearer)\s+[^\s"',;]+/gi;
+/** Direcciones dentro de cualquier texto. */
+const URL_IN_TEXT = /https?:\/\/[^\s"'<>]+/gi;
+/** Parámetros de firma sueltos (en un registro, una ruta sin dominio…): `sig=`, `signature=`, `token=` y parecidos. */
+const SECRET_PARAM = /(\b(?:sig|signature|x-amz-signature|token|access_token|refresh_token|id_token)=)[^&\s"';,]+/gi;
 /** Un `data:` largo (las muestras del modo simulado) se resume: no aporta nada y ocupa mucho. */
 const MAX_DATA_URL = 100;
 
@@ -26,16 +30,21 @@ function redactString(value: string): string {
     const comma = value.indexOf(",");
     return `${value.slice(0, comma >= 0 && comma < MAX_DATA_URL ? comma + 1 : 30)}… (${value.length} caracteres)`;
   }
-  // Una dirección con consulta puede llevar una firma (subidas prefirmadas): la consulta no se enseña.
-  if (/^https?:\/\/\S+$/i.test(value) && value.includes("?")) {
-    try {
-      const url = new URL(value);
-      return `${url.origin}${url.pathname}?${HIDDEN}`;
-    } catch {
-      return HIDDEN;
-    }
-  }
-  return value.replace(JWT, HIDDEN).replace(BEARER, (_match, scheme: string) => `${scheme} ${HIDDEN}`);
+  return value
+    .replace(URL_IN_TEXT, hideQuery)
+    .replace(SECRET_PARAM, (_match, name: string) => `${name}${HIDDEN}`)
+    .replace(JWT, HIDDEN)
+    .replace(BEARER, (_match, scheme: string) => `${scheme} ${HIDDEN}`);
+}
+
+/**
+ * Una dirección con consulta puede llevar una firma (subidas prefirmadas): la consulta no se enseña,
+ * esté la dirección sola o dentro de un texto. La puntuación del final del texto se queda.
+ */
+function hideQuery(found: string): string {
+  const [, url, trailing] = /^(.*?)([.,;:!)\]]*)$/.exec(found)!;
+  const query = url.indexOf("?");
+  return query < 0 ? found : `${url.slice(0, query)}?${HIDDEN}${trailing}`;
 }
 
 /** Copia de `value` sin nada que parezca una clave: campos con nombre de secreto, JWT, cabeceras `Bearer` y consultas de direcciones. */

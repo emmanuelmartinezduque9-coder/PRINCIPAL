@@ -42,13 +42,14 @@ function pollEvery(view: VideoViewJson | undefined): number | false {
 }
 
 /**
- * Qué pasos se pueden abrir: Imagen tras un desglose de la referencia actual; Clip con una imagen
- * aprobada (aunque luego cambie la referencia: el clip hecho se sigue viendo y descargando).
+ * Qué pasos se pueden abrir. Imagen: con el último desglose terminado y de la referencia actual, o
+ * si ya hay alguna ronda de imagen (una en marcha o en duda nunca se esconde). Clip: con una imagen
+ * aprobada, o si ya hay algún clip (aunque luego cambie la referencia, se sigue viendo y descargando).
  */
 function reachableSteps(view: VideoViewJson): FlowStep[] {
   const steps: FlowStep[] = ["referencia", "desglose"];
-  if (view.analysis?.status === "done" && !view.analysis.stale) steps.push("imagen");
-  if (view.frame.approvedResultId !== null) steps.push("clip");
+  if ((view.analysis?.status === "done" && !view.analysis.stale) || view.frame.current !== null) steps.push("imagen");
+  if (view.frame.approvedResultId !== null || view.clip.current !== null) steps.push("clip");
   return steps;
 }
 
@@ -194,7 +195,7 @@ function FlowBody({
       ) : current === "imagen" ? (
         <StepFrame view={data} onGoToClip={() => select("clip")} onGoToBreakdown={() => select("desglose")} />
       ) : (
-        <StepClip view={data} onGoToBreakdown={() => select("desglose")} />
+        <StepClip view={data} onGoToBreakdown={() => select("desglose")} onGoToFrame={() => select("imagen")} />
       )}
 
       {spent || isOwner ? (

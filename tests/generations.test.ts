@@ -7,6 +7,7 @@ import {
   getHiggsfield,
   HiggsfieldAuthError,
   HiggsfieldConnectError,
+  HiggsfieldNotConnectedError,
   HiggsfieldRejectedError,
   HiggsfieldUnavailableError,
   HiggsfieldUnknownOutcomeError,
@@ -243,6 +244,15 @@ function withBeforeSubmit(before: () => Promise<void>, port: HiggsfieldPort = fa
 // ───────────────────────── Pedir ─────────────────────────
 
 describe("pedir una generación", () => {
+  it("sin Higgsfield conectado o con la conexión caducada, el 409 lleva el código «higgsfield_connect»", async () => {
+    fake.failNext("balance", new HiggsfieldNotConnectedError());
+    await expect(quoteGeneration(ana, v.id, "frame", deps)).rejects.toMatchObject({ status: 409, code: "higgsfield_connect" });
+    fake.failNext("balance", new HiggsfieldAuthError());
+    await expect(requestGeneration(ana, v.id, "frame", { expectedCredits: 4 }, deps)).rejects.toMatchObject({ status: 409, code: "higgsfield_connect" });
+    fake.state.credits = 1;
+    await expect(quoteGeneration(ana, v.id, "frame", deps)).resolves.toMatchObject({ enough: false });
+  });
+
   it("el presupuesto dice créditos, saldo y si alcanza", async () => {
     expect(await quoteGeneration(ana, v.id, "frame", deps)).toEqual({ credits: 4, balance: 1000, enough: true, round: 1, regenerationsLeft: 2 });
     expect(await quoteGeneration(ana, v.id, "clip", deps)).toMatchObject({ credits: 30, enough: true, round: 1 });
@@ -1279,6 +1289,14 @@ describe("rutas", () => {
       expect(response.status).toBe(200);
       expect(await response.json()).toEqual({ risk: "Si sí estaba, Higgsfield te cobrará las dos." });
       expect(await rowOf(id)).toMatchObject({ status: "submitted", jobIds: ["j-cand"] });
+    });
+
+    it("«Es este» sin trabajo da 400 antes de mirar el historial", async () => {
+      const { id, local } = await stuckLocal();
+      local.calls.length = 0;
+      await expect(adoptCandidate(ana, v.id, "frame", "  ", { higgsfield: local.port })).rejects.toMatchObject({ status: 400 });
+      expect(local.calls.filter((c) => c.method === "history")).toHaveLength(0);
+      expect(await statusOf(id)).toBe("unknown");
     });
 
     it("POST …/imagen/no-esta la deja «no enviada»", async () => {

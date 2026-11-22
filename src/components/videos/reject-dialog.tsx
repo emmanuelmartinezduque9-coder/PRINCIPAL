@@ -1,7 +1,7 @@
 "use client";
 
 import { Loader2, ThumbsDown } from "lucide-react";
-import { useId, useState } from "react";
+import { useId, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogClose, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -28,16 +28,21 @@ export function RejectDialog({
   const [reason, setReason] = useState("");
   const id = useId();
   const text = reason.trim();
+  // Intro dos veces seguidas (antes de que `pending` llegue) no rechaza dos veces.
+  const sending = useRef(false);
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
-    if (!text || pending) return;
+    if (!text || pending || sending.current) return;
+    sending.current = true;
     try {
       await onReject(text);
       setOpen(false);
       setReason("");
     } catch {
       // El aviso ya lo da quien rechaza; el diálogo sigue abierto con lo escrito.
+    } finally {
+      sending.current = false;
     }
   }
 

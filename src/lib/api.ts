@@ -11,6 +11,8 @@ export class ApiError extends Error {
   constructor(
     message: string,
     public status: number,
+    /** Código estable que manda el servidor con algunos errores (p. ej. `higgsfield_connect`). */
+    public code?: string,
   ) {
     super(message);
   }
@@ -28,7 +30,7 @@ export async function api<T>(url: string, init?: RequestInit): Promise<T> {
     window.location.assign(`/login?volver=${encodeURIComponent(back)}`);
   }
   if (!response.ok) {
-    throw new ApiError(body?.error ?? "No se pudo completar la operación", response.status);
+    throw new ApiError(body?.error ?? "No se pudo completar la operación", response.status, typeof body?.code === "string" ? body.code : undefined);
   }
   return body as T;
 }

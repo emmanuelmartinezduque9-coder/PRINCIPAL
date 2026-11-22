@@ -102,6 +102,20 @@ describe("redactTokens", () => {
       empty: null,
     });
   });
+
+  it("también las direcciones dentro de un texto y los parámetros sig=, signature= y token= sueltos", () => {
+    expect(
+      redactTokens({
+        message: "Sube aquí: https://upload.example.com/m1?X-Amz-Signature=abc&x=1 y luego https://cdn.test/a.png?token=zz. Fin.",
+        log: "GET /files/a.mp4?sig=abc123&exp=1 200; otro token=secreto&b=2; signature=xyz",
+        plain: "https://cdn.test/a.png",
+      }),
+    ).toEqual({
+      message: "Sube aquí: https://upload.example.com/m1?[oculto] y luego https://cdn.test/a.png?[oculto]. Fin.",
+      log: "GET /files/a.mp4?sig=[oculto]&exp=1 200; otro token=[oculto]&b=2; signature=[oculto]",
+      plain: "https://cdn.test/a.png",
+    });
+  });
 });
 
 describe("detalles técnicos", () => {

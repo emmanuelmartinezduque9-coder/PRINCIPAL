@@ -2,7 +2,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { Check, ChevronRight, Copy, Loader2, RefreshCw } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { api } from "@/lib/api";
@@ -23,6 +23,13 @@ export function TechnicalDetails({ videoId }: { videoId: number }) {
     refetchOnWindowFocus: false,
   });
   const text = details.data ? JSON.stringify(details.data.generations, null, 2) : null;
+
+  // «Copiado» vuelve a «Copiar» al poco, para poder copiar otra vez.
+  useEffect(() => {
+    if (!copied) return;
+    const timer = setTimeout(() => setCopied(false), 2000);
+    return () => clearTimeout(timer);
+  }, [copied]);
 
   async function copy() {
     if (!text) return;

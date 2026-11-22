@@ -17,6 +17,7 @@ import {
   type HiggsfieldPort,
 } from "@/connectors/higgsfield";
 import { getDb, schema } from "@/db/client";
+import { HIGGSFIELD_CONNECT } from "@/lib/error-codes";
 import { enqueueJob } from "@/jobs/boss";
 import { getActiveUser, type AuthUser } from "@/server/auth";
 import { HttpError } from "@/server/http";
@@ -220,7 +221,9 @@ function trimRaw(raw: unknown): unknown {
 
 /** Errores de Higgsfield al presupuestar, como respuesta para la persona. */
 function asHttp(error: unknown): never {
-  if (error instanceof HiggsfieldNotConnectedError || error instanceof HiggsfieldAuthError) throw new HttpError(409, error.message);
+  if (error instanceof HiggsfieldNotConnectedError || error instanceof HiggsfieldAuthError) {
+    throw new HttpError(409, error.message, HIGGSFIELD_CONNECT);
+  }
   if (error instanceof HiggsfieldRejectedError) throw new HttpError(409, rejectedBy(error.reason));
   if (error instanceof HiggsfieldUnavailableError) throw new HttpError(503, error.message);
   throw error;
@@ -1012,6 +1015,8 @@ export async function adoptCandidate(
   jobId: string,
   deps: GenDeps = {},
 ): Promise<{ risk: string }> {
+  // Sin trabajo no hay nada que adoptar: ni se mira el historial.
+  if (typeof jobId !== "string" || jobId.trim() === "") throw new HttpError(400, NOT_A_CANDIDATE);
   const { video, row, provedAbsent } = await freshStuck(user, videoId, kind, deps);
   if (provedAbsent) throw new HttpError(409, PROVED_ABSENT);
   const now = clock(deps);

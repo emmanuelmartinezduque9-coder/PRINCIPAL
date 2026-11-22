@@ -1,7 +1,8 @@
 "use client";
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Check, Clapperboard, Download, Loader2, ThumbsUp } from "lucide-react";
+import { Check, Clapperboard, Download, ImageIcon, Loader2, ThumbsUp, VideoOff } from "lucide-react";
+import { useState } from "react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -9,11 +10,11 @@ import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import type { ClipResolution } from "@/server/videos/videos";
 import { GenerationNotice, Generating } from "./generation-status";
-import { canRequestRound, RUNNING_STATUSES, thumbUrl, type VideoJson, type VideoViewJson } from "./labels";
+import { canRequestRound, RUNNING_STATUSES, textHash, thumbUrl, type VideoJson, type VideoViewJson } from "./labels";
 import { QuoteCard } from "./quote-card";
 import { onRadioKeyDown, radioTabIndex } from "./radio-keys";
 import { RejectDialog } from "./reject-dialog";
-import { RegenerationsLeft } from "./step-frame";
+import { NoRegenerationsLeft, RegenerationsLeft } from "./step-frame";
 import { useGenerationActions } from "./use-generation";
 
 const RESOLUTIONS: Array<{ value: ClipResolution; note?: string }> = [
@@ -22,21 +23,31 @@ const RESOLUTIONS: Array<{ value: ClipResolution; note?: string }> = [
   { value: "1080p" },
 ];
 
-/** Resolución del clip: se guarda al elegir y el precio se vuelve a pedir. */
-function ResolutionPicker({ video }: { video: VideoJson }) {
+/**
+ * Guardar la resolución del clip. La caché del vídeo solo cambia con lo que devuelve el servidor:
+ * así el presupuesto (cuya clave lleva la resolución guardada) nunca se pide con una resolución que
+ * el servidor aún no tiene. Al guardarse, el presupuesto del clip se vuelve a pedir.
+ */
+function useSaveResolution(video: VideoJson) {
   const client = useQueryClient();
-  const save = useMutation({
+  return useMutation({
     mutationFn: (clipResolution: ClipResolution) =>
       api<{ video: VideoJson }>(`/api/videos/${video.id}`, { method: "PUT", body: JSON.stringify({ clipResolution }) }),
-    onMutate: (clipResolution) => {
-      client.setQueryData<VideoViewJson>(["video", video.id], (v) => (v ? { ...v, video: { ...v.video, clipResolution } } : v));
+    onSuccess: ({ video: saved }) => {
+      client.setQueryData<VideoViewJson>(["video", video.id], (v) => (v ? { ...v, video: saved } : v));
+      void client.invalidateQueries({ queryKey: ["quote", video.id, "clip"] });
     },
     onError: (error) => toast.error(error instanceof Error ? error.message : "No se pudo guardar."),
     onSettled: () => client.invalidateQueries({ queryKey: ["video", video.id] }),
   });
-  const selected = Math.max(0, RESOLUTIONS.findIndex((r) => r.value === video.clipResolution));
+}
+
+/** Resolución del clip: se guarda al elegir; mientras se guarda, la opción elegida ya se ve marcada. */
+function ResolutionPicker({ video, save }: { video: VideoJson; save: ReturnType<typeof useSaveResolution> }) {
+  const shown = save.isPending && save.variables ? save.variables : video.clipResolution;
+  const selected = Math.max(0, RESOLUTIONS.findIndex((r) => r.value === shown));
   const choose = (value: ClipResolution) => {
-    if (value !== video.clipResolution) save.mutate(value);
+    if (value !== shown) save.mutate(value);
   };
   return (
     <div role="radiogroup" aria-label="Resolución" className="grid grid-cols-3 gap-1 rounded-lg bg-muted p-1">
@@ -72,6 +83,7 @@ function Player({ view }: { view: VideoViewJson }) {
   const result = current?.status === "done" ? current.results.find((r) => r.ok && r.url) : undefined;
   const poster = view.frame.approvedResultId !== null ? thumbUrl(view.frame.approvedResultId) : undefined;
   const rejected = current?.rejectReason ?? null;
+  const [broken, setBroken] = useState<number | null>(null);
 
   return (
     <div className="flex flex-col gap-3">
@@ -86,7 +98,12 @@ function Player({ view }: { view: VideoViewJson }) {
           result && view.clip.approvedResultId === result.id && "ring-3 ring-emerald-500",
         )}
       >
-        {result ? (
+        {result && broken === result.id ? (
+          <div role="alert" className="absolute inset-0 flex flex-col items-center justify-center gap-2 px-6 text-center text-sm text-white/80">
+            <VideoOff className="size-7" aria-hidden />
+            No se pudo cargar el clip.
+          </div>
+        ) : result ? (
           <video
             key={result.id}
             src={result.url!}
@@ -96,6 +113,7 @@ function Player({ view }: { view: VideoViewJson }) {
             loop
             className={cn("absolute inset-0 size-full object-contain", rejected && "opacity-45 grayscale")}
             aria-label="Clip"
+            onError={() => setBroken(result.id)}
           />
         ) : (
           <>
@@ -126,16 +144,27 @@ function Player({ view }: { view: VideoViewJson }) {
 }
 
 /** Paso «Clip»: reproductor vertical y, al lado, resolución y precio, aprobar, rechazar y descargar. */
-export function StepClip({ view, onGoToBreakdown }: { view: VideoViewJson; onGoToBreakdown: () => void }) {
+export function StepClip({
+  view,
+  onGoToBreakdown,
+  onGoToFrame,
+}: {
+  view: VideoViewJson;
+  onGoToBreakdown: () => void;
+  onGoToFrame: () => void;
+}) {
   const { video, clip, mine } = view;
   const current = clip.current;
   const { approve, reject } = useGenerationActions(video.id, "clip");
   const result = current?.status === "done" ? current.results.find((r) => r.ok && r.url) : undefined;
   const reviewing = result !== undefined && current!.rejectReason === null;
   const canRequest = mine && canRequestRound(clip);
+  // Un clip fallido deja cambiar la imagen: sin imagen aprobada, primero hay que aprobar una.
+  const needsFrame = view.frame.approvedResultId === null;
   const closed = current !== null && (current.status === "failed" || current.rejectReason !== null);
   const approved = result !== undefined && clip.approvedResultId === result.id;
   const downloadable = clip.approvedResultId !== null || result !== undefined;
+  const saveResolution = useSaveResolution(video);
 
   return (
     <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,360px)_340px] lg:gap-8">
@@ -146,28 +175,40 @@ export function StepClip({ view, onGoToBreakdown }: { view: VideoViewJson; onGoT
       <aside className="flex flex-col gap-4 lg:sticky lg:top-6" aria-label="Clip">
         <GenerationNotice videoId={video.id} kind="clip" current={current} />
 
-        {canRequest ? (
+        {canRequest && needsFrame ? (
+          <Button variant="outline" className="h-11 gap-2" onClick={onGoToFrame}>
+            <ImageIcon data-icon="inline-start" />
+            Aprobar una imagen
+          </Button>
+        ) : canRequest ? (
           <QuoteCard
             videoId={video.id}
             kind="clip"
             label={current && current.status !== "not_sent" ? "Volver a generar" : "Generar clip"}
-            refreshKey={`${current?.id ?? 0}-${current?.status ?? ""}-${current?.rejectReason ?? ""}-${video.clipResolution}-${video.videoPrompt?.length ?? 0}`}
+            refreshKey={`${current?.id ?? 0}-${current?.status ?? ""}-${current?.rejectReason ?? ""}-${video.clipResolution}-${textHash(video.videoPrompt)}`}
             onGoToBreakdown={onGoToBreakdown}
+            blocked={saveResolution.isPending}
           >
-            <ResolutionPicker video={video} />
+            <ResolutionPicker video={video} save={saveResolution} />
           </QuoteCard>
         ) : null}
 
         {reviewing && mine ? (
           <div className="flex flex-col gap-3 rounded-xl bg-card p-5 ring-1 ring-foreground/10">
             {approved ? null : (
-              <Button className="h-11 gap-2" disabled={approve.isPending} onClick={() => approve.mutate(result.id)}>
+              <Button
+                className="h-11 gap-2"
+                disabled={approve.isPending}
+                onClick={() => {
+                  if (!approve.isPending) approve.mutate(result.id);
+                }}
+              >
                 {approve.isPending ? <Loader2 className="animate-spin" data-icon="inline-start" /> : <ThumbsUp data-icon="inline-start" />}
                 Aprobar
               </Button>
             )}
             <RejectDialog label="Rechazar" title="¿Por qué no vale?" pending={reject.isPending} onReject={(reason) => reject.mutateAsync(reason)} />
-            <RegenerationsLeft left={clip.regenerationsLeft} what="clip" />
+            <RegenerationsLeft left={clip.regenerationsLeft} />
           </div>
         ) : null}
 
@@ -182,7 +223,7 @@ export function StepClip({ view, onGoToBreakdown }: { view: VideoViewJson; onGoT
           </a>
         ) : null}
 
-        {mine && closed && !canRequest ? <RegenerationsLeft left={0} what="clip" /> : null}
+        {mine && closed && !canRequest ? <NoRegenerationsLeft what="clip" /> : null}
       </aside>
     </div>
   );

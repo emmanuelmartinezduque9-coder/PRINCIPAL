@@ -137,4 +137,16 @@ describe("protección de la API", () => {
     expect(response.status).toBe(404);
     expect(await response.json()).toEqual({ error: "Producto no encontrado." });
   });
+
+  it("un HttpError con código lo manda junto al mensaje (para que la pantalla no dependa del texto)", async () => {
+    const token = await sessionToken("dueno");
+    const response = await handle(
+      async () => {
+        throw new HttpError(409, "Conecta tu Higgsfield en Ajustes.", "higgsfield_connect");
+      },
+      { token: async () => token },
+    );
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({ error: "Conecta tu Higgsfield en Ajustes.", code: "higgsfield_connect" });
+  });
 });

@@ -5,6 +5,8 @@ export class HttpError extends Error {
   constructor(
     public status: number,
     message: string,
+    /** Opcional: un código estable para que la pantalla decida sin leer el mensaje (p. ej. `higgsfield_connect`). */
+    public code?: string,
   ) {
     super(message);
   }
@@ -51,7 +53,9 @@ export async function handle(
     }
     return await fn(user);
   } catch (error) {
-    if (error instanceof HttpError) return Response.json({ error: error.message }, { status: error.status });
+    if (error instanceof HttpError) {
+      return Response.json(error.code ? { error: error.message, code: error.code } : { error: error.message }, { status: error.status });
+    }
     console.error("[api]", error);
     // El detalle se queda en el registro del servidor: nunca se enseña a quien llama.
     return Response.json({ error: "Ha ocurrido un error inesperado." }, { status: 500 });

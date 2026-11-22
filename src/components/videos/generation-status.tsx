@@ -1,10 +1,11 @@
 "use client";
 
-import { Check, CircleAlert, ImageOff, Loader2, SearchX, TriangleAlert } from "lucide-react";
+import { Check, CircleAlert, Loader2, SearchX, TriangleAlert } from "lucide-react";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { RUNNING_STATUSES, type CurrentGeneration, type GenerationKind } from "./labels";
+import { modelLabel, RUNNING_STATUSES, type CurrentGeneration, type GenerationKind } from "./labels";
+import { ResultImage } from "./result-image";
 import { useGenerationActions } from "./use-generation";
 
 const UNKNOWN_TEXT =
@@ -57,6 +58,15 @@ function DismissButton({ risk, pending, onConfirm }: { risk: string; pending: bo
   );
 }
 
+/** «14:32» (y la fecha si no es de hoy) de un candidato; `null` si el historial no trae fecha. */
+function whenLabel(iso: string | null): string | null {
+  if (!iso) return null;
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return null;
+  const time = date.toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" });
+  return date.toDateString() === new Date().toDateString() ? time : `${date.toLocaleDateString("es-ES", { day: "numeric", month: "short" })} ${time}`;
+}
+
 /** Una duda atascada que ya puede resolver quien creó el vídeo: los parecidos con «Es este» y «No está». */
 function StuckResolver({ videoId, kind, stuck }: { videoId: number; kind: GenerationKind; stuck: NonNullable<CurrentGeneration["stuck"]> }) {
   const { adopt, dismiss } = useGenerationActions(videoId, kind);
@@ -65,32 +75,38 @@ function StuckResolver({ videoId, kind, stuck }: { videoId: number; kind: Genera
     <div className="flex flex-col gap-3 border-t border-amber-500/25 pt-3">
       {stuck.candidates.length > 0 ? (
         <ul className="flex flex-wrap gap-3" aria-label="Parecidos en tu Higgsfield">
-          {stuck.candidates.map((candidate) => (
-            <li key={candidate.jobId} className="flex w-28 flex-col gap-2">
-              <div className="relative grid aspect-[9/16] place-items-center overflow-hidden rounded-lg bg-muted ring-1 ring-foreground/10">
-                {candidate.thumbUrl ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img src={candidate.thumbUrl} alt="" className="absolute inset-0 size-full object-cover" />
-                ) : (
-                  <ImageOff className="size-5 text-muted-foreground" aria-hidden />
-                )}
-              </div>
-              <Button
-                variant="secondary"
-                className="h-8 gap-1 px-2"
-                disabled={busy}
-                aria-label={`Es este (${candidate.jobId})`}
-                onClick={() => adopt.mutate(candidate.jobId)}
-              >
-                {adopt.isPending && adopt.variables === candidate.jobId ? (
-                  <Loader2 className="animate-spin" data-icon="inline-start" />
-                ) : (
-                  <Check data-icon="inline-start" />
-                )}
-                Es este
-              </Button>
-            </li>
-          ))}
+          {stuck.candidates.map((candidate, index) => {
+            const when = whenLabel(candidate.createdAt);
+            const model = candidate.model ? modelLabel(candidate.model) : null;
+            return (
+              <li key={candidate.jobId} className="flex w-28 flex-col gap-1.5">
+                <div className="relative aspect-[9/16] overflow-hidden rounded-lg bg-muted ring-1 ring-foreground/10">
+                  <ResultImage sources={[candidate.thumbUrl]} />
+                </div>
+                {when || model ? (
+                  <p className="flex flex-col text-xs leading-tight text-muted-foreground">
+                    {when ? <span className="font-medium text-foreground tabular-nums">{when}</span> : null}
+                    {model ? <span className="truncate">{model}</span> : null}
+                  </p>
+                ) : null}
+                <Button
+                  variant="secondary"
+                  className="h-8 gap-1 px-2"
+                  disabled={busy}
+                  onClick={() => {
+                    if (!busy) adopt.mutate(candidate.jobId);
+                  }}
+                >
+                  {adopt.isPending && adopt.variables === candidate.jobId ? (
+                    <Loader2 className="animate-spin" data-icon="inline-start" />
+                  ) : (
+                    <Check data-icon="inline-start" />
+                  )}
+                  Es este<span className="sr-only"> (parecido {index + 1})</span>
+                </Button>
+              </li>
+            );
+          })}
         </ul>
       ) : null}
       <div>

@@ -74,6 +74,28 @@ export const formatCredits = (n: number) => new Intl.NumberFormat("es-ES", { use
 /** «1 crédito», «4 créditos». */
 export const creditsLabel = (n: number) => `${formatCredits(n)} ${n === 1 ? "crédito" : "créditos"}`;
 
+/** Huella corta de un texto (FNV-1a, 32 bits), para que la clave del presupuesto cambie cuando cambia el prompt. */
+export function textHash(text: string | null): string {
+  if (text === null) return "-";
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < text.length; i++) {
+    hash ^= text.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0).toString(36);
+}
+
+/** `nano_banana_2_1` → «Nano Banana 2.1»; `seedance_2_5` → «Seedance 2.5». */
+export function modelLabel(model: string): string {
+  const words: string[] = [];
+  for (const part of model.split(/[_\s-]+/).filter(Boolean)) {
+    const last = words.length - 1;
+    if (/^\d+$/.test(part) && last >= 0 && /\d$/.test(words[last])) words[last] += `.${part}`;
+    else words.push(/^\d/.test(part) ? part : part.charAt(0).toUpperCase() + part.slice(1));
+  }
+  return words.join(" ");
+}
+
 /** Miniatura (JPEG) de un resultado, hecha por el servidor al terminar la generación. */
 export const thumbUrl = (resultId: number) => `/api/resultados/${resultId}/miniatura`;
 

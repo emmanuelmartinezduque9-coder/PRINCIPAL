@@ -7,29 +7,44 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 import { GenerationNotice, Generating } from "./generation-status";
-import { canRequestRound, RUNNING_STATUSES, thumbUrl, type GenerationJson, type GenerationResult, type VideoViewJson } from "./labels";
+import {
+  canRequestRound,
+  RUNNING_STATUSES,
+  textHash,
+  thumbUrl,
+  type GenerationJson,
+  type GenerationResult,
+  type VideoViewJson,
+} from "./labels";
 import { QuoteCard } from "./quote-card";
 import { RejectDialog } from "./reject-dialog";
+import { ResultImage } from "./result-image";
 import { useGenerationActions } from "./use-generation";
 
 /** Estados del clip que ya no atan la imagen aprobada (como `CLIP_RELEASES_FRAME` en el servidor). */
 const CLIP_RELEASES_FRAME = ["not_sent", "failed"];
 
-/** Lo que se ve de un resultado: la miniatura del servidor o, si no la hay, su dirección. */
-const previewOf = (result: GenerationResult) => (result.hasThumb ? thumbUrl(result.id) : result.url);
+/** Direcciones de un resultado, por orden de preferencia: la miniatura del servidor y, si falla, la original. */
+const previewsOf = (result: GenerationResult) => [result.hasThumb ? thumbUrl(result.id) : null, result.url];
 
-/** «Te quedan N regeneraciones» o, a cero, qué hacer. */
-export function RegenerationsLeft({ left, what }: { left: number; what: "imagen" | "clip" }) {
-  if (left > 0) {
-    return (
-      <p className="text-sm text-muted-foreground tabular-nums">
-        {left === 1 ? "Te queda 1 regeneración" : `Te quedan ${left} regeneraciones`}
-      </p>
-    );
-  }
+/** «Te quedan N regeneraciones» mientras queden. */
+export function RegenerationsLeft({ left }: { left: number }) {
+  if (left <= 0) return null;
+  return (
+    <p className="text-sm text-muted-foreground tabular-nums">{left === 1 ? "Te queda 1 regeneración" : `Te quedan ${left} regeneraciones`}</p>
+  );
+}
+
+/**
+ * Sin rondas que pedir y sin nada que aprobar (la última falló o se rechazó): qué hacer. Corregir el
+ * desglose no da rondas nuevas, así que solo se ofrece empezar otro vídeo.
+ */
+export function NoRegenerationsLeft({ what }: { what: "imagen" | "clip" }) {
   return (
     <p className="text-sm text-pretty text-muted-foreground">
-      Has usado las 2 regeneraciones {what === "imagen" ? "de esta imagen" : "de este clip"}. Corrige el desglose o empieza un vídeo nuevo.
+      {what === "imagen"
+        ? "Has usado las 2 regeneraciones de esta imagen. Empieza un vídeo nuevo para probar otra."
+        : "Has usado las 2 regeneraciones de este clip. Empieza un vídeo nuevo para probar otro."}
     </p>
   );
 }
@@ -42,6 +57,7 @@ function Candidate({
   dimmed,
   canApprove,
   approving,
+  busy,
   onApprove,
   onZoom,
 }: {
@@ -51,10 +67,11 @@ function Candidate({
   dimmed: boolean;
   canApprove: boolean;
   approving: boolean;
+  /** Otra aprobación en marcha: las dos se desactivan a la vez. */
+  busy: boolean;
   onApprove: () => void;
   onZoom: () => void;
 }) {
-  const src = result.ok ? previewOf(result) : null;
   return (
     <li className="flex min-w-0 flex-col gap-3">
       <div
@@ -64,19 +81,18 @@ function Candidate({
           dimmed && "opacity-45 grayscale",
         )}
       >
-        {src ? (
+        {result.ok ? (
           <button
             type="button"
             onClick={onZoom}
             aria-label={`Ampliar la candidata ${index + 1}`}
-            className="group absolute inset-0 cursor-zoom-in outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
+            className="group absolute inset-0 cursor-zoom-in overflow-hidden outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
           >
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={src} alt="" className="size-full object-cover transition-transform duration-300 ease-out group-hover:scale-[1.02]" />
+            <ResultImage sources={previewsOf(result)} className="transition-transform duration-300 ease-out group-hover:scale-[1.02]" />
           </button>
         ) : (
           <div className="absolute inset-0 grid place-items-center text-muted-foreground">
-            <ImageOff className="size-6" aria-label="Sin imagen" />
+            <ImageOff className="size-6" role="img" aria-label="Sin imagen" />
           </div>
         )}
         {approved ? (
@@ -87,25 +103,35 @@ function Candidate({
         ) : null}
       </div>
       {canApprove && result.ok && !approved ? (
-        <Button variant="outline" className="h-10 gap-2" disabled={approving} onClick={onApprove}>
+        <Button variant="outline" className="h-10 gap-2" disabled={busy} onClick={onApprove}>
           {approving ? <Loader2 className="animate-spin" data-icon="inline-start" /> : <ThumbsUp data-icon="inline-start" />}
-          Aprobar esta
+          Aprobar esta<span className="sr-only"> (candidata {index + 1})</span>
         </Button>
       ) : null}
     </li>
   );
 }
 
+/** La candidata ampliada: la original y, si no carga, la miniatura. */
+function Zoomed({ result }: { result: GenerationResult }) {
+  const sources = [result.url, result.hasThumb ? thumbUrl(result.id) : null].filter((src): src is string => Boolean(src));
+  const [at, setAt] = useState(0);
+  const src = sources[at];
+  if (!src) {
+    return (
+      <div className="grid h-64 w-40 place-items-center text-muted-foreground">
+        <ImageOff className="size-6" role="img" aria-label="Sin imagen" />
+      </div>
+    );
+  }
+  return (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img key={src} src={src} alt="" onError={() => setAt((i) => i + 1)} className="max-h-[85vh] w-auto max-w-full rounded-lg" />
+  );
+}
+
 /** Las candidatas de la última ronda, con su ampliación. */
-function Candidates({
-  view,
-  generation,
-  canAct,
-}: {
-  view: VideoViewJson;
-  generation: GenerationJson;
-  canAct: boolean;
-}) {
+function Candidates({ view, generation, canAct }: { view: VideoViewJson; generation: GenerationJson; canAct: boolean }) {
   const current = generation.current!;
   const { approve } = useGenerationActions(view.video.id, "frame");
   const [zoomed, setZoomed] = useState<GenerationResult | null>(null);
@@ -127,7 +153,10 @@ function Candidates({
             dimmed={rejected}
             canApprove={canAct && !rejected}
             approving={approve.isPending && approve.variables === result.id}
-            onApprove={() => approve.mutate(result.id)}
+            busy={approve.isPending}
+            onApprove={() => {
+              if (!approve.isPending) approve.mutate(result.id);
+            }}
             onZoom={() => setZoomed(result)}
           />
         ))}
@@ -135,10 +164,7 @@ function Candidates({
       <Dialog open={zoomed !== null} onOpenChange={(open) => (open ? null : setZoomed(null))}>
         <DialogContent className="w-auto max-w-[calc(100%-2rem)] p-2 sm:max-w-fit">
           <DialogTitle className="sr-only">Candidata ampliada</DialogTitle>
-          {zoomed ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img src={zoomed.url ?? previewOf(zoomed) ?? ""} alt="" className="max-h-[85vh] w-auto rounded-lg" />
-          ) : null}
+          {zoomed ? <Zoomed key={zoomed.id} result={zoomed} /> : null}
         </DialogContent>
       </Dialog>
     </div>
@@ -175,6 +201,7 @@ export function StepFrame({ view, onGoToClip, onGoToBreakdown }: { view: VideoVi
   const canAct = mine && !clipLocks;
   const reviewing = hasResults && current.rejectReason === null;
   const canRequest = mine && canRequestRound(frame);
+  // Nada que aprobar: la última ronda falló o se rechazó.
   const closed = current !== null && (current.status === "failed" || current.rejectReason !== null);
 
   return (
@@ -189,7 +216,7 @@ export function StepFrame({ view, onGoToClip, onGoToBreakdown }: { view: VideoVi
             videoId={video.id}
             kind="frame"
             label={current && current.status !== "not_sent" ? "Volver a generar" : "Generar 2 imágenes"}
-            refreshKey={`${current?.id ?? 0}-${current?.status ?? ""}-${current?.rejectReason ?? ""}-${video.imagePrompt?.length ?? 0}`}
+            refreshKey={`${current?.id ?? 0}-${current?.status ?? ""}-${current?.rejectReason ?? ""}-${textHash(video.imagePrompt)}`}
             onGoToBreakdown={onGoToBreakdown}
           />
         ) : null}
@@ -204,11 +231,11 @@ export function StepFrame({ view, onGoToClip, onGoToBreakdown }: { view: VideoVi
         {reviewing && canAct ? (
           <div className="flex flex-col gap-3 rounded-xl bg-card p-5 ring-1 ring-foreground/10">
             <RejectDialog label="Rechazar las dos" title="¿Por qué no valen?" pending={reject.isPending} onReject={(reason) => reject.mutateAsync(reason)} />
-            <RegenerationsLeft left={frame.regenerationsLeft} what="imagen" />
+            <RegenerationsLeft left={frame.regenerationsLeft} />
           </div>
         ) : null}
 
-        {mine && closed && !canRequest ? <RegenerationsLeft left={0} what="imagen" /> : null}
+        {mine && closed && !canRequest ? <NoRegenerationsLeft what="imagen" /> : null}
       </aside>
     </div>
   );
