@@ -5,7 +5,7 @@ import path from "node:path";
 import { asc, eq } from "drizzle-orm";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { createFakeHiggsfield } from "@/connectors/higgsfield/fake";
-import { getDb, schema } from "@/db/client";
+import { getDb, getPool, schema } from "@/db/client";
 import { stopWorker } from "@/jobs/boss";
 import { jobKey } from "@/jobs/steps";
 import "@/jobs/video-jobs";
@@ -16,6 +16,7 @@ import {
   appendTaskChunk,
   claimTask,
   createAgentToken,
+  createVideoFromLink,
   expireLeases,
   extendLease,
   finishTask,
@@ -37,7 +38,7 @@ import { saveCredential } from "@/server/credentials";
 import { setPersonDisabled } from "@/server/people";
 import { addProductPhoto } from "@/server/photos";
 import { seedRules } from "@/server/rules";
-import { addVideoToBatch, batchView, createBatch } from "@/server/videos/batches";
+import { addVideoToBatch, batchView, createBatch, duplicateBatchVideo } from "@/server/videos/batches";
 import "@/server/videos/clip";
 import { quoteGeneration } from "@/server/videos/generations";
 import { processReference } from "@/server/videos/intake";
@@ -863,15 +864,22 @@ describe("reserva y latido", () => {
     expect(fresh.uploadId).not.toBe(stale.uploadId);
     await send(agentId, fresh, 0, mp4(100), now);
 
-    // Lo rezagado del primer intento: 409, aunque el Mac tenga la reserva.
-    await expect(send(agentId, stale, 1, mp4(100), now)).rejects.toMatchObject(TASK_LOST);
-    await expect(succeed(agentId, stale, CHUNK_BYTES + 100, now)).rejects.toMatchObject(TASK_LOST);
-    await expect(fail(agentId, stale, "x", now)).rejects.toMatchObject(TASK_LOST);
-    for (const uploadId of ["", "no-es-una-subida", "a".repeat(32)]) {
-      await expect(appendTaskChunk(agentId, taskId, uploadId, 1, mp4(100), now)).rejects.toMatchObject(TASK_LOST);
-      await expect(finishTask(agentId, taskId, { ok: false, uploadId, error: "x" }, now)).rejects.toMatchObject(TASK_LOST);
-      await expect(finishTask(agentId, taskId, { ok: true, uploadId, totalBytes: 100 }, now)).rejects.toMatchObject(TASK_LOST);
+    // Lo rezagado del primer intento: 409, aunque el Mac tenga la reserva. Y no la prolonga.
+    const afterAWhile = new Date(now.getTime() + 2 * MINUTE);
+    await expect(send(agentId, stale, 1, mp4(100), afterAWhile)).rejects.toMatchObject(TASK_LOST);
+    await expect(succeed(agentId, stale, CHUNK_BYTES + 100, afterAWhile)).rejects.toMatchObject(TASK_LOST);
+    await expect(fail(agentId, stale, "x", afterAWhile)).rejects.toMatchObject(TASK_LOST);
+    for (const uploadId of ["no-es-una-subida", "a".repeat(32)]) {
+      await expect(appendTaskChunk(agentId, taskId, uploadId, 1, mp4(100), afterAWhile)).rejects.toMatchObject(TASK_LOST);
+      await expect(finishTask(agentId, taskId, { ok: false, uploadId, error: "x" }, afterAWhile)).rejects.toMatchObject(TASK_LOST);
+      await expect(finishTask(agentId, taskId, { ok: true, uploadId, totalBytes: 100 }, afterAWhile)).rejects.toMatchObject(TASK_LOST);
     }
+    expect((await taskOf(taskId)).leaseExpiresAt).toEqual(new Date(now.getTime() + LEASE_MS));
+    // Sin la sesión de la reserva: petición mal hecha (400), no una tarea perdida.
+    const missing = { status: 400, message: "Falta la sesión de la reserva (`subida`)." };
+    await expect(appendTaskChunk(agentId, taskId, "", 1, mp4(100), afterAWhile)).rejects.toMatchObject(missing);
+    await expect(finishTask(agentId, taskId, { ok: false, uploadId: "", error: "x" }, afterAWhile)).rejects.toMatchObject(missing);
+    await expect(finishTask(agentId, taskId, { ok: true, uploadId: "", totalBytes: 100 }, afterAWhile)).rejects.toMatchObject(missing);
     // El intento en curso sigue entero y termina bien.
     expect(await taskOf(taskId)).toMatchObject({ status: "leased", attempts: 2 });
     expect(await sessionRows()).toMatchObject([{ id: fresh.uploadId, received: 1 }]);
@@ -1057,6 +1065,32 @@ describe("entrega del archivo", () => {
     expect((await getVideoFor(dueno, v.id)).referenceStatus).toBe("processing");
   });
 
+  it("un archivo ya entregado no se borra aunque la tarea se cierre con retraso", async () => {
+    const fake = createFakeHiggsfield();
+    const { agentId } = await mac();
+    const { taskId } = await requestLinkDownload(dueno, v.id, REEL, T0);
+    const task = await claim(agentId);
+    await send(agentId, task, 0, samples.tres);
+    // El archivo se da por bueno, pero el servidor se cae antes de marcar la tarea como hecha.
+    await finishUpload(task.uploadId, { agentTaskId: taskId }, v.id, samples.tres.length);
+    expect(await taskOf(taskId)).toMatchObject({ status: "leased" });
+    expect(await getVideoFor(dueno, v.id)).toMatchObject({ referenceStatus: "processing", linkTaskId: null });
+    // El Mac sigue latiendo y, a los 30 minutos, el seguimiento da la tarea por fallida: la
+    // sesión y su archivo, que la preparación necesita, siguen ahí…
+    for (let minute = 1; minute <= 31; minute++) {
+      await extendLease(agentId, taskId, later(minute * MINUTE)).catch(() => {});
+      await expireLeases(later(minute * MINUTE));
+    }
+    expect(await taskOf(taskId)).toMatchObject({ status: "failed", error: "La tarea superó el tiempo máximo." });
+    expect(await sessionRows()).toMatchObject([{ id: task.uploadId, agentTaskId: taskId }]);
+    expect(fs.existsSync(uploadPath(task.uploadId))).toBe(true);
+    expect(await getVideoFor(dueno, v.id)).toMatchObject({ referenceStatus: "processing", referenceError: null });
+    // …y la referencia se prepara con normalidad.
+    await processReference(v.id, task.uploadId, { higgsfield: fake.port });
+    expect(await getVideoFor(dueno, v.id)).toMatchObject({ referenceStatus: "ready", referenceSource: "link", referenceUrl: REEL });
+    expect(await linkOfVideo(v)).toBeNull();
+  }, 60_000);
+
   it("si lo que llegó no es lo que el Mac dice haber enviado, no se da por entregado", async () => {
     const { agentId } = await mac();
     const { taskId } = await requestLinkDownload(dueno, v.id, REEL, T0);
@@ -1213,6 +1247,53 @@ describe("crear el vídeo ya con su enlace", () => {
     expect(await analyses()).toMatchObject([{ version: 1, status: "queued", referenceMediaId: "media-1", createdBy: dueno.id }]);
   }, 60_000);
 
+  it("si la tarea no se puede encolar, el vídeo tampoco se crea: van en la misma transacción", async () => {
+    await mac(dueno, new Date());
+    const pool = getPool();
+    const videoCount = async () => (await getDb().select().from(schema.videos)).length;
+    const before = await videoCount();
+    await pool.query("create function prueba_fallo() returns trigger as $$ begin raise exception 'fallo de prueba'; end $$ language plpgsql");
+    await pool.query("create trigger prueba_fallo before insert on agent_tasks for each row execute function prueba_fallo()");
+    try {
+      await expect(createVideoFromLink(dueno, v.productId, REEL)).rejects.toThrow();
+      const batch = await createBatch(dueno, "Semana 48");
+      await expect(addVideoToBatch(dueno, batch.id, batchInput(v.productId, REEL))).rejects.toThrow();
+    } finally {
+      await pool.query("drop trigger prueba_fallo on agent_tasks");
+      await pool.query("drop function prueba_fallo()");
+    }
+    expect(await videoCount()).toBe(before);
+    expect(await tasks()).toEqual([]);
+    // Sin el fallo, se crean los dos a la vez.
+    const video = await createVideoFromLink(dueno, v.productId, REEL);
+    expect(video).toMatchObject({ referenceStatus: "uploading" });
+    expect(await tasks()).toMatchObject([{ videoId: video.id, status: "queued" }]);
+    expect(await videoCount()).toBe(before + 1);
+  });
+
+  it("duplicar un vídeo no hereda su enlace: ni el pendiente ni el fallido", async () => {
+    const { agentId } = await mac(dueno, new Date());
+    const batch = await createBatch(dueno, "Semana 48");
+    // Uno esperando su enlace (sin referencia todavía).
+    const pending = await addVideoToBatch(dueno, batch.id, batchInput(v.productId, REEL));
+    const copyOfPending = await duplicateBatchVideo(dueno, batch.id, pending.id);
+    expect(copyOfPending).toMatchObject({ referenceStatus: "none", referenceError: null, linkTaskId: null, referenceUrl: null });
+    // Otro con la referencia lista y un enlace que falló encima.
+    const ready = await addVideoToBatch(dueno, batch.id, batchInput(v.productId));
+    await makeReady(ready);
+    await requestLinkDownload(dueno, ready.id, TIKTOK);
+    await claim(agentId, new Date());
+    await fail(agentId, await claim(agentId, new Date()), "x", new Date());
+    expect((await linkOfVideo(ready))?.status).toBe("failed");
+    const copyOfReady = await duplicateBatchVideo(dueno, batch.id, ready.id);
+    expect(copyOfReady).toMatchObject({ referenceStatus: "ready", referenceMediaId: "ref-media", linkTaskId: null });
+    for (const copy of [copyOfPending, copyOfReady]) expect(await linkOfVideo(copy)).toBeNull();
+    // Las tareas siguen siendo solo las de los originales.
+    expect((await tasks()).map((task) => task.videoId).sort()).toEqual([pending.id, ready.id].sort());
+    const rows = (await batchView(dueno, batch.id)).rows;
+    expect(rows.filter((row) => row.link !== null).map((row) => row.id).sort()).toEqual([pending.id, ready.id].sort());
+  });
+
   it("un enlace que no vale o un Mac desconectado no dejan un vídeo a medias en el lote", async () => {
     const batch = await createBatch(dueno, "Semana 48");
     const count = async () => (await getDb().select().from(schema.videos).where(eq(schema.videos.batchId, batch.id))).length;
@@ -1301,8 +1382,9 @@ describe("rutas", () => {
     const finish = (body: unknown) => finishRoute(agentRequest(token, { body: typeof body === "string" ? body : JSON.stringify(body) }), taskParams(taskId));
 
     expect((await leaseRoute(agentRequest(token), taskParams(taskId))).status).toBe(200);
-    // Sin la sesión de la reserva, o con otra, 409.
-    expect((await chunk("?indice=0")).status).toBe(409);
+    // Sin la sesión de la reserva, 400; con la de otro intento, 409.
+    expect((await chunk("?indice=0")).status).toBe(400);
+    expect((await chunk("?indice=0&subida=")).status).toBe(400);
     expect((await chunk(`?indice=0&subida=${"a".repeat(32)}`)).status).toBe(409);
     const put = await chunk(`?indice=0&subida=${task.uploadId}`);
     expect(put.status).toBe(200);
@@ -1314,6 +1396,7 @@ describe("rutas", () => {
     expect((await finish({ ok: "sí", uploadId: task.uploadId })).status).toBe(400);
     expect((await finish({ ok: true, totalBytes: 100 })).status).toBe(400);
     expect((await finish("no es json")).status).toBe(400);
+    expect((await finish({ ok: true, uploadId: "", totalBytes: 100 })).status).toBe(400);
     expect((await finish({ ok: true, uploadId: "a".repeat(32), totalBytes: 100 })).status).toBe(409);
     expect((await finish({ ok: false, uploadId: "a".repeat(32), error: "x" })).status).toBe(409);
     expect((await getVideoFor(dueno, v.id)).referenceStatus).toBe("uploading");

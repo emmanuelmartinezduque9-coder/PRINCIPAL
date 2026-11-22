@@ -8,8 +8,8 @@ const parseIndex = (value: string | null) => (value !== null && /^(0|[1-9]\d{0,4
 /**
  * Un trozo del archivo descargado: `?indice=N&subida=<uploadId>` y el cuerpo son sus bytes, como
  * en la subida del navegador. `subida` es el `uploadId` que recibió al reservar la tarea. Repetir
- * un trozo ya recibido no lo escribe dos veces. 409 si la tarea ya no es suya o la sesión es de
- * un intento anterior.
+ * un trozo ya recibido no lo escribe dos veces. Sin `subida`, 400. 409 si la tarea ya no es suya
+ * o la sesión es de un intento anterior.
  */
 export async function PUT(request: Request, { params }: { params: Promise<{ taskId: string }> }) {
   return handle(

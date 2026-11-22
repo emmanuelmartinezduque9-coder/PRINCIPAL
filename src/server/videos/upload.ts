@@ -258,13 +258,18 @@ export async function agentUploadId(agentTaskId: number, executor: Executor = ge
 
 /**
  * La tarea `agentTaskId` no trajo el enlace (falló, caducó o nadie la recogió): se borra lo que
- * hubiera llegado y, si el vídeo esperaba esa tarea y no tenía referencia, queda en error con
- * `message` (apto para la persona). **Un vídeo con la referencia lista sigue listo**: el fallo
- * del enlace lo enseña la vista del vídeo (`link`). Dentro de la transacción que cierra la tarea.
+ * hubiera llegado y, si el vídeo no tenía referencia, queda en error con `message` (apto para la
+ * persona). **Un vídeo con la referencia lista sigue listo**: el fallo del enlace lo enseña la
+ * vista del vídeo (`link`). Dentro de la transacción que cierra la tarea.
+ *
+ * Solo si el vídeo sigue esperando esa tarea. Si ya no (el archivo se entregó y se está
+ * preparando, y la tarea se cierra con retraso), no se toca nada: la sesión y su archivo son los
+ * que necesita la preparación de la referencia.
  */
 export async function failLinkReference(tx: Tx, videoId: number, agentTaskId: number, message: string): Promise<void> {
   const video = await lockVideoReference(tx, videoId);
-  if (video && video.linkTaskId === agentTaskId && video.referenceStatus === "uploading") {
+  if (!video || video.linkTaskId !== agentTaskId) return;
+  if (video.referenceStatus === "uploading") {
     await tx
       .update(schema.videos)
       .set({ referenceStatus: "failed", referenceError: message, updatedAt: new Date() })

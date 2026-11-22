@@ -108,16 +108,26 @@ export interface NewVideoExtras {
  * Crea un vídeo vacío en un producto visible, titulado «Vídeo N» (N = los que ya tiene + 1). Desde
  * un lote llega además su lote, su tipo, sus cambios específicos y quién sale, ya comprobados. Si
  * no se dice quién sale, empieza con el avatar habitual del producto (`startingAvatar`; sin fotos
- * de avatar, sin elegir).
+ * de avatar, sin elegir). `inTransaction` se ejecuta con el vídeo recién creado dentro de la misma
+ * transacción: si falla, el vídeo no llega a existir (lo usa crear un vídeo ya con su enlace).
  */
-export async function createVideo(user: AuthUser, productId: number, extras: NewVideoExtras = {}): Promise<Video> {
+export async function createVideo(
+  user: AuthUser,
+  productId: number,
+  extras: NewVideoExtras = {},
+  inTransaction?: (tx: Tx, video: Video) => Promise<void>,
+): Promise<Video> {
   const product = await getProductFor(user, productId);
   if (extras.avatarMode === undefined) {
     const avatars = (await listProductPhotos(user, product.id)).filter((photo) => photo.role === "avatar").map((photo) => photo.id);
     // Un vídeo suelto sin fotos de avatar en el producto empieza sin elegir: lo decide la persona.
     extras = { ...extras, ...startingAvatar(product, avatars, "elegir") };
   }
-  return getDb().transaction((tx) => insertVideo(tx, user, product.id, extras));
+  return getDb().transaction(async (tx) => {
+    const video = await insertVideo(tx, user, product.id, extras);
+    await inTransaction?.(tx, video);
+    return video;
+  });
 }
 
 type Tx = Parameters<Parameters<ReturnType<typeof getDb>["transaction"]>[0]>[0];

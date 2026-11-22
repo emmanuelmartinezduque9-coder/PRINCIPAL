@@ -68,7 +68,10 @@ const BEARER = /^Bearer +(pra_[A-Za-z0-9_-]{43})$/i;
 /** Veces que `claimTask` prueba con la siguiente tarea si otra petición se le adelanta. */
 const CLAIM_ROUNDS = 5;
 
+type Tx = Parameters<typeof lockVideoReference>[0];
+
 const OWNER_ONLY = "Solo el dueño puede hacer esto.";
+const NO_UPLOAD = "Falta la sesión de la reserva (`subida`).";
 const BAD_TOKEN = "Ficha del Mac no válida.";
 const BAD_LINK = "Solo se admiten enlaces de Instagram, TikTok, YouTube o Facebook.";
 const MAC_OFFLINE = "El Mac no está conectado ahora mismo. Sube el archivo del vídeo.";
@@ -246,20 +249,23 @@ export async function checkLinkRequest(user: AuthUser, url: unknown, now: Date =
  * sustituido, lo tenga ya un Mac o no. No mientras otra referencia se prepara (409).
  */
 export async function startLinkDownload(user: AuthUser, video: Video, link: string, now: Date = new Date()): Promise<{ taskId: number }> {
-  requireVideoOwner(user, video);
-  if (linkOf(link) !== link) throw new HttpError(400, BAD_LINK);
-  const { taskId, discarded } = await getDb().transaction(async (tx) => {
-    // Con el vídeo bloqueado, dos peticiones del mismo vídeo van una detrás de otra.
-    if (!(await lockVideoReference(tx, video.id))) throw new HttpError(404, "Vídeo no encontrado.");
-    await cancelLinkTasks(tx, video.id, SUPERSEDED, now);
-    const [task] = await tx
-      .insert(agentTasks)
-      .values({ kind: "link_download", videoId: video.id, url: link, createdBy: user.id, createdAt: now, updatedAt: now })
-      .returning({ id: agentTasks.id });
-    return { taskId: task.id, discarded: await expectLinkReference(tx, video.id, task.id) };
-  });
+  const { taskId, discarded } = await getDb().transaction((tx) => queueLink(tx, user, video, link, now));
   await removeUploadFiles(discarded);
   return { taskId };
+}
+
+/** El cuerpo de `startLinkDownload`, dentro de la transacción de quien llama. */
+async function queueLink(tx: Tx, user: AuthUser, video: Video, link: string, now: Date): Promise<{ taskId: number; discarded: string[] }> {
+  requireVideoOwner(user, video);
+  if (linkOf(link) !== link) throw new HttpError(400, BAD_LINK);
+  // Con el vídeo bloqueado, dos peticiones del mismo vídeo van una detrás de otra.
+  if (!(await lockVideoReference(tx, video.id))) throw new HttpError(404, "Vídeo no encontrado.");
+  await cancelLinkTasks(tx, video.id, SUPERSEDED, now);
+  const [task] = await tx
+    .insert(agentTasks)
+    .values({ kind: "link_download", videoId: video.id, url: link, createdBy: user.id, createdAt: now, updatedAt: now })
+    .returning({ id: agentTasks.id });
+  return { taskId: task.id, discarded: await expectLinkReference(tx, video.id, task.id) };
 }
 
 /**
@@ -277,15 +283,17 @@ export async function requestLinkDownload(user: AuthUser, videoId: number, url: 
 
 /**
  * Crea un vídeo cuya referencia es un enlace pegado (un vídeo suelto o, con `extras`, el de un
- * lote). Todo lo del enlace se comprueba antes de crear nada: un enlace que no vale o un Mac
- * desconectado no dejan un vídeo a medias.
+ * lote). Todo lo del enlace se comprueba antes de crear nada, y el vídeo y su tarea se guardan en
+ * la misma transacción: un enlace que no vale, un Mac desconectado o un fallo al encolar no dejan
+ * un vídeo a medias.
  */
 export async function createVideoFromLink(user: AuthUser, productId: number, url: unknown, extras: NewVideoExtras = {}, now: Date = new Date()): Promise<Video> {
   // Un producto que no se ve da su 404 antes que cualquier fallo del enlace.
   await getProductFor(user, productId);
   const link = await checkLinkRequest(user, url, now);
-  const video = await createVideo(user, productId, extras);
-  await startLinkDownload(user, video, link, now);
+  const video = await createVideo(user, productId, extras, async (tx, created) => {
+    await queueLink(tx, user, created, link, now);
+  });
   return getVideoFor(user, video.id);
 }
 
@@ -361,8 +369,8 @@ export async function extendLease(agentId: number, taskId: number, now: Date = n
 /**
  * Un trozo del archivo descargado, por la misma subida por trozos que el navegador (mismos
  * límites y mismas respuestas). Solo quien tiene la reserva, y con la sesión de **esa** reserva
- * (`uploadId`): un trozo rezagado de un intento anterior, aunque sea del mismo Mac, da 409. Cada
- * trozo prolonga la reserva.
+ * (`uploadId`): un trozo rezagado de un intento anterior, aunque sea del mismo Mac, da 409 y no
+ * prolonga nada; sin `uploadId`, 400. Cada trozo válido prolonga la reserva.
  */
 export async function appendTaskChunk(
   agentId: number,
@@ -372,6 +380,11 @@ export async function appendTaskChunk(
   bytes: Buffer,
   now: Date = new Date(),
 ): Promise<{ received: number }> {
+  if (typeof uploadId !== "string" || uploadId === "") throw new HttpError(400, NO_UPLOAD);
+  // Primero, que la reserva y su sesión sean las de quien llama; solo entonces se prolonga.
+  if (!isId(taskId)) throw taskLost();
+  const [held] = await getDb().select({ id: agentTasks.id }).from(agentTasks).where(leasedBy(agentId, taskId));
+  if (!held || (await agentUploadId(taskId)) !== uploadId) throw taskLost();
   await extendLease(agentId, taskId, now);
   try {
     return await appendChunk(uploadId, index, bytes, { agentTaskId: taskId });
@@ -393,6 +406,7 @@ export type TaskResult = { ok: true; uploadId: string; totalBytes: number } | { 
  * la sesión de esa reserva.
  */
 export async function finishTask(agentId: number, taskId: number, result: TaskResult, now: Date = new Date()): Promise<void> {
+  if (typeof result.uploadId !== "string" || result.uploadId === "") throw new HttpError(400, NO_UPLOAD);
   if (!isId(taskId)) throw taskLost();
   const db = getDb();
   const [task] = await db

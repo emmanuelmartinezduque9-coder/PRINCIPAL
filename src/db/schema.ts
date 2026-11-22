@@ -441,6 +441,7 @@ export const videos = pgTable(
     index("videos_product").on(t.productId, t.createdAt),
     index("videos_reference_status").on(t.referenceStatus),
     index("videos_batch").on(t.batchId),
+    index("videos_link_task").on(t.linkTaskId),
     check("videos_note_length", sql`${t.note} is null or char_length(${t.note}) <= 6000`),
     check("videos_kind_valid", sql`${t.kind} in ('replicar', 'adaptacion_concepto', 'solo_gancho')`),
     check("videos_hook_seconds_valid", sql`${t.hookSeconds} between 2 and 8`),
