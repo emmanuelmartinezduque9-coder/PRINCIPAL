@@ -86,7 +86,7 @@ async function prepare(ctx: JobContext, videoId: number, uploadId: string, deps:
   if (probe.durationMs < MIN_REFERENCE_MS) throw new ReferenceProblem(TOO_SHORT);
   const segmentDurationMs = Math.min(probe.durationMs, MAX_SEGMENT_MS);
   const frames = await extractFrames(file, frameTimesMs(segmentDurationMs));
-  const cutsMs = (await detectCuts(file)).filter((ms) => ms > 0 && ms < segmentDurationMs);
+  const cutsMs = (await detectCuts(file, segmentDurationMs)).filter((ms) => ms > 0 && ms < segmentDurationMs);
   const clip = clipPath(uploadId);
   await normalizeClip(file, clip, segmentDurationMs);
   const { mediaId } = await uploadWithRetries(
@@ -97,18 +97,9 @@ async function prepare(ctx: JobContext, videoId: number, uploadId: string, deps:
   );
 
   await getDb().transaction(async (tx) => {
-    await tx.delete(schema.videoFrames).where(eq(schema.videoFrames.videoId, video.id));
-    await tx.insert(schema.videoFrames).values(
-      frames.map((frame, index) => ({
-        videoId: video.id,
-        index,
-        timeMs: frame.timeMs,
-        mime: "image/jpeg",
-        size: frame.jpeg.length,
-        data: frame.jpeg,
-      })),
-    );
-    await tx
+    // Primero el vídeo, y solo si sigue esperando esta referencia: si entretanto el seguimiento
+    // la dio por perdida (y quizá ya hay otra subida en marcha), este resultado no se escribe.
+    const updated = await tx
       .update(schema.videos)
       .set({
         referenceStatus: "ready",
@@ -123,7 +114,23 @@ async function prepare(ctx: JobContext, videoId: number, uploadId: string, deps:
         cutsMs,
         updatedAt: new Date(),
       })
-      .where(eq(schema.videos.id, video.id));
+      .where(and(eq(schema.videos.id, video.id), eq(schema.videos.referenceStatus, "processing")))
+      .returning({ id: schema.videos.id });
+    if (updated.length === 0) {
+      console.warn(`[videos] La referencia del vídeo ${video.id} ya no se esperaba: su resultado no se guarda.`);
+      return;
+    }
+    await tx.delete(schema.videoFrames).where(eq(schema.videoFrames.videoId, video.id));
+    await tx.insert(schema.videoFrames).values(
+      frames.map((frame, index) => ({
+        videoId: video.id,
+        index,
+        timeMs: frame.timeMs,
+        mime: "image/jpeg",
+        size: frame.jpeg.length,
+        data: frame.jpeg,
+      })),
+    );
   });
 }
 

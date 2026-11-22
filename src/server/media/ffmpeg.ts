@@ -236,10 +236,13 @@ export async function extractFrames(
   return frames;
 }
 
-export async function detectCuts(filePath: string): Promise<number[]> {
+/** Cortes de plano, en ms. Con `limitMs`, solo se lee y se analiza ese tramo del principio (`-t`). */
+export async function detectCuts(filePath: string, limitMs?: number): Promise<number[]> {
   const demuxer = await fileDemuxer(filePath);
+  const limit = limitMs !== undefined && Number.isFinite(limitMs) && limitMs > 0 ? ["-t", toSeconds(limitMs)] : [];
   const { stderr } = await run("ffmpeg", [
     "-nostdin", "-threads", "2",
+    ...limit,
     ...inputArgs(demuxer, filePath),
     "-an",
     // Se reduce antes de comparar escenas: mismo resultado, mucho menos trabajo con vídeos grandes.

@@ -40,8 +40,8 @@ async function readChunk(request: Request): Promise<Buffer> {
 export async function GET(_request: Request, { params }: Context) {
   return handle(async (user) => {
     const { videoId, uploadId } = await params;
-    await getVideoFor(user!, parseId(videoId));
-    return Response.json(await uploadProgress(uploadId, { userId: user!.id }));
+    const video = await getVideoFor(user!, parseId(videoId));
+    return Response.json(await uploadProgress(uploadId, { userId: user!.id }, video.id));
   });
 }
 
@@ -49,10 +49,10 @@ export async function GET(_request: Request, { params }: Context) {
 export async function PUT(request: Request, { params }: Context) {
   return handle(async (user) => {
     const { videoId, uploadId } = await params;
-    await getVideoFor(user!, parseId(videoId));
+    const video = await getVideoFor(user!, parseId(videoId));
     const index = parseIndex(new URL(request.url).searchParams.get("indice"));
     const bytes = await readChunk(request);
-    return Response.json(await appendChunk(uploadId, index, bytes, { userId: user!.id }));
+    return Response.json(await appendChunk(uploadId, index, bytes, { userId: user!.id }, video.id));
   });
 }
 
@@ -60,8 +60,8 @@ export async function PUT(request: Request, { params }: Context) {
 export async function POST(_request: Request, { params }: Context) {
   return handle(async (user) => {
     const { videoId, uploadId } = await params;
-    await getVideoFor(user!, parseId(videoId));
-    await finishUpload(uploadId, { userId: user!.id });
+    const video = await getVideoFor(user!, parseId(videoId));
+    await finishUpload(uploadId, { userId: user!.id }, video.id);
     return Response.json({ ok: true }, { status: 202 });
   });
 }

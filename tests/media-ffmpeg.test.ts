@@ -73,6 +73,12 @@ describe("ffmpeg", () => {
     expect(Math.abs(cuts[1] - 4000)).toBeLessThanOrEqual(200);
   });
 
+  it("con un límite, solo lee y busca cortes en ese tramo del principio", async () => {
+    const cuts = await detectCuts(sample, 3000);
+    expect(cuts).toHaveLength(1);
+    expect(Math.abs(cuts[0] - 2000)).toBeLessThanOrEqual(200);
+  });
+
   it("el recorte normalizado no tiene audio, dura lo pedido y no pasa de 1280 px", async () => {
     const out = path.join(dir, "recorte.mp4");
     await normalizeClip(sample, out, 3000);

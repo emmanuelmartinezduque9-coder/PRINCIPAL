@@ -83,8 +83,12 @@ async function removeFiles(uploadId: string): Promise<void> {
  * Empieza la subida de la referencia de un vídeo. Comprueba, por este orden: que el vídeo es
  * visible y de `user`, el tamaño, que su Higgsfield está conectado (y no pide volver a
  * conectar) y que no hay otra referencia preparándose. Una subida anterior del mismo vídeo se
- * descarta con su archivo. `deps` no se usa: la conexión se comprueba en la bóveda, sin llamar
- * a Higgsfield (se acepta para que quien llama pase el mismo simulado que al resto).
+ * descarta con su archivo. El vídeo pasa a «subiendo», salvo si su referencia ya está lista:
+ * esa se queda como está hasta terminar la nueva subida. `deps` no se usa: la conexión se
+ * comprueba en la bóveda, sin llamar a Higgsfield (se acepta para que quien llama pase el mismo
+ * simulado que al resto).
+ *
+ * Orden de los cerrojos en todo este módulo: primero el vídeo, después la sesión.
  */
 export async function startUpload(
   user: AuthUser,
@@ -119,10 +123,15 @@ export async function startUpload(
       .where(eq(schema.uploadSessions.videoId, video.id))
       .returning({ id: schema.uploadSessions.id });
     await tx.insert(schema.uploadSessions).values({ id: uploadId, videoId: video.id, userId: user.id, filename, totalBytes });
-    await tx
-      .update(schema.videos)
-      .set({ referenceStatus: "uploading", referenceError: null, updatedAt: new Date() })
-      .where(eq(schema.videos.id, video.id));
+    // Una referencia que ya funciona se conserva (estado, fotogramas y recorte) hasta que la nueva
+    // subida termine: elegir otro vídeo y abandonar no la pierde. La subida pendiente vive solo
+    // en su sesión.
+    if (locked.referenceStatus !== "ready") {
+      await tx
+        .update(schema.videos)
+        .set({ referenceStatus: "uploading", referenceError: null, updatedAt: new Date() })
+        .where(eq(schema.videos.id, video.id));
+    }
     return old.map((row) => row.id);
   });
   for (const id of discarded) await removeFiles(id);
@@ -137,23 +146,39 @@ function belongsTo(session: Session, actor: UploadActor): boolean {
   return session.agentTaskId === null && session.userId === actor.userId;
 }
 
-/** La sesión de `actor`, bloqueada hasta el final de la transacción. Ajena o inexistente: el mismo 404. */
-async function lockedSession(tx: Tx, uploadId: string, actor: UploadActor): Promise<Session> {
+/**
+ * La sesión de `actor` (y, si se da `videoId`, de ese vídeo: el de la dirección de la ruta).
+ * Ajena, de otro vídeo o inexistente: el mismo 404. Con `lock`, bloqueada hasta el final de la
+ * transacción.
+ */
+async function findSession(tx: Tx, uploadId: string, actor: UploadActor, videoId: number | undefined, lock: boolean): Promise<Session> {
   if (typeof uploadId !== "string" || !UPLOAD_ID.test(uploadId)) throw new HttpError(404, NOT_FOUND);
-  const [session] = await tx.select().from(schema.uploadSessions).where(eq(schema.uploadSessions.id, uploadId)).for("update");
-  if (!session || !belongsTo(session, actor)) throw new HttpError(404, NOT_FOUND);
+  const query = tx.select().from(schema.uploadSessions).where(eq(schema.uploadSessions.id, uploadId));
+  const [session] = lock ? await query.for("update") : await query;
+  if (!session || !belongsTo(session, actor) || (videoId !== undefined && session.videoId !== videoId)) {
+    throw new HttpError(404, NOT_FOUND);
+  }
   return session;
 }
+
+const lockedSession = (tx: Tx, uploadId: string, actor: UploadActor, videoId?: number) => findSession(tx, uploadId, actor, videoId, true);
 
 /**
  * Añade el trozo `index`. Con la fila de la sesión bloqueada: el trozo que toca se escribe y
  * cuenta; uno ya recibido (se perdió la respuesta) responde sin escribir; uno adelantado, 409.
  * El primero decide el formato por su contenido. Si quedó medio trozo de un intento anterior,
- * se recorta antes de seguir; si el archivo ya no está, 410.
+ * se recorta antes de seguir; si el archivo ya no está, 410. `videoId` (el de la dirección de la
+ * ruta) exige que la subida sea de ese vídeo.
  */
-export async function appendChunk(uploadId: string, index: number, bytes: Buffer, actor: UploadActor): Promise<{ received: number }> {
+export async function appendChunk(
+  uploadId: string,
+  index: number,
+  bytes: Buffer,
+  actor: UploadActor,
+  videoId?: number,
+): Promise<{ received: number }> {
   return getDb().transaction(async (tx) => {
-    const session = await lockedSession(tx, uploadId, actor);
+    const session = await lockedSession(tx, uploadId, actor, videoId);
     if (!Number.isSafeInteger(index) || index < 0 || index >= totalChunksOf(session.totalBytes)) throw new HttpError(400, BAD_CHUNK);
     if (index < session.received) return { received: session.received };
     if (index > session.received) throw new HttpError(409, MISSING_CHUNKS);
@@ -182,9 +207,13 @@ export async function appendChunk(uploadId: string, index: number, bytes: Buffer
 }
 
 /** Cuántos trozos han llegado de cuántos; si el archivo ya no está, 410 (hay que empezar de nuevo). */
-export async function uploadProgress(uploadId: string, actor: UploadActor): Promise<{ received: number; totalChunks: number }> {
+export async function uploadProgress(
+  uploadId: string,
+  actor: UploadActor,
+  videoId?: number,
+): Promise<{ received: number; totalChunks: number }> {
   return getDb().transaction(async (tx) => {
-    const session = await lockedSession(tx, uploadId, actor);
+    const session = await lockedSession(tx, uploadId, actor, videoId);
     if (session.received > 0 && (await fileSize(uploadPath(session.id))) === null) throw new HttpError(410, UPLOAD_GONE);
     return { received: session.received, totalChunks: totalChunksOf(session.totalBytes) };
   });
@@ -193,14 +222,19 @@ export async function uploadProgress(uploadId: string, actor: UploadActor): Prom
 /**
  * Termina la subida: comprueba que llegó entera, deja la referencia «preparándose» y encola
  * `video.referencia`. Pulsar dos veces no encola dos veces: si ya se está preparando, no hace nada.
+ * Una referencia lista que se está sustituyendo pasa aquí a «preparándose».
  */
-export async function finishUpload(uploadId: string, actor: UploadActor): Promise<void> {
+export async function finishUpload(uploadId: string, actor: UploadActor, videoId?: number): Promise<void> {
   const job = await getDb().transaction(async (tx) => {
-    const session = await lockedSession(tx, uploadId, actor);
-    const [video] = await tx.select().from(schema.videos).where(eq(schema.videos.id, session.videoId)).for("update");
+    // Cerrojos en el mismo orden que `startUpload` (vídeo y luego sesión): así no se bloquean
+    // entre sí. Primero se lee la sesión sin bloquear, solo para saber de qué vídeo es.
+    const found = await findSession(tx, uploadId, actor, videoId, false);
+    const [video] = await tx.select().from(schema.videos).where(eq(schema.videos.id, found.videoId)).for("update");
     if (!video) throw new HttpError(404, NOT_FOUND);
+    // Entre tanto otra subida pudo sustituirla: se vuelve a leer, ya bloqueada.
+    const session = await lockedSession(tx, uploadId, actor, video.id);
     if (video.referenceStatus === "processing") return null;
-    if (video.referenceStatus !== "uploading") throw new HttpError(410, UPLOAD_GONE);
+    if (video.referenceStatus !== "uploading" && video.referenceStatus !== "ready") throw new HttpError(410, UPLOAD_GONE);
     const size = await fileSize(uploadPath(session.id));
     if (session.received > 0 && size === null) throw new HttpError(410, UPLOAD_GONE);
     if (session.received < totalChunksOf(session.totalBytes) || size !== session.totalBytes) throw new HttpError(400, INCOMPLETE);
@@ -232,28 +266,31 @@ export async function discardUpload(uploadId: string): Promise<void> {
 /**
  * Borra las sesiones de más de 24 h con sus archivos, y cualquier archivo temporal de la carpeta
  * de subidas que lleve más de 24 h sin tocarse (restos de un proceso que se cayó). Un vídeo que
- * se quedó «subiendo» sin sesión pasa a error. Devuelve cuántas sesiones borró.
+ * se quedó «subiendo» sin sesión pasa a error; uno cuya referencia estaba lista sigue lista (la
+ * subida abandonada no la tocó). Devuelve cuántas sesiones borró.
+ *
+ * Son dos sentencias sueltas, no una transacción: así no se toman cerrojos en el orden contrario
+ * al del resto del módulo (sesión y luego vídeo). La condición «sin sesión» de la segunda basta
+ * para no tocar un vídeo que entre una y otra empezó otra subida.
  */
 export async function cleanStaleUploads(now: Date = new Date()): Promise<number> {
   const limit = new Date(now.getTime() - STALE_UPLOAD_MS);
   const sessions = schema.uploadSessions;
-  const removed = await getDb().transaction(async (tx) => {
-    const rows = await tx.delete(sessions).where(lt(sessions.createdAt, limit)).returning({ id: sessions.id, videoId: sessions.videoId });
-    const videoIds = [...new Set(rows.map((row) => row.videoId))];
-    if (videoIds.length > 0) {
-      await tx
-        .update(schema.videos)
-        .set({ referenceStatus: "failed", referenceError: UPLOAD_GONE, updatedAt: new Date() })
-        .where(
-          and(
-            inArray(schema.videos.id, videoIds),
-            eq(schema.videos.referenceStatus, "uploading"),
-            notExists(tx.select({ one: sql`1` }).from(sessions).where(eq(sessions.videoId, schema.videos.id))),
-          ),
-        );
-    }
-    return rows;
-  });
+  const db = getDb();
+  const removed = await db.delete(sessions).where(lt(sessions.createdAt, limit)).returning({ id: sessions.id, videoId: sessions.videoId });
+  const videoIds = [...new Set(removed.map((row) => row.videoId))];
+  if (videoIds.length > 0) {
+    await db
+      .update(schema.videos)
+      .set({ referenceStatus: "failed", referenceError: UPLOAD_GONE, updatedAt: new Date() })
+      .where(
+        and(
+          inArray(schema.videos.id, videoIds),
+          eq(schema.videos.referenceStatus, "uploading"),
+          notExists(db.select({ one: sql`1` }).from(sessions).where(eq(sessions.videoId, schema.videos.id))),
+        ),
+      );
+  }
   for (const row of removed) if (UPLOAD_ID.test(row.id)) await removeFiles(row.id);
 
   const entries = await fs.readdir(uploadDir()).catch(() => [] as string[]);

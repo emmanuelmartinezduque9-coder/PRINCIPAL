@@ -139,6 +139,19 @@ describe("rutas de vídeos", () => {
     expect(sent).toBeLessThan(10 * 1024 * 1024);
   });
 
+  it("una subida usada con la dirección de otro vídeo (aunque sea propio) da 404", async () => {
+    await as(ana);
+    const id = await newVideo();
+    const otro = await newVideo();
+    const uploadId = await start(id, 100);
+    const put = await chunkRoute(new Request(`${URL_BASE}?indice=0`, { method: "PUT", body: new Uint8Array(mp4(100)) }), up(otro, uploadId));
+    expect(put.status).toBe(404);
+    expect(await put.json()).toEqual({ error: "Subida no encontrada." });
+    expect((await progressRoute(new Request(URL_BASE), up(otro, uploadId))).status).toBe(404);
+    expect((await finishRoute(new Request(URL_BASE, { method: "POST" }), up(otro, uploadId))).status).toBe(404);
+    expect((await progressRoute(new Request(URL_BASE), up(id, uploadId))).status).toBe(200);
+  });
+
   it("los trozos de una subida ajena dan 404", async () => {
     await as(ana);
     const id = await newVideo();

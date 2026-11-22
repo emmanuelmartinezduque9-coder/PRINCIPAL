@@ -15,7 +15,7 @@ import { saveCredential } from "@/server/credentials";
 import { ensureMedia } from "@/server/higgsfield";
 import { processReference } from "@/server/videos/intake";
 import { videoSweep } from "@/server/videos/sweep";
-import { appendChunk, CHUNK_BYTES, finishUpload, startUpload, uploadPath } from "@/server/videos/upload";
+import { appendChunk, CHUNK_BYTES, cleanStaleUploads, finishUpload, startUpload, uploadPath } from "@/server/videos/upload";
 import { createVideo, getVideoFor, readVideoFrame, videoView, type Video } from "@/server/videos/videos";
 import { makeProduct, makeUser } from "./helpers/fixtures";
 import { truncateAll } from "./helpers/global-setup";
@@ -178,6 +178,60 @@ describe("preparar la referencia", () => {
     expect((await videoView(ana, v.id)).frames).toHaveLength(12);
     expect((await getVideoFor(ana, v.id)).referenceMediaId).toBe("media-2");
   }, 60_000);
+});
+
+describe("sustituir una referencia", () => {
+  it("elegir otro vídeo y abandonar la subida no pierde la referencia que ya funcionaba", async () => {
+    await processReference(v.id, await upload(samples.seis), { higgsfield: fake.port });
+    const lista = await getVideoFor(ana, v.id);
+    expect(lista.referenceStatus).toBe("ready");
+
+    const bytes = fs.readFileSync(samples.seis);
+    const { uploadId } = await startUpload(ana, v.id, { filename: "otra.mp4", totalBytes: bytes.length }, { higgsfield: fake.port });
+    await appendChunk(uploadId, 0, bytes.subarray(0, CHUNK_BYTES), { userId: ana.id });
+    // Mientras se sube la nueva, la anterior sigue lista.
+    expect(await getVideoFor(ana, v.id)).toMatchObject({ referenceStatus: "ready", referenceMediaId: "media-1" });
+
+    await getDb()
+      .update(schema.uploadSessions)
+      .set({ createdAt: new Date(Date.now() - 25 * 3600_000) })
+      .where(eq(schema.uploadSessions.id, uploadId));
+    expect(await cleanStaleUploads()).toBe(1);
+    expect(await getVideoFor(ana, v.id)).toMatchObject({
+      referenceStatus: "ready",
+      referenceError: null,
+      referenceMediaId: "media-1",
+      segmentDurationMs: lista.segmentDurationMs,
+    });
+    expect((await videoView(ana, v.id)).frames).toHaveLength(12);
+    expect(await getDb().select().from(schema.uploadSessions)).toEqual([]);
+  });
+
+  it("al terminar la nueva subida, la referencia pasa a prepararse y luego se sustituye", async () => {
+    await processReference(v.id, await upload(samples.seis), { higgsfield: fake.port });
+    const uploadId = await upload(samples.largo);
+    expect((await getVideoFor(ana, v.id)).referenceStatus).toBe("processing");
+    await processReference(v.id, uploadId, { higgsfield: fake.port });
+    expect(await getVideoFor(ana, v.id)).toMatchObject({ referenceStatus: "ready", referenceMediaId: "media-2", segmentDurationMs: 30_000 });
+  }, 60_000);
+
+  it("si la preparación vieja termina después de que el seguimiento la diera por perdida, su resultado no se escribe", async () => {
+    const oldUpload = await upload(samples.seis);
+    let newUpload = "";
+    // Mientras la preparación vieja sube el recorte, el seguimiento la da por perdida y Ana empieza otra subida.
+    const slow = {
+      ...fake.port,
+      async uploadMedia(userId: number, file: Parameters<typeof fake.port.uploadMedia>[1]) {
+        await videoSweep(new Date(Date.now() + 61 * 60_000));
+        newUpload = (await startUpload(ana, v.id, { filename: "nueva.mp4", totalBytes: 100 }, { higgsfield: fake.port })).uploadId;
+        return fake.port.uploadMedia(userId, file);
+      },
+    };
+    await processReference(v.id, oldUpload, { higgsfield: slow });
+    expect(await getVideoFor(ana, v.id)).toMatchObject({ referenceStatus: "uploading", referenceMediaId: null, segmentDurationMs: null });
+    expect((await videoView(ana, v.id)).frames).toEqual([]);
+    expect((await getDb().select().from(schema.uploadSessions)).map((s) => s.id)).toEqual([newUpload]);
+  });
 });
 
 describe("seguimiento", () => {

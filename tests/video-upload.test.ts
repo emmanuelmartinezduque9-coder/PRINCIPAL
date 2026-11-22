@@ -177,6 +177,12 @@ describe("trozos", () => {
     await expect(uploadProgress(id, { userId: luis.id })).rejects.toMatchObject(NOT_FOUND);
     await expect(finishUpload(id, { userId: luis.id })).rejects.toMatchObject(NOT_FOUND);
     await expect(appendChunk(id, 0, mp4(100), { agentTaskId: 1 })).rejects.toMatchObject(NOT_FOUND);
+    // Con el id de otro vídeo (aunque también sea de Ana), la subida no existe.
+    const otro = await createVideo(ana, v.productId);
+    await expect(appendChunk(id, 0, mp4(100), { userId: ana.id }, otro.id)).rejects.toMatchObject(NOT_FOUND);
+    await expect(uploadProgress(id, { userId: ana.id }, otro.id)).rejects.toMatchObject(NOT_FOUND);
+    await expect(finishUpload(id, { userId: ana.id }, otro.id)).rejects.toMatchObject(NOT_FOUND);
+    expect(await uploadProgress(id, { userId: ana.id }, v.id)).toEqual({ received: 0, totalChunks: 1 });
     for (const bad of ["../../etc/passwd", "x", ""]) {
       await expect(uploadProgress(bad, { userId: ana.id })).rejects.toMatchObject(NOT_FOUND);
     }
@@ -209,6 +215,24 @@ describe("terminar", () => {
     await expect(startUpload(ana, v.id, { filename: "b.mp4", totalBytes: 100 }, deps)).rejects.toMatchObject({ status: 409 });
     // Y ya no admite más trozos nuevos.
     await expect(appendChunk(id, 1, Buffer.alloc(10), { userId: ana.id })).rejects.toMatchObject({ status: 400 });
+  });
+});
+
+describe("a la vez", () => {
+  it("terminar y empezar otra subida del mismo vídeo a la vez no se bloquean entre sí", async () => {
+    for (let round = 0; round < 5; round++) {
+      await getDb().update(schema.videos).set({ referenceStatus: "none" }).where(eq(schema.videos.id, v.id));
+      const { uploadId } = await startUpload(ana, v.id, { filename: "a.mp4", totalBytes: 100 }, deps);
+      await appendChunk(uploadId, 0, mp4(100), { userId: ana.id });
+      const results = await Promise.allSettled([
+        finishUpload(uploadId, { userId: ana.id }),
+        startUpload(ana, v.id, { filename: "b.mp4", totalBytes: 100 }, deps),
+      ]);
+      // Gane quien gane, el otro recibe un error claro (404 o 409), nunca un fallo de la base de datos.
+      for (const result of results) {
+        if (result.status === "rejected") expect([404, 409]).toContain((result.reason as { status?: number }).status);
+      }
+    }
   });
 });
 
