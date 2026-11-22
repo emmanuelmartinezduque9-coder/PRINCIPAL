@@ -1,0 +1,9 @@
+{
+  "_origen": "captura real 22/11",
+  "_nota": "Última página de `show_generations` (cursor más antiguo que todo el historial). El final del historial es un `next_cursor: null` explícito.",
+  "isError": false,
+  "structuredContent": {
+    "items": [],
+    "next_cursor": null
+  }
+}

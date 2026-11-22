@@ -492,6 +492,81 @@ describe("envío único", () => {
     },
   );
 
+  it("una finalización vieja colgada (reserva caducada) no pisa lo que añade la respuesta tardía", async () => {
+    // El envío responde cuando la prueba quiera.
+    let reply!: () => void;
+    const replied = new Promise<void>((resolve) => (reply = resolve));
+    const controlled: HiggsfieldPort = {
+      ...fake.port,
+      submitImages: async () => {
+        await replied;
+        return { jobIds: ["j1", "j2"], rejected: [], raw: { jobs: ["j1", "j2"] } };
+      },
+    };
+    const { generationId: id } = await requestGeneration(ana, v.id, "frame", { expectedCredits: 4 }, deps);
+    await submitGeneration(id, { ...deps, higgsfield: controlled, submitDeadlineMs: 100 });
+    expect(await statusOf(id)).toBe("unknown");
+    fake.state.history = [hist("j1", SAME_PROMPT)];
+    await sweepGenerations(deps); // adopta j1
+    fake.state.jobs.j1 = { jobId: "j1", status: "done", failure: null, error: null, urls: ["https://cdn.test/j1.png"] };
+    await finalizeGeneration(id, deps); // `done` con j1
+    await getPool().query("update generations set recheck_until = now() + interval '1 hour' where id = $1", [id]);
+
+    // Una finalización que se hizo con la fila hace 11 minutos (reserva ya caducada) y sigue colgada en `jobs`.
+    let unblock!: () => void;
+    const gate = new Promise<void>((resolve) => (unblock = resolve));
+    let entered!: () => void;
+    const inJobs = new Promise<void>((resolve) => (entered = resolve));
+    const hanging: HiggsfieldPort = {
+      ...fake.port,
+      jobs: async (...args: Parameters<HiggsfieldPort["jobs"]>) => {
+        entered();
+        await gate;
+        return fake.port.jobs(...args);
+      },
+    };
+    const old = finalizeGeneration(id, { ...deps, higgsfield: hanging, now: minutes(-11) });
+    await inJobs;
+
+    reply(); // llega la respuesta: añade j2, vuelve a mirar y le quita la reserva a la vieja
+    await waitFor(async () => (await rowOf(id)).jobIds.length === 2);
+    unblock();
+    await old; // escribe lo que leyó (j1 solo, sin volver a mirar): ya no debe poder
+
+    const { rows } = await getPool().query(
+      "select status, job_ids as \"jobIds\", recheck_until > now() as rechecking, finalizing_at as \"finalizingAt\" from generations where id = $1",
+      [id],
+    );
+    expect(rows[0]).toMatchObject({ status: "done", jobIds: ["j1", "j2"], rechecking: true, finalizingAt: null });
+    fake.state.jobs.j2 = { jobId: "j2", status: "done", failure: null, error: null, urls: ["https://cdn.test/j2.png"] };
+    await finalizeGeneration(id, deps);
+    const results = await getPool().query("select index, job_id as \"jobId\", ok from generation_results where generation_id = $1 order by index", [id]);
+    expect(results.rows).toEqual([
+      { index: 0, jobId: "j1", ok: true },
+      { index: 1, jobId: "j2", ok: true },
+    ]);
+  });
+
+  it("al volver a mirar una generación hecha, un resultado ya guardado bien la mantiene `done`", async () => {
+    const { generationId: id } = await requestGeneration(ana, v.id, "frame", { expectedCredits: 4 }, deps);
+    await submitGeneration(id, deps);
+    const { jobIds } = await rowOf(id);
+    fake.state.jobs[jobIds[0]] = { jobId: jobIds[0], status: "done", failure: null, error: null, urls: ["https://cdn.test/a.png"] };
+    fake.state.jobs[jobIds[1]] = { jobId: jobIds[1], status: "failed", failure: "failed", error: null, urls: [] };
+    await finalizeGeneration(id, deps);
+    expect(await statusOf(id)).toBe("done");
+    // Se vuelve a mirar y ahora Higgsfield da los dos como fallidos (p. ej. el primero ya no está): sigue `done`.
+    await getPool().query("update generations set recheck_until = now() + interval '1 hour' where id = $1", [id]);
+    fake.state.jobs[jobIds[0]] = { jobId: jobIds[0], status: "failed", failure: "failed", error: null, urls: [] };
+    await finalizeGeneration(id, deps);
+    expect(await rowOf(id)).toMatchObject({ status: "done", error: null });
+    const { rows } = await getPool().query("select index, ok from generation_results where generation_id = $1 order by index", [id]);
+    expect(rows).toEqual([
+      { index: 0, ok: true },
+      { index: 1, ok: false },
+    ]);
+  });
+
   it("una respuesta que llega después de la espera tardía no se anota, pero sus trabajos quedan en el registro", async () => {
     const errors = vi.spyOn(console, "error").mockImplementation(() => {});
     try {

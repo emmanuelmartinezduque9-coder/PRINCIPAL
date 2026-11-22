@@ -363,7 +363,7 @@ export async function requestGeneration(
     generationId = await getDb().transaction(async (tx) => {
       await generationLock(tx, video.id);
       if (snapshot && Object.keys(snapshot).length > 0) {
-        const [current] = await tx.select().from(schema.videos).where(eq(schema.videos.id, video.id)).for("update");
+        const [current] = await tx.select().from(schema.videos).where(eq(schema.videos.id, video.id)).for("no key update");
         const changed =
           !current ||
           (Object.keys(snapshot) as Array<keyof Video>).some((key) => JSON.stringify(current[key]) !== JSON.stringify(snapshot[key]));
@@ -463,9 +463,12 @@ async function recordSubmitted(row: Generation, sent: HfSubmitResult, deps: GenD
         if (merged.length > current.jobIds.length) {
           // Ya terminada: se vuelve a mirar para que la finalización recoja el trabajo nuevo (índice nuevo).
           const recheck = current.status === "submitted" ? {} : { recheckUntil: laterOf(current.recheckUntil, new Date(now.getTime() + LATE_RECHECK_MS)) };
+          // Una finalización con la reserva caducada puede seguir viva (lenta): se le quita la reserva
+          // para que su escritura (`where(mine)`) no pise esto con lo que leyó antes.
+          const lease = current.finalizingAt === null ? {} : { finalizingAt: null };
           await tx
             .update(generations)
-            .set({ jobIds: merged, creditsSpent: Math.ceil((row.quotedCredits * merged.length) / row.count), ...recheck })
+            .set({ jobIds: merged, creditsSpent: Math.ceil((row.quotedCredits * merged.length) / row.count), ...recheck, ...lease })
             .where(eq(generations.id, row.id));
         }
         return "recorded" as const;
@@ -756,19 +759,19 @@ export async function finalizeGeneration(generationId: number, deps: GenDeps = {
       await release();
       return;
     }
-    const anyOk = jobs.some((job) => job.status === "done");
-    const notFound = jobs.some((job) => job.failure === "not_found");
-    if (row.status === "failed" && !anyOk && notFound) {
-      await release(); // sigue sin aparecer: se mirará otra vez
-      return;
-    }
-
-    // Lo que ya está guardado y bien (al volver a mirar una terminada) no se descarga otra vez.
+    // Lo que ya está guardado y bien (al volver a mirar una terminada) no se descarga otra vez, y la
+    // generación sigue `done` aunque ahora Higgsfield diga otra cosa de ese trabajo.
     const savedOk = new Set(
       (await getDb().select({ index: results.index }).from(results).where(and(eq(results.generationId, row.id), eq(results.ok, true)))).map(
         (saved) => saved.index,
       ),
     );
+    const anyOk = jobs.some((job) => job.status === "done") || savedOk.size > 0;
+    const notFound = jobs.some((job) => job.failure === "not_found");
+    if (row.status === "failed" && !anyOk && notFound) {
+      await release(); // sigue sin aparecer: se mirará otra vez
+      return;
+    }
     const found = await Promise.all(
       jobs.map(async (job, index) => {
         if (savedOk.has(index)) return null;
