@@ -446,18 +446,33 @@ export const generations = pgTable(
     submittedAt: instant("submitted_at"),
     finishedAt: instant("finished_at"),
     lastPolledAt: instant("last_polled_at"),
+    /** Reserva del trabajo que descarga los resultados y hace las miniaturas (`video.finalizar`). */
+    finalizingAt: instant("finalizing_at"),
+    /**
+     * Hasta cuándo se vuelve a mirar una generación `failed` por tope de una hora o porque
+     * Higgsfield no encontraba sus trabajos: si terminan tarde, no se pierden.
+     */
+    recheckUntil: instant("recheck_until"),
   },
   (t) => [
     uniqueIndex("generations_video_kind_round")
       .on(t.videoId, t.kind, t.round)
       .where(sql`${t.status} <> 'not_sent'`),
+    // Como mucho una en marcha o en duda por tipo y vídeo.
+    uniqueIndex("generations_one_active")
+      .on(t.videoId, t.kind)
+      .where(sql`${t.status} in ('intent', 'submitting', 'submitted', 'unknown')`),
     index("generations_status").on(t.status),
+    index("generations_video_kind").on(t.videoId, t.kind, t.id),
+    index("generations_job_ids").using("gin", t.jobIds),
     check("generations_kind_valid", sql`${t.kind} in ('frame', 'clip')`),
     check(
       "generations_status_valid",
       sql`${t.status} in ('intent', 'submitting', 'submitted', 'done', 'failed', 'not_sent', 'unknown')`,
     ),
     check("generations_count_valid", sql`${t.count} between 1 and 12`),
+    check("generations_round_valid", sql`${t.round} >= 1`),
+    check("generations_credits_valid", sql`${t.quotedCredits} >= 0 and (${t.creditsSpent} is null or ${t.creditsSpent} >= 0)`),
   ],
 );
 
@@ -477,7 +492,7 @@ export const generationResults = pgTable(
     thumbMime: text("thumb_mime"),
     thumb: bytea("thumb"),
   },
-  (t) => [unique("generation_results_generation_index").on(t.generationId, t.index)],
+  (t) => [unique("generation_results_generation_index").on(t.generationId, t.index), unique("generation_results_job").on(t.jobId)],
 );
 
 /**

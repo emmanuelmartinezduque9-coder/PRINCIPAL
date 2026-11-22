@@ -1,0 +1,6 @@
+{
+  "_origen": "captura real 22/11",
+  "_nota": "Error de `estimate_video_cost` con params { model: \"hf_mult_motion_control_flash\", resolution: \"720p\" } (sin vídeo de referencia). Llega como texto con isError.",
+  "isError": true,
+  "text": "Error estimating cost: hf_mult_motion_control_flash backend request failed (422): cost params failed validation [{\"type\":\"too_short\",\"loc\":[\"video_references\"],\"msg\":\"List should have at least 1 item after validation, not 0\",\"input\":[]}]\nRequest ID: 08569fea-338f-4a1e-aff8-d8da2fe3e916"
+}

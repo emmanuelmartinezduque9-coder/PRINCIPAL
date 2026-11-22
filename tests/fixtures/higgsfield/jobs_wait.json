@@ -1,16 +1,24 @@
 {
-  "_origen": "supuesto",
-  "_nota": "Forma supuesta de la respuesta de `jobs_wait` (el esquema publica entradas, no respuestas; la descripción habla de estados indexados, direcciones de resultados, `error` en los trabajos failed/nsfw/ip_detected, `all_terminal` y `poll_after_seconds`). Se sustituye por la captura real en la PUERTA.",
+  "_origen": "captura real 22/11",
+  "_nota": "Respuesta de `jobs_wait` con cuatro trabajos (tres en curso y uno terminado). Las direcciones llevan el marcador user_XXXX en lugar del identificador real.",
   "isError": false,
   "structuredContent": {
-    "all_terminal": false,
-    "poll_after_seconds": 10,
     "jobs": [
-      { "index": 0, "job_id": "j1", "status": "completed", "results": [{ "url": "https://cdn.higgsfield.test/j1.png" }] },
-      { "index": 1, "job_id": "j2", "status": "nsfw", "error": "Content flagged." },
-      { "index": 2, "job_id": "j3", "status": "in_progress" },
-      { "index": 3, "job_id": "j4", "status": "failed", "error": "Generation failed." },
-      { "index": 4, "job_id": "j5", "status": "something_new" }
-    ]
+      { "index": 6, "job_id": "540c3252-e858-49ee-998d-adceebf077de", "status": "in_progress", "type": "video", "model": "hf_mult_motion_control" },
+      { "index": 11, "job_id": "4ef0f16b-da97-4b90-a602-fb56adc21a27", "status": "in_progress", "type": "video", "model": "seedance_2_5" },
+      { "index": 10, "job_id": "769c9e55-c61c-4d83-aee0-27f8b8eb0477", "status": "in_progress", "type": "video", "model": "seedance_2_5" },
+      {
+        "index": 1,
+        "job_id": "980c2227-9b12-4c14-bc7b-b6d11e5b9a05",
+        "status": "completed",
+        "type": "video",
+        "model": "topaz_video",
+        "result_url": "https://d8j0ntlcm91z4.cloudfront.net/user_XXXX/hf_20261122_060226_980c2227-9b12-4c14-bc7b-b6d11e5b9a05.mp4"
+      }
+    ],
+    "summary": { "total": 4, "completed": 1, "failed": 0, "active": 3, "errors": 0 },
+    "all_terminal": false,
+    "timed_out": true,
+    "poll_after_seconds": 10
   }
 }

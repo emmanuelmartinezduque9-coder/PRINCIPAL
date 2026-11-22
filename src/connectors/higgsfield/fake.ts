@@ -54,6 +54,7 @@ export function createFakeHiggsfield(
   const kinds = new Map<string, "image" | "video">();
   let uploads = 0;
   let jobCounter = 0;
+  let quotes = 0;
 
   function record(method: keyof HiggsfieldPort, userId: number, args: unknown): void {
     calls.push({ method, userId, args });
@@ -73,7 +74,15 @@ export function createFakeHiggsfield(
       jobIds.push(jobId);
       kinds.set(jobId, type);
       state.jobs[jobId] = { jobId, status: "pending", failure: null, error: null, urls: [] };
-      state.history.unshift({ jobId, type, model: request.model, prompt: request.prompt, createdAt: new Date() });
+      state.history.unshift({
+        jobId,
+        type,
+        model: request.model,
+        prompt: request.prompt,
+        createdAt: new Date(),
+        mediaIds: request.medias.map((media) => media.value),
+        resolution: request.resolution,
+      });
     }
     state.credits -= unitCost * accepted;
     const rejected = Array.from({ length: count - accepted }, () => "Rechazada por el simulado.");
@@ -96,18 +105,20 @@ export function createFakeHiggsfield(
     },
     async quoteImages(userId, request, count) {
       record("quoteImages", userId, { request, count });
-      return { credits: imageCost(count) };
+      quotes += 1;
+      return { credits: imageCost(count), quoteRef: `quote:fake-${quotes}` };
     },
     async quoteVideo(userId, request) {
       record("quoteVideo", userId, { request });
-      return { credits: videoCost(request) };
+      quotes += 1;
+      return { credits: videoCost(request), quoteRef: `quote:fake-${quotes}` };
     },
     async submitImages(userId, request, count) {
       record("submitImages", userId, { request, count });
       return submit("image", request, count, imageCost(1));
     },
-    async submitVideo(userId, request) {
-      record("submitVideo", userId, { request });
+    async submitVideo(userId, request, submitOptions = {}) {
+      record("submitVideo", userId, { request, quoteRef: submitOptions.quoteRef ?? null });
       return submit("video", request, 1, videoCost(request));
     },
     async jobs(userId, jobIds, waitSeconds) {
@@ -123,9 +134,13 @@ export function createFakeHiggsfield(
         return job ? { ...job, urls: [...job.urls] } : { jobId, status: "pending", failure: null, error: null, urls: [] };
       });
     },
-    async history(userId, type, limit) {
-      record("history", userId, { type, limit });
-      return state.history.filter((item) => item.type === type).slice(0, limit);
+    async history(userId, type, limit, cursor = null) {
+      record("history", userId, { type, limit, cursor });
+      // Como el real: de la más reciente a la más antigua; el cursor es la fecha (en segundos) de la última.
+      const seconds = (item: HfHistoryItem) => (item.createdAt ? item.createdAt.getTime() / 1000 : 0);
+      const older = state.history.filter((item) => item.type === type && (cursor === null || seconds(item) < cursor));
+      const items = older.slice(0, limit);
+      return { items, nextCursor: older.length > limit ? seconds(items[items.length - 1]) : null };
     },
   };
 

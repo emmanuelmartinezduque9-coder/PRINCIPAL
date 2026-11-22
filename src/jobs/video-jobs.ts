@@ -2,7 +2,7 @@ import { defineJob, defineSchedule } from "@/jobs/registry";
 import { StepFailedError } from "@/jobs/steps";
 import { probeConnections } from "@/server/higgsfield";
 import { ANALYSIS_JOB, runAnalysis } from "@/server/videos/analysis";
-import { SUBMIT_JOB, submitGeneration } from "@/server/videos/generations";
+import { FINALIZE_JOB, finalizeGeneration, SUBMIT_JOB, submitGeneration } from "@/server/videos/generations";
 import { processReference } from "@/server/videos/intake";
 import { videoSweep } from "@/server/videos/sweep";
 import { REFERENCE_JOB } from "@/server/videos/upload";
@@ -46,6 +46,16 @@ defineJob<{ generationId: number }>(
     await submitGeneration(generationId);
   },
   "Enviar a Higgsfield",
+);
+
+/** Descarga los resultados de una generación terminada y hace sus miniaturas (con su propia reserva; no gasta). */
+defineJob<{ generationId: number }>(
+  FINALIZE_JOB,
+  async ({ generationId }) => {
+    if (typeof generationId !== "number") throw new StepFailedError("Datos del trabajo no válidos.");
+    await finalizeGeneration(generationId);
+  },
+  "Guardar los resultados de Higgsfield",
 );
 
 /** Cada minuto: subidas abandonadas, referencias atascadas, desgloses que no terminan y generaciones en curso o en duda. */

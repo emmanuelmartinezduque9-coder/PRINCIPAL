@@ -2,14 +2,18 @@ import { McpUnauthorizedError, openMcp, type McpCaller } from "./mcp";
 import { accessTokenFor, refreshNow } from "./oauth";
 import {
   HiggsfieldAuthError,
+  HiggsfieldConnectError,
+  HiggsfieldNotConnectedError,
   HiggsfieldRejectedError,
   HiggsfieldUnavailableError,
   HiggsfieldUnknownOutcomeError,
   isHiggsfieldError,
   type HfBalance,
   type HfHistoryItem,
+  type HfHistoryPage,
   type HfImageRequest,
   type HfJob,
+  type HfQuote,
   type HfSubmitResult,
   type HfVideoRequest,
   type HiggsfieldPort,
@@ -170,44 +174,42 @@ const MAX_WAIT_SECONDS = 15;
 const RAW_LIMIT = 20_000;
 
 // ───────────────────────── Generaciones: lectores de respuestas ─────────────────────────
+// Escritos contra las capturas reales del 22/11 (`tests/fixtures/higgsfield/*.json`).
 
 const isObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
-/** La primera lista que encuentre en esas claves (o la respuesta, si es una lista), también un nivel más abajo. */
-function listIn(data: unknown, keys: string[]): unknown[] | null {
-  if (Array.isArray(data)) return data;
-  if (!isObject(data)) return null;
-  for (const key of keys) {
-    if (Array.isArray(data[key])) return data[key] as unknown[];
-  }
-  for (const key of ["data", "result"]) {
-    const inner = data[key];
-    if (isObject(inner)) {
-      const found = listIn(inner, keys);
-      if (found) return found;
-    }
-  }
-  return null;
-}
-
 const text = (value: unknown): string | null => (typeof value === "string" && value.trim() ? value.trim() : null);
 
-/**
- * Créditos de un presupuesto. Admite variantes de nombre y un nivel de anidación; un número con
- * decimales se redondea hacia ARRIBA (mejor pedir de más que quedarse corto). `null` si no hay cifra.
- */
-export function readQuote(data: unknown): { credits: number } | null {
+/** La lista de `key` en la respuesta (o un nivel más abajo, en `data`/`result`). */
+function listAt(data: unknown, key: string): unknown[] | null {
   if (!isObject(data)) return null;
-  const layers = [data, ...["estimate", "cost", "quote", "data", "result", "price"].map((k) => data[k]).filter(isObject)];
-  for (const layer of layers) {
-    for (const key of ["credits", "total_credits", "estimated_credits", "credits_cost", "cost", "total_cost", "total", "price", "amount"]) {
-      const n = num(layer[key]);
-      if (n !== null) return { credits: Math.ceil(n) };
-    }
+  if (Array.isArray(data[key])) return data[key] as unknown[];
+  for (const wrapper of ["data", "result"]) {
+    const inner = data[wrapper];
+    if (isObject(inner) && Array.isArray(inner[key])) return inner[key] as unknown[];
   }
   return null;
 }
+
+/**
+ * Un presupuesto: `{ cost: { credits, credits_exact }, quote_ref }`. Un número con decimales se
+ * redondea hacia ARRIBA (mejor pedir de más que quedarse corto). `null` si no hay cifra.
+ */
+export function readQuote(data: unknown): HfQuote | null {
+  if (!isObject(data)) return null;
+  const cost = isObject(data.cost) ? data.cost : {};
+  const credits = num(cost.credits) ?? num(cost.credits_exact) ?? num(data.credits);
+  if (credits === null) return null;
+  return { credits: Math.ceil(credits), quoteRef: text(data.quote_ref) };
+}
+
+/**
+ * Texto de error de Higgsfield que prueba que la petición no se aceptó: validación (400/422),
+ * créditos insuficientes o la pregunta de las generaciones ilimitadas. Forma real:
+ * «… backend request failed (422): cost params failed validation [...]».
+ */
+const CERTAIN_REJECTION = /failed validation|validation error|request failed \((400|402|422)\)|insufficient (credits|balance)|not enough credits|unlim_choice/i;
 
 /** ¿Higgsfield pregunta si pagar con generaciones ilimitadas? Entonces no ha enviado nada. */
 function isUnlimChoice(data: unknown): boolean {
@@ -216,66 +218,68 @@ function isUnlimChoice(data: unknown): boolean {
   return ["status", "type", "kind", "action"].some((key) => data[key] === "unlim_choice");
 }
 
-const jobIdOf = (entry: Record<string, unknown>) => text(entry.job_id) ?? text(entry.jobId) ?? text(entry.id);
+const jobIdOf = (entry: Record<string, unknown>) => text(entry.job_id) ?? text(entry.jobId);
 const reasonOf = (entry: Record<string, unknown>) =>
-  text(entry.error) ?? text(entry.reason) ?? text(entry.message) ?? (isObject(entry.error) ? text(entry.error.message) : null);
+  text(entry.error) ?? text(entry.reason) ?? (isObject(entry.error) ? (text(entry.error.message) ?? text(entry.error.msg)) : null);
 
 /**
- * Lee la respuesta de `generate_*_batch`: identificadores de los trabajos aceptados y motivos de
- * los rechazados (en la misma lista o aparte). `null` si no se entiende nada.
+ * Lee la respuesta de `generate_*_batch`, de forma real
+ * `{ jobs: [{ index, job_id, status: "pending" }], submitted_count, failed_count }`.
+ *
+ * - `{ ok }`: identificadores aceptados y motivos de las peticiones rechazadas con un error explícito.
+ * - `{ rejectedAll }`: todas rechazadas con error explícito (seguro que no se envió nada).
+ * - `null`: cualquier otra cosa (sin lista, una entrada sin identificador ni error, cuentas que no
+ *   cuadran): no se sabe qué se envió.
  */
 export function readSubmit(data: unknown): { jobIds: string[]; rejected: string[] } | null {
+  const entries = listAt(data, "jobs");
+  if (!entries || entries.length === 0) return null;
   const jobIds: string[] = [];
   const rejected: string[] = [];
-  for (const entry of listIn(data, ["jobs", "results", "items", "generations", "requests"]) ?? []) {
-    if (typeof entry === "string" && entry.trim()) {
-      jobIds.push(entry.trim());
-      continue;
-    }
-    if (!isObject(entry)) continue;
+  for (const entry of entries) {
+    if (!isObject(entry)) return null;
     const jobId = jobIdOf(entry);
+    const reason = reasonOf(entry);
     if (jobId) jobIds.push(jobId);
-    else rejected.push(reasonOf(entry) ?? "Rechazada sin motivo.");
+    else if (reason) rejected.push(reason);
+    else return null;
   }
-  if (isObject(data)) {
-    for (const key of ["rejected", "errors", "failed", "failures"]) {
-      const list = data[key];
-      if (!Array.isArray(list)) continue;
-      for (const entry of list) {
-        rejected.push(text(entry) ?? (isObject(entry) ? reasonOf(entry) : null) ?? "Rechazada sin motivo.");
-      }
-    }
-  }
-  if (jobIds.length === 0 && rejected.length === 0) return null;
+  const declared = isObject(data) ? num(data.submitted_count) : null;
+  if (declared !== null && declared !== jobIds.length) return null;
   return { jobIds: [...new Set(jobIds)], rejected };
 }
 
-const DONE = new Set(["completed", "complete", "done", "succeeded", "success", "finished", "ready"]);
+const DONE = new Set(["completed", "complete", "done", "succeeded", "success", "finished"]);
 const FAILED = new Set(["failed", "failure", "error", "errored", "canceled", "cancelled", "rejected", "expired"]);
 const BLOCKED = new Set(["nsfw", "ip_detected"]);
+const NOT_FOUND = new Set(["not_found", "missing", "lookup_failed", "unknown_job"]);
 
-const URL_KEYS = ["url", "raw_url", "video_url", "image_url", "full_url", "download_url", "min_url", "src"];
+const URL_KEYS = ["result_url", "rawUrl", "raw_url", "url", "video_url", "image_url"];
 
-/** Direcciones de los resultados de un trabajo, en las formas razonables. */
+/** Direcciones de los resultados: `result_url` en `jobs_wait`, `results.rawUrl` en el historial. */
 function urlsOf(entry: Record<string, unknown>): string[] {
   const urls: string[] = [];
   const add = (value: unknown) => {
-    if (typeof value === "string" && /^(https?:|data:)/.test(value.trim())) urls.push(value.trim());
+    if (typeof value === "string" && /^(https:|data:)/.test(value.trim())) urls.push(value.trim());
     else if (isObject(value)) {
       const found = URL_KEYS.map((k) => value[k]).find((v) => typeof v === "string" && v.trim());
       if (found) add(found);
     }
   };
-  for (const key of ["urls", "results", "result", "outputs", "output", "media", "files"]) {
+  for (const key of URL_KEYS) add(entry[key]);
+  for (const key of ["results", "result", "urls"]) {
     const value = entry[key];
     if (Array.isArray(value)) value.forEach(add);
     else if (value !== undefined) add(value);
   }
-  for (const key of URL_KEYS) add(entry[key]);
   return [...new Set(urls)];
 }
 
-/** Un trabajo de `jobs_wait`. Un estado que no se reconoce se trata como pendiente. */
+/**
+ * Un trabajo de `jobs_wait` (`{ index, job_id, status, type, model, result_url }`). Un estado que no
+ * se reconoce, o un terminado sin dirección, sigue pendiente (el tope de una hora lo acaba cerrando).
+ * Una entrada con error y sin estado es un fallo permanente de la consulta (`not_found`).
+ */
 function readJob(jobId: string, entry: Record<string, unknown> | undefined): HfJob {
   const pending: HfJob = { jobId, status: "pending", failure: null, error: null, urls: [] };
   if (!entry) return pending;
@@ -283,17 +287,21 @@ function readJob(jobId: string, entry: Record<string, unknown> | undefined): HfJ
   const error = reasonOf(entry);
   if (BLOCKED.has(status)) return { jobId, status: "failed", failure: status as "nsfw" | "ip_detected", error, urls: [] };
   if (FAILED.has(status)) return { jobId, status: "failed", failure: "failed", error, urls: [] };
-  if (DONE.has(status)) return { jobId, status: "done", failure: null, error: null, urls: urlsOf(entry) };
+  if (NOT_FOUND.has(status) || (!status && error)) return { jobId, status: "failed", failure: "not_found", error, urls: [] };
+  if (DONE.has(status)) {
+    const urls = urlsOf(entry);
+    return urls.length > 0 ? { jobId, status: "done", failure: null, error: null, urls } : pending;
+  }
   return pending;
 }
 
 /**
  * Lee la respuesta de `jobs_wait` para los trabajos pedidos, en ese orden. Cada entrada se asocia
  * por `job_id` o, si no lo trae, por su índice. Un trabajo que no aparece sigue pendiente. `null`
- * si la respuesta no tiene ninguna lista.
+ * si la respuesta no tiene la lista `jobs`.
  */
 export function readJobs(data: unknown, jobIds: string[]): HfJob[] | null {
-  const entries = listIn(data, ["jobs", "results", "items", "statuses"]);
+  const entries = listAt(data, "jobs");
   if (!entries) return null;
   const byId = new Map<string, Record<string, unknown>>();
   for (const entry of entries) {
@@ -304,7 +312,7 @@ export function readJobs(data: unknown, jobIds: string[]): HfJob[] | null {
   return jobIds.map((jobId) => readJob(jobId, byId.get(jobId)));
 }
 
-/** Una fecha en segundos, milisegundos o ISO; `null` si no se entiende. */
+/** Una fecha en segundos (como la real, `createdAt: 1795304165.949`), milisegundos o ISO; `null` si no se entiende. */
 function dateOf(value: unknown): Date | null {
   const n = num(value);
   if (n !== null && n > 0) return new Date(n < 1e12 ? n * 1000 : n);
@@ -315,14 +323,37 @@ function dateOf(value: unknown): Date | null {
   return null;
 }
 
-/** Lee la respuesta de `show_generations`. Las entradas sin identificador se saltan. `null` si no hay lista. */
-export function readHistory(data: unknown, type: "image" | "video"): HfHistoryItem[] | null {
-  const entries = listIn(data, ["generations", "items", "results", "jobs"]);
+/** Identificadores de las entradas que deja ver una generación del historial. */
+function mediaIdsOf(params: Record<string, unknown>): string[] {
+  const ids: string[] = [];
+  const add = (value: unknown) => {
+    if (isObject(value)) {
+      const id = text(value.id) ?? text(value.media_id) ?? text(value.value);
+      if (id) ids.push(id);
+    } else if (typeof value === "string" && value.trim()) ids.push(value.trim());
+  };
+  for (const key of ["input_images", "input_videos", "medias", "media_inputs"]) {
+    const value = params[key];
+    if (Array.isArray(value)) value.forEach(add);
+  }
+  for (const key of ["input_image", "input_video", "start_image", "end_image"]) {
+    if (params[key] !== null && params[key] !== undefined) add(params[key]);
+  }
+  return [...new Set(ids)];
+}
+
+/**
+ * Lee una página de `show_generations`: `{ items: [{ id, type, status, model, params: { prompt,
+ * resolution, input_images… }, results, createdAt }], next_cursor }`. Las entradas sin `id` se
+ * saltan. `null` si no hay lista.
+ */
+export function readHistory(data: unknown, type: "image" | "video"): HfHistoryPage | null {
+  const entries = listAt(data, "items") ?? listAt(data, "generations");
   if (!entries) return null;
   const items: HfHistoryItem[] = [];
   for (const entry of entries) {
     if (!isObject(entry)) continue;
-    const jobId = jobIdOf(entry);
+    const jobId = text(entry.id) ?? jobIdOf(entry);
     if (!jobId) continue;
     const params = isObject(entry.params) ? entry.params : {};
     const kind = text(entry.type);
@@ -330,11 +361,14 @@ export function readHistory(data: unknown, type: "image" | "video"): HfHistoryIt
       jobId,
       type: kind === "image" || kind === "video" ? kind : type,
       model: text(entry.model) ?? text(params.model) ?? "",
-      prompt: text(params.prompt) ?? text(entry.prompt),
-      createdAt: dateOf(entry.created_at ?? entry.createdAt ?? entry.created),
+      prompt: typeof params.prompt === "string" ? params.prompt : null,
+      createdAt: dateOf(entry.createdAt ?? entry.created_at),
+      mediaIds: mediaIdsOf(params),
+      resolution: text(params.resolution),
     });
   }
-  return items;
+  const cursor = isObject(data) ? num(data.next_cursor) : null;
+  return { items, nextCursor: cursor };
 }
 
 /** La respuesta en crudo para guardar: el JSON si lo hay; si no, el texto, recortado. */
@@ -387,10 +421,17 @@ export function createHiggsfieldPort(
     }
   }
 
-  /** Un presupuesto: no gasta. */
-  function quote(userId: number, tool: string, params: Record<string, unknown>): Promise<{ credits: number }> {
+  /**
+   * Un presupuesto: no gasta. Un error de validación de Higgsfield (forma real: «… failed (422):
+   * cost params failed validation …») es `HiggsfieldRejectedError` con su texto; otra cosa que no
+   * se entiende, `HiggsfieldUnavailableError`.
+   */
+  function quote(userId: number, tool: string, params: Record<string, unknown>): Promise<HfQuote> {
     return withCaller(userId, async (caller) => {
       const result = await caller.callTool(tool, { params });
+      if (result.isError && CERTAIN_REJECTION.test(result.text)) {
+        throw new HiggsfieldRejectedError(result.text.trim().slice(0, 500), rawOf(result));
+      }
       const quoted = result.isError ? null : readQuote(result.data);
       if (!quoted) {
         console.warn(`[higgsfield] Respuesta de \`${tool}\` que no se entiende.`);
@@ -401,35 +442,58 @@ export function createHiggsfieldPort(
   }
 
   /**
-   * Un envío que GASTA. Un 401 prueba que no se ejecutó (se refresca y se repite una vez, en
-   * `withCaller`). Cualquier otro fallo de la llamada, o una respuesta que no se entiende, deja el
-   * resultado en duda: `HiggsfieldUnknownOutcomeError`, y quien llama no lo repite.
+   * Un envío que GASTA.
+   * - No se llegó a llamar a la herramienta (token, refresco o conexión fallan antes; un 401 prueba
+   *   que no se ejecutó y se repite una vez) → `HiggsfieldConnectError` (o el de permisos).
+   * - Higgsfield dice que no de forma explícita (validación, créditos, `unlim_choice`, todas las
+   *   peticiones con su error) → `HiggsfieldRejectedError`.
+   * - Cualquier otra cosa (corte durante la llamada, error sin prueba de rechazo, respuesta que no
+   *   cuadra) → `HiggsfieldUnknownOutcomeError`: quien llama no lo repite.
    */
-  function submit(userId: number, tool: string, requests: Array<{ index: number; params: Record<string, unknown> }>): Promise<HfSubmitResult> {
-    return withCaller(userId, async (caller) => {
-      let result: { isError: boolean; text: string; data: unknown };
-      try {
-        result = await caller.callTool(tool, { requests });
-      } catch (error) {
-        if (error instanceof McpUnauthorizedError) throw error;
-        console.warn(`[higgsfield] \`${tool}\` se cortó sin respuesta: ${error instanceof Error ? error.name : "desconocido"}`);
-        throw new HiggsfieldUnknownOutcomeError();
-      }
-      const raw = rawOf(result);
-      if (result.isError) {
-        throw new HiggsfieldRejectedError(result.text.trim().slice(0, 500) || "Higgsfield no ha aceptado la petición.", raw);
-      }
-      if (isUnlimChoice(result.data)) {
-        throw new HiggsfieldRejectedError("Higgsfield ha preguntado si pagar con generaciones ilimitadas; no se ha enviado nada.", raw);
-      }
-      const read = readSubmit(result.data);
-      if (!read) {
-        console.warn(`[higgsfield] Respuesta de \`${tool}\` que no se entiende.`);
-        throw new HiggsfieldUnknownOutcomeError(raw);
-      }
-      if (read.jobIds.length === 0) throw new HiggsfieldRejectedError(read.rejected.join(" · ").slice(0, 500), raw);
-      return { ...read, raw };
-    });
+  async function submit(
+    userId: number,
+    tool: string,
+    requests: Array<{ index: number; params: Record<string, unknown> }>,
+  ): Promise<HfSubmitResult> {
+    let maybeSent = false;
+    try {
+      return await withCaller(userId, async (caller) => {
+        let result: { isError: boolean; text: string; data: unknown };
+        try {
+          maybeSent = true;
+          result = await caller.callTool(tool, { requests });
+        } catch (error) {
+          if (error instanceof McpUnauthorizedError) {
+            maybeSent = false; // un 401 prueba que no se ejecutó
+            throw error;
+          }
+          console.warn(`[higgsfield] \`${tool}\` se cortó sin respuesta: ${error instanceof Error ? error.name : "desconocido"}`);
+          throw new HiggsfieldUnknownOutcomeError();
+        }
+        const raw = rawOf(result);
+        if (isUnlimChoice(result.data)) {
+          throw new HiggsfieldRejectedError("Higgsfield ha preguntado si pagar con generaciones ilimitadas; no se ha enviado nada.", raw);
+        }
+        if (result.isError) {
+          if (CERTAIN_REJECTION.test(result.text)) {
+            throw new HiggsfieldRejectedError(result.text.trim().slice(0, 500), raw);
+          }
+          console.warn(`[higgsfield] \`${tool}\` respondió con un error sin prueba de rechazo.`);
+          throw new HiggsfieldUnknownOutcomeError(raw);
+        }
+        const read = readSubmit(result.data);
+        if (!read) {
+          console.warn(`[higgsfield] Respuesta de \`${tool}\` que no se entiende.`);
+          throw new HiggsfieldUnknownOutcomeError(raw);
+        }
+        if (read.jobIds.length === 0) throw new HiggsfieldRejectedError(read.rejected.join(" · ").slice(0, 500), raw);
+        return { ...read, raw };
+      });
+    } catch (error) {
+      const certain = error instanceof HiggsfieldAuthError || error instanceof HiggsfieldNotConnectedError || error instanceof HiggsfieldRejectedError;
+      if (!maybeSent && !certain && !(error instanceof HiggsfieldUnknownOutcomeError)) throw new HiggsfieldConnectError();
+      throw error;
+    }
   }
 
   return {
@@ -501,12 +565,14 @@ export function createHiggsfieldPort(
       return quote(userId, "estimate_video_cost", videoParams(request));
     },
     async submitImages(userId, request, count) {
-      // Una petición por candidata (el lote solo admite `count: 1`).
+      // Una petición por candidata (el lote solo admite `count: 1`; un presupuesto de `count` no se puede partir).
       const params = imageParams(request, 1);
       return submit(userId, "generate_image_batch", Array.from({ length: count }, (_, index) => ({ index, params })));
     },
-    async submitVideo(userId, request) {
-      return submit(userId, "generate_video_batch", [{ index: 0, params: { ...videoParams(request), count: 1 } }]);
+    async submitVideo(userId, request, options = {}) {
+      // Con el `quote_ref` se envía exactamente lo presupuestado (así lo hizo el piloto).
+      const params = options.quoteRef ? { ref: options.quoteRef, use_unlim: false } : { ...videoParams(request), count: 1 };
+      return submit(userId, "generate_video_batch", [{ index: 0, params }]);
     },
     async jobs(userId, jobIds, waitSeconds) {
       if (jobIds.length === 0) return [];
@@ -529,15 +595,17 @@ export function createHiggsfieldPort(
         return found;
       });
     },
-    async history(userId, type, limit) {
+    async history(userId, type, limit, cursor) {
       return withCaller(userId, async (caller) => {
-        const result = await caller.callTool("show_generations", { only_completed: false, type, size: limit });
-        const items = result.isError ? null : readHistory(result.data, type);
-        if (!items) {
+        const args: Record<string, unknown> = { only_completed: false, type, size: limit };
+        if (typeof cursor === "number") args.cursor = cursor;
+        const result = await caller.callTool("show_generations", args);
+        const page = result.isError ? null : readHistory(result.data, type);
+        if (!page) {
           console.warn("[higgsfield] Respuesta de `show_generations` que no se entiende.");
           throw new HiggsfieldUnavailableError();
         }
-        return items;
+        return page;
       });
     },
   };

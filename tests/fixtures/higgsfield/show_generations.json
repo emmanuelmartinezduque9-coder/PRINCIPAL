@@ -1,13 +1,31 @@
 {
-  "_origen": "supuesto",
-  "_nota": "Forma supuesta de la respuesta de `show_generations` con `only_completed: false` (la descripción dice que devuelve generaciones con {id, type, status, model, params, results} y `next_cursor`; la fecha no consta). Se sustituye por la captura real en la PUERTA.",
+  "_origen": "captura real 22/11",
+  "_nota": "Respuesta de `show_generations` (type image, size 1). El prompt y los identificadores de entrada están recortados como en la captura; las direcciones llevan user_XXXX. createdAt y next_cursor son segundos unix con decimales.",
   "isError": false,
   "structuredContent": {
-    "generations": [
-      { "id": "j10", "type": "image", "status": "in_progress", "model": "nano_banana_pro", "params": { "prompt": "P", "aspect_ratio": "9:16" }, "created_at": "2026-11-22T08:00:05Z", "results": [] },
-      { "id": "j9", "type": "image", "status": "completed", "model": "nano_banana_pro", "params": { "prompt": "P" }, "created_at": 1795334400, "results": [{ "url": "https://cdn.higgsfield.test/j9.png" }] },
-      { "type": "image", "status": "completed", "model": "nano_banana_pro" }
+    "items": [
+      {
+        "id": "852dd20b-a360-417b-b123-865d60edc11c",
+        "type": "image",
+        "status": "completed",
+        "model": "nano_banana_2",
+        "params": {
+          "prompt": "Square 1:1 premium colour-variant image. ...(verbatim prompt as sent, not enhanced)...",
+          "aspect_ratio": "1:1",
+          "input_images": [{ "id": "eafdd350-...", "type": "media_input", "url": "https://d2ol7oe51mr4n9.cloudfront.net/user_XXXX/eafdd350-....png" }],
+          "width": 2048,
+          "height": 2048,
+          "resolution": "2k",
+          "batch_size": 1,
+          "input_image": null,
+          "application": null,
+          "surface": null
+        },
+        "results": { "rawUrl": "https://d8j0ntlcm91z4.cloudfront.net/user_XXXX/hf_20261121_233605_852dd20b-....png", "minUrl": "https://.../..._min.webp" },
+        "createdAt": 1795304165.949377,
+        "liked": false
+      }
     ],
-    "next_cursor": null
+    "next_cursor": 1795304064.437977
   }
 }

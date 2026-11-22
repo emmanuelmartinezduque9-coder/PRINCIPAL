@@ -1,0 +1,22 @@
+{
+  "_origen": "captura real 22/11",
+  "_nota": "Respuesta de `estimate_video_cost` (modelo hf_mult_motion_control, 480p, con medias). El prompt de `prepared_params` está recortado aquí; en la captura vuelve tal cual se mandó.",
+  "isError": false,
+  "structuredContent": {
+    "cost": { "credits": 39, "credits_exact": 39 },
+    "input_check": { "required_media_present": true, "image_count": 2, "video_count": 1, "missing_roles": [], "generation_validated": false },
+    "prepared_params": {
+      "model": "hf_mult_motion_control",
+      "prompt": "Use the complete source video for all actions, camera movement, cut positions and duration. …(recortado)",
+      "count": 1,
+      "medias": [
+        { "role": "video_references", "value": "02e9e3c3-526c-4d5a-9315-8c07e9075693" },
+        { "role": "image_references", "value": "d8416232-600d-4933-b01e-61b5466ad869" },
+        { "role": "image_references", "value": "d33a220a-9f45-4872-a379-5be12239858f" }
+      ],
+      "use_unlim": false,
+      "resolution": "480p"
+    },
+    "quote_ref": "quote:DTOeJTIpiCpkiwq-DsbjRA"
+  }
+}

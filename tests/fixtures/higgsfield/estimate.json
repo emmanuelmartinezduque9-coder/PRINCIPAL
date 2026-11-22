@@ -1,6 +1,6 @@
 {
-  "_origen": "supuesto",
-  "_nota": "Forma supuesta de la respuesta de `estimate_image_cost` / `estimate_video_cost` (el esquema publica entradas, no respuestas; la descripción dice que devuelve `quote_ref`). Se sustituye por la captura real en la PUERTA.",
+  "_origen": "captura real 22/11",
+  "_nota": "Respuesta de `estimate_image_cost` con params { model: \"nano_banana_pro\", resolution: \"2k\", aspect_ratio: \"9:16\" }.",
   "isError": false,
-  "structuredContent": { "credits": 4, "quote_ref": "quote_0b6f", "currency": "credits" }
+  "structuredContent": { "cost": { "credits": 2, "credits_exact": 2 }, "quote_ref": "quote:mxotdA8XzE0Syp7rmJrpEA" }
 }

@@ -6,11 +6,13 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vites
 import {
   getHiggsfield,
   HiggsfieldAuthError,
+  HiggsfieldConnectError,
   HiggsfieldRejectedError,
   HiggsfieldUnavailableError,
   HiggsfieldUnknownOutcomeError,
   type HfHistoryItem,
   type HfJob,
+  type HiggsfieldPort,
 } from "@/connectors/higgsfield";
 import { createFakeHiggsfield, type FakeHiggsfield } from "@/connectors/higgsfield/fake";
 import { getPool } from "@/db/client";
@@ -23,8 +25,12 @@ import type { Product } from "@/server/products";
 import {
   approveResult,
   BLOCKED,
+  CANNOT_CONFIRM,
+  finalizeGeneration,
   GENERATION_ACCESS_LOST,
+  INTENT_EXPIRED,
   JOB_FAILED,
+  JOB_NOT_FOUND,
   NEVER_ARRIVED,
   pollGeneration,
   quoteGeneration,
@@ -32,6 +38,7 @@ import {
   registerRequestBuilder,
   rejectRound,
   requestGeneration,
+  SEND_TOO_SLOW,
   submitGeneration,
   sweepGenerations,
   TIMED_OUT,
@@ -57,7 +64,7 @@ vi.mock("next/headers", () => ({
  */
 
 const SAME_PROMPT = "A woman holds the bottle in a bright kitchen.";
-const MODEL = "nano_banana_pro";
+const MEDIA = "m1";
 
 let dir: string;
 let jpeg: Buffer;
@@ -65,6 +72,7 @@ let fake: FakeHiggsfield;
 let deps: GenDeps;
 let fetched: string[];
 let frameCount = 2;
+let frameModel = "nano_banana_pro";
 
 let dueno: AuthUser;
 let ana: AuthUser;
@@ -80,10 +88,12 @@ beforeAll(() => {
   jpeg = fs.readFileSync(file);
 
   registerRequestBuilder("frame", async () => ({
-    request: { model: MODEL, prompt: SAME_PROMPT, aspectRatio: "9:16", resolution: "2k", medias: [{ role: "image_references", value: "m1" }] },
+    request: { model: frameModel, prompt: SAME_PROMPT, aspectRatio: "9:16", resolution: "2k", medias: [{ role: "image_references", value: MEDIA }] },
     count: frameCount,
   }));
-  registerRequestBuilder("clip", async () => ({
+  // El clip se apoya en la imagen aprobada: la declara en `snapshot` (la imagen inicial, no: compatibilidad).
+  registerRequestBuilder("clip", async (_user, video) => ({
+    snapshot: { approvedFrameResultId: video.approvedFrameResultId },
     request: {
       model: "seedance_2_5",
       mode: "omni_reference",
@@ -112,6 +122,7 @@ beforeEach(async () => {
   delete process.env.PRINCIPAL_HIGGSFIELD_FAKE;
   cookie.value = undefined;
   frameCount = 2;
+  frameModel = "nano_banana_pro";
   fake = createFakeHiggsfield();
   fetched = [];
   const fakeFetch = (async (input: RequestInfo | URL) => {
@@ -140,12 +151,13 @@ interface Row {
   rejectReason: string | null;
   request: Record<string, unknown>;
   raw: unknown;
+  recheckUntil: Date | null;
 }
 
 async function rowOf(id: number): Promise<Row> {
   const { rows } = await getPool().query(
     `select status, round, error, job_ids as "jobIds", credits_spent as "creditsSpent", quoted_credits as "quotedCredits",
-            reject_reason as "rejectReason", request, raw
+            reject_reason as "rejectReason", request, raw, recheck_until as "recheckUntil"
        from generations where id = $1`,
     [id],
   );
@@ -156,17 +168,26 @@ async function countGenerations(): Promise<number> {
   const { rows } = await getPool().query("select count(*)::int as n from generations");
   return rows[0].n;
 }
+async function finalizeJobsQueued(): Promise<number> {
+  const { rows } = await getPool().query("select count(*)::int as n from job_steps where job_name = 'video.finalizar'");
+  return rows[0].n;
+}
 const submits = () => fake.calls.filter((c) => c.method === "submitImages" || c.method === "submitVideo");
 const jobCalls = () => fake.calls.filter((c) => c.method === "jobs");
 const minutes = (n: number) => () => new Date(Date.now() + n * 60_000);
+const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /** Pone una columna de hora de la fila `ms` milisegundos en el pasado. */
 async function setAgo(id: number, column: string, ms: number): Promise<void> {
   await getPool().query(`update generations set ${column} = now() - make_interval(secs => $2) where id = $1`, [id, ms / 1000]);
 }
+async function setUnknown(id: number): Promise<void> {
+  await getPool().query("update generations set status = 'unknown', submit_started_at = now() where id = $1", [id]);
+}
 
-function hist(jobId: string, prompt: string, createdAt: Date | null = null): HfHistoryItem {
-  return { jobId, type: "image", model: MODEL, prompt, createdAt };
+/** Una entrada del historial como la real: con fecha, modelo, entradas y resolución. */
+function hist(jobId: string, prompt: string | null, over: Partial<HfHistoryItem> = {}): HfHistoryItem {
+  return { jobId, type: "image", model: frameModel, prompt, createdAt: new Date(), mediaIds: [MEDIA], resolution: "2k", ...over };
 }
 
 /** Pide y envía una imagen inicial (4 créditos). */
@@ -176,15 +197,19 @@ async function sendFrame(user = ana): Promise<number> {
   return generationId;
 }
 
-/** Termina en el simulado los trabajos de la generación y deja que el seguimiento pregunte otra vez. */
-async function finish(id: number, job: Partial<HfJob> = {}, urls = (i: number) => [`https://cdn.test/r${id}-${i}.png`]): Promise<void> {
+/** Pone en el simulado los trabajos de la generación como `job` (por defecto, terminados con dirección). */
+async function setJobs(id: number, job: Partial<HfJob> = {}, urls = (i: number) => [`https://cdn.test/r${id}-${i}.png`]): Promise<void> {
   const { jobIds } = await rowOf(id);
   jobIds.forEach((jobId, i) => {
     const done = (job.status ?? "done") === "done";
     fake.state.jobs[jobId] = { jobId, status: "done", failure: null, error: null, urls: done ? urls(i) : [], ...job };
   });
-  await getPool().query("update generations set last_polled_at = null where id = $1", [id]);
-  await pollGeneration(id, deps);
+}
+
+/** Termina los trabajos y ejecuta la finalización (lo que haría el trabajo `video.finalizar`). */
+async function finish(id: number, job: Partial<HfJob> = {}, urls?: (i: number) => string[]): Promise<void> {
+  await setJobs(id, job, urls);
+  await finalizeGeneration(id, deps);
 }
 
 /** Una ronda completa: enviar, terminar bien y rechazar. */
@@ -193,6 +218,17 @@ async function roundRejected(): Promise<number> {
   await finish(id);
   await rejectRound(ana, v.id, "frame", "No me gusta la luz");
   return id;
+}
+
+/** Un puerto que ejecuta `before` justo antes del envío de imágenes del simulado. */
+function withBeforeSubmit(before: () => Promise<void>, port: HiggsfieldPort = fake.port): HiggsfieldPort {
+  return {
+    ...port,
+    submitImages: async (...args: Parameters<HiggsfieldPort["submitImages"]>) => {
+      await before();
+      return port.submitImages(...args);
+    },
+  };
 }
 
 // ───────────────────────── Pedir ─────────────────────────
@@ -236,20 +272,60 @@ describe("pedir una generación", () => {
     expect(await countGenerations()).toBe(1);
   });
 
+  it("la base de datos tampoco admite dos generaciones activas del mismo tipo en un vídeo", async () => {
+    const { generationId } = await requestGeneration(ana, v.id, "frame", { expectedCredits: 4 }, deps);
+    const { rows } = await getPool().query("select video_id, user_id, request from generations where id = $1", [generationId]);
+    await expect(
+      getPool().query(
+        "insert into generations (video_id, kind, round, status, user_id, request, count, quoted_credits) values ($1, 'frame', 2, 'unknown', $2, $3, 2, 4)",
+        [rows[0].video_id, rows[0].user_id, rows[0].request],
+      ),
+    ).rejects.toThrow(/generations_one_active/);
+  });
+
   it("la intención está guardada antes de llamar a Higgsfield", async () => {
     const { generationId } = await requestGeneration(ana, v.id, "frame", { expectedCredits: 4 }, deps);
     expect(await rowOf(generationId)).toMatchObject({ status: "intent", round: 1, quotedCredits: 4 });
     let seen: Row | null = null;
-    const watching = {
+    const watching = withBeforeSubmit(async () => {
+      seen = await rowOf(generationId);
+    });
+    await submitGeneration(generationId, { ...deps, higgsfield: watching });
+    expect(seen).toMatchObject({ status: "submitting", request: { model: "nano_banana_pro", prompt: SAME_PROMPT, resolution: "2k" } });
+    expect(await rowOf(generationId)).toMatchObject({ status: "submitted", jobIds: ["job-1", "job-2"], creditsSpent: 4 });
+  });
+
+  it("el clip se envía con el `quote_ref` del presupuesto fresco: exactamente lo presupuestado", async () => {
+    const { generationId } = await requestGeneration(ana, v.id, "clip", { expectedCredits: 30 }, deps);
+    await submitGeneration(generationId, deps);
+    const quoted = fake.calls.filter((c) => c.method === "quoteVideo");
+    expect(quoted).toHaveLength(2); // al pedir y justo antes de enviar
+    expect(submits()).toHaveLength(1);
+    expect(submits()[0].args).toMatchObject({ quoteRef: "quote:fake-2" });
+    expect(await rowOf(generationId)).toMatchObject({ status: "submitted", creditsSpent: 30 });
+  });
+
+  it("si el vídeo cambia entre construir la petición y apuntarla (otra pestaña rechaza la imagen), no se apunta nada", async () => {
+    const frame = await sendFrame();
+    await finish(frame);
+    const [result] = (await videoView(ana, v.id)).frame.current!.results;
+    await approveResult(ana, v.id, "frame", result.id);
+
+    const otherTab: HiggsfieldPort = {
       ...fake.port,
-      submitImages: async (...args: Parameters<typeof fake.port.submitImages>) => {
-        seen = await rowOf(generationId);
-        return fake.port.submitImages(...args);
+      quoteVideo: async (...args: Parameters<HiggsfieldPort["quoteVideo"]>) => {
+        await rejectRound(ana, v.id, "frame", "Al final no"); // desaprueba la imagen en la que se apoyaba el clip
+        return fake.port.quoteVideo(...args);
       },
     };
-    await submitGeneration(generationId, { ...deps, higgsfield: watching });
-    expect(seen).toMatchObject({ status: "submitting", request: { model: MODEL, prompt: SAME_PROMPT, resolution: "2k" } });
-    expect(await rowOf(generationId)).toMatchObject({ status: "submitted", jobIds: ["job-1", "job-2"], creditsSpent: 4 });
+    await expect(requestGeneration(ana, v.id, "clip", { expectedCredits: 30 }, { ...deps, higgsfield: otherTab })).rejects.toMatchObject({
+      status: 409,
+      message: "El vídeo ha cambiado mientras se preparaba el envío. Vuelve a intentarlo.",
+    });
+    const { rows } = await getPool().query("select count(*)::int as n from generations where kind = 'clip'");
+    expect(rows[0].n).toBe(0);
+    // Sin cambios entretanto, el clip se apunta.
+    await expect(requestGeneration(ana, v.id, "clip", { expectedCredits: 30 }, deps)).resolves.toMatchObject({ generationId: expect.any(Number) });
   });
 
   it("solo quien creó el vídeo genera: el dueño recibe 403 y quien no tiene el producto, 404", async () => {
@@ -266,7 +342,7 @@ describe("pedir una generación", () => {
     expect(await countGenerations()).toBe(0);
   });
 
-  it("sin conexión con Higgsfield, el presupuesto lo dice y no se apunta nada", async () => {
+  it("sin conexión con Higgsfield, o si rechaza el presupuesto, lo dice y no se apunta nada", async () => {
     fake.failNext("balance", new HiggsfieldAuthError());
     await expect(requestGeneration(ana, v.id, "frame", { expectedCredits: 4 }, deps)).rejects.toMatchObject({
       status: 409,
@@ -274,6 +350,11 @@ describe("pedir una generación", () => {
     });
     fake.failNext("quoteImages", new HiggsfieldUnavailableError());
     await expect(quoteGeneration(ana, v.id, "frame", deps)).rejects.toMatchObject({ status: 503 });
+    fake.failNext("quoteImages", new HiggsfieldRejectedError("cost params failed validation"));
+    await expect(quoteGeneration(ana, v.id, "frame", deps)).rejects.toMatchObject({
+      status: 409,
+      message: "Higgsfield no ha aceptado la petición: cost params failed validation",
+    });
     expect(await countGenerations()).toBe(0);
   });
 });
@@ -290,6 +371,64 @@ describe("envío único", () => {
     expect(submits()).toHaveLength(1);
   });
 
+  it("si el seguimiento da el envío por perdido mientras está en marcha, los identificadores no se pierden", async () => {
+    const { generationId: id } = await requestGeneration(ana, v.id, "frame", { expectedCredits: 4 }, deps);
+    const racing = withBeforeSubmit(async () => {
+      // El seguimiento de otro proceso cree que el envío se cortó.
+      await setAgo(id, "submit_started_at", 3 * 60_000);
+      await sweepGenerations(deps);
+      expect(await statusOf(id)).toBe("unknown");
+    });
+    await submitGeneration(id, { ...deps, higgsfield: racing });
+    expect(await rowOf(id)).toMatchObject({ status: "submitted", jobIds: ["job-1", "job-2"], creditsSpent: 4, error: null });
+    expect(submits()).toHaveLength(1);
+  });
+
+  it("la marca de envío se pone justo antes de la llamada que gasta, no al hacerse con la fila", async () => {
+    const { generationId: id } = await requestGeneration(ana, v.id, "frame", { expectedCredits: 4 }, deps);
+    let stampedAt: Date | null = null;
+    const slowChecks: HiggsfieldPort = {
+      ...fake.port,
+      balance: async (userId) => {
+        await wait(150);
+        return fake.port.balance(userId);
+      },
+    };
+    const port = withBeforeSubmit(async () => {
+      const { rows } = await getPool().query("select submit_started_at from generations where id = $1", [id]);
+      stampedAt = rows[0].submit_started_at;
+    }, slowChecks);
+    const started = Date.now();
+    await submitGeneration(id, { ...deps, higgsfield: port });
+    expect(stampedAt!.getTime()).toBeGreaterThanOrEqual(started + 140);
+  });
+
+  it("si las comprobaciones previas tardan demasiado, no se envía", async () => {
+    const { generationId: id } = await requestGeneration(ana, v.id, "frame", { expectedCredits: 4 }, deps);
+    const slow: HiggsfieldPort = {
+      ...fake.port,
+      balance: async (userId) => {
+        await wait(400);
+        return fake.port.balance(userId);
+      },
+    };
+    await submitGeneration(id, { ...deps, higgsfield: slow, submitDeadlineMs: 300 });
+    expect(await rowOf(id)).toMatchObject({ status: "not_sent", error: SEND_TOO_SLOW });
+    expect(submits()).toHaveLength(0);
+  });
+
+  it("un envío que no responde a tiempo queda «desconocido»; si la respuesta llega después, se anota", async () => {
+    const { generationId: id } = await requestGeneration(ana, v.id, "frame", { expectedCredits: 4 }, deps);
+    const slowSend = withBeforeSubmit(async () => {
+      await wait(500);
+    });
+    await submitGeneration(id, { ...deps, higgsfield: slowSend, submitDeadlineMs: 300 });
+    expect(await rowOf(id)).toMatchObject({ status: "unknown", error: UNKNOWN_OUTCOME });
+    for (let i = 0; i < 40 && (await statusOf(id)) !== "submitted"; i++) await wait(50);
+    expect(await rowOf(id)).toMatchObject({ status: "submitted", jobIds: ["job-1", "job-2"], error: null });
+    expect(submits()).toHaveLength(1);
+  });
+
   it("caída a mitad del envío: al volver no se reenvía; se adopta lo que aparece en el historial", async () => {
     const { generationId: id } = await requestGeneration(ana, v.id, "frame", { expectedCredits: 4 }, deps);
     await getPool().query("update generations set status = 'submitting' where id = $1", [id]);
@@ -299,29 +438,72 @@ describe("envío único", () => {
     await submitGeneration(id, deps); // el trabajo vuelve: no reenvía
     fake.state.history = [hist("j9", SAME_PROMPT), hist("j10", SAME_PROMPT), hist("j1", "otro prompt")];
     await sweepGenerations(deps);
-    expect(await rowOf(id)).toMatchObject({ status: "submitted", jobIds: ["j9", "j10"], creditsSpent: 4 });
+    expect((await rowOf(id)).status).toBe("submitted");
+    expect([...(await rowOf(id)).jobIds].sort()).toEqual(["j10", "j9"]);
+    expect((await rowOf(id)).creditsSpent).toBe(4);
     expect(submits()).toHaveLength(0);
   });
 
-  it("al reconciliar no se adopta lo anterior al envío ni lo que ya es de otra generación", async () => {
+  it("al reconciliar no se adopta lo anterior al envío, lo que ya es de otra generación ni lo de otras entradas", async () => {
     const old = await sendFrame(); // job-1 y job-2
     await finish(old);
     await rejectRound(ana, v.id, "frame", "Otra vez");
     const { generationId: id } = await requestGeneration(ana, v.id, "frame", { expectedCredits: 4 }, deps);
-    await getPool().query("update generations set status = 'unknown', submit_started_at = now() where id = $1", [id]);
+    await setUnknown(id);
     fake.state.history = [
-      hist("j-viejo", SAME_PROMPT, new Date(Date.now() - 10 * 60_000)),
+      hist("j-viejo", SAME_PROMPT, { createdAt: new Date(Date.now() - 10 * 60_000) }),
       hist("job-1", SAME_PROMPT),
-      hist("j-nuevo", SAME_PROMPT, new Date()),
-      { ...hist("j-otro-modelo", SAME_PROMPT), model: "nano_banana_2_1" },
+      hist("j-otras-fotos", SAME_PROMPT, { mediaIds: ["otra-foto"] }),
+      hist("j-4k", SAME_PROMPT, { resolution: "4k" }),
+      hist("j-otro-modelo", SAME_PROMPT, { model: "seedream_4" }),
+      hist("j-nuevo", SAME_PROMPT),
     ];
     await sweepGenerations(deps);
     expect(await rowOf(id)).toMatchObject({ status: "submitted", jobIds: ["j-nuevo"], creditsSpent: 2 });
   });
 
+  it("el modelo cuenta por familia: `nano_banana_2` en el historial para un envío `nano_banana_2_1`", async () => {
+    frameModel = "nano_banana_2_1";
+    const { generationId: id } = await requestGeneration(ana, v.id, "frame", { expectedCredits: 4 }, deps);
+    await setUnknown(id);
+    fake.state.history = [hist("j-a", SAME_PROMPT, { model: "nano_banana_2" }), hist("j-b", SAME_PROMPT, { model: "nano_banana_2" })];
+    await sweepGenerations(deps);
+    expect(await rowOf(id)).toMatchObject({ status: "submitted", creditsSpent: 4 });
+  });
+
+  it("una entrada sin fecha nunca se adopta sola, y mientras exista no se da por no enviado", async () => {
+    const { generationId: id } = await requestGeneration(ana, v.id, "frame", { expectedCredits: 4 }, deps);
+    await setUnknown(id);
+    fake.state.history = [hist("j-sin-fecha", SAME_PROMPT, { createdAt: null })];
+    await sweepGenerations({ ...deps, now: minutes(11) });
+    expect(await rowOf(id)).toMatchObject({ status: "unknown", jobIds: [], error: CANNOT_CONFIRM });
+  });
+
+  it("un historial sin prompts no prueba nada: sigue «desconocido» y pide mirar la cuenta", async () => {
+    const { generationId: id } = await requestGeneration(ana, v.id, "frame", { expectedCredits: 4 }, deps);
+    await setUnknown(id);
+    fake.state.history = [hist("j-x", null), hist("j-y", null)];
+    await sweepGenerations({ ...deps, now: minutes(11) });
+    expect(await rowOf(id)).toMatchObject({ status: "unknown", error: CANNOT_CONFIRM });
+  });
+
+  it("el historial se recorre por páginas hasta cubrir desde el envío; si no se llega, no se da por no enviado", async () => {
+    const { generationId: id } = await requestGeneration(ana, v.id, "frame", { expectedCredits: 4 }, deps);
+    await setUnknown(id);
+    const recent = (n: number) => Array.from({ length: n }, (_, i) => hist(`otro-${i}`, `otro prompt ${i}`, { createdAt: new Date(Date.now() + 60_000 - i * 100) }));
+    fake.state.history = recent(300); // más de 5 páginas, todas posteriores al envío
+    await sweepGenerations({ ...deps, now: minutes(11) });
+    expect(await rowOf(id)).toMatchObject({ status: "unknown", error: CANNOT_CONFIRM });
+    expect(fake.calls.filter((c) => c.method === "history")).toHaveLength(5);
+
+    fake.state.history = recent(120); // tres páginas: la última, incompleta, llega al principio
+    await sweepGenerations({ ...deps, now: minutes(12) });
+    expect(await rowOf(id)).toMatchObject({ status: "not_sent", error: NEVER_ARRIVED });
+  });
+
   it("resultado desconocido sin rastro: a los 10 minutos queda «no enviado»; antes no deja repetir", async () => {
     const { generationId: id } = await requestGeneration(ana, v.id, "frame", { expectedCredits: 4 }, deps);
-    await getPool().query("update generations set status = 'unknown', submit_started_at = now() where id = $1", [id]);
+    await setUnknown(id);
     await expect(requestGeneration(ana, v.id, "frame", { expectedCredits: 4 }, { ...deps, now: minutes(5) })).rejects.toMatchObject({
       status: 409,
       message: "Estamos comprobando con Higgsfield si la petición anterior llegó. No se vuelve a enviar para no cobrarte dos veces.",
@@ -336,10 +518,10 @@ describe("envío único", () => {
 
   it("si el historial no se puede leer, sigue «desconocido» aunque pasen 10 minutos", async () => {
     const { generationId: id } = await requestGeneration(ana, v.id, "frame", { expectedCredits: 4 }, deps);
-    await getPool().query("update generations set status = 'unknown', submit_started_at = now() where id = $1", [id]);
+    await setUnknown(id);
     fake.failNext("history", new HiggsfieldUnavailableError());
     await sweepGenerations({ ...deps, now: minutes(11) });
-    expect(await statusOf(id)).toBe("unknown");
+    expect(await rowOf(id)).toMatchObject({ status: "unknown", error: null });
   });
 
   it("un envío cortado sin respuesta queda «desconocido» y no se repite", async () => {
@@ -363,6 +545,13 @@ describe("envío único", () => {
     // No gastó ronda: se puede volver a pedir la primera.
     const again = await requestGeneration(ana, v.id, "frame", { expectedCredits: 4 }, deps);
     expect((await rowOf(again.generationId)).round).toBe(1);
+  });
+
+  it("si no se pudo abrir la conexión para enviar, queda «no enviado» al momento (no «desconocido»)", async () => {
+    const { generationId: id } = await requestGeneration(ana, v.id, "frame", { expectedCredits: 4 }, deps);
+    fake.failNext("submitImages", new HiggsfieldConnectError());
+    await submitGeneration(id, deps);
+    expect(await rowOf(id)).toMatchObject({ status: "not_sent", error: new HiggsfieldConnectError().message });
   });
 
   it("permiso caducado al enviar: no se llama a generar y queda «no enviado» con el aviso de reconectar", async () => {
@@ -390,7 +579,7 @@ describe("envío único", () => {
 
   it("el precio subió entre pedir y enviar: no se envía", async () => {
     const { generationId: id } = await requestGeneration(ana, v.id, "frame", { expectedCredits: 4 }, deps);
-    const pricier = { ...fake.port, quoteImages: async () => ({ credits: 6 }) };
+    const pricier = { ...fake.port, quoteImages: async () => ({ credits: 6, quoteRef: null }) };
     await submitGeneration(id, { ...deps, higgsfield: pricier });
     expect(await rowOf(id)).toMatchObject({ status: "not_sent", error: "El precio ha cambiado: ahora son 6 créditos. Revísalo y confirma de nuevo." });
     expect(submits()).toHaveLength(0);
@@ -418,6 +607,19 @@ describe("envío único", () => {
     await setPersonDisabled(dueno, ana.id, true);
     await sweepGenerations(deps);
     expect(await rowOf(id)).toMatchObject({ status: "not_sent", error: GENERATION_ACCESS_LOST });
+    expect(submits()).toHaveLength(0);
+  });
+
+  it("una intención de hace más de 15 minutos ya no se envía", async () => {
+    const late = await requestGeneration(ana, v.id, "frame", { expectedCredits: 4 }, deps);
+    await setAgo(late.generationId, "intent_at", 16 * 60_000);
+    await submitGeneration(late.generationId, deps); // el trabajo llega tarde
+    expect(await rowOf(late.generationId)).toMatchObject({ status: "not_sent", error: INTENT_EXPIRED });
+
+    const forgotten = await requestGeneration(ana, v.id, "frame", { expectedCredits: 4 }, deps);
+    await setAgo(forgotten.generationId, "intent_at", 16 * 60_000);
+    await sweepGenerations(deps);
+    expect(await rowOf(forgotten.generationId)).toMatchObject({ status: "not_sent", error: INTENT_EXPIRED });
     expect(submits()).toHaveLength(0);
   });
 });
@@ -465,7 +667,7 @@ describe("rondas, rechazo y aprobación", () => {
     await expect(rejectRound(ana, v.id, "frame", "aún no")).rejects.toMatchObject({ status: 409, message: "Ya hay una generación en marcha." });
   });
 
-  it("aprobar un resultado de otro vídeo da 404; aprobar uno propio lo marca; rechazar la ronda lo desmarca", async () => {
+  it("aprobar un resultado de otro vídeo da 404; aprobar uno propio lo marca; rechazar la ronda lo desmarca y ya no se aprueba", async () => {
     const id = await sendFrame();
     await finish(id);
     const view = await videoView(ana, v.id);
@@ -482,10 +684,11 @@ describe("rondas, rechazo y aprobación", () => {
 
     await rejectRound(ana, v.id, "frame", "Mejor otra");
     expect((await getVideoFor(ana, v.id)).approvedFrameResultId).toBeNull();
+    await expect(approveResult(ana, v.id, "frame", first.id)).rejects.toMatchObject({ status: 404, message: "Resultado no encontrado." });
   });
 });
 
-// ───────────────────────── Seguimiento ─────────────────────────
+// ───────────────────────── Seguimiento y finalización ─────────────────────────
 
 describe("seguimiento", () => {
   it("el seguimiento guarda resultados y miniaturas y termina la generación", async () => {
@@ -507,6 +710,41 @@ describe("seguimiento", () => {
     // Quien ve el producto ve la miniatura; quien no, 404.
     await readResultThumb(dueno, view.frame.current!.results[0].id);
     await expect(readResultThumb(luis, view.frame.current!.results[0].id)).rejects.toMatchObject({ status: 404, message: "Miniatura no encontrada." });
+  });
+
+  it("consultar no descarga nada: cuando todo ha terminado encola la finalización", async () => {
+    const id = await sendFrame();
+    await setJobs(id);
+    await getPool().query("update generations set last_polled_at = null where id = $1", [id]);
+    await pollGeneration(id, deps);
+    expect(fetched).toHaveLength(0);
+    expect(await statusOf(id)).toBe("submitted");
+    expect(await finalizeJobsQueued()).toBe(1);
+    await finalizeGeneration(id, deps);
+    expect(await statusOf(id)).toBe("done");
+    expect(fetched).toHaveLength(2);
+  });
+
+  it("dos finalizaciones a la vez descargan una sola vez", async () => {
+    const id = await sendFrame();
+    await setJobs(id);
+    await Promise.all([finalizeGeneration(id, deps), finalizeGeneration(id, deps), finalizeGeneration(id, deps)]);
+    expect(fetched).toHaveLength(2);
+    expect(await statusOf(id)).toBe("done");
+    // Una finalización repetida después tampoco hace nada.
+    await finalizeGeneration(id, deps);
+    expect(fetched).toHaveLength(2);
+    expect((await videoView(ana, v.id)).frame.current!.results).toHaveLength(2);
+  });
+
+  it("un trabajo «terminado» sin dirección sigue pendiente (no se da por fallido)", async () => {
+    const id = await sendFrame();
+    await setJobs(id, { status: "done" }, () => []);
+    await getPool().query("update generations set last_polled_at = null where id = $1", [id]);
+    await pollGeneration(id, deps);
+    await finalizeGeneration(id, deps);
+    expect(await statusOf(id)).toBe("submitted");
+    expect(await finalizeJobsQueued()).toBe(0);
   });
 
   it("si la miniatura no se puede hacer, el resultado se guarda sin ella", async () => {
@@ -531,7 +769,7 @@ describe("seguimiento", () => {
   it.each([["nsfw"], ["ip_detected"], ["failed"]] as const)("un trabajo %s deja la generación en error con texto claro y gasta ronda", async (failure) => {
     const id = await sendFrame();
     await finish(id, { status: "failed", failure, error: "flagged" });
-    expect(await rowOf(id)).toMatchObject({ status: "failed", error: failure === "failed" ? JOB_FAILED : BLOCKED });
+    expect(await rowOf(id)).toMatchObject({ status: "failed", error: failure === "failed" ? JOB_FAILED : BLOCKED, recheckUntil: null });
     expect((await videoView(ana, v.id)).frame.current!.results.map((r) => r.ok)).toEqual([false, false]);
     // Gastó ronda, y como falló no hace falta rechazarla para regenerar.
     expect(await quoteGeneration(ana, v.id, "frame", deps)).toMatchObject({ round: 2 });
@@ -542,10 +780,24 @@ describe("seguimiento", () => {
     const { jobIds } = await rowOf(id);
     fake.state.jobs[jobIds[0]] = { jobId: jobIds[0], status: "done", failure: null, error: null, urls: ["https://cdn.test/ok.png"] };
     fake.state.jobs[jobIds[1]] = { jobId: jobIds[1], status: "failed", failure: "nsfw", error: null, urls: [] };
-    await getPool().query("update generations set last_polled_at = null where id = $1", [id]);
-    await pollGeneration(id, deps);
+    await finalizeGeneration(id, deps);
     expect(await statusOf(id)).toBe("done");
     expect((await videoView(ana, v.id)).frame.current!.results.map((r) => r.ok)).toEqual([true, false]);
+  });
+
+  it("si Higgsfield no encuentra los trabajos, no espera una hora: error ya, y se sigue mirando por si aparecen", async () => {
+    const id = await sendFrame();
+    await finish(id, { status: "failed", failure: "not_found", error: "Job not found." });
+    const failed = await rowOf(id);
+    expect(failed).toMatchObject({ status: "failed", error: JOB_NOT_FOUND });
+    expect(failed.recheckUntil!.getTime()).toBeGreaterThan(Date.now() + 5 * 60 * 60 * 1000);
+    // Aparecen más tarde, terminados: el seguimiento los recoge.
+    await setJobs(id);
+    await sweepGenerations({ ...deps, now: minutes(6) });
+    expect(await finalizeJobsQueued()).toBe(1);
+    await finalizeGeneration(id, { ...deps, now: minutes(6) });
+    expect(await rowOf(id)).toMatchObject({ status: "done", error: null, recheckUntil: null });
+    expect((await videoView(ana, v.id)).frame.current!.results.map((r) => r.ok)).toEqual([true, true]);
   });
 
   it("no pregunta a Higgsfield más de una vez cada 8 segundos por generación", async () => {
@@ -558,16 +810,27 @@ describe("seguimiento", () => {
     expect(jobCalls()).toHaveLength(2);
   });
 
-  it("una generación enviada que no termina en una hora queda en error sin reenviarse", async () => {
+  it("una generación enviada que no termina en una hora queda en error sin reenviarse, y si termina tarde se recoge", async () => {
     const id = await sendFrame();
     await setAgo(id, "submitted_at", 61 * 60_000);
     await setAgo(id, "last_polled_at", 60_000);
     await sweepGenerations(deps);
     expect(await rowOf(id)).toMatchObject({ status: "failed", error: TIMED_OUT });
     expect(submits()).toHaveLength(1);
-    // Una que lleva menos de una hora sigue esperando.
-    await getPool().query("update generations set status = 'submitted', error = null where id = $1", [id]);
+    // Termina dos horas después: el seguimiento lo ve (como mucho cada 5 minutos) y lo guarda.
+    await setJobs(id);
+    await sweepGenerations({ ...deps, now: minutes(2) });
+    expect(await finalizeJobsQueued()).toBe(0);
+    await sweepGenerations({ ...deps, now: minutes(6) });
+    expect(await finalizeJobsQueued()).toBe(1);
+    await finalizeGeneration(id, { ...deps, now: minutes(6) });
+    expect(await rowOf(id)).toMatchObject({ status: "done", error: null });
+  });
+
+  it("una generación que lleva menos de una hora sigue esperando", async () => {
+    const id = await sendFrame();
     await setAgo(id, "submitted_at", 30 * 60_000);
+    await setAgo(id, "last_polled_at", 60_000);
     await sweepGenerations(deps);
     expect(await statusOf(id)).toBe("submitted");
   });
@@ -587,6 +850,8 @@ describe("rutas", () => {
   const as = async (user: AuthUser) => {
     cookie.value = (await login(user.email, TEST_PASSWORD))!.token;
   };
+  const getVideo = async () =>
+    (await getVideoRoute(new Request("http://localhost/x"), { params: Promise.resolve({ videoId: String(v.id) }) })).json();
 
   it("GET /api/resultados/[id]/miniatura da el JPEG a quien ve el vídeo y 404 a quien no", async () => {
     const id = await sendFrame();
@@ -603,7 +868,7 @@ describe("rutas", () => {
     expect((await thumbRoute(new Request("http://localhost/x"), params(String(resultId)))).status).toBe(404);
   });
 
-  it("GET /api/videos/[id] pregunta por la generación en curso si mira quien la creó (modo local simulado)", async () => {
+  it("GET /api/videos/[id] solo consulta (sin descargar) si mira quien lo creó; la finalización la hace el trabajo (modo local)", async () => {
     process.env.PRINCIPAL_HIGGSFIELD_FAKE = "1";
     const local = getHiggsfield(); // trabajos que terminan a la segunda consulta, con una muestra `data:`
     const { generationId: id } = await requestGeneration(ana, v.id, "frame", { expectedCredits: 4 }, { higgsfield: local });
@@ -611,13 +876,16 @@ describe("rutas", () => {
     await getPool().query("update generations set last_polled_at = null where id = $1", [id]);
 
     await as(dueno); // ve el vídeo, pero no es quien lo creó: no pregunta
-    const seenByOwner = await (await getVideoRoute(new Request("http://localhost/x"), { params: Promise.resolve({ videoId: String(v.id) }) })).json();
-    expect(seenByOwner.frame.current.status).toBe("submitted");
+    expect((await getVideo()).frame.current.status).toBe("submitted");
+    expect(await finalizeJobsQueued()).toBe(0);
 
     await as(ana);
-    const response = await getVideoRoute(new Request("http://localhost/x"), { params: Promise.resolve({ videoId: String(v.id) }) });
-    expect(response.status).toBe(200);
-    const body = await response.json();
+    const seen = await getVideo();
+    expect(seen.frame.current).toMatchObject({ id, status: "submitted", results: [] }); // nada descargado en la petición
+    expect(await finalizeJobsQueued()).toBe(1);
+
+    await finalizeGeneration(id, { higgsfield: local }); // lo que hace el trabajo `video.finalizar`
+    const body = await getVideo();
     expect(body.frame.current).toMatchObject({ id, status: "done" });
     expect(body.frame.current.results).toHaveLength(2);
     expect(body.frame.current.results[0]).toMatchObject({ ok: true, hasThumb: true });

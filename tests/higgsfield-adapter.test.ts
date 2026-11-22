@@ -12,6 +12,7 @@ import {
 import { McpUnauthorizedError, type McpCaller } from "@/connectors/higgsfield/mcp";
 import {
   HiggsfieldAuthError,
+  HiggsfieldConnectError,
   HiggsfieldNotConnectedError,
   HiggsfieldRejectedError,
   HiggsfieldUnavailableError,
@@ -21,6 +22,8 @@ import {
 } from "@/connectors/higgsfield/port";
 import balanceFixture from "./fixtures/higgsfield/balance.json";
 import estimateFixture from "./fixtures/higgsfield/estimate.json";
+import estimateErrorFixture from "./fixtures/higgsfield/estimate_error.json";
+import estimateVideoFixture from "./fixtures/higgsfield/estimate_video.json";
 import generateBatchFixture from "./fixtures/higgsfield/generate_batch.json";
 import jobsWaitFixture from "./fixtures/higgsfield/jobs_wait.json";
 import showGenerationsFixture from "./fixtures/higgsfield/show_generations.json";
@@ -286,15 +289,17 @@ describe("generaciones en el adaptador", () => {
       { role: "image_references", value: "m2" },
     ],
   };
+  /** Como la respuesta real de `generate_*_batch`. */
   const accepted = (jobIds: string[]): Reply => ({
     isError: false,
     text: "",
-    data: { jobs: jobIds.map((job_id, index) => ({ index, job_id })) },
+    data: { jobs: jobIds.map((job_id, index) => ({ index, job_id, status: "pending" })), submitted_count: jobIds.length, failed_count: 0 },
   });
+  const errorReply = (fixture: { isError: boolean; text: string }): Reply => ({ isError: fixture.isError, text: fixture.text, data: null });
 
-  it("quoteImages → estimate_image_cost", async () => {
+  it("quoteImages → estimate_image_cost, con el `quote_ref` de la respuesta real", async () => {
     const { port, mcpCalls } = setup([fixtureReply(estimateFixture)]);
-    expect(await port.quoteImages(ANA, IMAGE, 2)).toEqual({ credits: 4 });
+    expect(await port.quoteImages(ANA, IMAGE, 2)).toEqual({ credits: 2, quoteRef: "quote:mxotdA8XzE0Syp7rmJrpEA" });
     expect(mcpCalls[0]).toEqual({
       name: "estimate_image_cost",
       args: {
@@ -312,8 +317,8 @@ describe("generaciones en el adaptador", () => {
   });
 
   it("quoteVideo → estimate_video_cost con los parámetros fijos del clip", async () => {
-    const { port, mcpCalls } = setup([fixtureReply(estimateFixture)]);
-    expect(await port.quoteVideo(ANA, VIDEO)).toEqual({ credits: 4 });
+    const { port, mcpCalls } = setup([fixtureReply(estimateVideoFixture)]);
+    expect(await port.quoteVideo(ANA, VIDEO)).toEqual({ credits: 39, quoteRef: "quote:DTOeJTIpiCpkiwq-DsbjRA" });
     expect(mcpCalls[0]).toEqual({
       name: "estimate_video_cost",
       args: {
@@ -333,8 +338,15 @@ describe("generaciones en el adaptador", () => {
     });
   });
 
-  it("un presupuesto sin cifra, o con error, es HiggsfieldUnavailableError", async () => {
-    for (const reply of [{ isError: false, text: "{}", data: { quote_ref: "q" } }, { isError: true, text: "no", data: { credits: 4 } }]) {
+  it("un presupuesto con error de validación (forma real) es un rechazo con el texto de Higgsfield", async () => {
+    const { port } = setup([errorReply(estimateErrorFixture)]);
+    const error = await port.quoteVideo(ANA, VIDEO).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(HiggsfieldRejectedError);
+    expect((error as HiggsfieldRejectedError).reason).toContain("cost params failed validation");
+  });
+
+  it("un presupuesto sin cifra, o con otro error, es HiggsfieldUnavailableError", async () => {
+    for (const reply of [{ isError: false, text: "{}", data: { quote_ref: "q" } }, { isError: true, text: "backend request failed (503)", data: null }]) {
       const { port } = setup([reply]);
       await expect(port.quoteImages(ANA, IMAGE, 2)).rejects.toBeInstanceOf(HiggsfieldUnavailableError);
     }
@@ -344,7 +356,7 @@ describe("generaciones en el adaptador", () => {
     const { port, mcpCalls } = setup([accepted(["a", "b"])]);
     const result = await port.submitImages(ANA, IMAGE, 2);
     expect(result).toMatchObject({ jobIds: ["a", "b"], rejected: [] });
-    expect(result.raw).toEqual({ jobs: [{ index: 0, job_id: "a" }, { index: 1, job_id: "b" }] });
+    expect(result.raw).toMatchObject({ submitted_count: 2 });
     expect(mcpCalls[0].name).toBe("generate_image_batch");
     const args = mcpCalls[0].args as { requests: Array<{ index: number; params: Record<string, unknown> }> };
     expect(args.requests.map((r) => [r.index, r.params.count, r.params.use_unlim])).toEqual([
@@ -386,12 +398,26 @@ describe("generaciones en el adaptador", () => {
     });
   });
 
-  it("si Higgsfield acepta una de dos, lo dice con el motivo de la otra", async () => {
-    const { port } = setup([fixtureReply(generateBatchFixture)]);
-    expect(await port.submitImages(ANA, IMAGE, 2)).toMatchObject({
-      jobIds: ["5b0e6a52-8a54-4c55-9d1f-1d2c3b4a5f60"],
-      rejected: ["Insufficient credits for this request."],
+  it("submitVideo con `quoteRef` envía exactamente lo presupuestado y lee la respuesta real", async () => {
+    const { port, mcpCalls } = setup([fixtureReply(generateBatchFixture)]);
+    expect(await port.submitVideo(ANA, VIDEO, { quoteRef: "quote:DTOeJTIpiCpkiwq-DsbjRA" })).toMatchObject({
+      jobIds: ["540c3252-e858-49ee-998d-adceebf077de"],
+      rejected: [],
     });
+    expect(mcpCalls[0]).toEqual({
+      name: "generate_video_batch",
+      args: { requests: [{ index: 0, params: { ref: "quote:DTOeJTIpiCpkiwq-DsbjRA", use_unlim: false } }] },
+    });
+  });
+
+  it("si Higgsfield acepta una de dos y rechaza la otra con su error, lo dice", async () => {
+    const reply: Reply = {
+      isError: false,
+      text: "",
+      data: { jobs: [{ index: 0, job_id: "a", status: "pending" }, { index: 1, error: "Insufficient credits." }], submitted_count: 1, failed_count: 1 },
+    };
+    const { port } = setup([reply]);
+    expect(await port.submitImages(ANA, IMAGE, 2)).toMatchObject({ jobIds: ["a"], rejected: ["Insufficient credits."] });
   });
 
   it("jobs → jobs_wait con índices y la espera pedida (0–15 s)", async () => {
@@ -402,22 +428,45 @@ describe("generaciones en el adaptador", () => {
     expect(mcpCalls[1].args).toMatchObject({ timeout_seconds: 15 });
   });
 
-  it("jobs lee terminados, bloqueados, fallidos y pendientes", async () => {
+  it("jobs lee la respuesta real: terminado con `result_url`, en curso y ausente", async () => {
     const { port } = setup([fixtureReply(jobsWaitFixture)]);
-    expect(await port.jobs(ANA, ["j1", "j2", "j3", "j4", "j6"], 0)).toEqual([
-      { jobId: "j1", status: "done", failure: null, error: null, urls: ["https://cdn.higgsfield.test/j1.png"] },
-      { jobId: "j2", status: "failed", failure: "nsfw", error: "Content flagged.", urls: [] },
-      { jobId: "j3", status: "pending", failure: null, error: null, urls: [] },
-      { jobId: "j4", status: "failed", failure: "failed", error: "Generation failed.", urls: [] },
+    const ids = ["980c2227-9b12-4c14-bc7b-b6d11e5b9a05", "4ef0f16b-da97-4b90-a602-fb56adc21a27", "no-esta"];
+    expect(await port.jobs(ANA, ids, 0)).toEqual([
+      {
+        jobId: ids[0],
+        status: "done",
+        failure: null,
+        error: null,
+        urls: ["https://d8j0ntlcm91z4.cloudfront.net/user_XXXX/hf_20261122_060226_980c2227-9b12-4c14-bc7b-b6d11e5b9a05.mp4"],
+      },
+      { jobId: ids[1], status: "pending", failure: null, error: null, urls: [] },
       // No aparece en la respuesta: sigue pendiente.
-      { jobId: "j6", status: "pending", failure: null, error: null, urls: [] },
+      { jobId: ids[2], status: "pending", failure: null, error: null, urls: [] },
     ]);
   });
 
-  it("un estado de trabajo que no se reconoce se trata como pendiente", () => {
-    expect(readJobs(jobsWaitFixture.structuredContent, ["j5"])).toEqual([{ jobId: "j5", status: "pending", failure: null, error: null, urls: [] }]);
-    // Sin `job_id`, por su índice; `ip_detected` también es un bloqueo.
-    expect(readJobs({ jobs: [{ index: 0, status: "ip_detected" }] }, ["x"])).toMatchObject([{ jobId: "x", status: "failed", failure: "ip_detected" }]);
+  it("estados de trabajo: bloqueos, fallos, no encontrado, terminado sin dirección y desconocido", () => {
+    const jobs = readJobs(
+      {
+        jobs: [
+          { index: 0, job_id: "a", status: "nsfw", error: "Content flagged." },
+          { index: 1, job_id: "b", status: "ip_detected" },
+          { index: 2, job_id: "c", status: "failed", error: "Generation failed." },
+          { index: 3, job_id: "d", error: "Job not found." },
+          { index: 4, job_id: "e", status: "completed" },
+          { index: 5, job_id: "f", status: "something_new" },
+        ],
+      },
+      ["a", "b", "c", "d", "e", "f"],
+    )!;
+    expect(jobs.map((job) => [job.status, job.failure])).toEqual([
+      ["failed", "nsfw"],
+      ["failed", "ip_detected"],
+      ["failed", "failed"],
+      ["failed", "not_found"],
+      ["pending", null], // terminado sin dirección: sigue pendiente
+      ["pending", null], // estado que no se reconoce: pendiente
+    ]);
     expect(readJobs({ nada: true }, ["x"])).toBeNull();
   });
 
@@ -428,22 +477,42 @@ describe("generaciones en el adaptador", () => {
     }
   });
 
-  it("history → show_generations con todos los estados", async () => {
-    const { port, mcpCalls } = setup([fixtureReply(showGenerationsFixture)]);
-    const items = await port.history(ANA, "image", 50);
+  it("history → show_generations con todos los estados, leyendo la respuesta real (segundos, entradas, resolución, cursor)", async () => {
+    const { port, mcpCalls } = setup([fixtureReply(showGenerationsFixture), fixtureReply(showGenerationsFixture)]);
+    const page = await port.history(ANA, "image", 50);
     expect(mcpCalls[0]).toEqual({ name: "show_generations", args: { only_completed: false, type: "image", size: 50 } });
-    expect(items).toEqual([
-      { jobId: "j10", type: "image", model: "nano_banana_pro", prompt: "P", createdAt: new Date("2026-11-22T08:00:05Z") },
-      { jobId: "j9", type: "image", model: "nano_banana_pro", prompt: "P", createdAt: new Date(1795334400 * 1000) },
-    ]);
+    expect(page).toEqual({
+      items: [
+        {
+          jobId: "852dd20b-a360-417b-b123-865d60edc11c",
+          type: "image",
+          model: "nano_banana_2",
+          prompt: "Square 1:1 premium colour-variant image. ...(verbatim prompt as sent, not enhanced)...",
+          createdAt: new Date(1795304165.949377 * 1000),
+          mediaIds: ["eafdd350-..."],
+          resolution: "2k",
+        },
+      ],
+      nextCursor: 1795304064.437977,
+    });
+    await port.history(ANA, "image", 50, 1795304064.437977);
+    expect(mcpCalls[1].args).toEqual({ only_completed: false, type: "image", size: 50, cursor: 1795304064.437977 });
   });
 
-  it("un envío con `isError` lanza HiggsfieldRejectedError con el texto de Higgsfield", async () => {
-    const { port } = setup([{ isError: true, text: "Insufficient credits.", data: null }]);
-    const error = await port.submitImages(ANA, IMAGE, 2).catch((e: unknown) => e);
-    expect(error).toBeInstanceOf(HiggsfieldRejectedError);
-    expect((error as HiggsfieldRejectedError).reason).toBe("Insufficient credits.");
-    expect((error as HiggsfieldRejectedError).raw).toEqual({ texto: "Insufficient credits." });
+  it("un envío con un error de validación o de créditos es un rechazo con el texto de Higgsfield", async () => {
+    for (const text of [estimateErrorFixture.text, "Insufficient credits: you need 12 and have 3."]) {
+      const { port } = setup([{ isError: true, text, data: null }]);
+      const error = await port.submitImages(ANA, IMAGE, 2).catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(HiggsfieldRejectedError);
+      expect((error as HiggsfieldRejectedError).reason).toBe(text.trim());
+    }
+  });
+
+  it("un envío con otro error (sin prueba de que no se aceptó) es un resultado desconocido", async () => {
+    for (const text of ["backend request failed (500): internal error", "Something went wrong"]) {
+      const { port } = setup([{ isError: true, text, data: null }]);
+      await expect(port.submitImages(ANA, IMAGE, 2)).rejects.toBeInstanceOf(HiggsfieldUnknownOutcomeError);
+    }
   });
 
   it("una respuesta `unlim_choice` es un rechazo: no se envió nada", async () => {
@@ -453,17 +522,59 @@ describe("generaciones en el adaptador", () => {
     }
   });
 
-  it("si Higgsfield rechaza todas las peticiones, es un rechazo con sus motivos", async () => {
-    const { port } = setup([{ isError: false, text: "", data: { jobs: [{ index: 0, error: "bad prompt" }] } }]);
+  it("si Higgsfield rechaza todas las peticiones con su error, es un rechazo con sus motivos", async () => {
+    const { port } = setup([{ isError: false, text: "", data: { jobs: [{ index: 0, error: "bad prompt" }], submitted_count: 0, failed_count: 1 } }]);
     await expect(port.submitVideo(ANA, VIDEO)).rejects.toMatchObject({ name: "HiggsfieldRejectedError", reason: "bad prompt" });
   });
 
-  it("un corte de conexión o una respuesta ilegible en un envío lanza HiggsfieldUnknownOutcomeError", async () => {
-    for (const reply of [new Error("ECONNRESET"), { isError: false, text: "ok", data: null }, { isError: false, text: "", data: { jobs: [] } }]) {
+  it("un corte durante la llamada o una respuesta que no cuadra en un envío lanza HiggsfieldUnknownOutcomeError", async () => {
+    for (const reply of [
+      new Error("ECONNRESET"),
+      { isError: false, text: "ok", data: null },
+      { isError: false, text: "", data: { jobs: [] } },
+      { isError: false, text: "", data: { results: ["a"] } }, // otra clave: no se adivina
+      { isError: false, text: "", data: { jobs: [{ index: 0, status: "pending" }] } }, // sin identificador ni error
+      { isError: false, text: "", data: { jobs: [{ index: 0, job_id: "a" }], submitted_count: 2 } }, // las cuentas no cuadran
+    ]) {
       const { port, refresh } = setup([reply]);
       await expect(port.submitImages(ANA, IMAGE, 2)).rejects.toBeInstanceOf(HiggsfieldUnknownOutcomeError);
       expect(refresh).not.toHaveBeenCalled();
     }
+  });
+
+  it("si no se puede abrir la conexión, el envío no llama a la herramienta y lo dice (HiggsfieldConnectError)", async () => {
+    const calls: string[] = [];
+    const failingOpen = vi.fn(async (): Promise<McpCaller> => {
+      throw new TypeError("fetch failed");
+    });
+    const port = createHiggsfieldPort({ open: failingOpen, refresh: vi.fn() });
+    await expect(port.submitImages(ANA, IMAGE, 2)).rejects.toBeInstanceOf(HiggsfieldConnectError);
+    // Tampoco si falla el refresco tras un 401.
+    const refreshDown = createHiggsfieldPort({
+      open: async () => ({
+        async callTool(name) {
+          calls.push(name);
+          throw new McpUnauthorizedError();
+        },
+        async listTools() {
+          return [];
+        },
+        async close() {},
+      }),
+      refresh: async () => {
+        throw new HiggsfieldUnavailableError();
+      },
+    });
+    await expect(refreshDown.submitVideo(ANA, VIDEO)).rejects.toBeInstanceOf(HiggsfieldConnectError);
+    expect(calls).toEqual(["generate_video_batch"]); // el único intento acabó en 401: no se ejecutó
+    // Sin conexión guardada: el error de siempre (también seguro que no se envió).
+    const notConnected = createHiggsfieldPort({
+      open: async () => {
+        throw new HiggsfieldNotConnectedError();
+      },
+      refresh: vi.fn(),
+    });
+    await expect(notConnected.submitVideo(ANA, VIDEO)).rejects.toBeInstanceOf(HiggsfieldNotConnectedError);
   });
 
   it("un 401 en un envío prueba que no se ejecutó: se refresca y se repite una vez", async () => {
@@ -477,15 +588,17 @@ describe("generaciones en el adaptador", () => {
   });
 
   it("lectores: variantes razonables", () => {
-    expect(readQuote({ cost: { credits: 3.2 } })).toEqual({ credits: 4 });
-    expect(readQuote({ total_credits: "6" })).toEqual({ credits: 6 });
+    expect(readQuote({ cost: { credits: 3.2 } })).toEqual({ credits: 4, quoteRef: null });
+    expect(readQuote({ cost: { credits_exact: "6" }, quote_ref: "quote:x" })).toEqual({ credits: 6, quoteRef: "quote:x" });
     expect(readQuote({ quote_ref: "q" })).toBeNull();
-    expect(readSubmit({ results: ["a", "b"] })).toEqual({ jobIds: ["a", "b"], rejected: [] });
-    expect(readSubmit({ jobs: [{ index: 0, id: "a" }], rejected: [{ index: 1, reason: "no" }] })).toEqual({ jobIds: ["a"], rejected: ["no"] });
+    expect(readSubmit(generateBatchFixture.structuredContent)).toEqual({ jobIds: ["540c3252-e858-49ee-998d-adceebf077de"], rejected: [] });
     expect(readSubmit({})).toBeNull();
-    expect(readHistory({ data: { items: [{ job_id: "z", params: { model: "m", prompt: { ref: "x" } } }] } }, "video")).toEqual([
-      { jobId: "z", type: "video", model: "m", prompt: null, createdAt: null },
-    ]);
+    expect(readHistory({ items: [{ id: "z", model: "m", params: { prompt: "" }, createdAt: "2026-11-22T08:00:00Z" }] }, "video")).toEqual({
+      items: [{ jobId: "z", type: "video", model: "m", prompt: "", createdAt: new Date("2026-11-22T08:00:00Z"), mediaIds: [], resolution: null }],
+      nextCursor: null,
+    });
+    // Sin prompt en la entrada: `null` (no sirve para descartar nada).
+    expect(readHistory({ items: [{ id: "y", params: {} }] }, "image")!.items[0]).toMatchObject({ prompt: null, model: "", createdAt: null });
     expect(readHistory({ nada: 1 }, "video")).toBeNull();
   });
 });
