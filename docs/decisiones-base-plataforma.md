@@ -166,6 +166,18 @@
   - **Un paso cortado a media llamada por un despliegue se liquida por lo reservado y se vuelve a ejecutar cuando pasa el tiempo de silencio: puede costar dos veces.** Para que casi nunca ocurra, el controlador pondrá `RAILWAY_DEPLOYMENT_DRAINING_SECONDS=120` en el servicio (una llamada a Claude puede tardar hasta 10 minutos, así que no lo elimina del todo).
 - **Reloj de la base de datos.** Las horas que deciden si algo lleva demasiado sin señales (`started_at`, `heartbeat_at`, `updated_at`) las pone y las compara PostgreSQL con `now()`, no el reloj de cada proceso.
 
+## Tarea extra: interfaz para el ordenador (22/11/2026)
+
+El dueño decidió que todos trabajan en ordenador: las pantallas se piensan para ventanas de 1280–1440 px y en el móvil solo tienen que no romperse.
+
+- **Estructura.** Menú lateral fijo desde 768 px (`md`), con el logo, «Vídeos y ángulos de venta», las secciones con icono y texto y, abajo, la persona conectada (iniciales, nombre y papel; el papel no se repite si el nombre ya lo dice) y «Salir». Por debajo de 768 px se conservan la cabecera y la barra inferior. El contenido ocupa hasta 1200 px. Cada pantalla usa `PageHeader` (volver, título, una frase y acciones a la derecha) y `Panel` (bloque con título), en `src/components/shell/`.
+- **Menú por papel.** Dueño: Productos, Gasto, Reglas y Personas. Colaborador: solo Productos (antes también veía Gasto); así lo pide el encargo. Si la pantalla de Gasto acaba teniendo una vista para el colaborador (su propio gasto), habrá que volver a añadirla en `navFor`.
+- **Productos.** Rejilla de 1/2/3/4 columnas (4 a partir de 1280 px) con portada 4:3, nombre, frase, idioma y países. Buscador por nombre en el navegador (sin tildes ni mayúsculas; `/` lleva al buscador y Esc lo vacía): la lista ya llega entera, así que no hace falta una consulta nueva.
+- **Nuevo producto y detalle.** Dos columnas: datos a la izquierda, fotos a la derecha con miniaturas grandes (la primera se marca como portada) y una zona para arrastrar y soltar que también es un botón (clic, Intro o Espacio). Crear producto está arriba a la derecha junto a Cancelar. El detalle tiene una barra de secciones con «Datos y fotos» y, desactivadas con la etiqueta «Pronto», «Vídeos» y «Ángulos».
+- **Reglas.** Dos paneles desde 1024 px con un `layout.tsx` propio, para que la lista no se vuelva a pedir al cambiar de regla. En el ordenador, `/reglas` abre directamente la primera regla (comprobado con `matchMedia` en el navegador; en el móvil se queda la lista). El texto se edita en un área alta que llena la ventana; «¿Qué has cambiado?» y «Guardar versión nueva» van en una barra bajo el texto y Ctrl+S (Cmd+S) guarda. El historial va en una pestaña: versiones a la izquierda y el texto de la elegida a la derecha, con «Recuperar esta versión». Una pestaña «Sin guardar» avisa de cambios pendientes. Un colaborador que entra por la dirección ve un solo aviso.
+- **Pestañas.** `src/components/ui/tabs.tsx` escrito a mano sobre `Tabs` de `radix-ui` (ya instalado) con el estilo de los componentes shadcn del proyecto; no se añadió ninguna dependencia.
+- **Avisos** arriba a la derecha (antes arriba en el centro), donde no tapan la cabecera ni la barra inferior del móvil.
+
 ## Pendiente para el plan 1b
 
 - El motor de ángulos debe cargar siempre juntas las tres reglas (`RULE_SLUGS.angulos`, `ejemplos`, `metodo`) con `loadRules`, porque se remiten unas a otras («que se entrega junto a esta»).

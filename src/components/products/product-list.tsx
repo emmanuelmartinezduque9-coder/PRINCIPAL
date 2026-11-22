@@ -1,89 +1,224 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { ImageOff, Plus } from "lucide-react";
+import { ImageOff, Languages, MapPin, Package, Plus, Search, X } from "lucide-react";
 import Link from "next/link";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
+import { PageHeader } from "@/components/shell/page-header";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { COUNTRY_LABELS, LANGUAGE_LABELS, type ProductView } from "./labels";
 
 export function ProductCover({ photoId, className }: { photoId?: number | null; className?: string }) {
   return (
-    <div className={cn("grid shrink-0 place-items-center overflow-hidden rounded-lg bg-muted text-muted-foreground", className)}>
+    <div className={cn("grid shrink-0 place-items-center overflow-hidden bg-muted text-muted-foreground", className)}>
       {photoId ? (
         // eslint-disable-next-line @next/next/no-img-element
         <img src={`/api/fotos/${photoId}`} alt="" loading="lazy" className="size-full object-cover" />
       ) : (
-        <ImageOff className="size-6" aria-label="Sin foto" />
+        <span className="flex flex-col items-center gap-1.5 text-xs">
+          <ImageOff className="size-6" aria-hidden />
+          Sin foto
+        </span>
       )}
     </div>
   );
 }
 
+export const languageLabel = (code: string) => LANGUAGE_LABELS[code] ?? code;
+export const countryLabels = (codes: string[]) => codes.map((code) => COUNTRY_LABELS[code] ?? code);
+
 export function ProductMarket({ product }: { product: ProductView }) {
   return (
     <div className="flex flex-wrap gap-1.5">
-      <Badge variant="secondary">{LANGUAGE_LABELS[product.language] ?? product.language}</Badge>
-      {product.countries.map((country) => (
+      <Badge variant="secondary">{languageLabel(product.language)}</Badge>
+      {countryLabels(product.countries).map((country) => (
         <Badge key={country} variant="outline">
-          {COUNTRY_LABELS[country] ?? country}
+          {country}
         </Badge>
       ))}
     </div>
   );
 }
 
+/** Quita tildes y mayúsculas para que «maquina» encuentre «Máquina». */
+const normalize = (text: string) =>
+  text
+    .normalize("NFD")
+    .replace(/\p{Diacritic}/gu, "")
+    .toLowerCase();
+
+function ProductCard({ product }: { product: ProductView }) {
+  return (
+    <Link
+      href={`/productos/${product.id}`}
+      className="group flex h-full flex-col overflow-hidden rounded-xl bg-card ring-1 ring-foreground/10 transition-shadow outline-none hover:shadow-[0_2px_12px_-4px_rgb(0_0_0/0.12)] hover:ring-foreground/20 focus-visible:ring-2 focus-visible:ring-foreground/70"
+    >
+      <ProductCover photoId={product.coverPhotoId} className="aspect-[4/3] w-full border-b" />
+      <div className="flex flex-1 flex-col gap-1.5 p-4">
+        <h2 className="truncate text-[15px] font-semibold tracking-tight">{product.name}</h2>
+        <p className="line-clamp-2 min-h-10 text-sm text-muted-foreground">{product.summary}</p>
+        <dl className="mt-auto flex flex-col gap-1 pt-2 text-xs text-muted-foreground">
+          <div className="flex items-center gap-1.5">
+            <dt>
+              <Languages className="size-3.5" aria-label="Idioma" />
+            </dt>
+            <dd className="text-foreground/80">{languageLabel(product.language)}</dd>
+          </div>
+          <div className="flex min-w-0 items-center gap-1.5">
+            <dt>
+              <MapPin className="size-3.5" aria-label="Países" />
+            </dt>
+            <dd className="truncate">{countryLabels(product.countries).join(" · ")}</dd>
+          </div>
+        </dl>
+      </div>
+    </Link>
+  );
+}
+
+const GRID = "grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4";
+
 export function ProductList() {
   const query = useQuery({
     queryKey: ["products"],
     queryFn: () => api<{ products: ProductView[] }>("/api/productos"),
   });
-  const products = query.data?.products ?? [];
+  const products = useMemo(() => query.data?.products ?? [], [query.data]);
+  const [search, setSearch] = useState("");
+  const searchInput = useRef<HTMLInputElement>(null);
+
+  const visible = useMemo(() => {
+    const term = normalize(search.trim());
+    return term ? products.filter((product) => normalize(product.name).includes(term)) : products;
+  }, [products, search]);
+
+  // «/» lleva al buscador desde cualquier parte de la pantalla (como en muchas webs).
+  useEffect(() => {
+    function onKey(event: KeyboardEvent) {
+      const target = event.target as HTMLElement | null;
+      const typing = target && (target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName));
+      if (event.key === "/" && !typing && !event.metaKey && !event.ctrlKey && !event.altKey) {
+        event.preventDefault();
+        searchInput.current?.focus();
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  const hasProducts = products.length > 0;
 
   return (
-    <div className="flex flex-col gap-5">
-      <div className="flex items-center justify-between gap-3">
-        <h1 className="text-2xl font-semibold tracking-tight">Productos</h1>
-        <Link href="/productos/nuevo" className={cn(buttonVariants(), "h-11 gap-2 px-4 text-base")}>
-          <Plus className="size-5" />
-          Nuevo producto
-        </Link>
-      </div>
+    <div className="flex flex-col gap-6">
+      <PageHeader
+        title="Productos"
+        description="Cada producto con sus fotos, el idioma y los países donde se vende."
+        actions={
+          <Link href="/productos/nuevo" className={cn(buttonVariants(), "h-10 gap-2 px-4")}>
+            <Plus className="size-4" aria-hidden />
+            Nuevo producto
+          </Link>
+        }
+      />
+
+      {hasProducts ? (
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="relative w-full sm:max-w-sm">
+            <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden />
+            <Input
+              ref={searchInput}
+              type="search"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Escape") setSearch("");
+              }}
+              placeholder="Buscar por nombre"
+              aria-label="Buscar productos por nombre"
+              className="h-10 pr-10 pl-9 text-sm [&::-webkit-search-cancel-button]:hidden"
+            />
+            {search ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setSearch("");
+                  searchInput.current?.focus();
+                }}
+                aria-label="Borrar la búsqueda"
+                className="absolute top-1/2 right-2 grid size-7 -translate-y-1/2 place-items-center rounded-md text-muted-foreground outline-none hover:bg-muted hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50"
+              >
+                <X className="size-4" aria-hidden />
+              </button>
+            ) : (
+              <kbd className="pointer-events-none absolute top-1/2 right-2.5 hidden -translate-y-1/2 rounded border bg-muted px-1.5 font-sans text-[11px] text-muted-foreground sm:block">
+                /
+              </kbd>
+            )}
+          </div>
+          <p className="text-sm text-muted-foreground tabular-nums" aria-live="polite">
+            {search.trim()
+              ? `${visible.length} de ${products.length} ${products.length === 1 ? "producto" : "productos"}`
+              : `${products.length} ${products.length === 1 ? "producto" : "productos"}`}
+          </p>
+        </div>
+      ) : null}
 
       {query.isLoading ? (
-        <div className="flex flex-col gap-3">
-          <Skeleton className="h-28" />
-          <Skeleton className="h-28" />
-        </div>
+        <ul className={GRID} aria-label="Cargando productos">
+          {Array.from({ length: 8 }, (_, i) => (
+            <li key={i} className="overflow-hidden rounded-xl ring-1 ring-foreground/10">
+              <Skeleton className="aspect-[4/3] rounded-none" />
+              <div className="flex flex-col gap-2 p-4">
+                <Skeleton className="h-4 w-2/3" />
+                <Skeleton className="h-3.5 w-full" />
+                <Skeleton className="h-3.5 w-4/5" />
+              </div>
+            </li>
+          ))}
+        </ul>
       ) : query.isError ? (
-        <p className="rounded-lg bg-destructive/10 px-3 py-3 text-sm">
-          No se pudieron cargar los productos. Recarga la página para volver a intentarlo.
-        </p>
-      ) : products.length === 0 ? (
-        <Card className="items-center px-6 py-10 text-center">
-          <p className="text-base font-medium">Todavía no hay productos</p>
-          <p className="max-w-sm text-sm text-muted-foreground">
-            Añade el primero con su nombre, una frase que diga qué hace y unas fotos.
-          </p>
-        </Card>
+        <div role="alert" className="rounded-xl bg-destructive/10 px-5 py-4 text-sm">
+          <p className="font-medium">No se pudieron cargar los productos.</p>
+          <p className="text-muted-foreground">Recarga la página para volver a intentarlo.</p>
+        </div>
+      ) : !hasProducts ? (
+        <div className="flex flex-col items-center gap-3 rounded-xl border border-dashed px-6 py-16 text-center">
+          <span className="grid size-12 place-items-center rounded-full bg-muted text-muted-foreground">
+            <Package className="size-5" aria-hidden />
+          </span>
+          <div className="flex flex-col gap-1">
+            <p className="text-base font-medium">Todavía no hay productos</p>
+            <p className="max-w-sm text-sm text-muted-foreground">
+              Añade el primero con su nombre, una frase que diga qué hace y unas fotos.
+            </p>
+          </div>
+          <Link href="/productos/nuevo" className={cn(buttonVariants({ variant: "outline" }), "mt-1 h-10 gap-2 px-4")}>
+            <Plus className="size-4" aria-hidden />
+            Añadir el primer producto
+          </Link>
+        </div>
+      ) : visible.length === 0 ? (
+        <div className="flex flex-col items-center gap-2 rounded-xl border border-dashed px-6 py-12 text-center">
+          <p className="font-medium">Ningún producto se llama así</p>
+          <p className="text-sm text-muted-foreground">Prueba con otra palabra del nombre.</p>
+          <button
+            type="button"
+            onClick={() => setSearch("")}
+            className={cn(buttonVariants({ variant: "outline" }), "mt-1 h-9 px-3")}
+          >
+            Ver todos
+          </button>
+        </div>
       ) : (
-        <ul className="flex flex-col gap-3">
-          {products.map((product) => (
+        <ul className={GRID}>
+          {visible.map((product) => (
             <li key={product.id}>
-              <Link href={`/productos/${product.id}`} className="block rounded-xl focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none">
-                <Card className="flex-row gap-3 p-3 transition-colors hover:bg-muted/40">
-                  <ProductCover photoId={product.coverPhotoId} className="size-24" />
-                  <div className="flex min-w-0 flex-1 flex-col gap-1.5">
-                    <p className="truncate text-base font-semibold">{product.name}</p>
-                    <p className="line-clamp-2 text-sm text-muted-foreground">{product.summary}</p>
-                    <ProductMarket product={product} />
-                  </div>
-                </Card>
-              </Link>
+              <ProductCard product={product} />
             </li>
           ))}
         </ul>

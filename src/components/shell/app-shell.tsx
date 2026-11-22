@@ -18,12 +18,14 @@ interface NavItem {
 
 const NAV: NavItem[] = [
   { href: "/productos", label: "Productos", icon: Package },
-  { href: "/gasto", label: "Gasto", icon: Wallet },
+  { href: "/gasto", label: "Gasto", icon: Wallet, ownerOnly: true },
   { href: "/reglas", label: "Reglas", icon: BookOpen, ownerOnly: true },
   { href: "/personas", label: "Personas", icon: Users, ownerOnly: true },
 ];
 
-/** Opciones del menú que ve una persona según su papel. Todos ven Productos y Gasto; el dueño, además, Reglas y Personas. */
+const ROLE_LABELS: Record<AuthUser["role"], string> = { dueno: "Dueño", colaborador: "Colaborador" };
+
+/** Opciones del menú que ve una persona según su papel: el colaborador, Productos; el dueño, además Gasto, Reglas y Personas. */
 export function navFor(role: AuthUser["role"] | undefined): NavItem[] {
   return NAV.filter((item) => !item.ownerOnly || role === "dueno");
 }
@@ -36,15 +38,24 @@ function useMe() {
   });
 }
 
+export function BrandMark({ className }: { className?: string }) {
+  return (
+    <span className={cn("grid size-9 shrink-0 place-items-center rounded-lg bg-foreground text-background", className)}>
+      <Sparkles className="size-4" aria-hidden />
+    </span>
+  );
+}
+
 function Brand() {
   return (
-    <Link href="/productos" className="flex items-center gap-2.5">
-      <span className="grid size-9 place-items-center rounded-lg bg-foreground text-background">
-        <Sparkles className="size-4" />
-      </span>
-      <span className="leading-tight">
+    <Link
+      href="/productos"
+      className="flex items-center gap-2.5 rounded-lg outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
+    >
+      <BrandMark />
+      <span className="min-w-0 leading-tight">
         <span className="block text-sm font-semibold tracking-tight">PRINCIPAL</span>
-        <span className="block text-xs text-muted-foreground">Ángulos de venta</span>
+        <span className="block truncate text-xs text-muted-foreground">Vídeos y ángulos de venta</span>
       </span>
     </Link>
   );
@@ -65,15 +76,40 @@ function SignOutButton({ className, label }: { className?: string; label?: strin
     <button
       type="button"
       onClick={signOut}
-      aria-label="Cerrar sesión"
+      aria-label={label ? undefined : "Salir"}
       className={cn(
-        "flex items-center gap-2 rounded-lg text-sm text-muted-foreground transition-colors hover:bg-foreground/[0.05] hover:text-foreground",
+        "flex items-center gap-2 rounded-lg text-sm text-muted-foreground transition-colors outline-none hover:bg-foreground/[0.05] hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50",
         className,
       )}
     >
-      <LogOut className="size-4 shrink-0" />
+      <LogOut className="size-4 shrink-0" aria-hidden />
       {label}
     </button>
+  );
+}
+
+function initials(name: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  return ((parts[0]?.[0] ?? "") + (parts.length > 1 ? parts[parts.length - 1][0] : "")).toUpperCase() || "?";
+}
+
+function CurrentUser({ user }: { user: AuthUser }) {
+  return (
+    <div className="flex items-center gap-2.5 px-2.5 py-2">
+      <span
+        aria-hidden
+        className="grid size-8 shrink-0 place-items-center rounded-full bg-foreground/[0.07] text-xs font-semibold text-foreground"
+      >
+        {initials(user.name)}
+      </span>
+      <span className="min-w-0 leading-tight">
+        <span className="block truncate text-sm font-medium">{user.name}</span>
+        {/* El papel solo se repite si dice algo que el nombre no dice. */}
+        {user.name !== ROLE_LABELS[user.role] ? (
+          <span className="block truncate text-xs text-muted-foreground">{ROLE_LABELS[user.role]}</span>
+        ) : null}
+      </span>
+    </div>
   );
 }
 
@@ -84,50 +120,55 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const isActive = (href: string) => pathname === href || pathname.startsWith(`${href}/`);
 
   return (
-    <div className="flex min-h-dvh">
-      {/* Escritorio: menú lateral. */}
-      <aside className="sticky top-0 hidden h-dvh w-60 shrink-0 flex-col gap-6 border-r bg-card p-3 lg:flex">
-        <div className="px-2.5 pt-2">
+    <div className="flex min-h-dvh bg-background">
+      {/* Ordenador y tableta: menú lateral fijo. */}
+      <aside className="sticky top-0 hidden h-dvh w-56 shrink-0 flex-col border-r bg-sidebar md:flex lg:w-60">
+        <div className="flex h-16 items-center px-4">
           <Brand />
         </div>
-        <nav aria-label="Principal" className="flex flex-col gap-0.5">
-          {items.map(({ href, label, icon: Icon }) => (
-            <Link
-              key={href}
-              href={href}
-              aria-current={isActive(href) ? "page" : undefined}
-              className={cn(
-                "flex h-10 items-center gap-2.5 rounded-lg px-2.5 text-sm transition-colors",
-                isActive(href)
-                  ? "bg-foreground/[0.06] font-medium text-foreground"
-                  : "text-muted-foreground hover:bg-foreground/[0.04] hover:text-foreground",
-              )}
-            >
-              <Icon className="size-4 shrink-0" />
-              {label}
-            </Link>
-          ))}
+        <nav aria-label="Principal" className="flex flex-col gap-0.5 px-3 pt-3">
+          {items.map(({ href, label, icon: Icon }) => {
+            const active = isActive(href);
+            return (
+              <Link
+                key={href}
+                href={href}
+                aria-current={active ? "page" : undefined}
+                className={cn(
+                  "flex h-9 items-center gap-2.5 rounded-lg px-2.5 text-sm transition-colors outline-none focus-visible:ring-3 focus-visible:ring-ring/50",
+                  active
+                    ? "bg-foreground/[0.07] font-medium text-foreground"
+                    : "text-muted-foreground hover:bg-foreground/[0.04] hover:text-foreground",
+                )}
+              >
+                <Icon className={cn("size-4 shrink-0", active ? "text-foreground" : "")} aria-hidden />
+                {label}
+              </Link>
+            );
+          })}
         </nav>
-        <div className="mt-auto flex flex-col gap-1">
-          {data?.user ? <p className="truncate px-2.5 text-xs text-muted-foreground">{data.user.name}</p> : null}
-          <SignOutButton className="h-10 px-2.5" label="Cerrar sesión" />
+        <div className="mt-auto flex flex-col gap-0.5 border-t p-3">
+          {data?.user ? <CurrentUser user={data.user} /> : null}
+          <SignOutButton className="h-9 px-2.5" label="Salir" />
         </div>
       </aside>
 
       <div className="flex min-w-0 flex-1 flex-col">
         {/* Móvil: cabecera sencilla. */}
-        <header className="sticky top-0 z-30 flex h-14 items-center justify-between border-b bg-background/90 px-4 backdrop-blur lg:hidden">
+        <header className="sticky top-0 z-30 flex h-14 items-center justify-between border-b bg-background/90 px-4 backdrop-blur md:hidden">
           <Brand />
           <SignOutButton className="size-10 justify-center" />
         </header>
 
-        <main className="mx-auto w-full max-w-5xl flex-1 px-4 py-6 pb-28 lg:px-8 lg:py-8 lg:pb-8">{children}</main>
+        <main className="flex-1 px-4 pt-6 pb-28 md:px-8 md:pt-8 md:pb-12">
+          <div className="mx-auto w-full max-w-[1200px]">{children}</div>
+        </main>
       </div>
 
       {/* Móvil: barra inferior fija. */}
       <nav
         aria-label="Principal"
-        className="fixed inset-x-0 bottom-0 z-40 border-t bg-background/95 pb-[env(safe-area-inset-bottom)] backdrop-blur lg:hidden"
+        className="fixed inset-x-0 bottom-0 z-40 border-t bg-background/95 pb-[env(safe-area-inset-bottom)] backdrop-blur md:hidden"
       >
         <ul className="mx-auto flex max-w-md">
           {items.map(({ href, label, icon: Icon }) => (
@@ -140,7 +181,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                   isActive(href) ? "font-semibold text-foreground" : "text-muted-foreground",
                 )}
               >
-                <Icon className="size-5" />
+                <Icon className="size-5" aria-hidden />
                 {label}
               </Link>
             </li>

@@ -41,14 +41,14 @@ function LoginForm() {
       <AuthField label="Correo" name="email" type="email" autoComplete="username" required autoFocus />
       <AuthField label="Contraseña" name="password" type="password" autoComplete="current-password" required />
       {error ? (
-        <p className="flex gap-2 rounded-lg bg-destructive/10 px-3 py-2 text-sm">
+        <p role="alert" className="flex gap-2 rounded-lg bg-destructive/10 px-3 py-2 text-sm">
           <CircleAlert className="mt-0.5 size-4 shrink-0 text-destructive" /> {error}
         </p>
       ) : null}
       <button
         type="submit"
         disabled={busy}
-        className="flex h-11 items-center justify-center gap-2 rounded-lg bg-primary text-base font-medium text-primary-foreground disabled:opacity-60"
+        className="mt-1 flex h-11 items-center justify-center gap-2 rounded-lg bg-primary text-base font-medium text-primary-foreground outline-none transition-colors hover:bg-primary/85 focus-visible:ring-3 focus-visible:ring-ring/50 disabled:opacity-60"
       >
         {busy ? <Loader2 className="animate-spin" /> : null}
         Entrar

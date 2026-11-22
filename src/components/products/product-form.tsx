@@ -1,16 +1,18 @@
 "use client";
 
 import { useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, CircleAlert, Loader2 } from "lucide-react";
+import { CircleAlert, Loader2 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { toast } from "sonner";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { PageHeader } from "@/components/shell/page-header";
+import { Panel } from "@/components/shell/panel";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { COUNTRY_LABELS, LANGUAGE_LABELS, type ProductView } from "./labels";
@@ -54,77 +56,87 @@ export function ProductForm() {
     setCountries((current) => (on ? [...current, code] : current.filter((c) => c !== code)));
   }
 
+  const submitLabel = busy && files.length ? "Guardando y subiendo fotos…" : busy ? "Guardando…" : "Crear producto";
+
   return (
-    <form onSubmit={submit} className="mx-auto flex max-w-xl flex-col gap-6">
-      <div className="flex flex-col gap-2">
-        <Link href="/productos" className="inline-flex h-9 w-fit items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground">
-          <ArrowLeft className="size-4" /> Productos
-        </Link>
-        <h1 className="text-2xl font-semibold tracking-tight">Nuevo producto</h1>
-      </div>
-
-      <div className="flex flex-col gap-2">
-        <Label htmlFor="name">Nombre del producto</Label>
-        <Input id="name" className="h-11 text-base" value={name} onChange={(e) => setName(e.target.value)} maxLength={200} required autoComplete="off" />
-      </div>
-
-      <div className="flex flex-col gap-2">
-        <Label htmlFor="summary">¿Qué hace? (una frase)</Label>
-        <Textarea id="summary" rows={3} value={summary} onChange={(e) => setSummary(e.target.value)} maxLength={1000} required placeholder="Por ejemplo: hace helado en 2 minutos sin hielo" />
-      </div>
-
-      <div className="flex flex-col gap-2">
-        <Label htmlFor="language">Idioma en el que se vende</Label>
-        <Select value={language} onValueChange={setLanguage}>
-          <SelectTrigger id="language" className="h-11 w-full text-base">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {Object.entries(LANGUAGE_LABELS).map(([code, label]) => (
-              <SelectItem key={code} value={code}>
-                {label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </div>
-
-      <fieldset className="flex flex-col gap-2">
-        <legend className="mb-2 text-sm font-medium">Países donde se vende</legend>
-        <div className="grid grid-cols-2 gap-2">
-          {Object.entries(COUNTRY_LABELS).map(([code, label]) => {
-            const on = countries.includes(code);
-            return (
-              <label
-                key={code}
-                className={cn(
-                  "flex h-11 cursor-pointer items-center gap-2.5 rounded-lg border px-3 text-base has-[:focus-visible]:ring-3 has-[:focus-visible]:ring-ring/50",
-                  on ? "border-foreground bg-foreground/[0.04]" : "text-muted-foreground",
-                )}
-              >
-                <input type="checkbox" className="size-4 accent-foreground" checked={on} onChange={(e) => toggleCountry(code, e.target.checked)} />
-                {label}
-              </label>
-            );
-          })}
-        </div>
-      </fieldset>
-
-      <div className="flex flex-col gap-2">
-        <Label>Fotos del producto</Label>
-        <PhotoPicker files={files} onChange={setFiles} />
-      </div>
+    <form id="product-form" onSubmit={submit} className="flex flex-col gap-6">
+      <PageHeader
+        back={{ href: "/productos", label: "Productos" }}
+        title="Nuevo producto"
+        description="Rellena los datos y añade unas fotos. Podrás añadir más fotos después."
+        actions={
+          <>
+            <Link href="/productos" className={cn(buttonVariants({ variant: "outline" }), "h-10 px-4")}>
+              Cancelar
+            </Link>
+            <Button type="submit" disabled={busy} className="h-10 px-4">
+              {busy ? <Loader2 className="animate-spin" aria-hidden /> : null}
+              {submitLabel}
+            </Button>
+          </>
+        }
+      />
 
       {error ? (
         <p role="alert" className="flex gap-2 rounded-lg bg-destructive/10 px-3 py-2 text-sm">
-          <CircleAlert className="mt-0.5 size-4 shrink-0 text-destructive" /> {error}
+          <CircleAlert className="mt-0.5 size-4 shrink-0 text-destructive" aria-hidden /> {error}
         </p>
       ) : null}
 
-      <Button type="submit" disabled={busy} className="h-12 text-base">
-        {busy ? <Loader2 className="animate-spin" /> : null}
-        {busy && files.length ? "Guardando y subiendo fotos…" : "Crear producto"}
-      </Button>
+      <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,5fr)_minmax(0,6fr)]">
+        <Panel title="Datos del producto" description="Lo que necesitamos para buscarle ángulos de venta.">
+          <div className="flex flex-col gap-2">
+            <Label htmlFor="name">Nombre del producto</Label>
+            <Input id="name" className="h-10" value={name} onChange={(e) => setName(e.target.value)} maxLength={200} required autoComplete="off" autoFocus />
+          </div>
+
+          <div className="flex flex-col gap-2">
+            <Label htmlFor="summary">¿Qué hace? (una frase)</Label>
+            <Textarea id="summary" rows={3} value={summary} onChange={(e) => setSummary(e.target.value)} maxLength={1000} required placeholder="Por ejemplo: hace helado en 2 minutos sin hielo" />
+          </div>
+
+          <div className="flex flex-col gap-2">
+            <Label htmlFor="language">Idioma en el que se vende</Label>
+            <Select value={language} onValueChange={setLanguage}>
+              <SelectTrigger id="language" className="w-full data-[size=default]:h-10">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {Object.entries(LANGUAGE_LABELS).map(([code, label]) => (
+                  <SelectItem key={code} value={code}>
+                    {label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          <fieldset className="flex flex-col gap-2">
+            <legend className="mb-2 text-sm font-medium">Países donde se vende</legend>
+            <div className="grid grid-cols-2 gap-2">
+              {Object.entries(COUNTRY_LABELS).map(([code, label]) => {
+                const on = countries.includes(code);
+                return (
+                  <label
+                    key={code}
+                    className={cn(
+                      "flex h-10 cursor-pointer items-center gap-2.5 rounded-lg border px-3 text-sm transition-colors has-[:focus-visible]:ring-3 has-[:focus-visible]:ring-ring/50",
+                      on ? "border-foreground/70 bg-foreground/[0.04] text-foreground" : "text-muted-foreground hover:bg-muted/50",
+                    )}
+                  >
+                    <input type="checkbox" className="size-4 accent-foreground" checked={on} onChange={(e) => toggleCountry(code, e.target.checked)} />
+                    {label}
+                  </label>
+                );
+              })}
+            </div>
+          </fieldset>
+        </Panel>
+
+        <Panel title="Fotos" description="La primera será la portada. Se suben al crear el producto.">
+          <PhotoPicker files={files} onChange={setFiles} />
+        </Panel>
+      </div>
     </form>
   );
 }

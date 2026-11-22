@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
 import { api, ApiError } from "@/lib/api";
+import { cn } from "@/lib/utils";
 
 const MAX_PHOTOS = 6;
 const ACCEPT = "image/jpeg,image/png,image/webp";
@@ -47,18 +48,28 @@ export async function uploadPhotos(productId: number, files: File[]): Promise<nu
   return failed;
 }
 
-function FileButton({
+/**
+ * Zona para añadir fotos: se pueden arrastrar desde el ordenador o elegir con un clic
+ * (o con Intro / Espacio desde el teclado).
+ */
+function PhotoDropzone({
   onFiles,
   disabled,
-  children,
+  busy,
+  compact,
 }: {
   onFiles: (files: File[]) => void;
   disabled?: boolean;
-  children: React.ReactNode;
+  busy?: boolean;
+  /** Más baja cuando ya hay fotos encima. */
+  compact?: boolean;
 }) {
   const input = useRef<HTMLInputElement>(null);
+  const [over, setOver] = useState(false);
+  const off = disabled || busy;
+
   return (
-    <>
+    <div>
       <input
         ref={input}
         type="file"
@@ -74,15 +85,82 @@ function FileButton({
           if (files.length) onFiles(files);
         }}
       />
-      <Button type="button" variant="outline" className="h-11 w-full text-base sm:w-auto" disabled={disabled} onClick={() => input.current?.click()}>
-        <ImagePlus className="size-5" />
-        {children}
-      </Button>
-    </>
+      <button
+        type="button"
+        disabled={off}
+        onClick={() => input.current?.click()}
+        onDragOver={(event) => {
+          if (off || !event.dataTransfer.types.includes("Files")) return;
+          event.preventDefault();
+          event.dataTransfer.dropEffect = "copy";
+          setOver(true);
+        }}
+        onDragLeave={() => setOver(false)}
+        onDrop={(event) => {
+          event.preventDefault();
+          setOver(false);
+          if (off) return;
+          const files = Array.from(event.dataTransfer.files);
+          if (files.length) onFiles(files);
+        }}
+        className={cn(
+          "flex w-full flex-col items-center justify-center gap-2 rounded-xl *:pointer-events-none border-2 border-dashed px-4 text-center transition-colors outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-60",
+          compact ? "py-5" : "py-10",
+          over ? "border-foreground/60 bg-foreground/[0.04]" : "border-border hover:border-foreground/30 hover:bg-muted/50",
+        )}
+      >
+        <span className="grid size-10 place-items-center rounded-full bg-muted text-muted-foreground">
+          {busy ? <Loader2 className="size-5 animate-spin" aria-hidden /> : <ImagePlus className="size-5" aria-hidden />}
+        </span>
+        <span className="text-sm font-medium">
+          {busy ? "Subiendo fotos…" : over ? "Suelta las fotos aquí" : "Arrastra las fotos aquí o haz clic para elegirlas"}
+        </span>
+        <span className="text-xs text-muted-foreground">JPG, PNG o WebP · hasta 8 MB cada una · {MAX_PHOTOS} como máximo</span>
+      </button>
+    </div>
   );
 }
 
-/** Elegir fotos antes de que el producto exista: se ven en pequeño y se suben al guardar. */
+function Thumb({
+  src,
+  alt,
+  cover,
+  removeLabel,
+  onRemove,
+  icon,
+}: {
+  src: string;
+  alt: string;
+  cover: boolean;
+  removeLabel: string;
+  onRemove: () => void;
+  icon: React.ReactNode;
+}) {
+  return (
+    <li className="group relative aspect-square overflow-hidden rounded-xl bg-muted ring-1 ring-foreground/10">
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img src={src} alt={alt} className="size-full object-cover" />
+      {cover ? (
+        <span className="absolute bottom-2 left-2 rounded-md bg-background/90 px-1.5 py-0.5 text-[11px] font-medium shadow-sm">
+          Portada
+        </span>
+      ) : null}
+      <button
+        type="button"
+        aria-label={removeLabel}
+        title={removeLabel}
+        onClick={onRemove}
+        className="absolute top-2 right-2 grid size-8 place-items-center rounded-full bg-background/90 shadow-sm transition-colors outline-none hover:bg-background hover:text-destructive focus-visible:ring-3 focus-visible:ring-ring/60"
+      >
+        {icon}
+      </button>
+    </li>
+  );
+}
+
+const THUMB_GRID = "grid grid-cols-2 gap-3 sm:grid-cols-3";
+
+/** Elegir fotos antes de que el producto exista: se ven en grande y se suben al guardar. */
 export function PhotoPicker({ files, onChange }: { files: File[]; onChange: (files: File[]) => void }) {
   const previews = useMemo(() => files.map((file) => URL.createObjectURL(file)), [files]);
   useEffect(() => () => previews.forEach((url) => URL.revokeObjectURL(url)), [previews]);
@@ -96,28 +174,26 @@ export function PhotoPicker({ files, onChange }: { files: File[]; onChange: (fil
   return (
     <div className="flex flex-col gap-3">
       {files.length > 0 ? (
-        <ul className="grid grid-cols-3 gap-2">
+        <ul className={THUMB_GRID}>
           {files.map((file, index) => (
-            <li key={`${file.name}-${index}`} className="relative aspect-square overflow-hidden rounded-lg border bg-muted">
-              {/* Vista previa local (blob:), no una imagen del servidor. */}
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={previews[index]} alt={file.name} className="size-full object-cover" />
-              <button
-                type="button"
-                aria-label={`Quitar ${file.name}`}
-                onClick={() => onChange(files.filter((_, i) => i !== index))}
-                className="absolute top-1 right-1 grid size-8 place-items-center rounded-full bg-background/90 shadow-sm"
-              >
-                <X className="size-4" />
-              </button>
-            </li>
+            <Thumb
+              key={`${file.name}-${index}`}
+              // Vista previa local (blob:), no una imagen del servidor.
+              src={previews[index]}
+              alt={file.name}
+              cover={index === 0}
+              removeLabel={`Quitar ${file.name}`}
+              onRemove={() => onChange(files.filter((_, i) => i !== index))}
+              icon={<X className="size-4" aria-hidden />}
+            />
           ))}
         </ul>
       ) : null}
-      <FileButton onFiles={add} disabled={files.length >= MAX_PHOTOS}>
-        {files.length ? "Añadir más fotos" : "Elegir fotos"}
-      </FileButton>
-      <p className="text-xs text-muted-foreground">JPG, PNG o WebP, hasta 8 MB cada una y 6 como máximo.</p>
+      {files.length < MAX_PHOTOS ? (
+        <PhotoDropzone onFiles={add} compact={files.length > 0} />
+      ) : (
+        <p className="text-sm text-muted-foreground">Ya has elegido las {MAX_PHOTOS} fotos que admite. Quita una para añadir otra.</p>
+      )}
     </div>
   );
 }
@@ -160,41 +236,36 @@ export function PhotoManager({ productId }: { productId: number }) {
   return (
     <div className="flex flex-col gap-3">
       {photos.isLoading ? (
-        <div className="grid grid-cols-3 gap-2">
-          <Skeleton className="aspect-square" />
-          <Skeleton className="aspect-square" />
+        <div className={THUMB_GRID}>
+          <Skeleton className="aspect-square rounded-xl" />
+          <Skeleton className="aspect-square rounded-xl" />
+          <Skeleton className="aspect-square rounded-xl" />
         </div>
       ) : photos.isError ? (
-        <p className="text-sm text-destructive">No se pudieron cargar las fotos.</p>
-      ) : list.length === 0 ? (
-        <p className="text-sm text-muted-foreground">Todavía no hay fotos de este producto.</p>
-      ) : (
-        <ul className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+        <p role="alert" className="rounded-lg bg-destructive/10 px-3 py-2 text-sm">
+          No se pudieron cargar las fotos. Recarga la página para volver a intentarlo.
+        </p>
+      ) : list.length === 0 ? null : (
+        <ul className={THUMB_GRID}>
           {list.map((photo, index) => (
-            <li key={photo.id} className="relative aspect-square overflow-hidden rounded-lg border bg-muted">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={`/api/fotos/${photo.id}`} alt={`Foto ${index + 1} del producto`} className="size-full object-cover" />
-              <button
-                type="button"
-                aria-label={`Borrar la foto ${index + 1}`}
-                onClick={() => setToDelete(photo)}
-                className="absolute top-1.5 right-1.5 grid size-9 place-items-center rounded-full bg-background/90 shadow-sm"
-              >
-                <Trash2 className="size-4" />
-              </button>
-            </li>
+            <Thumb
+              key={photo.id}
+              src={`/api/fotos/${photo.id}`}
+              alt={`Foto ${index + 1} del producto`}
+              cover={index === 0}
+              removeLabel={`Borrar la foto ${index + 1}`}
+              onRemove={() => setToDelete(photo)}
+              icon={<Trash2 className="size-4" aria-hidden />}
+            />
           ))}
         </ul>
       )}
 
-      {list.length < MAX_PHOTOS ? (
-        <FileButton onFiles={(files) => upload.mutate(files)} disabled={upload.isPending}>
-          {upload.isPending ? "Subiendo…" : "Añadir fotos"}
-        </FileButton>
+      {photos.isLoading || photos.isError ? null : list.length < MAX_PHOTOS ? (
+        <PhotoDropzone onFiles={(files) => upload.mutate(files)} busy={upload.isPending} compact={list.length > 0} />
       ) : (
-        <p className="text-xs text-muted-foreground">Ya tiene las {MAX_PHOTOS} fotos que admite. Borra una para añadir otra.</p>
+        <p className="text-sm text-muted-foreground">Ya tiene las {MAX_PHOTOS} fotos que admite. Borra una para añadir otra.</p>
       )}
-      {upload.isPending ? <Loader2 className="size-4 animate-spin text-muted-foreground" aria-hidden /> : null}
 
       <Dialog open={toDelete !== null} onOpenChange={(open) => !open && setToDelete(null)}>
         <DialogContent>
@@ -203,12 +274,12 @@ export function PhotoManager({ productId }: { productId: number }) {
             <DialogDescription>No se puede deshacer.</DialogDescription>
           </DialogHeader>
           <DialogFooter>
-            <Button variant="outline" className="h-11" onClick={() => setToDelete(null)}>
+            <Button variant="outline" className="h-10 px-4" onClick={() => setToDelete(null)}>
               Cancelar
             </Button>
             <Button
               variant="destructive"
-              className="h-11"
+              className="h-10 px-4"
               disabled={remove.isPending}
               onClick={() => toDelete && remove.mutate(toDelete.id)}
             >
