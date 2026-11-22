@@ -110,7 +110,7 @@ function UploadProgress({ upload }: { upload: Extract<ReferenceUpload, { kind: "
         </span>
       </div>
       <Progress value={percent} aria-label="Progreso de la subida" />
-      <span className="text-sm text-muted-foreground">No cierres esta pantalla</span>
+      <span className="text-sm text-muted-foreground">No cierres la pestaña</span>
     </div>
   );
 }

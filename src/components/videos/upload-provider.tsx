@@ -34,9 +34,16 @@ interface UploadsContext {
 const Context = createContext<UploadsContext | null>(null);
 const IDLE: ReferenceUpload = { kind: "idle" };
 
-const storageKey = (videoId: number, file: File) => `principal:subida:${videoId}:${file.size}:${file.name}`;
+// `lastModified` evita mezclar dos archivos distintos con el mismo nombre y tamaño en una sola subida.
+const storageKey = (videoId: number, file: File) =>
+  `principal:subida:${videoId}:${file.size}:${file.lastModified}:${file.name}`;
+
+/** Copia en memoria por si `sessionStorage` no está disponible (ventana privada): «Reintentar» sigue la misma subida. */
+const memorySessions = new Map<string, UploadSession>();
 
 function readSession(key: string): UploadSession | undefined {
+  const inMemory = memorySessions.get(key);
+  if (inMemory) return inMemory;
   try {
     const value = JSON.parse(sessionStorage.getItem(key) ?? "null") as UploadSession | null;
     return value && typeof value.uploadId === "string" && Number.isSafeInteger(value.chunkBytes) ? value : undefined;
@@ -46,11 +53,13 @@ function readSession(key: string): UploadSession | undefined {
 }
 
 function writeSession(key: string, session: UploadSession | null) {
+  if (session) memorySessions.set(key, session);
+  else memorySessions.delete(key);
   try {
     if (session) sessionStorage.setItem(key, JSON.stringify(session));
     else sessionStorage.removeItem(key);
   } catch {
-    // Sin almacenamiento (ventana privada): «Reintentar» sigue en memoria; tras recargar se empieza de nuevo.
+    // Sin almacenamiento (ventana privada): queda la copia en memoria para «Reintentar»; tras recargar se empieza de nuevo.
   }
 }
 
