@@ -440,7 +440,7 @@ export const batches = pgTable(
      * autoriza. Desde la migración 0040 todos los lotes están en `true`.
      */
     autoConfirm: boolean("auto_confirm").notNull().default(true),
-    /** «Traducir el diálogo al alemán» para los vídeos del lote que no digan otra cosa en su tarjeta. */
+    /** Antiguo (hasta el 24/11/2026): «Traducir el diálogo» del lote. Ya no se usa: se dobla siempre (`doblaje.ts`). */
     dubDialogue: boolean("dub_dialogue").notNull().default(false),
   },
   (t) => [
@@ -691,8 +691,9 @@ export const videos = pgTable(
      */
     frameCount: integer("frame_count"),
     /**
-     * «Traducir el diálogo al alemán» (`doblaje.ts`): el montaje separa la voz de la música del «Audio
-     * original», dobla solo la voz al alemán y deja la canción igual. `null`: lo del lote (sin lote, no).
+     * Doblar el diálogo (`doblaje.ts`): el montaje separa la voz de la música del «Audio original», dobla solo
+     * la voz al idioma del anuncio y deja la canción igual. `null`: sí (regla fija del 24/11/2026); `false`:
+     * el dueño lo apagó en la tarjeta.
      */
     dubDialogue: boolean("dub_dialogue"),
     /**
@@ -1268,7 +1269,8 @@ export const editRuns = pgTable(
  * 19/11/2026): la voz separada del «Audio original» con BandIt v2, doblada con el modelo `dubbing` de
  * Higgsfield y mezclada sobre la música y los efectos originales. Una fila por vídeo, audio de partida
  * (`source_sha256`) e idioma: el mismo audio no se paga dos veces. `submitting` → `submitted` →
- * `done` (con `storage_key`, el audio final en el almacén) | `failed` | `unknown` (no se sabe si llegó).
+ * `done` (con `storage_key`, el audio final en el almacén) | `failed` | `unknown` (no se sabe si llegó), o
+ * `skipped`: no hacía falta (sin diálogo o ya en el idioma del anuncio; `raw` dice qué oyó Whisper).
  */
 export const dubs = pgTable(
   "dubs",
@@ -1293,9 +1295,9 @@ export const dubs = pgTable(
     updatedAt: instant("updated_at").notNull().defaultNow(),
   },
   (t) => [
-    uniqueIndex("dubs_one_live").on(t.videoId, t.sourceSha256, t.language).where(sql`${t.status} in ('submitting', 'submitted', 'done')`),
+    uniqueIndex("dubs_one_live").on(t.videoId, t.sourceSha256, t.language).where(sql`${t.status} in ('submitting', 'submitted', 'done', 'skipped')`),
     index("dubs_video").on(t.videoId, t.id),
-    check("dubs_status_valid", sql`${t.status} in ('submitting', 'submitted', 'done', 'failed', 'unknown')`),
+    check("dubs_status_valid", sql`${t.status} in ('submitting', 'submitted', 'done', 'failed', 'unknown', 'skipped')`),
     check("dubs_credits_valid", sql`${t.quotedCredits} >= 0 and (${t.creditsSpent} is null or ${t.creditsSpent} >= 0)`),
   ],
 );

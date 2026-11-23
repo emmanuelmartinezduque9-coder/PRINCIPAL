@@ -84,7 +84,8 @@ export type HfVideoRequest = HfSeedanceRequest | HfGenjutsuRequest | HfWanReques
  */
 export interface HfDubRequest {
   mediaId: string;
-  targetLanguage: "deu";
+  /** ISO 639-3 de los que admite `dubbing` (deu, ita, fra, spa, eng…). */
+  targetLanguage: string;
 }
 
 export interface HfSubmitResult {

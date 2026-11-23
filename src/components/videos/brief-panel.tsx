@@ -160,9 +160,9 @@ function SavedHookSeconds({ value, onSave, disabled }: { value: number; onSave: 
 }
 
 /**
- * «Traducir el diálogo al alemán» (solo con «Audio original»): el montaje separa la voz de la música,
- * dobla solo la voz al alemán y deja la canción igual. Enseña lo que vale (lo de la tarjeta o lo del
- * lote); cambiarlo lo fija en la tarjeta.
+ * «Doblar el diálogo» (solo con «Audio original»), discreto: va SIEMPRE por defecto (regla fija del dueño,
+ * 24/11/2026; si la referencia no tiene diálogo o ya está en el idioma del anuncio, no se gasta nada). Solo
+ * se apaga si el dueño lo apaga aquí.
  */
 function DubDialogueSwitch({ view }: { view: VideoViewJson }) {
   const client = useQueryClient();
@@ -185,9 +185,9 @@ function DubDialogueSwitch({ view }: { view: VideoViewJson }) {
     }
   }
   return (
-    <label htmlFor={id} className={cn("flex h-8 shrink-0 items-center gap-2 text-sm", mine && "cursor-pointer")}>
+    <label htmlFor={id} className={cn("flex h-8 shrink-0 items-center gap-1.5 text-xs text-muted-foreground", mine && "cursor-pointer")}>
       <Switch id={id} checked={view.dubDialogue} disabled={!mine || saving} onCheckedChange={(next) => void change(next)} />
-      Traducir el diálogo al alemán
+      Doblar el diálogo
     </label>
   );
 }

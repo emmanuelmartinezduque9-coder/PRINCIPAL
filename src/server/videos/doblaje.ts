@@ -26,7 +26,23 @@ import type { ObjectStore } from "@/lib/object-store";
  * se para con el motivo y, si la persona vuelve a montar, se intenta de nuevo.
  */
 
-export const DUB_LANGUAGE = "deu" as const;
+/**
+ * Idioma del anuncio (`products.language`, ISO 639-1) → el código de Higgsfield `dubbing` (ISO 639-3) y su nombre.
+ * Regla fija del dueño (24/11/2026): el diálogo se dobla POR DEFECTO al idioma del país del producto.
+ */
+export const DUB_LANGUAGES: Record<string, { code: string; name: string }> = {
+  de: { code: "deu", name: "alemán" },
+  it: { code: "ita", name: "italiano" },
+  fr: { code: "fra", name: "francés" },
+  es: { code: "spa", name: "español" },
+  en: { code: "eng", name: "inglés" },
+  pt: { code: "por", name: "portugués" },
+  pl: { code: "pol", name: "polaco" },
+  sv: { code: "swe", name: "sueco" },
+  fi: { code: "fin", name: "finés" },
+  tr: { code: "tur", name: "turco" },
+};
+export const dubLanguageOf = (language: string) => DUB_LANGUAGES[language] ?? DUB_LANGUAGES.de;
 /** Lo que se espera a Higgsfield dentro de un mismo montaje antes de devolverlo a la cola (Codex: 20 min). */
 export const DUB_WAIT_IN_RUN_MS = 10 * 60_000;
 /** Desde el envío, lo más que se espera un doblaje antes de darlo por fallido. */
@@ -41,12 +57,12 @@ export const dubFailure = (detail: string) => `No se pudo doblar el diálogo: ${
 const dubs = schema.dubs;
 type Dub = typeof dubs.$inferSelect;
 
-/** Si el vídeo traduce el diálogo: lo de su tarjeta o, si no dice nada, lo de su lote (sin lote, no). */
-export async function dubDialogueOf(video: { dubDialogue: boolean | null; batchId: number | null }): Promise<boolean> {
-  if (video.dubDialogue !== null) return video.dubDialogue;
-  if (video.batchId === null) return false;
-  const [batch] = await getDb().select({ dub: schema.batches.dubDialogue }).from(schema.batches).where(eq(schema.batches.id, video.batchId));
-  return batch?.dub ?? false;
+/**
+ * Si el montaje dobla el diálogo: SIEMPRE, salvo que el dueño lo apague en la tarjeta (regla fija del 24/11/2026).
+ * Doblar no gasta si no hace falta: sin diálogo o con el diálogo ya en el idioma del anuncio, no se envía nada.
+ */
+export async function dubDialogueOf(video: { dubDialogue: boolean | null }): Promise<boolean> {
+  return video.dubDialogue ?? true;
 }
 
 export interface DubContext {
@@ -55,13 +71,15 @@ export interface DubContext {
   requestedAt: Date;
   /** El «Audio original» ya en el disco. */
   audio: string;
+  /** Idioma del anuncio (`products.language`, ISO 639-1): al que se dobla. */
+  language: string;
   /** El vídeo de la referencia, si está (el `dialogue-only.mp4` lleva su imagen, como en Codex); si no, negro. */
   referenceVideo: string | null;
   dir: string;
   store: ObjectStore;
   notes: string[];
   /** Corre `doblar.py` con sus argumentos; `{ ok, error?, … }` de su última línea. */
-  doblar: (args: string[]) => Promise<{ ok: boolean; error?: string }>;
+  doblar: (args: string[]) => Promise<DoblarResult>;
   higgsfield?: HiggsfieldPort;
   fetch?: typeof fetch;
   now?: () => Date;
@@ -69,7 +87,19 @@ export interface DubContext {
   pollSeconds?: number;
 }
 
-export type DubOutcome = { kind: "ready"; path: string } | { kind: "defer"; delayMs: number } | { kind: "failed"; shown: string; detail: string };
+/** Lo que responde `doblar.py`; `voz` (al separar): si hay diálogo y en qué idioma (Whisper), `null` si no se sabe. */
+export interface DoblarResult {
+  ok: boolean;
+  error?: string;
+  voz?: { hay: boolean; idioma: string | null; probabilidad: number | null; texto: string; motivo: string | null } | null;
+}
+
+export type DubOutcome =
+  | { kind: "ready"; path: string }
+  /** No hace falta doblar (sin diálogo, ya en el idioma del anuncio o no se sabe): el «Audio original» tal cual. */
+  | { kind: "skip" }
+  | { kind: "defer"; delayMs: number }
+  | { kind: "failed"; shown: string; detail: string };
 
 const nowOf = (ctx: DubContext) => ctx.now?.() ?? new Date();
 const messageOf = (error: unknown) => (error instanceof Error ? error.message : String(error)).slice(0, 500);
@@ -84,7 +114,7 @@ async function update(id: number, values: Partial<Dub>): Promise<void> {
   await getDb().update(dubs).set({ ...values, updatedAt: new Date() }).where(eq(dubs.id, id));
 }
 
-/** El «Audio original» doblado al alemán (ver arriba). Nunca lanza: dice si está, si hay que esperar o por qué no. */
+/** El «Audio original» con el diálogo doblado al idioma del anuncio (ver arriba). Nunca lanza: dice si está, si hay que esperar o por qué no. */
 export async function dubbedAudio(ctx: DubContext): Promise<DubOutcome> {
   const higgsfield = ctx.higgsfield ?? getHiggsfield();
   const [video] = await getDb().select({ createdBy: schema.videos.createdBy }).from(schema.videos).where(eq(schema.videos.id, ctx.videoId));
@@ -93,19 +123,22 @@ export async function dubbedAudio(ctx: DubContext): Promise<DubOutcome> {
   const sha = await sha256File(ctx.audio);
   const stems = path.join(ctx.dir, "doblaje");
   const output = path.join(ctx.dir, "audio-doblado.m4a");
+  const target = dubLanguageOf(ctx.language);
 
   try {
     let [row]: Array<Dub | undefined> = await getDb()
       .select()
       .from(dubs)
-      .where(and(eq(dubs.videoId, ctx.videoId), eq(dubs.sourceSha256, sha), eq(dubs.language, DUB_LANGUAGE)))
+      .where(and(eq(dubs.videoId, ctx.videoId), eq(dubs.sourceSha256, sha), eq(dubs.language, target.code)))
       .orderBy(desc(dubs.id))
       .limit(1);
 
+    // Ya se vio que no hace falta doblar este audio: nada.
+    if (row?.status === "skipped") return { kind: "skip" };
     // Ya doblado: del almacén, sin pagar otra vez.
     if (row?.status === "done" && row.storageKey) {
       await ctx.store.download(row.storageKey, output);
-      ctx.notes.push("Diálogo en alemán: el doblaje ya hecho de este vídeo (sin gastar otra vez)");
+      ctx.notes.push(`Diálogo en ${target.name}: el doblaje ya hecho de este vídeo (sin gastar otra vez)`);
       return { kind: "ready", path: output };
     }
     // Una duda (o un envío cortado a medias): solo se vuelve a intentar si la persona pidió el montaje después.
@@ -117,10 +150,30 @@ export async function dubbedAudio(ctx: DubContext): Promise<DubOutcome> {
 
     if (!row || row.status === "failed") {
       const separated = await ctx.doblar(["separar", ctx.audio, stems, ...(ctx.referenceVideo ? ["--video", ctx.referenceVideo] : [])]);
-      if (!separated.ok) return { kind: "failed", shown: dubFailure(separated.error ?? "no se pudo separar la voz"), detail: separated.error ?? "separar" };
+      if (!separated.ok) {
+        // Aún no se ha gastado nada: se monta con el audio original y se avisa (el doblaje va por defecto).
+        ctx.notes.push(`No se pudo separar la voz de la referencia (${(separated.error ?? "sin detalle").slice(0, 120)}): el diálogo va sin doblar`);
+        return { kind: "skip" };
+      }
+      // ¿Hace falta? Sin diálogo, o con el diálogo ya en el idioma del anuncio, no se envía nada (no se gasta).
+      const voz = separated.voz;
+      if (voz === undefined || voz === null) {
+        ctx.notes.push("No se pudo saber si la referencia tiene diálogo: no se dobla");
+        return { kind: "skip" };
+      }
+      if (!voz.hay || voz.idioma === ctx.language) {
+        const why = !voz.hay ? `sin diálogo (${voz.motivo ?? "sin palabras"})` : `el diálogo ya está en ${target.name}`;
+        await getDb()
+          .insert(dubs)
+          .values({ videoId: ctx.videoId, userId, sourceSha256: sha, language: target.code, status: "skipped", quotedCredits: 0, error: why, raw: voz })
+          .onConflictDoNothing();
+        if (voz.hay) ctx.notes.push(`El diálogo de la referencia ya está en ${target.name}: no se dobla`);
+        return { kind: "skip" };
+      }
+      ctx.notes.push(`Diálogo de la referencia en «${voz.idioma}»: se dobla al ${target.name}`);
       const bytes = await fs.readFile(path.join(stems, "dialogue-only.mp4"));
       const { mediaId } = await higgsfield.uploadMedia(userId, { bytes, filename: "dialogue-only.mp4", contentType: "video/mp4", type: "video" });
-      const request = { mediaId, targetLanguage: DUB_LANGUAGE };
+      const request = { mediaId, targetLanguage: target.code };
       const quote = await higgsfield.quoteDubbing(userId, request);
       const { credits } = await higgsfield.balance(userId);
       if (credits < quote.credits) {
@@ -132,7 +185,7 @@ export async function dubbedAudio(ctx: DubContext): Promise<DubOutcome> {
       }
       const [created] = await getDb()
         .insert(dubs)
-        .values({ videoId: ctx.videoId, userId, sourceSha256: sha, language: DUB_LANGUAGE, status: "submitting", mediaId, quotedCredits: quote.credits })
+        .values({ videoId: ctx.videoId, userId, sourceSha256: sha, language: target.code, status: "submitting", mediaId, quotedCredits: quote.credits })
         .returning();
       row = created;
       try {
@@ -194,7 +247,7 @@ export async function dubbedAudio(ctx: DubContext): Promise<DubOutcome> {
     const key = `doblajes/${ctx.videoId}/${row.id}.m4a`;
     await ctx.store.putFile(key, output, { contentType: "audio/mp4" });
     await update(row.id, { status: "done", storageKey: key, creditsSpent: row.quotedCredits, error: null });
-    ctx.notes.push("Diálogo traducido al alemán; la música es la original");
+    ctx.notes.push(`Diálogo traducido al ${target.name}; la música es la original`);
     return { kind: "ready", path: output };
   } catch (error) {
     const shown = isHiggsfieldError(error) ? dubFailure(error.message) : dubFailure("error interno del doblaje");

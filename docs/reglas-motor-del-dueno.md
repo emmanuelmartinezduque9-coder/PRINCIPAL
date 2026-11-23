@@ -98,3 +98,12 @@ Añadidas tras los vídeos de prueba del 23/11 (EisWerk, vídeo 2): el paso «De
 * **Una imagen por vídeo por defecto** (como el motor de Codex: un frame por clip). Más solo si Emmanuel lo especifica en la tarjeta o en el lote.
 * **Solo preguntas obligatorias.** El flujo se para únicamente con una pregunta concreta que solo él puede decidir (avatar obligatorio sin elegir, variante, canción, falta un archivo, no hay saldo o se pasa del presupuesto) y sigue solo en cuanto responde. Nunca preguntas por preguntar.
 * La aprobación visual de la imagen (punto 2) sigue siendo la única parada rutinaria; tras ella, clip y montaje van sin otra ronda. Un rechazo se regenera solo dentro de sus rondas.
+
+## 11. Doblaje del diálogo por defecto (Emmanuel, 24/11/2026)
+
+Todo vídeo cuya referencia tenga diálogo en otro idioma se dobla al idioma del país del producto (Alemania → alemán,
+Italia → italiano…), sin interruptor en el lote ni preguntas. Sin diálogo, o con el diálogo ya en ese idioma, no se
+hace nada ni se gasta (Whisper lo decide sobre la voz separada). Solo la voz: la música queda igual. La única forma de
+no doblar es apagar «Doblar el diálogo» en la tarjeta del vídeo. Gasto aprobado: ~44 créditos por vídeo de 12 s.
+Regla en `reglas/doblaje-del-dialogo.md`; código en `src/server/videos/doblaje.ts` y `montador/doblar.py`.
+

@@ -1,4 +1,13 @@
-# «Traducir el diálogo al alemán» — decisiones (23/11/2026)
+# «Traducir el diálogo al alemán» — decisiones (23/11/2026; por defecto desde el 24/11/2026)
+
+> **24/11/2026, orden del dueño:** el doblaje va POR DEFECTO, sin interruptor en el lote (se quitó). Todo vídeo cuya
+> referencia tenga diálogo en otro idioma se dobla al idioma del producto (`products.language`: `de` → `deu`,
+> `it` → `ita`…). Al separar la voz, Whisper (`faster-whisper`, modelo `base`, en la imagen) dice si hay diálogo
+> (texto con detector de voz y probabilidad de idioma ≥ 0,5; si no, suele ser la letra de la canción) y en qué idioma:
+> sin diálogo o ya en el idioma del anuncio, no se sube nada ni se gasta (fila `dubs` en `skipped`, que no se vuelve a
+> mirar). Si la voz no se puede separar, se monta con el audio original y un aviso. Solo se apaga desde la tarjeta
+> («Doblar el diálogo», discreto). Los vídeos de lote ya montados desde el 23/11 con «Audio original» se volvieron a
+> montar una vez al publicar (`redubTodaysEdits`, marca `doblaje.relanzado-20261124`). Regla: `reglas/doblaje-del-dialogo.md`.
 
 Petición de Emmanuel: en un vídeo o en el lote, la opción **«Traducir el diálogo al alemán»**. El montaje separa
 la voz de la música, dobla SOLO el diálogo al alemán y deja la canción exactamente igual.

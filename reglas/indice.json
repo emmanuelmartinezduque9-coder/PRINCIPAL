@@ -160,5 +160,16 @@
     "replacesSha256": [
       "1c201c1cad4a48d47aa36db5fe1ddcb3c3bf36de5a7ec84972e9e3d5f62ea5d7"
     ]
+  },
+  {
+    "slug": "doblaje-del-dialogo",
+    "title": "Doblaje del diálogo",
+    "description": "El diálogo de la referencia se dobla por defecto al idioma del país del producto, sin tocar la música; sin diálogo o ya en ese idioma, no se gasta.",
+    "file": "doblaje-del-dialogo.md",
+    "source": "docs/reglas-motor-del-dueno.md",
+    "sources": [
+      "docs/reglas-motor-del-dueno.md",
+      "docs/decisiones-doblaje-dialogo.md"
+    ]
   }
 ]

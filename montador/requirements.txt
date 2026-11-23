@@ -6,5 +6,7 @@ numpy>=1.26,<3
 pillow>=10,<14
 freetype-py>=2.4,<3
 uharfbuzz>=0.39,<1
+# «Traducir el diálogo»: si la referencia tiene diálogo y en qué idioma (doblar.py, modelo `base` en la imagen).
+faster-whisper>=1.1,<2
 # Enlaces que la nube sí alcanza (TikTok, YouTube): siempre la última.
 yt-dlp

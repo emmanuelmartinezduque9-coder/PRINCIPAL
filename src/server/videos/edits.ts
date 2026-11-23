@@ -1,5 +1,5 @@
 import { and, desc, eq, inArray, max, sql } from "drizzle-orm";
-import { getDb, schema } from "@/db/client";
+import { getDb, getSetting, schema, setSetting } from "@/db/client";
 import { MAX_EDIT_BYTES, MAX_EDIT_TEXT } from "@/db/schema";
 import { getActiveUser, type AuthUser } from "@/server/auth";
 import { HttpError } from "@/server/http";
@@ -291,6 +291,48 @@ export async function startBatchEdits(batchId: number, now: Date = new Date()): 
     }
   }
   await settleBatch(batch.id);
+}
+
+export const REDUB_SETTING = "doblaje.relanzado-20261124";
+/** Desde cuándo cuentan los montajes «de hoy» de la orden del 24/11/2026 (los lotes del 23 y el 24, hora de Berlín). */
+export const REDUB_SINCE = new Date("2026-11-22T23:00:00Z");
+
+/**
+ * Orden del dueño (24/11/2026), UNA vez: los vídeos de lote ya montados desde el 23/11 con «Audio original»
+ * se vuelven a montar, ahora con el doblaje por defecto (gasto aprobado: ~44 créditos por vídeo de 12 s). Si su
+ * referencia no tiene diálogo o ya está en el idioma del anuncio, el montaje no gasta nada. Devuelve cuántos puso
+ * en cola; repetirlo no hace nada (marca `doblaje.relanzado-20261124`).
+ */
+export async function redubTodaysEdits(now: Date = new Date()): Promise<number> {
+  if (await getSetting<string>(REDUB_SETTING)) return 0;
+  await setSetting(REDUB_SETTING, now.toISOString());
+  const rows = await getDb()
+    .selectDistinct({ id: videos.id })
+    .from(videos)
+    .innerJoin(edits, eq(edits.videoId, videos.id))
+    .where(
+      and(
+        sql`${videos.batchId} is not null`,
+        sql`${videos.songId} is null`,
+        sql`${videos.dubDialogue} is distinct from false`,
+        eq(videos.editStatus, "hecho"),
+        sql`${edits.createdAt} >= ${REDUB_SINCE.toISOString()}::timestamptz`,
+      ),
+    );
+  let queued = 0;
+  for (const { id } of rows) {
+    const [video] = await getDb().select().from(videos).where(eq(videos.id, id));
+    const creator = video ? await getActiveUser(video.createdBy) : null;
+    if (!video || !creator) continue;
+    try {
+      await queueEdit(video, await getProductFor(creator, video.productId), creator.id, now);
+      queued += 1;
+    } catch (error) {
+      console.warn(`[montaje] No se pudo volver a montar el vídeo ${id} para doblarlo: ${error instanceof Error ? error.message : error}`);
+    }
+  }
+  console.log(`[montaje] Doblaje por defecto: ${queued} vídeo(s) de los lotes de hoy vuelven a montarse.`);
+  return queued;
 }
 
 /**

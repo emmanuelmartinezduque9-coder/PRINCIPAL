@@ -11,9 +11,10 @@ import { stopWorker } from "@/jobs/boss";
 import { LocalStore, setObjectStoreForTests } from "@/lib/object-store";
 import type { AuthUser } from "@/server/auth";
 import { uploadSong } from "@/server/songs";
-import { createBatch, setBatchDubDialogue } from "@/server/videos/batches";
+
 import { DUB_UNKNOWN } from "@/server/videos/doblaje";
-import { startEdit, type EditSpec } from "@/server/videos/edits";
+import { redubTodaysEdits, startEdit, type EditSpec } from "@/server/videos/edits";
+import { createBatch } from "@/server/videos/batches";
 import { claimRun, runEdit, type MontajeDeps } from "@/server/videos/montaje-nube";
 import { createVideo, getVideoFor, updateVideoChoices, videoView, type Video } from "@/server/videos/videos";
 import { makeProduct, makeUser } from "./helpers/fixtures";
@@ -56,8 +57,14 @@ if args[0] == 'separar':
     d = Path(args[2]); d.mkdir(parents=True, exist_ok=True)
     (d / 'music.wav').write_bytes(b'musica')
     shutil.copy(args[1], d / 'dialogue-only.mp4')
-    with open(Path(args[2]).parent / 'separaciones.log', 'a') as log: log.write('1')
-    r = {'ok': True}
+    audio = Path(args[1]).read_bytes()
+    if audio.startswith(b'SIN-VOZ'):
+        voz = {'hay': False, 'idioma': None, 'probabilidad': None, 'texto': '', 'motivo': 'sin palabras'}
+    elif audio.startswith(b'AUDIO-ALEMAN'):
+        voz = {'hay': True, 'idioma': 'de', 'probabilidad': 0.97, 'texto': 'Drei, zwei, eins', 'motivo': None}
+    else:
+        voz = {'hay': True, 'idioma': 'en', 'probabilidad': 0.98, 'texto': 'Three, two, one', 'motivo': None}
+    r = {'ok': True, 'voz': voz}
 else:
     Path(args[3]).write_bytes(b'MEZCLA-ALEMANA')
     r = {'ok': True}
@@ -139,23 +146,50 @@ const dubRows = () => getDb().select().from(schema.dubs).orderBy(schema.dubs.id)
 const dubCalls = () => hf.calls.filter((c) => c.method === "submitDubbing");
 
 describe("la opción", () => {
-  it("la tarjeta manda; si no dice nada, lo del lote; sin lote, no se traduce", async () => {
-    const solo = await videoWithAudio();
-    expect((await videoView(dueno, solo.id)).dubDialogue).toBe(false);
-    await updateVideoChoices(dueno, solo.id, { dubDialogue: true });
-    expect((await videoView(dueno, solo.id)).dubDialogue).toBe(true);
+  it("por defecto se dobla (regla fija del dueño); solo no si se apaga en la tarjeta", async () => {
+    const video = await videoWithAudio();
+    expect((await videoView(dueno, video.id)).dubDialogue).toBe(true);
+    await updateVideoChoices(dueno, video.id, { dubDialogue: false });
+    expect((await videoView(dueno, video.id)).dubDialogue).toBe(false);
+    await updateVideoChoices(dueno, video.id, { dubDialogue: null });
+    expect((await videoView(dueno, video.id)).dubDialogue).toBe(true);
+    await expect(updateVideoChoices(dueno, video.id, { dubDialogue: "sí" })).rejects.toMatchObject({ status: 400 });
+  });
+});
 
-    const batch = await createBatch(dueno, "Lote");
-    const enLote = await videoWithAudio({ batchId: batch.id });
-    expect((await videoView(dueno, enLote.id)).dubDialogue).toBe(false);
-    await setBatchDubDialogue(dueno, batch.id, true);
-    expect((await videoView(dueno, enLote.id)).dubDialogue).toBe(true);
-    await updateVideoChoices(dueno, enLote.id, { dubDialogue: false });
-    expect((await videoView(dueno, enLote.id)).dubDialogue).toBe(false);
-    await updateVideoChoices(dueno, enLote.id, { dubDialogue: null });
-    expect((await videoView(dueno, enLote.id)).dubDialogue).toBe(true);
-    await expect(updateVideoChoices(dueno, enLote.id, { dubDialogue: "sí" })).rejects.toMatchObject({ status: 400 });
-    await expect(setBatchDubDialogue(dueno, batch.id, "sí")).rejects.toMatchObject({ status: 400 });
+describe("cuándo no hace falta doblar (no se gasta)", () => {
+  async function withAudio(bytes: Buffer) {
+    const video = await videoWithAudio();
+    await getDb().update(schema.videoReferenceAudio).set({ data: bytes, size: bytes.length }).where(eq(schema.videoReferenceAudio.videoId, video.id));
+    return video;
+  }
+
+  it("con el diálogo ya en alemán: el audio tal cual, sin Higgsfield, y no se vuelve a mirar", async () => {
+    const video = await withAudio(Buffer.from("AUDIO-ALEMAN"));
+    const first = await mount(video.id);
+    expect(first.outcome).toBe("done");
+    expect(first.row.notes).toContain("audio:AUDIO-ALEMAN");
+    expect(first.row.notes).toContain("El diálogo de la referencia ya está en alemán: no se dobla");
+    expect(hf.calls).toEqual([]);
+    expect((await dubRows()).map((r) => [r.status, r.quotedCredits])).toEqual([["skipped", 0]]);
+    await mount(video.id);
+    expect(hf.calls).toEqual([]);
+  });
+
+  it("sin diálogo: el audio tal cual y sin gastar", async () => {
+    const video = await withAudio(Buffer.from("SIN-VOZ"));
+    const { outcome, row } = await mount(video.id);
+    expect(outcome).toBe("done");
+    expect(row.notes).toContain("audio:SIN-VOZ");
+    expect(hf.calls).toEqual([]);
+  });
+
+  it("apagado en la tarjeta: ni se mira", async () => {
+    const video = await videoWithAudio({ dubDialogue: false });
+    const { row } = await mount(video.id);
+    expect(row.notes).toContain(`audio:${ORIGINAL.toString()}`);
+    expect(hf.calls).toEqual([]);
+    expect(await dubRows()).toEqual([]);
   });
 });
 
@@ -183,21 +217,13 @@ describe("el montaje con el diálogo traducido", () => {
     expect(dubCalls()).toHaveLength(1);
   });
 
-  it("sin la opción, el «Audio original» va tal cual y no se llama a Higgsfield", async () => {
-    const video = await videoWithAudio();
-    const { outcome, row } = await mount(video.id);
-    expect(outcome).toBe("done");
-    expect(row.notes).toContain(`audio:${ORIGINAL.toString()}`);
-    expect(hf.calls).toEqual([]);
-  });
-
   it("con canción elegida no hay diálogo que traducir: monta con la canción y lo avisa, sin gastar", async () => {
     const video = await videoWithAudio({ dubDialogue: true });
     const { song } = await uploadSong(dueno, mp3, { title: "Canción", dropMs: 1000 });
     await getDb().update(schema.videos).set({ songId: song.id, audioMode: "cancion" }).where(eq(schema.videos.id, video.id));
     const { row } = await mount(video.id);
-    expect(row.notes).toContain("Con canción elegida no suena el audio de la referencia: no hay diálogo que traducir");
     expect(dubCalls()).toEqual([]);
+    expect(await dubRows()).toEqual([]);
   });
 
   it("sin saldo para el doblaje, se para con el motivo y no envía nada", async () => {
@@ -242,6 +268,26 @@ describe("el montaje con el diálogo traducido", () => {
     expect(await runEdit(run, deps({ higgsfield: slow.port }))).toBe("done");
     expect(slow.calls.filter((c) => c.method === "submitDubbing")).toHaveLength(1);
     expect((await dubRows())[0].status).toBe("done");
+  });
+});
+
+describe("los vídeos de hoy ya montados (orden del 24/11/2026)", () => {
+  it("se vuelven a montar una sola vez: los de lote con «Audio original», doblaje no apagado y montados desde el 23/11", async () => {
+    const batch = await createBatch(dueno, "23/11 · EisWerk");
+    const montado = async (over: Partial<typeof schema.videos.$inferInsert>, at = new Date()) => {
+      const video = await videoWithAudio({ batchId: batch.id, editStatus: "hecho", ...over });
+      await getDb().insert(schema.edits).values({ videoId: video.id, version: 1, size: 1, durationMs: 1000, storageKey: `montajes/${video.id}/1.mp4`, createdAt: at });
+      return video;
+    };
+    const sí = await montado({});
+    await montado({ dubDialogue: false });
+    await montado({}, new Date("2026-11-20T10:00:00Z"));
+    await videoWithAudio({ editStatus: "hecho" }); // sin lote
+    expect(await redubTodaysEdits()).toBe(1);
+    const runs = await getDb().select().from(schema.editRuns);
+    expect(runs.map((r) => [r.videoId, r.status])).toEqual([[sí.id, "queued"]]);
+    expect((runs[0].spec as EditSpec).dubDialogue).toBe(true);
+    expect(await redubTodaysEdits()).toBe(0);
   });
 });
 

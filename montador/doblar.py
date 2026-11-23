@@ -16,12 +16,14 @@ Railway) en vez de PyTorch, para no meter PyTorch en la imagen. `test_doblar.py`
 Uso (`--resultado <archivo.json>` antes de la orden deja también el resultado en ese archivo):
   python doblar.py separar <audio_o_video> <carpeta> [--video <referencia.mp4>]
       → carpeta/{mix,speech,music,sfx}.wav y carpeta/dialogue-only.mp4 (la voz sobre la imagen de la referencia
-        si se da; si no, sobre negro). Imprime un JSON con niveles por pista.
+        si se da; si no, sobre negro). Imprime un JSON con niveles por pista y `voz`: si hay diálogo y su idioma
+        (Whisper), para no doblar lo que no tiene diálogo o ya está en el idioma del anuncio.
   python doblar.py mezclar <carpeta> <doblaje.mp4|wav> <salida.m4a>
       → salida.m4a = música + efectos originales + voz doblada, con la duración del original.
 """
 import argparse
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -77,6 +79,31 @@ def rms_db(x):
     return round(float(20 * np.log10(np.sqrt(np.mean(np.square(x, dtype='float64'))) + 1e-9)), 1)
 
 
+WHISPER_MODELO = 'base'
+UMBRAL_VOZ_DB = -45.0
+UMBRAL_IDIOMA = 0.5
+
+
+def detectar_dialogo(voz, voz_db):
+    """¿Hay diálogo en la voz separada y en qué idioma? Whisper (faster-whisper, modelo `base`, CPU) con detector de
+    voz: sin palabras, o con una voz casi muda, no hay diálogo; un idioma dudoso (< 0,5) tampoco cuenta (suele ser la
+    letra de la canción colándose en la voz). `None` si falta Whisper: entonces no se dobla."""
+    if voz_db < UMBRAL_VOZ_DB:
+        return dict(hay=False, idioma=None, probabilidad=None, texto='', motivo='voz casi muda')
+    try:
+        from faster_whisper import WhisperModel
+    except ImportError:
+        return None
+    modelo = WhisperModel(WHISPER_MODELO, device='cpu', compute_type='int8',
+                          download_root=os.environ.get('WHISPER_MODELS') or str(Path.home() / '.cache' / 'principal-whisper'))
+    trozos, info = modelo.transcribe(str(voz), vad_filter=True, beam_size=1, without_timestamps=True)
+    texto = ' '.join(t.text for t in trozos).strip()
+    prob = round(float(info.language_probability), 2)
+    hay = bool(texto) and prob >= UMBRAL_IDIOMA
+    return dict(hay=hay, idioma=info.language, probabilidad=prob, texto=texto[:300],
+                motivo=None if hay else ('sin palabras' if not texto else 'idioma dudoso'))
+
+
 def separar(fuente, carpeta, video=None):
     """Voz, música y efectos de `fuente` en `carpeta` (WAV estéreo de 48 kHz en coma flotante) y `dialogue-only.mp4`."""
     carpeta = Path(carpeta)
@@ -105,8 +132,10 @@ def separar(fuente, carpeta, video=None):
     else:
         ffmpeg('-f', 'lavfi', '-i', NEGRO, '-i', carpeta / 'speech.wav', '-map', '0:v:0', '-map', '1:a:0', '-c:v', 'libx264',
                '-preset', 'veryfast', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-b:a', '256k', '-shortest', dialogo)
-    return dict(ok=True, segundos=round(len(x) / RATE, 3), mix_db=rms_db(x),
-                **{f'{n}_db': rms_db(pistas[i]) for i, n in enumerate(STEMS)}, dialogo=str(dialogo))
+    r = dict(ok=True, segundos=round(len(x) / RATE, 3), mix_db=rms_db(x),
+             **{f'{n}_db': rms_db(pistas[i]) for i, n in enumerate(STEMS)}, dialogo=str(dialogo))
+    r['voz'] = detectar_dialogo(carpeta / 'speech.wav', r['speech_db'])
+    return r
 
 
 def mezclar(carpeta, doblaje, salida):

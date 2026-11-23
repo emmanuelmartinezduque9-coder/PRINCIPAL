@@ -282,7 +282,7 @@ async function decompose(file: string, dir: string, deps: MontajeDeps): Promise<
 
 /** Entorno de los programas: sin secretos de la web (base de datos, bóveda, claves). */
 function safeEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv {
-  const keep = ["PATH", "HOME", "LANG", "LC_ALL", "TMPDIR", "PYTHONPATH", "UV_CACHE_DIR", "XDG_CACHE_HOME", "NUMBA_CACHE_DIR", "MPLCONFIGDIR", "EMOJI_FONT", "REA_VIDEO_HOME", "REA_VIDEO_MODELS"];
+  const keep = ["PATH", "HOME", "LANG", "LC_ALL", "TMPDIR", "PYTHONPATH", "UV_CACHE_DIR", "XDG_CACHE_HOME", "NUMBA_CACHE_DIR", "MPLCONFIGDIR", "EMOJI_FONT", "REA_VIDEO_HOME", "REA_VIDEO_MODELS", "WHISPER_MODELS"];
   const env: Record<string, string> = {};
   for (const name of keep) if (process.env[name]) env[name] = process.env[name]!;
   return { ...env, PYTHONDONTWRITEBYTECODE: "1", ...extra } as unknown as NodeJS.ProcessEnv;
@@ -356,10 +356,9 @@ export async function runEdit(run: Run, deps: MontajeDeps = {}): Promise<"done" 
       }
     }
     // «Traducir el diálogo al alemán»: el «Audio original» con la voz doblada y la música de siempre.
-    if (spec.dubDialogue) {
-      if (spec.song) notes.push("Con canción elegida no suena el audio de la referencia: no hay diálogo que traducir");
-      else if (!referenceAudio) notes.push("No hay audio de la referencia: no hay diálogo que traducir");
-      else if (!store) notes.push("Sin almacén de archivos: el diálogo no se traduce");
+    // Por defecto (regla fija del 24/11/2026); con canción elegida no suena la referencia y no hay nada que doblar.
+    if (spec.dubDialogue && !spec.song && referenceAudio) {
+      if (!store) notes.push("Sin almacén de archivos: el diálogo no se traduce");
       else {
         const montadorDir = deps.montadorDir ?? path.join(process.cwd(), "montador");
         const python = process.env.REA_VIDEO_PYTHON || deps.python || process.env.MONTADOR_PYTHON || "python3";
@@ -367,6 +366,7 @@ export async function runEdit(run: Run, deps: MontajeDeps = {}): Promise<"done" 
           videoId: spec.videoId,
           requestedAt: run.createdAt,
           audio: referenceAudio.path,
+          language: spec.product.language,
           referenceVideo: audioLink?.file ?? null,
           dir,
           store,
@@ -384,7 +384,7 @@ export async function runEdit(run: Run, deps: MontajeDeps = {}): Promise<"done" 
               env: safeEnv(),
             });
             try {
-              return JSON.parse(await fs.readFile(out, "utf8")) as { ok: boolean; error?: string };
+              return JSON.parse(await fs.readFile(out, "utf8")) as import("@/server/videos/doblaje").DoblarResult;
             } catch {
               return { ok: false, error: ran.timedOut ? "tardó demasiado" : (lastLine(ran.stderr) ?? "doblar.py no respondió") };
             }
@@ -398,7 +398,7 @@ export async function runEdit(run: Run, deps: MontajeDeps = {}): Promise<"done" 
           await finishFailed(run, dub.shown, dub.detail, nowOf(deps), notes);
           return "failed";
         }
-        referenceAudio = { path: dub.path };
+        if (dub.kind === "ready") referenceAudio = { path: dub.path };
       }
     }
 

@@ -337,6 +337,13 @@
       "when": 1795475129339,
       "tag": "0047_motion_transfer_por_defecto",
       "breakpoints": true
+    },
+    {
+      "idx": 48,
+      "version": "7",
+      "when": 1795475794434,
+      "tag": "0048_doblaje_por_defecto",
+      "breakpoints": true
     }
   ]
 }

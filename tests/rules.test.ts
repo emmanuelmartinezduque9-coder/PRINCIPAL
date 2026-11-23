@@ -31,7 +31,7 @@ beforeEach(async () => {
 });
 
 describe("reglas versionadas", () => {
-  it("la siembra crea la versión 1 de las once reglas y repetirla no cambia nada", async () => {
+  it("la siembra crea la versión 1 de las doce reglas y repetirla no cambia nada", async () => {
     await seedRules();
     expect((await listRules()).map((r) => [r.slug, r.version])).toEqual([
       ["angulos-de-venta", 1],
@@ -45,6 +45,7 @@ describe("reglas versionadas", () => {
       ["nombres-de-marca", 1],
       ["nichos-con-datos", 1],
       ["referencias-pinterest", 1],
+      ["doblaje-del-dialogo", 1],
     ]);
   });
 
@@ -124,7 +125,7 @@ describe("reglas versionadas", () => {
 
   it("el dueño lee, ve una versión antigua y guarda por la API", async () => {
     cookie.value = await tokenOf(dueno);
-    expect((await (await getReglasRoute()).json()).rules).toHaveLength(11);
+    expect((await (await getReglasRoute()).json()).rules).toHaveLength(12);
     const post = new Request(`http://localhost/api/reglas/${A}`, {
       method: "POST",
       body: JSON.stringify({ body: "por la API", note: "prueba" }),
