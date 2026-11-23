@@ -2,7 +2,7 @@
 
 **Regla fija del dueño (23/11/2026). Por defecto, siempre:** cada imagen inicial que se genera con Nano Banana lleva fotos reales de Pinterest como referencia de entorno y realismo. También al regenerar una imagen rechazada. Dan mucho realismo y calidad, que es lo que el dueño busca.
 
-**Única excepción:** si el dueño pone una referencia de entorno a mano en la tarjeta o en el vídeo, esa manda y **no** se busca en Pinterest para ese vídeo.
+**Única excepción:** si el dueño pone una referencia a mano en la tarjeta o en el vídeo, esa manda. Desde el 24/11/2026 se pueden subir varias imágenes en cada tarjeta de «Nuevo lote», en su grupo (vale para las tarjetas sin las suyas) y en la pantalla del vídeo, cada una con su papel: **fondo / sala** (por defecto), ambiente, ropa, realismo u otra. Con un fondo subido a mano no se elige nada del banco: ese fondo es la sala del método aprobado («Image N is the user-selected room background only, not product identity.», con sus elementos y su luz). Un ambiente o realismo a mano ocupa el hueco de la foto de realismo; la ropa u otra van adjuntas con su papel. Al aprobar la imagen, el fondo subido a mano entra en el banco de aprobadas.
 
 **Orden del dueño del 23/11/2026, vigente: de momento NO se busca en Pinterest.** Las fotos que encontraba la búsqueda nueva salían falsas, oscuras y sin la decoración pedida. Cada imagen reutiliza fotos del **banco de referencias aprobadas**: las que el dueño ya eligió a mano y aprobó en lotes anteriores (44 del sistema anterior, R00–R48 sin las que no son sitios ni las que rechazó). La aplicación elige sola, con visión, la que mejor encaja con la escena (p. ej. un salón navideño para la escena del sofá y el árbol). El dueño no elige nada ni aprueba ningún paso.
 

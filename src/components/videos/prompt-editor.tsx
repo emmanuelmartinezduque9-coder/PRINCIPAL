@@ -17,6 +17,7 @@ const MANIFEST_ROLE: Record<ManifestItem["role"], string> = {
   video_referencia: "Referencia",
   imagen_aprobada: "Imagen aprobada",
   pinterest: "Referencia de Pinterest",
+  referencia: "Referencia subida a mano",
   ...(PHOTO_ROLE_LABELS as Record<PhotoRole, string>),
 };
 

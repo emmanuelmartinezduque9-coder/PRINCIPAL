@@ -443,6 +443,27 @@ export async function seedReferenceBank(file: string = path.join(process.cwd(), 
  * entorno puesta a mano, esa foto pasa al banco de aprobadas (una vez por huella).
  */
 export async function addApprovedToBank(user: AuthUser, videoId: number): Promise<void> {
+  // Los fondos subidos a mano en la tarjeta o el vídeo (ya guardados por huella) entran tal cual.
+  const manual = (await manualReferences(videoId)).filter((ref) => ref.role === "fondo" || ref.role === "ambiente");
+  if (manual.length > 0) {
+    const [owner] = await getDb()
+      .select({ productId: schema.videos.productId })
+      .from(schema.videos)
+      .where(eq(schema.videos.id, videoId));
+    const product = owner ? await getProductFor(user, owner.productId) : null;
+    for (const ref of manual) {
+      await getDb()
+        .insert(schema.referenceBank)
+        .values({
+          sha256: ref.sha256,
+          code: `V${videoId}`,
+          description: `${ref.role === "fondo" ? "Fondo" : "Ambiente"} que el dueño subió a mano en un vídeo${product ? ` de ${product.name}` : ""} y aprobó`,
+          accounts: product ? [product.name.toUpperCase()] : [],
+          source: "aprobada_en_lote",
+        })
+        .onConflictDoNothing();
+    }
+  }
   const [video] = await getDb()
     .select({ environmentPhotoId: schema.videos.environmentPhotoId, productId: schema.videos.productId })
     .from(schema.videos)
@@ -498,6 +519,17 @@ async function pickFromBank(
   product: { name: string; countries: string[] },
   frameJpeg: Buffer | null,
 ): Promise<void> {
+  // Referencias subidas a mano en la tarjeta o el vídeo (24/11/2026): un fondo a mano es la sala y
+  // manda (no se elige del banco); un «ambiente» o «realismo» a mano ocupa el hueco de realismo.
+  const manual = await manualReferences(run.videoId);
+  const manualRoom = manual.find((ref) => ref.role === "fondo");
+  const manualRealism = manual.find((ref) => ref.role === "realismo" || ref.role === "ambiente");
+  const userRef = (sha256: string, reason: string): PinterestRef => ({ sha256, query: "a mano", pinId: "a mano", sourceUrl: "subida-a-mano", reason });
+  if (manualRoom) {
+    const refs = [userRef(manualRoom.sha256, "Fondo subido a mano en la tarjeta: manda sobre el banco."), ...(manualRealism ? [userRef(manualRealism.sha256, "Subida a mano: realismo.")] : [])];
+    await finishWithRefs(run, ctx, gateway, rules, refs, frameJpeg, product, scene, true);
+    return;
+  }
   const bank = await getDb().select().from(schema.referenceBank).where(eq(schema.referenceBank.active, true)).orderBy(schema.referenceBank.code);
   const shown: Array<{ row: (typeof bank)[number]; thumb: Buffer }> = [];
   for (let start = 0; start < bank.length; start += THUMB_PARALLEL) {
@@ -541,11 +573,36 @@ async function pickFromBank(
     await failRun(run, `No se eligió ninguna referencia del banco (${picked.rejected})`);
     return;
   }
-  const refs: PinterestRef[] = chosen.map((pick) => {
+  const fromBank: PinterestRef[] = chosen.map((pick) => {
     const { row } = shown[pick.n - 1];
     return { sha256: row.sha256, query: `banco ${row.code}`, pinId: row.code, sourceUrl: `banco:${row.code}`, reason: pick.reason };
   });
-  const composed = await composeFramePrompt(run, ctx, gateway, rules, refs, frameJpeg);
+  const refs = manualRealism ? [fromBank[0], userRef(manualRealism.sha256, "Subida a mano: realismo.")] : fromBank;
+  await finishWithRefs(run, ctx, gateway, rules, refs, frameJpeg, product, scene, false);
+}
+
+/** Las referencias subidas a mano del vídeo (tabla `video_references`), en orden. */
+async function manualReferences(videoId: number): Promise<Array<{ sha256: string; role: string }>> {
+  return getDb()
+    .select({ sha256: schema.videoReferences.sha256, role: schema.videoReferences.role })
+    .from(schema.videoReferences)
+    .where(eq(schema.videoReferences.videoId, videoId))
+    .orderBy(schema.videoReferences.position);
+}
+
+/** Escribe el prompt con la sala elegida (del banco o subida a mano) y deja lista la búsqueda. */
+async function finishWithRefs(
+  run: Run,
+  ctx: JobContext,
+  gateway: LlmGateway,
+  rules: Awaited<ReturnType<typeof loadRules>>,
+  refs: PinterestRef[],
+  frameJpeg: Buffer | null,
+  product: { name: string },
+  scene: PinterestScene,
+  userSelected: boolean,
+): Promise<void> {
+  const composed = await composeFramePrompt(run, ctx, gateway, rules, refs, frameJpeg, userSelected);
   if (!composed) return;
   const [current] = await getDb().select({ scene: runs.scene }).from(runs).where(eq(runs.id, run.id));
   await setRun(run.id, {
@@ -650,7 +707,7 @@ Escribe en inglés, en prosa corrida, cinco párrafos (cada uno de un solo bloqu
 
 Primero decide productVisible (si el artículo o su efecto se ven en esta toma) y packagingVisible (si se ve la caja). Lo que no se ve no se adjunta, como en el método aprobado: no lo cites.
 
-Cita cada imagen por su papel, literal y con llaves, nunca con un número: el fotograma original es image 1; la sala, image {ROOM}; el avatar, image {AVATAR}; la primera foto del artículo, image {ARTICLE} (la segunda, image {ARTICLE2}…); la foto del producto funcionando o de su efecto, image {EFFECT}; la caja, image {PACKAGING}. La aplicación pone los números reales. Si en la lista de adjuntos no hay foto de funcionamiento, no cites {EFFECT}.
+Cita cada imagen por su papel, literal y con llaves, nunca con un número: el fotograma original es image 1; la sala, image {ROOM}; el avatar, image {AVATAR}; la primera foto del artículo, image {ARTICLE} (la segunda, image {ARTICLE2}…); la foto del producto funcionando o de su efecto, image {EFFECT}; la caja, image {PACKAGING}; las referencias que el dueño subió a mano para la ropa u otra cosa, image {MANUAL1}, image {MANUAL2}… (con su papel: «Image {MANUAL1} is the user-selected outfit reference: …»). La aplicación pone los números reales. Si en la lista de adjuntos no hay foto de funcionamiento, no cites {EFFECT}.
 
 EL PRODUCTO SIEMPRE ES EL DEL ENCARGO, y se nombra como en el método aprobado: nunca por su nombre de marca ni por el nombre o la marca del producto de image 1 (Higgsfield bloquea un nombre de marca como si fuera ajena). En el párrafo product escribe «Image {ARTICLE} is the exact selected product» (y si se ve la caja, «image {PACKAGING} is its exact retail packaging»), «Retain its geometry, markings, materials and realistic scale», descríbelo con palabras genéricas (p. ej. «the small black collar projector with a cylindrical module») y ordena sustituir el objeto de image 1 descrito también de forma genérica («the glowing collar gadget of image 1 is replaced by the exact selected product of image {ARTICLE}»). Si hay foto de funcionamiento, «image {EFFECT} shows the exact selected product working: its exact effect». La marca propia solo aparece como marca física impresa en el producto o en su caja. De image 1 solo se conservan la posición, el tamaño en el encuadre, la orientación y cómo se usa o se sujeta; nunca su forma, su color ni su efecto («never the one in image 1»). No escribas «same as image 1» ni «as the … in image 1» para el aspecto del producto o de su efecto. Si el producto produce un efecto (una proyección, una luz, un resultado) y hay foto de funcionamiento, el efecto de image 1 se BORRA entero y se dibuja el de image {EFFECT}: escribe «Erase the projected effect of image 1 completely; it must not survive in shape, outline or texture. Draw instead the exact effect of image {EFFECT}» y describe su forma con detalle, mirando image {EFFECT} (p. ej. «two butterfly wings on each side: a large rounded forewing above and a smaller rounded hindwing below, scalloped edges, translucent pink fading to lilac, a network of thin white veins radiating from the body, small sparkles»), con su tamaño y posición respecto al sujeto tal como en image {EFFECT}, y añade «not feathers, not angel wings, not dragon wings, no pointed feather tips». Para el efecto no cites image 1 ni su tamaño, y no nombres la forma del efecto original más que para borrarlo.
 
@@ -674,6 +731,7 @@ async function composeFramePrompt(
   rules: Awaited<ReturnType<typeof loadRules>>,
   refs: PinterestRef[],
   frameJpeg: Buffer | null,
+  userSelected = false,
 ): Promise<{
   prompt: string;
   baseSha: string;
@@ -690,12 +748,28 @@ async function composeFramePrompt(
   }
   const room = await makeThumbnail((await readPinterestImage(refs[0].sha256)).data, "image", 1024);
   const productPhotos = await productPhotosFor(run.videoId);
+  const extras = (await manualReferences(run.videoId)).filter((ref) => ref.role === "ropa" || ref.role === "otro");
+  const extraParts: Array<ReturnType<typeof textPart>> = [];
+  for (const [i, ref] of extras.entries()) {
+    try {
+      const jpeg = await makeThumbnail((await readPinterestImage(ref.sha256)).data, "image", 768);
+      const label = ref.role === "ropa" ? "la ropa que debe llevar la persona (subida a mano)" : "otra referencia subida a mano por el dueño (úsala por lo que muestra)";
+      extraParts.push(textPart(`image {MANUAL${i + 1}} — ${label}:`), imagePart(jpeg, "image/jpeg"));
+    } catch {
+      // Una referencia que no se puede leer no se enseña.
+    }
+  }
   const content: LlmContent = [
     textPart(`Prompt del desglose (lo que se conserva: acción, identidad, producto):\n${base}`),
     ...productPhotos.flatMap((photo) => [textPart(`image ${photo.tag} — ${photo.label}:`), imagePart(photo.jpeg, "image/jpeg")]),
     ...(frameJpeg ? [textPart("image 1 — fotograma original (composición):"), imagePart(frameJpeg, "image/jpeg")] : []),
-    textPart("image {ROOM} — la sala elegida, fondo EXACTO:"),
+    textPart(
+      userSelected
+        ? "image {ROOM} — el fondo que el dueño subió a mano en la tarjeta, fondo EXACTO. En el párrafo environment empieza con «Image {ROOM} is the user-selected room background only, not product identity.»:"
+        : "image {ROOM} — la sala elegida, fondo EXACTO:",
+    ),
     imagePart(room, "image/jpeg"),
+    ...extraParts,
   ];
   const imageRules = await loadRules([RULE_SLUGS.imagen]);
   const written = await runStep(ctx, stepKey(ctx, "prompt-sala", { runId: run.id, attempt: run.attempts, room: refs[0].sha256 }), async () => {
@@ -754,6 +828,7 @@ export async function framePromptFor(videoId: number, imagePrompt: string, manif
     .replaceAll("{AVATAR}", number(byRole("avatar")[0]))
     .replaceAll("{PACKAGING}", number(byRole("embalaje")[0]))
     .replaceAll("{EFFECT}", number(byRole("funcionamiento")[0]))
+    .replace(/\{MANUAL(\d)\}/g, (_, n: string) => number(byRole("referencia")[Number(n) - 1]))
     .replace(/\{ARTICLE(\d?)\}/g, (_, n: string) => number(articles[(n ? Number(n) : 1) - 1]));
 }
 

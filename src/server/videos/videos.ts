@@ -16,6 +16,7 @@ import { analysisStaleness, answersText, checkKindInput, cleanNote, isAvatarMode
 import { bodiesOfVideo, checkVideoBodies, type VideoBody } from "@/server/videos/bodies";
 import { analysisCostMicros, costsOfVideo, type VideoCosts } from "@/server/videos/costs";
 import { clipManifest, imageManifest, type ManifestItem, type ManifestRefs, clipPromptFor } from "@/server/videos/manifest";
+import { listReferences, referencesView } from "@/server/videos/referencias";
 import { pinterestView, readyPinterest, withPinterestRoles, type PinterestView } from "@/server/videos/pinterest";
 import { getVariantFor } from "@/server/variants";
 import { checkImagePrompt, checkVideoPrompt, type PromptIssue } from "@/server/videos/prompt-check";
@@ -555,6 +556,8 @@ export interface VideoView {
   clipManifest: ManifestItem[];
   /** «Referencias de Pinterest» de la imagen inicial (`null`: aún sin desglose, o con entorno puesto a mano). */
   pinterest: PinterestView | null;
+  /** Las imágenes de referencia subidas a mano, con su papel y su enlace. */
+  references: Array<{ sha256: string; role: string; url: string }>;
   /** La imagen inicial: ronda, regeneraciones que quedan, resultado aprobado y la generación más reciente. */
   frame: GenerationView;
   /** El clip, igual que `frame`. */
@@ -630,6 +633,8 @@ export async function manifestRefsFor(user: AuthUser, video: Video, options: { f
     productHidden: ready.productHidden,
     packagingHidden: ready.packagingHidden,
     approvedMethod: ready.approvedMethod,
+    // Las subidas a mano que no son sala ni realismo (ropa, otra): solo con el prompt del método aprobado, que las cita.
+    manualExtras: ready.approvedMethod ? (await listReferences(video.id)).filter((ref) => ref.role === "ropa" || ref.role === "otro") : [],
   };
 }
 
@@ -739,6 +744,7 @@ export async function videoView(user: AuthUser, videoId: number): Promise<VideoV
     imageManifest: imageManifest(video, refs),
     clipManifest: clipManifest(video, refs),
     pinterest: video.environmentPhotoId === null ? await pinterestView(video.id) : null,
+    references: await referencesView(video.id),
     frame: await generationView(video, "frame", user.id),
     clip: await generationView(video, "clip", user.id),
     costs: await costsOfVideo(video),

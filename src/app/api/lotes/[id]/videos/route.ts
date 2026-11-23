@@ -13,17 +13,18 @@ const isId = (value: unknown): value is number => Number.isSafeInteger(value) &&
  * Mac de quien lo pide. `songId`: la «Música» (id de una canción o `null`, audio original).
  * `editReferenceUrl`: la «Referencia de edición» (un enlace admitido o `null`; solo se guarda).
  * `clipModel`: cómo se genera la réplica (`auto`, por defecto, o un modelo).
+ * `references`: las imágenes de referencia subidas a mano (`{ sha256, role }[]`).
  * Solo quien creó el lote.
  */
 export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
   return handle(async (user) => {
     const { id } = await params;
     const body = (await request.json().catch(() => null)) as Record<string, unknown> | null;
-    const { productId, avatarPhotoId, avatarLibraryId, avatarMode, variantId, kind, adaptation, hookSeconds, bodyClipIds, note, linkUrl, songId, editReferenceUrl, clipModel } = body ?? {};
+    const { productId, avatarPhotoId, avatarLibraryId, avatarMode, variantId, kind, adaptation, hookSeconds, bodyClipIds, note, linkUrl, songId, editReferenceUrl, clipModel, references } = body ?? {};
     if (!isId(productId)) return badRequest("Elige el producto.");
     if (avatarPhotoId !== null && !isId(avatarPhotoId)) return badRequest("Elige una foto con papel «Avatar» de este producto.");
     // El tipo, la adaptación, el gancho, los cuerpos, los cambios, quién sale y el enlace los comprueba `addVideoToBatch` (400).
-    const video = await addVideoToBatch(user!, parseId(id), { productId, avatarPhotoId, avatarLibraryId, avatarMode, variantId, kind, adaptation, hookSeconds, bodyClipIds, note, linkUrl, songId, editReferenceUrl, clipModel });
+    const video = await addVideoToBatch(user!, parseId(id), { productId, avatarPhotoId, avatarLibraryId, avatarMode, variantId, kind, adaptation, hookSeconds, bodyClipIds, note, linkUrl, songId, editReferenceUrl, clipModel, references });
     return Response.json({ video }, { status: 201 });
   });
 }

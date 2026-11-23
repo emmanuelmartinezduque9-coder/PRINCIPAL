@@ -1,5 +1,8 @@
 "use client";
 
+import { ReferenceImagesField } from "@/components/videos/reference-images";
+import { isReferenceImage } from "@/lib/reference-images";
+
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { CircleAlert, Clock, Download, Film, FishingHook, Link2, Link2Off, Loader2, MonitorOff, Plug, RefreshCw, Upload } from "lucide-react";
 import Link from "next/link";
@@ -601,6 +604,18 @@ export function StepReference({
               )}
             </Panel>
           ) : null}
+          <Panel title="Imágenes de referencia" actions={<span className="text-xs text-muted-foreground">Opcional</span>}>
+            <ReferenceImagesField
+              value={((view.references ?? []) as unknown[]).filter(isReferenceImage).map(({ sha256, role }) => ({ sha256, role }))}
+              disabled={!mine || video.approvedFrameResultId !== null}
+              onChange={(references) =>
+                void api(`/api/videos/${video.id}/referencias`, { method: "PUT", body: JSON.stringify({ references }) })
+                  .then(refresh)
+                  .catch((error: unknown) => toast.error(error instanceof Error ? error.message : "No se pudieron guardar las imágenes."))
+              }
+            />
+            <p className="mt-2 text-xs text-pretty text-muted-foreground">Un fondo subido aquí manda: la imagen no elige sala del banco.</p>
+          </Panel>
           <Panel title="Entorno" actions={<span className="text-xs text-muted-foreground">Opcional</span>}>
             <PhotoPick
               productId={video.productId}

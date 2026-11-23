@@ -49,8 +49,10 @@ export interface ManifestItem {
     /** Con `automatico`, el sitio del avatar que aún no está elegido (o no encontró ninguno). */
     | { kind: "avatar_pending" }
     /** Una foto de Pinterest guardada (por su huella), como referencia de entorno y realismo. */
-    | { kind: "pinterest"; sha256: string };
-  role: "composicion" | "video_referencia" | "imagen_aprobada" | "pinterest" | PhotoRole;
+    | { kind: "pinterest"; sha256: string }
+    /** Una referencia subida a mano en la tarjeta o el vídeo (ropa u otra), por su huella. */
+    | { kind: "manual"; sha256: string; refRole: string };
+  role: "composicion" | "video_referencia" | "imagen_aprobada" | "pinterest" | "referencia" | PhotoRole;
 }
 
 /**
@@ -76,6 +78,8 @@ export interface ManifestRefs {
   packagingHidden?: boolean;
   /** El prompt con la sala está escrito con el método aprobado: entonces va su orden de adjuntos. */
   approvedMethod?: boolean;
+  /** Referencias subidas a mano que van aparte de la sala y del realismo (ropa, otra), en orden. */
+  manualExtras?: Array<{ sha256: string; role: string }>;
 }
 
 /** Solo fotos (sin variante ni avatar de la biblioteca) o todo. */
@@ -172,7 +176,8 @@ function codexOrder(video: Video, refs: ManifestRefs, bank: string[]): ManifestI
             : firstOf(refs.photos, "embalaje", MAX_PACKAGING_REFS)),
       ];
   const pin = (sha256: string): Ref => ({ source: { kind: "pinterest", sha256 }, role: "pinterest" });
-  const ordered: Ref[] = [...product, pin(bank[0]), ...avatarRefs(video, refs), ...bank.slice(1).map(pin)];
+  const extras = (refs.manualExtras ?? []).map((ref): Ref => ({ source: { kind: "manual", sha256: ref.sha256, refRole: ref.role }, role: "referencia" }));
+  const ordered: Ref[] = [...product, pin(bank[0]), ...avatarRefs(video, refs), ...extras, ...bank.slice(1).map(pin)];
   return [
     { index: 1, tag: "image 1", source: { kind: "reference_frame" }, role: "composicion" },
     ...ordered.map((ref, i): ManifestItem => ({ index: i + 2, tag: `image ${i + 2}`, source: ref.source, role: ref.role })),

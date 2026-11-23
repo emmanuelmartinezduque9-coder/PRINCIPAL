@@ -1557,3 +1557,29 @@ export const referenceBank = pgTable("reference_bank", {
   thumb: bytea("thumb"),
   createdAt: instant("created_at").notNull().defaultNow(),
 });
+
+/**
+ * Referencias de imagen subidas a mano a un vídeo (en la tarjeta del lote, en su grupo o en la
+ * pantalla del vídeo), con su papel: `fondo` (por defecto: la sala, que entonces manda y no se
+ * elige del banco), `ambiente`, `ropa`, `realismo` u `otro`. El archivo está en `pinterest_images`
+ * (por huella, en el almacén).
+ */
+export const videoReferences = pgTable(
+  "video_references",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    videoId: bigint("video_id", { mode: "number" })
+      .notNull()
+      .references(() => videos.id, { onDelete: "cascade" }),
+    sha256: text("sha256")
+      .notNull()
+      .references(() => pinterestImages.sha256),
+    role: text("role").notNull().default("fondo"),
+    position: integer("position").notNull(),
+    createdAt: instant("created_at").notNull().defaultNow(),
+  },
+  (t) => [
+    index("video_references_video").on(t.videoId, t.position),
+    check("video_references_role_valid", sql`${t.role} in ('fondo', 'ambiente', 'ropa', 'realismo', 'otro')`),
+  ],
+);

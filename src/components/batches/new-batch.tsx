@@ -39,7 +39,9 @@ import {
   type VariantJson,
 } from "./batch-fields";
 import { autoBatchName } from "./labels";
-import { effectiveClipModel, effectiveEditReference, newGroup, nextKey, type Group, type Row, type Source } from "./draft";
+import { ReferenceImagesButton, ReferenceImagesField } from "@/components/videos/reference-images";
+import type { ReferenceImage } from "@/lib/reference-images";
+import { effectiveClipModel, effectiveEditReference, effectiveRefs, newGroup, nextKey, type Group, type Row, type Source } from "./draft";
 import { ClipModelSelect } from "@/components/videos/clip-model-picker";
 import { CLIP_MODEL_HINT, CLIP_MODEL_LABEL, DEFAULT_CLIP_MODEL_CHOICE, type ClipModelChoice } from "@/lib/clip-models";
 import { useNewBatchDraft } from "./draft-provider";
@@ -410,6 +412,7 @@ function RowCard({
   editReference,
   groupEditReference,
   groupClipModel,
+  groupRefs,
   onChange,
   onDuplicate,
   onRemove,
@@ -431,6 +434,8 @@ function RowCard({
   groupEditReference: string;
   /** El modelo del grupo, el que usa la tarjeta en «Automático». */
   groupClipModel: ClipModelChoice;
+  /** Las imágenes de referencia del grupo, las que usa la tarjeta si no tiene las suyas. */
+  groupRefs: ReferenceImage[];
   onChange: (changes: Partial<Row>) => void;
   onDuplicate: () => void;
   onRemove: () => void;
@@ -438,6 +443,7 @@ function RowCard({
 }) {
   const name = rowName(row);
   const [refOpen, setRefOpen] = useState(false);
+  const [imagesOpen, setImagesOpen] = useState(false);
   return (
     <li className="group/row flex gap-4 px-5 py-4 transition-colors hover:bg-foreground/[0.015]">
       <RowPreview row={row} />
@@ -460,6 +466,7 @@ function RowCard({
               <ClipModelSelect compact label={`Modelo de ${name}`} value={row.clipModel} inherited={groupClipModel} onChange={(clipModel) => clipModel && onChange({ clipModel })} />
             </span>
             <span className="mx-1 h-5 w-px bg-border" aria-hidden />
+            <ReferenceImagesButton count={row.refs?.length ?? 0} inherited={groupRefs.length} open={imagesOpen} onOpenChange={setImagesOpen} />
             {editReference ? <EditReferenceButton value={row.editReference} inherited={groupEditReference} open={refOpen} onOpenChange={setRefOpen} /> : null}
             <Tooltip>
               <TooltipTrigger asChild>
@@ -511,6 +518,9 @@ function RowCard({
             <HookStepper value={row.hookSeconds} onChange={(hookSeconds) => onChange({ hookSeconds })} disabled={busy} />
             <BodyPicker productId={productId} value={row.bodies} onChange={(bodies) => onChange({ bodies })} className="min-w-0 flex-1" />
           </div>
+        ) : null}
+        {imagesOpen || (row.refs?.length ?? 0) > 0 ? (
+          <ReferenceImagesField value={row.refs ?? []} inherited={groupRefs} onChange={(refs) => onChange({ refs })} disabled={busy} compact />
         ) : null}
         {editReference && refOpen ? (
           <EditReferenceField value={row.editReference} onSave={(url) => onChange({ editReference: url ?? "" })} onClose={() => setRefOpen(false)} />
@@ -589,6 +599,7 @@ function GroupHeader({
 }) {
   const [notesOpen, setNotesOpen] = useState(group.notes.trim() !== "");
   const [refOpen, setRefOpen] = useState(false);
+  const [imagesOpen, setImagesOpen] = useState(false);
   const variant = variants.find((v) => v.id === group.variant);
   const coverId = variant?.articlePhotoIds[0] ?? product?.coverPhotoId ?? null;
   return (
@@ -643,8 +654,12 @@ function GroupHeader({
                   className="min-h-16 resize-y"
                 />
               </Indications>
+              <ReferenceImagesButton count={group.refs?.length ?? 0} inherited={0} open={imagesOpen} onOpenChange={setImagesOpen} />
               <EditReferenceButton value={group.editReference} open={refOpen} onOpenChange={setRefOpen} />
             </div>
+            {imagesOpen || (group.refs?.length ?? 0) > 0 ? (
+              <ReferenceImagesField value={group.refs ?? []} onChange={(refs) => onChange({ refs })} disabled={busy} compact />
+            ) : null}
             {refOpen ? (
               <EditReferenceField
                 value={group.editReference}
@@ -734,6 +749,7 @@ export function NewBatch() {
     editReference: "",
     song: null,
     clipModel: "auto",
+    refs: [],
     open: false,
     error: null,
   });
@@ -847,6 +863,8 @@ export function NewBatch() {
                 songId: row.song?.id ?? null,
                 // El modelo del vídeo: el de la tarjeta o, en «Automático», el de su grupo.
                 clipModel: effectiveClipModel(group, row),
+                // Las imágenes de referencia subidas a mano: las de la tarjeta o, si no tiene, las de su grupo.
+                references: effectiveRefs(group, row),
                 // La «Edición de referencia»: la de la tarjeta o, si no tiene, la de su grupo.
                 ...(editReference ? { editReferenceUrl: effectiveEditReference(group, row) || null } : {}),
                 // Con enlace, el vídeo nace esperando al Mac; con archivo, se sube después.
@@ -935,6 +953,7 @@ export function NewBatch() {
                     editReference={editReference}
                     groupEditReference={group.editReference}
                     groupClipModel={group.clipModel}
+                    groupRefs={group.refs ?? []}
                     onChange={(changes) => updateRow(group.key, row.key, changes)}
                     onDuplicate={() => duplicate(group.key, row)}
                     onRemove={() => removeRow(group.key, row)}

@@ -122,6 +122,10 @@ async function mediaOf(user: AuthUser, video: Video, item: ManifestItem, deps: G
     const filename = `avatar-${source.avatarId}.${EXTENSIONS[avatar.mime] ?? "jpg"}`;
     return ensureMedia(user.id, { bytes: avatar.data, filename, contentType: avatar.mime, type: "image" }, deps);
   }
+  if (source.kind === "manual") {
+    const image = await readPinterestImage(source.sha256);
+    return ensureMedia(user.id, { bytes: image.data, filename: `referencia-${source.sha256.slice(0, 16)}.jpg`, contentType: image.mime, type: "image" }, deps);
+  }
   if (source.kind === "pinterest") {
     const image = await readPinterestImage(source.sha256);
     return ensureMedia(user.id, { bytes: image.data, filename: `pinterest-${source.sha256.slice(0, 16)}.jpg`, contentType: image.mime, type: "image" }, deps);

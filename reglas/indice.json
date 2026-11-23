@@ -156,9 +156,10 @@
       "docs/casos/referencias-pinterest/regla-refinada-propuesta.md",
       "docs/reglas-motor-del-dueno.md"
     ],
-    "updateNote": "Orden del dueño (23/11): de momento sin búsqueda nueva; se reutiliza el banco de referencias aprobadas",
+    "updateNote": "Referencias subidas a mano (24/11): varias por tarjeta, grupo o vídeo, con su papel; un fondo a mano es la sala",
     "replacesSha256": [
-      "1c201c1cad4a48d47aa36db5fe1ddcb3c3bf36de5a7ec84972e9e3d5f62ea5d7"
+      "1c201c1cad4a48d47aa36db5fe1ddcb3c3bf36de5a7ec84972e9e3d5f62ea5d7",
+      "879b4d7262960f4f82e3740288d99ea8e1c9ab05a6495c0dcb4e878c60619149"
     ]
   },
   {

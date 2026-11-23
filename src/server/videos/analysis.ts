@@ -368,6 +368,7 @@ const ROLE_LABEL: Record<ManifestItem["role"], string> = {
   entorno: "entorno",
   funcionamiento: "el producto funcionando o su efecto (forma, color y efecto exactos del producto del encargo, que sustituyen a los del original)",
   otro: "otro",
+  referencia: "referencia subida a mano por el dueño (ropa u otra cosa, por lo que muestra)",
   pinterest: "foto real de Pinterest (entorno y realismo; la añade la aplicación después)",
 };
 

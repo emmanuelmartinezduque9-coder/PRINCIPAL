@@ -1,4 +1,5 @@
 import { pinterestView, type PinterestView } from "@/server/videos/pinterest";
+import { checkReferences, writeReferences } from "@/server/videos/referencias";
 import { DEFAULT_CLIP_MODEL_CHOICE, resolveClipModel, type ClipModel } from "@/lib/clip-models";
 import { and, asc, count, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import { getDb, schema } from "@/db/client";
@@ -353,6 +354,8 @@ export async function addVideoToBatch(
     editReferenceUrl?: unknown;
     /** Cómo se genera la réplica: `auto` (por defecto) o un modelo. */
     clipModel?: unknown;
+    /** Referencias de imagen subidas a mano (`{ sha256, role }[]`, ya subidas con `/api/referencias`). */
+    references?: unknown;
   },
 ): Promise<Video> {
   const batch = await ownBatch(user, batchId, NOT_CREATOR);
@@ -361,6 +364,7 @@ export async function addVideoToBatch(
   const note = cleanNote(input.note);
   const editReferenceUrl = checkEditReferenceUrl(input.editReferenceUrl) ?? null;
   const clipModel = input.clipModel === undefined || input.clipModel === null ? undefined : checkClipModel(input.clipModel);
+  const references = await checkReferences(input.references);
   const { kind, adaptation, hookSeconds } = checkKindInput(input);
   if (!isAvatarMode(input.avatarMode)) throw new HttpError(400, "Valor no válido.");
   const avatarMode = input.avatarMode;
@@ -398,7 +402,9 @@ export async function addVideoToBatch(
     editReferenceUrl,
     ...(clipModel === undefined ? {} : { clipModel }),
   };
-  return input.linkUrl == null ? createVideo(user, input.productId, extras) : createVideoFromLink(user, input.productId, input.linkUrl, extras);
+  const video = input.linkUrl == null ? await createVideo(user, input.productId, extras) : await createVideoFromLink(user, input.productId, input.linkUrl, extras);
+  if (references.length > 0) await getDb().transaction((tx) => writeReferences(tx, video.id, references));
+  return video;
 }
 
 export interface BatchRow {
@@ -698,6 +704,9 @@ export async function duplicateBatchVideo(user: AuthUser, batchId: number, video
         : {}),
       ...(valid ? { imagePrompt: video.imagePrompt, videoPrompt: video.videoPrompt, frameUse: video.frameUse } : {}),
     });
+    // Las referencias subidas a mano viajan con el duplicado.
+    await tx.execute(sql`insert into video_references (video_id, sha256, role, position)
+      select ${copy.id}, sha256, role, position from video_references where video_id = ${video.id}`);
     if (ready) {
       await tx.execute(sql`insert into video_frames (video_id, index, time_ms, mime, size, data)
         select ${copy.id}, index, time_ms, mime, size, data from video_frames where video_id = ${video.id}`);

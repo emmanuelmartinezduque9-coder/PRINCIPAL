@@ -458,3 +458,76 @@ describe("paso del efecto del producto (foto «Funcionando»)", () => {
     vi.unstubAllGlobals();
   });
 });
+
+describe("imágenes de referencia subidas a mano", () => {
+  it("se suben, viajan con la tarjeta y el duplicado; un fondo a mano es la sala (sin banco) y al aprobar entra en el banco", async () => {
+    const { uploadReference, listReferences } = await import("@/server/videos/referencias");
+    const { addVideoToBatch, createBatch, duplicateBatchVideo } = await import("@/server/videos/batches");
+    const { addApprovedToBank } = await import("@/server/videos/pinterest");
+
+    const fondo = await uploadReference(makeImage("fondo-a-mano.jpg", "purple"));
+    const ropa = await uploadReference(makeImage("ropa-a-mano.jpg", "yellow"));
+    expect(fondo.sha256).toMatch(/^[0-9a-f]{64}$/);
+
+    const batch = await createBatch(ana, "Lote con referencias");
+    const created = await addVideoToBatch(ana, batch.id, {
+      productId: producto.id,
+      avatarPhotoId: ids.avatar,
+      avatarMode: "elegido",
+      references: [
+        { sha256: fondo.sha256, role: "fondo" },
+        { sha256: ropa.sha256, role: "ropa" },
+      ],
+    });
+    expect(await listReferences(created.id)).toEqual([
+      { sha256: fondo.sha256, role: "fondo" },
+      { sha256: ropa.sha256, role: "ropa" },
+    ]);
+    // Una huella que no está subida no vale.
+    await expect(
+      addVideoToBatch(ana, batch.id, { productId: producto.id, avatarPhotoId: ids.avatar, avatarMode: "elegido", references: [{ sha256: "f".repeat(64), role: "fondo" }] }),
+    ).rejects.toMatchObject({ status: 400 });
+
+    // «Duplicar» las conserva.
+    const copy = await duplicateBatchVideo(ana, batch.id, created.id);
+    expect(await listReferences(copy.id)).toHaveLength(2);
+
+    // Con un fondo a mano no se elige del banco: la sala es la suya y Claude escribe «user-selected».
+    await analysed(created.id);
+    await requirePinterestRefs(created.id).catch(() => {});
+    const [run] = await getDb().select().from(schema.videoPinterestRefs).where(eq(schema.videoPinterestRefs.videoId, created.id));
+    const { client, calls } = fakeMessages([
+      { text: JSON.stringify(SCENE) },
+      { text: JSON.stringify({ ...COMPOSED, environment: "Image {ROOM} is the user-selected room background only, not product identity. Preserve its sofa on the LEFT." }) },
+    ]);
+    await runPinterest(run.id, pinterestDeps({ gateway: createGateway({ client }) }));
+    const [done] = await getDb().select().from(schema.videoPinterestRefs).where(eq(schema.videoPinterestRefs.id, run.id));
+    expect(done.status).toBe("ready");
+    expect((done.refs as Array<{ sha256: string }>).map((r) => r.sha256)).toEqual([fondo.sha256]);
+    expect(calls).toHaveLength(2); // escena y prompt: ninguna llamada para elegir del banco
+    const texts = (calls[1].messages[0].content as Array<{ type: string; text?: string }>).filter((b) => b.type === "text").map((b) => b.text).join("\n");
+    expect(texts).toContain("user-selected room background only, not product identity");
+    expect(texts).toContain("image {MANUAL1} — la ropa que debe llevar la persona");
+
+    // La imagen: la sala es su fondo y la ropa va adjunta con su papel.
+    const video = await getVideoFor(ana, created.id);
+    const manifest = imageManifest(video, await manifestRefsFor(ana, video));
+    expect(manifest.filter((m) => m.role === "pinterest").map((m) => (m.source as { sha256: string }).sha256)).toEqual([fondo.sha256]);
+    expect(manifest.find((m) => m.role === "referencia")?.source).toEqual({ kind: "manual", sha256: ropa.sha256, refRole: "ropa" });
+
+    // Al aprobar, el fondo subido a mano entra en el banco de aprobadas.
+    await addApprovedToBank(ana, created.id);
+    const [banked] = await getDb().select().from(schema.referenceBank).where(eq(schema.referenceBank.sha256, fondo.sha256));
+    expect(banked).toMatchObject({ source: "aprobada_en_lote", code: `V${created.id}` });
+  });
+
+  it("el borrador guarda las imágenes de la tarjeta y del grupo; la tarjeta sin las suyas usa las del grupo", async () => {
+    const { serializeDraft, parseDraft, effectiveRefs, newGroup } = await import("@/components/batches/draft");
+    const sha = "a".repeat(64);
+    const group = { ...newGroup(7), refs: [{ sha256: sha, role: "fondo" as const }] };
+    const restored = parseDraft(JSON.parse(JSON.stringify(serializeDraft({ name: "x", autoAnalyze: true, groups: [group], batchId: null }))));
+    expect(restored?.groups[0].refs).toEqual([{ sha256: sha, role: "fondo" }]);
+    expect(effectiveRefs(group, { refs: [] })).toEqual(group.refs);
+    expect(effectiveRefs(group, { refs: [{ sha256: "b".repeat(64), role: "ropa" }] })).toEqual([{ sha256: "b".repeat(64), role: "ropa" }]);
+  });
+});

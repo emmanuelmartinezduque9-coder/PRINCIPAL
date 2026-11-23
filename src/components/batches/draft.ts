@@ -2,6 +2,7 @@ import { DEFAULT_CLIP_MODEL_CHOICE, isClipModelChoice, type ClipModelChoice } fr
 import type { SongJson } from "@/components/songs/labels";
 import { DEFAULT_HOOK_SECONDS as DEFAULT_HOOK, MAX_HOOK_SECONDS, MIN_HOOK_SECONDS } from "@/components/videos/brief-labels";
 import type { VideoKind } from "@/server/videos/brief";
+import { isReferenceImage, MAX_REFERENCE_IMAGES, type ReferenceImage } from "@/lib/reference-images";
 
 /**
  * Borrador de «Nuevo lote». Vive en memoria en el diseño de la aplicación (con los archivos
@@ -45,6 +46,8 @@ export interface Row {
   song: SongJson | null;
   /** Cómo se genera la réplica; `auto`: la del grupo (o «Automático»). */
   clipModel: ClipModelChoice;
+  /** Imágenes de referencia subidas a mano (huella + papel); vacío: las del grupo. */
+  refs?: ReferenceImage[];
   /** «Más opciones» abierto. */
   open: boolean;
   error: string | null;
@@ -65,6 +68,8 @@ export interface Group {
   editReference: string;
   /** Cómo se genera la réplica en el grupo: la de cada tarjeta en «Automático». */
   clipModel: ClipModelChoice;
+  /** Imágenes de referencia del grupo: las de cada tarjeta que no tenga las suyas. */
+  refs?: ReferenceImage[];
   rows: Row[];
 }
 
@@ -102,7 +107,15 @@ export function hasContent(draft: Draft): boolean {
   return (
     draft.name.trim() !== "" ||
     draft.batchId !== null ||
-    draft.groups.some((group) => group.productId !== null || group.notes.trim() !== "" || group.editReference !== "" || group.clipModel !== DEFAULT_CLIP_MODEL_CHOICE || group.rows.length > 0)
+    draft.groups.some(
+      (group) =>
+        group.productId !== null ||
+        group.notes.trim() !== "" ||
+        group.editReference !== "" ||
+        group.clipModel !== DEFAULT_CLIP_MODEL_CHOICE ||
+        (group.refs?.length ?? 0) > 0 ||
+        group.rows.length > 0,
+    )
   );
 }
 
@@ -152,6 +165,13 @@ function parseSong(value: unknown): SongJson | null {
   return isRecord(value) && isId(value.id) && typeof value.title === "string" ? (value as unknown as SongJson) : null;
 }
 
+const parseRefs = (value: unknown): ReferenceImage[] => (Array.isArray(value) ? value.filter(isReferenceImage).slice(0, MAX_REFERENCE_IMAGES) : []);
+
+/** Las imágenes de referencia que valen para una tarjeta: las suyas o, si no tiene, las de su grupo. */
+export function effectiveRefs(group: Pick<Group, "refs">, row: Pick<Row, "refs">): ReferenceImage[] {
+  return (row.refs?.length ?? 0) > 0 ? row.refs! : (group.refs ?? []);
+}
+
 function parseRow(value: unknown): Row | null {
   if (!isRecord(value)) return null;
   const source = parseSource(value.source);
@@ -169,6 +189,7 @@ function parseRow(value: unknown): Row | null {
     editReference: text(value.editReference).slice(0, 2000),
     song: parseSong(value.song),
     clipModel: isClipModelChoice(value.clipModel) ? value.clipModel : "auto",
+    ...(Array.isArray(value.refs) ? { refs: parseRefs(value.refs) } : {}),
     open: value.open === true,
     error: null,
   };
@@ -185,6 +206,7 @@ function parseGroup(value: unknown): Group | null {
     variant: isId(value.variant) ? value.variant : null,
     editReference: text(value.editReference).slice(0, 2000),
     clipModel: isClipModelChoice(value.clipModel) && value.clipModel !== "auto" ? value.clipModel : DEFAULT_CLIP_MODEL_CHOICE,
+    ...(Array.isArray(value.refs) ? { refs: parseRefs(value.refs) } : {}),
     rows: Array.isArray(value.rows) ? value.rows.map(parseRow).filter((row): row is Row => row !== null) : [],
   };
 }
