@@ -594,6 +594,12 @@ export async function submitGeneration(generationId: number, deps: GenDeps = {})
     return;
   }
   if (!(await settleSend(row, outcome, deps))) return;
+  if (row.kind === "frame") {
+    // Comprobable en los registros: cuántas referencias llevó la imagen y si iban las de Pinterest (regla fija).
+    const request = row.request as HfImageRequest;
+    const pinterest = /found on Pinterest/.test(request.prompt);
+    console.log(`[generaciones] Imagen del vídeo ${row.videoId} enviada (ronda ${row.round}): ${request.medias.length} referencias; Pinterest: ${pinterest ? "sí" : "no"}.`);
+  }
   try {
     await pollGeneration(row.id, deps);
   } catch (error) {

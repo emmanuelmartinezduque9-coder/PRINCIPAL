@@ -13,7 +13,7 @@ import { getObjectStore } from "@/lib/object-store";
 import { getActiveUser } from "@/server/auth";
 import { HttpError } from "@/server/http";
 import { makeThumbnail } from "@/server/media/ffmpeg";
-import { searchPins, type PinCandidate } from "@/server/pinterest-searches";
+import type { PinCandidate, searchPins } from "@/server/pinterest-searches";
 import { getProductFor } from "@/server/products";
 import { loadRules } from "@/server/rules";
 import type { ManifestItem } from "@/server/videos/manifest";
@@ -44,6 +44,8 @@ const MAX_CANDIDATES = 24;
 /** Lado largo de las miniaturas que mira Claude y de las fotos que se guardan. */
 const THUMB_SIDE = 474;
 const STORED_SIDE = 2048;
+/** Miniaturas que se preparan a la vez (cada una es un ffmpeg). */
+const THUMB_PARALLEL = 4;
 /** Intentos automáticos de una búsqueda que falló antes de pararse y decirlo. */
 export const MAX_PINTEREST_ATTEMPTS = 3;
 /** Una búsqueda en marcha sin novedades desde hace esto se vuelve a lanzar. */
@@ -469,7 +471,9 @@ export async function runPinterest(runId: number, deps: PinterestDeps = {}): Pro
   }
 
   // 2. Buscar (nube; si no deja, el Mac).
-  const search = deps.search ?? searchPins;
+  // Se carga aquí: `pinterest-searches` arrastra la cola de trabajos (subidas → trabajos de vídeo →
+  // este módulo), y cargarlo arriba crea un ciclo de importaciones que rompe la compilación.
+  const search = deps.search ?? (await import("@/server/pinterest-searches")).searchPins;
   const found: Array<PinCandidate & { query: string }> = [];
   const seen = new Set<string>();
   const failures: string[] = [];
@@ -500,15 +504,18 @@ export async function runPinterest(runId: number, deps: PinterestDeps = {}): Pro
   // 3. Elegir con visión.
   const fetchImage = deps.fetchImage ?? fetchBytes;
   const thumbs: Array<{ candidate: (typeof shortlist)[number]; jpeg: Buffer }> = [];
-  await Promise.all(
-    shortlist.map(async (candidate, i) => {
-      try {
-        thumbs[i] = { candidate, jpeg: await makeThumbnail(await fetchImage(candidate.thumbUrl), "image", THUMB_SIDE) };
-      } catch {
-        // Una miniatura que no baja no se enseña.
-      }
-    }),
-  );
+  // De 4 en 4: muchas ffmpeg a la vez agotan los hilos del servidor y fallan otras tareas.
+  for (let start = 0; start < shortlist.length; start += THUMB_PARALLEL) {
+    await Promise.all(
+      shortlist.slice(start, start + THUMB_PARALLEL).map(async (candidate, offset) => {
+        try {
+          thumbs[start + offset] = { candidate, jpeg: await makeThumbnail(await fetchImage(candidate.thumbUrl), "image", THUMB_SIDE) };
+        } catch {
+          // Una miniatura que no baja no se enseña.
+        }
+      }),
+    );
+  }
   const shown = thumbs.filter(Boolean);
   if (shown.length === 0) {
     await failRun(run, "No se pudo bajar ninguna foto de Pinterest");
