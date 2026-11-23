@@ -31,7 +31,7 @@ import { formatUsd } from "@/lib/money";
 import { cn } from "@/lib/utils";
 import { AutoAction, AutoStepper, PauseBanner, SendBatchButton } from "./auto-send";
 import type { VariantJson } from "./batch-fields";
-import { AutoAnalyzeSwitch, FrameCountPicker, GroupHeader, RowActions } from "./board-parts";
+import { AutoAnalyzeSwitch, DubDialogueSwitch, FrameCountPicker, GroupHeader, RowActions } from "./board-parts";
 import { checkLink, EditReferenceField, rowSupportsEditReference } from "./edit-reference";
 import {
   analysisState,
@@ -892,11 +892,15 @@ export function BatchBoard({ batchId }: { batchId: number }) {
               <div className="flex flex-wrap items-center gap-x-3">
                 <AutoAnalyzeSwitch batchId={batchId} value={data.batch.autoAnalyze} editable={data.batch.mine} />
                 <FrameCountPicker batchId={batchId} value={data.batch.frameCount} editable={data.batch.mine} />
+                <DubDialogueSwitch batchId={batchId} value={data.batch.dubDialogue} editable={data.batch.mine} />
               </div>
             ) : (
-              <span className="px-1 text-sm text-muted-foreground tabular-nums">
-                {done}/{rows.length} clips
-              </span>
+              <div className="flex flex-wrap items-center gap-x-3">
+                <span className="px-1 text-sm text-muted-foreground tabular-nums">
+                  {done}/{rows.length} clips
+                </span>
+                <DubDialogueSwitch batchId={batchId} value={data.batch.dubDialogue} editable={data.batch.mine} />
+              </div>
             )
           }
         >

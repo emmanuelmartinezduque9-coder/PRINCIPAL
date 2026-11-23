@@ -353,6 +353,8 @@ export interface VideoChoicesInput {
   editReferenceUrl?: unknown;
   /** Imágenes por ronda (1–4), o `null` para la del lote (o 1). */
   frameCount?: unknown;
+  /** «Traducir el diálogo al alemán»: `true`/`false`, o `null` para lo del lote. */
+  dubDialogue?: unknown;
 }
 
 /**
@@ -402,6 +404,11 @@ export async function updateVideoChoices(user: AuthUser, videoId: number, input:
   if (input.frameCount !== undefined) {
     if (input.frameCount !== null && !isFrameCount(input.frameCount)) throw new HttpError(400, BAD_FRAME_COUNT);
     changes.frameCount = input.frameCount;
+  }
+  // Traducir el diálogo: solo cambia el montaje.
+  if (input.dubDialogue !== undefined) {
+    if (input.dubDialogue !== null && typeof input.dubDialogue !== "boolean") throw new HttpError(400, "Elige si se traduce el diálogo.");
+    changes.dubDialogue = input.dubDialogue;
   }
 
   if (Object.keys(changes).length === 0) return video;
@@ -487,6 +494,8 @@ export interface VideoView {
   auto: AutoStatus;
   /** Imágenes que pide cada ronda (la de la tarjeta, la del lote o 1). */
   frameCount: number;
+  /** «Traducir el diálogo al alemán» para el montaje (lo de la tarjeta o, si no dice nada, lo del lote). */
+  dubDialogue: boolean;
   /** «Indicaciones» del lote para el producto de este vídeo (llegan al desglose), o `null`. */
   productNotes: string | null;
   mine: boolean;
@@ -728,10 +737,11 @@ export async function videoView(user: AuthUser, videoId: number): Promise<VideoV
 }
 
 /** El estado del flujo automático y cuántas imágenes por ronda. Se cargan al pedirlo (importan este módulo). */
-async function autoParts(user: AuthUser, video: Video): Promise<Pick<VideoView, "auto" | "frameCount">> {
+async function autoParts(user: AuthUser, video: Video): Promise<Pick<VideoView, "auto" | "frameCount" | "dubDialogue">> {
   const { autoStatusOf } = await import("@/server/videos/autopilot");
   const { frameCountOf } = await import("@/server/videos/frame");
-  return { auto: await autoStatusOf(user, video), frameCount: await frameCountOf(video) };
+  const { dubDialogueOf } = await import("@/server/videos/doblaje");
+  return { auto: await autoStatusOf(user, video), frameCount: await frameCountOf(video), dubDialogue: await dubDialogueOf(video) };
 }
 
 /** El montaje del vídeo y sus rótulos. `edits.ts` importa este módulo: se carga al pedirlo, sin ciclo al arrancar. */

@@ -257,6 +257,33 @@ export function AutoAnalyzeSwitch({ batchId, value, editable }: { batchId: numbe
   );
 }
 
+/**
+ * «Traducir el diálogo al alemán» del lote: el montaje de cada vídeo (que no diga otra cosa en su
+ * tarjeta) dobla solo la voz del «Audio original» y deja la música igual. Solo quien creó el lote.
+ */
+export function DubDialogueSwitch({ batchId, value, editable }: { batchId: number; value: boolean; editable: boolean }) {
+  const client = useQueryClient();
+  const id = useId();
+  const [saving, setSaving] = useState(false);
+  async function change(next: boolean) {
+    setSaving(true);
+    try {
+      await api(`/api/lotes/${batchId}`, { method: "PATCH", body: JSON.stringify({ dubDialogue: next }) });
+      await client.invalidateQueries({ queryKey: ["batch", batchId] });
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "No se pudo guardar.");
+    } finally {
+      setSaving(false);
+    }
+  }
+  return (
+    <label htmlFor={id} className={cn("flex h-9 items-center gap-2.5 px-1 text-sm text-muted-foreground", editable && "cursor-pointer")}>
+      <Switch id={id} checked={value} disabled={!editable || saving} onCheckedChange={(next) => void change(next)} />
+      Traducir el diálogo al alemán
+    </label>
+  );
+}
+
 const FRAME_COUNT_OPTIONS = (["1", "2", "3", "4"] as const).map((value) => ({ value, label: value }));
 
 /** «Imágenes por vídeo» del lote (1 por defecto: regla fija del dueño). Solo quien lo creó lo cambia. */

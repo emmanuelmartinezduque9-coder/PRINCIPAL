@@ -8,6 +8,7 @@ import { BodyPicker, HookStepper } from "@/components/library/body-picker";
 import { Panel } from "@/components/shell/panel";
 import { MusicPicker } from "@/components/songs/music-picker";
 import type { SongJson } from "@/components/songs/labels";
+import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { api } from "@/lib/api";
 import { createLatestSaver, type LatestSaver } from "@/lib/latest-saver";
@@ -159,6 +160,39 @@ function SavedHookSeconds({ value, onSave, disabled }: { value: number; onSave: 
 }
 
 /**
+ * «Traducir el diálogo al alemán» (solo con «Audio original»): el montaje separa la voz de la música,
+ * dobla solo la voz al alemán y deja la canción igual. Enseña lo que vale (lo de la tarjeta o lo del
+ * lote); cambiarlo lo fija en la tarjeta.
+ */
+function DubDialogueSwitch({ view }: { view: VideoViewJson }) {
+  const client = useQueryClient();
+  const id = useId();
+  const [saving, setSaving] = useState(false);
+  const { video, mine } = view;
+  async function change(next: boolean) {
+    const key = ["video", video.id];
+    const before = client.getQueryData<VideoViewJson>(key);
+    client.setQueryData<VideoViewJson>(key, (current) => (current ? { ...current, dubDialogue: next } : current));
+    setSaving(true);
+    try {
+      await api(`/api/videos/${video.id}`, { method: "PUT", body: JSON.stringify({ dubDialogue: next }) });
+    } catch (error) {
+      if (before) client.setQueryData(key, before);
+      toast.error(error instanceof Error ? error.message : "No se pudo guardar.");
+    } finally {
+      setSaving(false);
+      void client.invalidateQueries({ queryKey: key });
+    }
+  }
+  return (
+    <label htmlFor={id} className={cn("flex h-8 shrink-0 items-center gap-2 text-sm", mine && "cursor-pointer")}>
+      <Switch id={id} checked={view.dubDialogue} disabled={!mine || saving} onCheckedChange={(next) => void change(next)} />
+      Traducir el diálogo al alemán
+    </label>
+  );
+}
+
+/**
  * Tipo de vídeo, «Cambios específicos» (con dictado) y «Qué adaptación quieres» (solo con
  * adaptación). Con «Solo gancho», la duración del gancho y los cuerpos que van detrás (de los
  * cuerpos del producto). Si el vídeo es de un lote con indicaciones para su producto, se ven (no
@@ -194,6 +228,7 @@ export function BriefPanel({ view }: { view: VideoViewJson }) {
             <span className="text-sm text-muted-foreground">{CLIP_MODEL_LABEL[video.clipModel as ClipModelChoice] ?? video.clipModel}</span>
           )}
         </div>
+        {view.song ? null : <DubDialogueSwitch view={view} />}
         {productNotes ? (
           <p className="flex min-w-0 items-start gap-2 text-sm text-muted-foreground" title={productNotes}>
             <Layers className="mt-0.5 size-4 shrink-0" role="img" aria-label="Indicaciones del lote" />

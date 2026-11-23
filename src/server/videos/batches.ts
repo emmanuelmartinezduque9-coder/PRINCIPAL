@@ -106,6 +106,14 @@ export async function setBatchFrameCount(user: AuthUser, batchId: number, frameC
   return updated;
 }
 
+/** «Traducir el diálogo al alemán» para los vídeos del lote que no digan otra cosa. Solo quien creó el lote. */
+export async function setBatchDubDialogue(user: AuthUser, batchId: number, dubDialogue: unknown): Promise<Batch> {
+  const batch = await ownBatch(user, batchId);
+  if (typeof dubDialogue !== "boolean") throw new HttpError(400, "Elige si se traduce el diálogo.");
+  const [updated] = await getDb().update(batches).set({ dubDialogue }).where(eq(batches.id, batch.id)).returning();
+  return updated;
+}
+
 /**
  * Guarda las «Indicaciones para los vídeos de {producto}» del lote (hasta 4.000 caracteres; vacío
  * las quita). Llegan al desglose de cada vídeo de ese producto en el lote, y cambiarlas deja sus
@@ -476,7 +484,7 @@ export interface BatchGroup {
 }
 
 export interface BatchView {
-  batch: { id: number; name: string; createdAt: Date; createdBy: number; mine: boolean; autoAnalyze: boolean; frameCount: number };
+  batch: { id: number; name: string; createdAt: Date; createdBy: number; mine: boolean; autoAnalyze: boolean; frameCount: number; dubDialogue: boolean };
   /** Los productos del lote, en el orden de su primer vídeo. */
   groups: BatchGroup[];
   rows: BatchRow[];

@@ -440,6 +440,8 @@ export const batches = pgTable(
      * 23/11/2026 quedan en `false` y siguen esperando su confirmación.
      */
     autoConfirm: boolean("auto_confirm").notNull().default(true),
+    /** «Traducir el diálogo al alemán» para los vídeos del lote que no digan otra cosa en su tarjeta. */
+    dubDialogue: boolean("dub_dialogue").notNull().default(false),
   },
   (t) => [
     index("batches_created_by").on(t.createdBy, t.createdAt),
@@ -682,6 +684,11 @@ export const videos = pgTable(
      * sin lote, 1 (regla fija del dueño: una imagen por vídeo salvo que pida más).
      */
     frameCount: integer("frame_count"),
+    /**
+     * «Traducir el diálogo al alemán» (`doblaje.ts`): el montaje separa la voz de la música del «Audio
+     * original», dobla solo la voz al alemán y deja la canción igual. `null`: lo del lote (sin lote, no).
+     */
+    dubDialogue: boolean("dub_dialogue"),
     /**
      * Desde cuándo el vídeo va solo (`autopilot.ts`): desglose → imagen → clip → montaje sin botones.
      * Los vídeos nuevos nacen con la fecha; los de antes del 23/11/2026 quedan `null` hasta que quien
@@ -1247,6 +1254,43 @@ export const editRuns = pgTable(
     index("edit_runs_queue").on(t.status, t.availableAt, t.id),
     uniqueIndex("edit_runs_one_active").on(t.videoId).where(sql`${t.status} in ('queued', 'running')`),
     check("edit_runs_status_valid", sql`${t.status} in ('queued', 'running', 'done', 'failed')`),
+  ],
+);
+
+/**
+ * Doblajes del diálogo al alemán (`src/server/videos/doblaje.ts`, copia del método de Codex del
+ * 19/11/2026): la voz separada del «Audio original» con BandIt v2, doblada con el modelo `dubbing` de
+ * Higgsfield y mezclada sobre la música y los efectos originales. Una fila por vídeo, audio de partida
+ * (`source_sha256`) e idioma: el mismo audio no se paga dos veces. `submitting` → `submitted` →
+ * `done` (con `storage_key`, el audio final en el almacén) | `failed` | `unknown` (no se sabe si llegó).
+ */
+export const dubs = pgTable(
+  "dubs",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    videoId: bigint("video_id", { mode: "number" })
+      .notNull()
+      .references((): AnyPgColumn => videos.id, { onDelete: "cascade" }),
+    /** Quien paga (con su Higgsfield): quien creó el vídeo. */
+    userId: bigint("user_id", { mode: "number" }).notNull(),
+    sourceSha256: text("source_sha256").notNull(),
+    language: text("language").notNull().default("deu"),
+    status: text("status").notNull().default("submitting"),
+    mediaId: text("media_id"),
+    jobId: text("job_id"),
+    quotedCredits: integer("quoted_credits").notNull(),
+    creditsSpent: integer("credits_spent"),
+    storageKey: text("storage_key"),
+    error: text("error"),
+    raw: jsonb("raw"),
+    createdAt: instant("created_at").notNull().defaultNow(),
+    updatedAt: instant("updated_at").notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("dubs_one_live").on(t.videoId, t.sourceSha256, t.language).where(sql`${t.status} in ('submitting', 'submitted', 'done')`),
+    index("dubs_video").on(t.videoId, t.id),
+    check("dubs_status_valid", sql`${t.status} in ('submitting', 'submitted', 'done', 'failed', 'unknown')`),
+    check("dubs_credits_valid", sql`${t.quotedCredits} >= 0 and (${t.creditsSpent} is null or ${t.creditsSpent} >= 0)`),
   ],
 );
 

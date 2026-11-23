@@ -6,6 +6,7 @@ import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { and, eq, inArray, lt, sql } from "drizzle-orm";
 import { getDb, schema } from "@/db/client";
+import type { HiggsfieldPort } from "@/connectors/higgsfield";
 import { getObjectStore, type ObjectStore } from "@/lib/object-store";
 import { macOnline } from "@/server/agent-tasks";
 import { downloadLinkMedia, ensureLinkMedia, fetchInCloud, macTaskStatus, requestFromMac, saveBreakdown, type FetchDeps } from "@/server/link-media";
@@ -14,6 +15,7 @@ import { killPrograms, lastLine, runProgram } from "@/server/media/programs";
 import { readSongFile } from "@/server/songs";
 import { storedOriginalKey } from "@/server/videos/archive";
 import { openClipStream } from "@/server/videos/clip";
+import { dubbedAudio } from "@/server/videos/doblaje";
 import { batchOfVideo, cleanSelfCheck, failEdit, MAX_EDIT_BYTES, readReferenceAudio, saveEdit, settleBatch, type EditSpec } from "@/server/videos/edits";
 
 /**
@@ -41,6 +43,8 @@ export const RUN_STALE_MS = 3 * 60_000;
 export const MAX_RUN_ATTEMPTS = 3;
 export const MONTADOR_TIMEOUT_MS = 25 * 60_000;
 export const REA_VIDEO_TIMEOUT_MS = 10 * 60_000;
+/** Separar la voz o mezclar el doblaje (`doblar.py`). */
+export const DOBLAR_TIMEOUT_MS = 15 * 60_000;
 /** Lo más que un montaje espera a que el Mac traiga un enlace, desde que se pidió el montaje. */
 export const LINK_WAIT_MAX_MS = 20 * 60_000;
 /** Cada cuánto se vuelve a mirar si el enlace ya llegó. */
@@ -70,6 +74,9 @@ export interface MontajeDeps {
   montadorDir?: string;
   /** yt-dlp simulado (pruebas). */
   runYtDlp?: FetchDeps["runYtDlp"];
+  /** Higgsfield (pruebas: el simulado) y la espera de cada pregunta, para el doblaje del diálogo. */
+  higgsfield?: HiggsfieldPort;
+  dubPollSeconds?: number;
 }
 
 const nowOf = (deps: MontajeDeps) => deps.now?.() ?? new Date();
@@ -322,6 +329,53 @@ export async function runEdit(run: Run, deps: MontajeDeps = {}): Promise<"done" 
         notes.push("No se pudo sacar el audio de la referencia: el vídeo queda sin él");
       }
     }
+    // «Traducir el diálogo al alemán»: el «Audio original» con la voz doblada y la música de siempre.
+    if (spec.dubDialogue) {
+      if (spec.song) notes.push("Con canción elegida no suena el audio de la referencia: no hay diálogo que traducir");
+      else if (!referenceAudio) notes.push("No hay audio de la referencia: no hay diálogo que traducir");
+      else if (!store) notes.push("Sin almacén de archivos: el diálogo no se traduce");
+      else {
+        const montadorDir = deps.montadorDir ?? path.join(process.cwd(), "montador");
+        const python = process.env.REA_VIDEO_PYTHON || deps.python || process.env.MONTADOR_PYTHON || "python3";
+        const dub = await dubbedAudio({
+          videoId: spec.videoId,
+          requestedAt: run.createdAt,
+          audio: referenceAudio.path,
+          referenceVideo: audioLink?.file ?? null,
+          dir,
+          store,
+          notes,
+          higgsfield: deps.higgsfield,
+          fetch: deps.fetch,
+          now: deps.now,
+          pollSeconds: deps.dubPollSeconds,
+          doblar: async (args) => {
+            const out = path.join(dir, `doblar-${args[0]}.json`);
+            await fs.rm(out, { force: true });
+            const ran = await runProgram(python, ["-B", path.join(montadorDir, "doblar.py"), "--resultado", out, ...args], {
+              cwd: montadorDir,
+              timeoutMs: DOBLAR_TIMEOUT_MS,
+              env: safeEnv(),
+            });
+            try {
+              return JSON.parse(await fs.readFile(out, "utf8")) as { ok: boolean; error?: string };
+            } catch {
+              return { ok: false, error: ran.timedOut ? "tardó demasiado" : (lastLine(ran.stderr) ?? "doblar.py no respondió") };
+            }
+          },
+        });
+        if (dub.kind === "defer") {
+          await defer(run, dub.delayMs, nowOf(deps));
+          return "deferred";
+        }
+        if (dub.kind === "failed") {
+          await finishFailed(run, dub.shown, dub.detail, nowOf(deps), notes);
+          return "failed";
+        }
+        referenceAudio = { path: dub.path };
+      }
+    }
+
     const font = await fontFile(store, deps);
     if (!font) {
       await finishFailed(run, montajeFailure("falta la fuente de los rótulos en el servidor"), "sin fuente", nowOf(deps), notes);

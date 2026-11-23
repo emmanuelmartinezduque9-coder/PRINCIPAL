@@ -28,6 +28,8 @@ export interface FakeHiggsfield {
 
 /** Créditos del simulado: 2 por imagen; por clip, `duration × 3` a 480p (× 5 a 720p, × 8 a 1080p). */
 const IMAGE_CREDITS = 2;
+/** Lo que costó el doblaje real de Codex (12 s, 19/11/2026). */
+export const DUB_CREDITS = 66;
 const VIDEO_CREDITS_PER_SECOND: Record<HfVideoRequest["resolution"], number> = { "480p": 3, "720p": 5, "1080p": 8 };
 
 /** Muestras para el modo local: una imagen PNG de 90×160 y un vídeo MP4 de 1 s, como direcciones `data:`. */
@@ -160,6 +162,20 @@ export function createFakeHiggsfield(
     async submitVideo(userId, request, submitOptions = {}) {
       record("submitVideo", userId, { request, quoteRef: submitOptions.quoteRef ?? null });
       return submit("video", request, 1, videoCost(request));
+    },
+    async quoteDubbing(userId, request) {
+      record("quoteDubbing", userId, { request });
+      quotes += 1;
+      return { credits: DUB_CREDITS, quoteRef: `quote:fake-${quotes}` };
+    },
+    async submitDubbing(userId, request) {
+      record("submitDubbing", userId, { request });
+      jobCounter += 1;
+      const jobId = `job-${jobCounter}`;
+      kinds.set(jobId, "video");
+      state.jobs[jobId] = { jobId, status: "pending", failure: null, error: null, urls: [] };
+      state.credits -= DUB_CREDITS;
+      return { jobIds: [jobId], rejected: [], raw: { jobs: [{ index: 0, job_id: jobId }] } };
     },
     async jobs(userId, jobIds, waitSeconds) {
       record("jobs", userId, { jobIds, waitSeconds });

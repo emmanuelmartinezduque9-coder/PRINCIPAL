@@ -78,6 +78,15 @@ export interface HfWanRequest {
 
 export type HfVideoRequest = HfSeedanceRequest | HfGenjutsuRequest | HfWanRequest;
 
+/**
+ * Doblaje del diálogo (modelo `dubbing` de Higgsfield, el que usó Codex el 19/11/2026): un vídeo
+ * subido con SOLO la voz (`input_video`) se vuelve a decir en `targetLanguage` (ISO 639-3: `deu`).
+ */
+export interface HfDubRequest {
+  mediaId: string;
+  targetLanguage: "deu";
+}
+
 export interface HfSubmitResult {
   /** Trabajos que Higgsfield aceptó (uno por candidata aceptada). */
   jobIds: string[];
@@ -158,6 +167,10 @@ export interface HiggsfieldPort {
   submitImages(userId: number, request: HfImageRequest, count: number): Promise<HfSubmitResult>;
   /** GASTA: envía un clip; con `quoteRef`, exactamente el presupuestado. Mismos errores que `submitImages`. */
   submitVideo(userId: number, request: HfVideoRequest, options?: { quoteRef?: string | null }): Promise<HfSubmitResult>;
+  /** Presupuesto (no gasta) de un doblaje. */
+  quoteDubbing(userId: number, request: HfDubRequest): Promise<HfQuote>;
+  /** GASTA: envía un doblaje. Mismos errores que `submitImages`. */
+  submitDubbing(userId: number, request: HfDubRequest): Promise<HfSubmitResult>;
   /** Estado de los trabajos, esperando como mucho `waitSeconds` (0–15). En el orden pedido. */
   jobs(userId: number, jobIds: string[], waitSeconds: number): Promise<HfJob[]>;
   /**

@@ -7,6 +7,7 @@ import { getProductFor, type Product } from "@/server/products";
 import { parseRange, songSummaries } from "@/server/songs";
 import type { Analysis } from "@/server/videos/analysis";
 import { bodiesOfVideo } from "@/server/videos/bodies";
+import { dubDialogueOf } from "@/server/videos/doblaje";
 import { getObjectStore } from "@/lib/object-store";
 import { downloadableClip, servableClipUrl } from "@/server/videos/clip";
 import { canChooseSong, effectiveEditReferenceUrl, getVideoFor, hookTiming, type Video } from "@/server/videos/videos";
@@ -72,6 +73,11 @@ export interface EditSpec {
   referenceAudio: { source: "web" } | { source: "enlace"; url: string } | null;
   texts: { main: string; cta: string };
   editReferenceUrl: string | null;
+  /**
+   * «Traducir el diálogo al alemán» (`doblaje.ts`): el «Audio original» se dobla (solo la voz; la
+   * música y los efectos quedan los originales). Sin canción y con audio de la referencia; si no, aviso.
+   */
+  dubDialogue?: boolean;
 }
 
 /** El CTA de siempre del dueño, en el idioma del anuncio. */
@@ -176,6 +182,7 @@ async function buildSpec(video: Video, product: Product): Promise<EditSpec> {
     texts: editTextsFor(video, product, await latestAnalysisResult(video.id)),
     // La del vídeo o, si no tiene, la de su producto en el lote.
     editReferenceUrl: await effectiveEditReferenceUrl(video),
+    dubDialogue: await dubDialogueOf(video),
   };
 }
 

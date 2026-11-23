@@ -33,6 +33,10 @@ RUN python3 -m venv /opt/montador \
 # rea-video los baja la primera vez que haga falta.
 RUN mkdir -p /opt/rea-models && /opt/montador/bin/python -c "\
 from rea_video import stems; stems.ensure_model()" || echo 'modelos de rea-video: se bajarán al usarlos'
+# BandIt v2 (voz / música / efectos, ~149 MB, ONNX) para «Traducir el diálogo al alemán» (montador/doblar.py,
+# copia del método de Codex del 19/11/2026): dentro de la imagen; si no se puede bajar ahora, se baja al primer doblaje.
+RUN /opt/montador/bin/python -c "\
+from rea_video import effects; effects.ensure_model()" || echo 'BandIt v2: se bajará al primer doblaje'
 
 WORKDIR /app
 COPY package.json package-lock.json ./

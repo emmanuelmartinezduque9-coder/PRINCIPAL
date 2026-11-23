@@ -1,0 +1,117 @@
+#!/usr/bin/env python3
+"""Pruebas de doblar.py («Traducir el diálogo al alemán»): la mezcla deja la música y los efectos ORIGINALES y solo
+cambia la voz, con la duración del original; un doblaje de otra duración no se mezcla; y, si el modelo BandIt v2
+está en la máquina (imagen de Railway o rea-video en el Mac), la separación deja voz, música, efectos y el vídeo
+con solo la voz. Sin red. `python3 -I montador/test_doblar.py` (también desde vitest, tests/doblaje.test.ts)."""
+import importlib.util
+import shutil
+import subprocess
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE))
+
+HAS_NUMPY = importlib.util.find_spec('numpy') is not None
+FFMPEG = shutil.which('ffmpeg') and shutil.which('ffprobe')
+
+if HAS_NUMPY:
+    import numpy as np
+    import doblar  # noqa: E402
+
+RATE = 48000
+
+
+def tono(path, freq, segundos, canales=2, volumen=0.3):
+    t = np.arange(int(RATE * segundos)) / RATE
+    x = (volumen * np.sin(2 * np.pi * freq * t)).astype('<f4')
+    x = np.repeat(x[:, None], canales, axis=1)
+    subprocess.run(['ffmpeg', '-v', 'error', '-y', '-f', 'f32le', '-ar', str(RATE), '-ac', str(canales), '-i', 'pipe:0',
+                    '-c:a', 'pcm_f32le', str(path)], input=x.tobytes(), check=True)
+
+
+def leer(path):
+    raw = subprocess.run(['ffmpeg', '-v', 'error', '-i', str(path), '-map', '0:a:0', '-ac', '2', '-ar', str(RATE), '-f', 'f32le', '-'],
+                         capture_output=True, check=True).stdout
+    return np.frombuffer(raw, '<f4').reshape(-1, 2).astype('float64')
+
+
+def video_con(audio, salida, segundos):
+    subprocess.run(['ffmpeg', '-v', 'error', '-y', '-f', 'lavfi', '-i', f'color=c=black:s=64x64:r=24:d={segundos}', '-i', str(audio),
+                    '-map', '0:v', '-map', '1:a', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-shortest', str(salida)],
+                   check=True)
+
+
+@unittest.skipUnless(HAS_NUMPY and FFMPEG, 'faltan numpy o ffmpeg')
+class Mezcla(unittest.TestCase):
+    def setUp(self):
+        self.dir = Path(tempfile.mkdtemp(prefix='doblar-'))
+        tono(self.dir / 'music.wav', 220, 3)
+        tono(self.dir / 'sfx.wav', 3000, 3, volumen=0.05)
+        tono(self.dir / 'speech.wav', 500, 3)
+
+    def tearDown(self):
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+    def test_la_musica_y_los_efectos_quedan_igual_y_solo_cambia_la_voz(self):
+        tono(self.dir / 'voz-de.wav', 700, 3)
+        video_con(self.dir / 'voz-de.wav', self.dir / 'dub.mp4', 3)
+        r = doblar.mezclar(self.dir, self.dir / 'dub.mp4', self.dir / 'salida.m4a')
+        self.assertTrue(r['ok'])
+        self.assertAlmostEqual(r['segundos'], 3.0, delta=0.06)
+        salida, dub = leer(self.dir / 'salida.m4a'), leer(self.dir / 'dub.mp4')
+        fondo = leer(self.dir / 'music.wav') + leer(self.dir / 'sfx.wav')
+        n = min(len(salida), len(dub), len(fondo)) - RATE // 10
+        resto = salida[RATE // 10:n] - dub[RATE // 10:n]
+        # Lo que queda al quitar la voz doblada es la música + efectos originales (solo la pérdida del AAC).
+        self.assertGreater(np.corrcoef(resto.ravel(), fondo[RATE // 10:n].ravel())[0, 1], 0.99)
+        # Y la voz inglesa (500 Hz) no está.
+        espectro = np.abs(np.fft.rfft(salida[:, 0]))
+        f = np.fft.rfftfreq(len(salida), 1 / RATE)
+        self.assertLess(espectro[np.abs(f - 500) < 3].max(), espectro[np.abs(f - 700) < 3].max() / 50)
+
+    def test_un_doblaje_de_otra_duracion_no_se_mezcla(self):
+        tono(self.dir / 'corta.wav', 700, 2)
+        video_con(self.dir / 'corta.wav', self.dir / 'dub.mp4', 2)
+        with self.assertRaises(doblar.Fallo):
+            doblar.mezclar(self.dir, self.dir / 'dub.mp4', self.dir / 'salida.m4a')
+
+    def test_la_orden_deja_el_resultado_en_el_archivo_pedido(self):
+        tono(self.dir / 'voz-de.wav', 700, 3)
+        video_con(self.dir / 'voz-de.wav', self.dir / 'dub.mp4', 3)
+        out = self.dir / 'r.json'
+        code = doblar.main(['--resultado', str(out), 'mezclar', str(self.dir), str(self.dir / 'dub.mp4'), str(self.dir / 's.m4a')])
+        self.assertEqual(code, 0)
+        self.assertIn('"ok": true', out.read_text())
+
+
+def modelo_disponible():
+    try:
+        from rea_video import effects
+        from rea_video.stems import models_dir
+    except ImportError:
+        return False
+    return (models_dir() / effects.MODEL_NAME).is_file()
+
+
+@unittest.skipUnless(HAS_NUMPY and FFMPEG and modelo_disponible(), 'sin el modelo BandIt v2 de rea-video en esta máquina')
+class Separacion(unittest.TestCase):
+    def test_separa_voz_musica_y_efectos_y_hace_el_video_con_solo_la_voz(self):
+        d = Path(tempfile.mkdtemp(prefix='doblar-sep-'))
+        try:
+            tono(d / 'mezcla.wav', 220, 5)
+            r = doblar.separar(d / 'mezcla.wav', d / 'pistas')
+            self.assertTrue(r['ok'])
+            for nombre in ('mix', 'speech', 'music', 'sfx'):
+                self.assertAlmostEqual(doblar.duracion(d / 'pistas' / f'{nombre}.wav'), 5.0, delta=0.02)
+            self.assertAlmostEqual(doblar.duracion(d / 'pistas' / 'dialogue-only.mp4'), 5.0, delta=0.1)
+            # Un tono sostenido es música, no voz.
+            self.assertGreater(r['music_db'], r['speech_db'])
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+
+
+if __name__ == '__main__':
+    unittest.main(verbosity=2)

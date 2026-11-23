@@ -9,6 +9,7 @@ import {
   HiggsfieldUnknownOutcomeError,
   isHiggsfieldError,
   type HfBalance,
+  type HfDubRequest,
   type HfHistoryItem,
   type HfHistoryPage,
   type HfImageRequest,
@@ -183,6 +184,16 @@ export function videoParams(request: HfVideoRequest): Record<string, unknown> {
   }
   // Genjutsu: modelo, prompt, resolución y entradas; nada más (Codex).
   return { model: request.model, prompt: request.prompt, resolution: request.resolution, use_unlim: false, medias };
+}
+
+/** Parámetros de `estimate_video_cost` / `generate_video_batch` para el modelo `dubbing`. */
+function dubParams(request: HfDubRequest): Record<string, unknown> {
+  return {
+    model: "dubbing",
+    target_language: request.targetLanguage,
+    use_unlim: false,
+    medias: [{ role: "input_video", value: request.mediaId }],
+  };
 }
 
 /** `jobs_wait` admite como mucho 12 trabajos por llamada y 15 s de espera. */
@@ -626,6 +637,12 @@ export function createHiggsfieldPort(
       // Con el `quote_ref` se envía exactamente lo presupuestado (así lo hizo el piloto).
       const params = options.quoteRef ? { ref: options.quoteRef, use_unlim: false } : { ...videoParams(request), count: 1 };
       return submit(userId, "generate_video_batch", [{ index: 0, params }]);
+    },
+    async quoteDubbing(userId, request) {
+      return quote(userId, "estimate_video_cost", dubParams(request));
+    },
+    async submitDubbing(userId, request) {
+      return submit(userId, "generate_video_batch", [{ index: 0, params: { ...dubParams(request), count: 1 } }]);
     },
     async jobs(userId, jobIds, waitSeconds) {
       if (jobIds.length === 0) return [];

@@ -267,6 +267,13 @@
       "when": 1795412712525,
       "tag": "0037_modelo_del_clip",
       "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1795440603019,
+      "tag": "0038_doblaje_dialogo",
+      "breakpoints": true
     }
   ]
 }
