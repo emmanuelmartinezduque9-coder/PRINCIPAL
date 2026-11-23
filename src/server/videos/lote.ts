@@ -15,10 +15,10 @@ import { briefOf, type OwnerAnswer } from "@/server/videos/brief";
 import { estimateClipCredits } from "@/server/videos/clip";
 import { PINTEREST_PENDING } from "@/server/videos/pinterest";
 // Registra el constructor de la imagen inicial (`frame`) en las generaciones.
-import { approveFrame } from "@/server/videos/frame";
+import { approveFrame, rejectFrame } from "@/server/videos/frame";
 import { BLOCKED, MAX_REGENERATIONS, quoteGeneration, requestGeneration, type GenDeps, type GenerationKind } from "@/server/videos/generations";
 import { clipModelProblem, getVideoFor, setVideoSong, referenceOutdated, REFERENCE_OUTDATED, staleness, updateVideoChoices, withProductNotes, type Video } from "@/server/videos/videos";
-import { CLIP_MODEL_LABEL, CLIP_MODELS, resolveClipModel, SEEDANCE, sourceProblem, type ClipModel } from "@/lib/clip-models";
+import { CLIP_MODEL_LABEL, CLIP_MODELS, resolveClipModel, SEEDANCE, sourceProblem } from "@/lib/clip-models";
 import { isPromptProblem, PROMPT_ERROR } from "@/server/videos/prompt-check";
 
 /**
@@ -203,9 +203,9 @@ const clipStage = (row: Row, batch: Batch): Stage => {
   const stage = stageOf(row.clips, false, retryAfterOf(batch));
   const last = row.clips.at(-1);
   if (stage !== "failed" || !last || last.error !== BLOCKED) return stage;
-  // Bloqueado con Genjutsu o Wan: aún queda pasar a Seedance (`sanitizeAfterBlock`).
-  const canSwitch = modelOf(last) !== SEEDANCE && resolveClipModel(row.video.clipModel, row.video.segmentDurationMs) !== SEEDANCE;
-  return canSwitch || blockedClips(row) <= MAX_BLOCKED_RETRIES ? "need" : stage;
+  // Bloqueado con la imagen aprobada aún sin rehacer: primero se rehace la imagen (`sanitizeAfterBlock`).
+  const frameHandled = row.video.ownerAnswers.some((answer) => answer.key === `sys:imagen-bloqueada-${row.video.approvedFrameResultId ?? 0}`);
+  return !frameHandled || blockedClips(row) <= MAX_BLOCKED_RETRIES ? "need" : stage;
 };
 
 /**
@@ -213,6 +213,10 @@ const clipStage = (row: Row, batch: Batch): Stage => {
  * (`higgsfield-generate`: «nsfw / ip_detected — content policy. Rephrase»; evitar personas reales,
  * contenido sexual, marcas y personajes con marca). La segunda vez, más estricta.
  */
+/** La indicación para el desglose cuando se rehace la imagen de un clip bloqueado. */
+const BLOCKED_FRAME_NOTE =
+  "Higgsfield bloqueó el clip por su filtro de marcas y personas conocidas: la imagen inicial llevaba en la pared un cuadro o póster con una persona. En la imagen nueva no puede haber ningún cuadro, póster, foto, ilustración ni figura con personas, personajes o caras en paredes, espejos o fondos: paredes lisas o con decoración sin personas, y nada de marcas ajenas.";
+
 const BLOCKED_NOTES = [
   "Higgsfield bloqueó el clip por su filtro de contenido o de marcas (nsfw / ip_detected). Reescribe los dos prompts sin marcas comerciales, logotipos ni nombres de tiendas o productos ajenos, sin personajes con derechos (dibujos, películas, juegos) y sin personas famosas: descríbelos de forma genérica. Pide que se quiten o neutralicen todos los logotipos y rótulos de marcas ajenas visibles en la escena (ropa, envases, carteles), conservando nuestro producto, su embalaje y su marca. Nada sexual ni sugerente.",
   "Higgsfield volvió a bloquear el clip por su filtro de contenido o de marcas. Además de lo anterior: ninguna marca, logotipo, texto de marca ni uniforme reconocible de ninguna empresa ajena en ninguna toma (sustitúyelos por equivalentes genéricos sin marca), ropa neutra y discreta, ningún parecido con personajes ni personas conocidas. Conserva la acción, los cortes y nuestro producto.",
@@ -227,24 +231,22 @@ async function sanitizeAfterBlock(user: AuthUser, row: Row): Promise<boolean> {
   if (!last || last.status !== "failed" || last.error !== BLOCKED) return false;
   const [latest] = row.analyses;
   if (latest && ACTIVE_ANALYSIS.includes(latest.status)) return true;
-  // La causa real (23/11/2026, lote 3): Genjutsu y Wan editan a la persona real del vídeo de
-  // referencia, y Higgsfield lo rechaza (`ip_detected`) cuando se le ve la cara, con cualquier
-  // prompt. Seedance genera desde la imagen aprobada (la referencia solo da cámara y ritmo): el
-  // vídeo pasa a Seedance, se rehace el desglose para ese modelo y se repite, sin contar en el tope.
-  if (modelOf(last) !== SEEDANCE && resolveClipModel(row.video.clipModel, row.video.segmentDurationMs) !== SEEDANCE) {
-    await getDb().update(schema.videos).set({ clipModel: SEEDANCE, updatedAt: new Date() }).where(eq(schema.videos.id, row.video.id));
-    await saveAnswer(row.video.id, {
-      key: "sys:modelo-bloqueado",
-      question: "Higgsfield bloqueó el clip",
-      answer: `Higgsfield rechazó ${CLIP_MODEL_LABEL[modelOf(last) as ClipModel] ?? modelOf(last)} (ip_detected: edita a la persona real del vídeo de referencia). Se hace con Seedance desde la imagen aprobada.`,
-      inBrief: false,
-    });
+  // La causa real (23/11/2026, lote 3, la encontró Emmanuel): la imagen aprobada llevaba un póster
+  // con una persona famosa en la pared (de una sala del banco) y Higgsfield bloquea el clip
+  // (`ip_detected`) con cualquier prompt. Lo primero es rehacer la imagen sin ese elemento: se
+  // rechaza la aprobada con el motivo, se rehace el desglose (con la indicación y otra sala) y la
+  // imagen nueva vuelve a la revisión del dueño. Una vez por imagen aprobada.
+  const frameKey = `sys:imagen-bloqueada-${row.video.approvedFrameResultId ?? 0}`;
+  if (row.video.approvedFrameResultId !== null && !row.video.ownerAnswers.some((answer) => answer.key === frameKey)) {
+    await saveAnswer(row.video.id, { key: frameKey, question: "Higgsfield bloqueó el clip", answer: BLOCKED_FRAME_NOTE, inBrief: true });
     try {
+      await rejectFrame(user, row.video.id, "Higgsfield bloqueó el clip: la imagen lleva un cuadro o póster con una persona o una figura reconocible; se rehace sin él.");
       await requestAnalysis(user, row.video.id);
     } catch (error) {
       if (!(error instanceof HttpError)) throw error;
+      console.warn(`[lotes] Vídeo ${row.video.id}: no se pudo rehacer la imagen bloqueada: ${error.message}`);
     }
-    console.warn(`[lotes] Vídeo ${row.video.id}: ${modelOf(last)} bloqueado por Higgsfield (persona real en la referencia); pasa a Seedance y se rehace el desglose.`);
+    console.warn(`[lotes] Vídeo ${row.video.id}: clip bloqueado por Higgsfield; se rehace la imagen inicial sin cuadros ni pósteres con personas.`);
     return true;
   }
   const blocked = blockedClips(row);
@@ -864,11 +866,15 @@ async function redoPrompt(user: AuthUser, row: Row): Promise<boolean> {
   return true;
 }
 
-/** Pausa por un clip bloqueado de un vídeo que aún no ha probado Seedance: se quita y pasa a Seedance. */
+/** Pausa por un clip bloqueado cuya imagen aún no se ha rehecho sin el elemento sospechoso: se quita. */
 async function canStillSwitch(pause: NonNullable<Batch["pause"]>): Promise<boolean> {
   if (pause.kindOf !== "clip" || pause.videoId === null || !pause.reason.includes("también con el prompt reescrito")) return false;
-  const [video] = await getDb().select({ clipModel: schema.videos.clipModel }).from(schema.videos).where(eq(schema.videos.id, pause.videoId));
-  return video !== undefined && video.clipModel !== SEEDANCE;
+  const [video] = await getDb()
+    .select({ frame: schema.videos.approvedFrameResultId, answers: schema.videos.ownerAnswers })
+    .from(schema.videos)
+    .where(eq(schema.videos.id, pause.videoId));
+  // Aún no se ha rehecho la imagen de ese clip: se quita la pausa y se rehace.
+  return video !== undefined && !video.answers.some((answer) => answer.key === `sys:imagen-bloqueada-${video.frame ?? 0}`);
 }
 
 /** ¿La pausa «máximo de regeneraciones» de un clip deja de serlo sin contar los bloqueos del filtro? */

@@ -481,36 +481,9 @@ describe("presupuesto y dinero", () => {
 });
 
 describe("clip bloqueado por el filtro de Higgsfield", () => {
-  it("con Genjutsu (persona real en la referencia), el vídeo pasa solo a Seedance, rehace el desglose y repite sin contar en el tope", async () => {
+  it("no pausa: rehace la imagen inicial sin cuadros ni pósteres con personas (rechaza la aprobada, rehace el desglose) y el bloqueo no cuenta como gastado", async () => {
     const { batchId, videos } = await sentAndConfirmed(1);
-    await getPool().query("update videos set clip_model = 'auto' where id = $1", [videos[0].id]);
-    await getPool().query("update video_analyses set clip_model = 'hf_mult_motion_control' where video_id = $1", [videos[0].id]);
-    // El lote se presupuestó con Seedance: aquí se prevé lo que cuesta el clip de Genjutsu en el simulado.
-    await getPool().query("update batches set budget_credits = 1000, estimates = jsonb_set(estimates, array[$2::text, 'clip'], '30') where id = $1", [batchId, String(videos[0].id)]);
-    await cycle(batchId, 1);
-    await approveFrame(ana, videos[0].id, await firstCandidate(videos[0].id));
-    await advanceBatch(batchId, deps);
-    const clip = (await generations()).find((g) => g.kind === "clip")!;
-    expect((await getPool().query("select request->>'model' as m from generations where id = $1", [clip.id])).rows[0].m).toBe("hf_mult_motion_control");
-    await submitGeneration(clip.id, deps);
-    const { rows } = await getPool().query("select job_ids as \"jobIds\" from generations where id = $1", [clip.id]);
-    for (const jobId of rows[0].jobIds) fake.state.jobs[jobId] = { jobId, status: "failed", failure: "ip_detected", error: null, urls: [] };
-    await finalizeGeneration(clip.id, deps);
-
-    await advanceBatch(batchId, deps);
-    expect((await getBatchFor(ana, batchId)).status).not.toBe("pausado");
-    expect((await getVideoFor(ana, videos[0].id)).clipModel).toBe("seedance_2_5");
-    await runQueuedAnalyses();
-    await advanceBatch(batchId, deps);
-    const clips = (await getPool().query("select status, request->>'model' as m from generations where kind = 'clip' order by id")).rows;
-    expect(clips).toEqual([
-      { status: "failed", m: "hf_mult_motion_control" },
-      { status: "intent", m: "seedance_2_5" },
-    ]);
-  });
-
-  it("no pausa: reescribe el prompt sin marcas (Codex: «Rephrase») y repite el clip; el bloqueo no cuenta como gastado", async () => {
-    const { batchId, videos } = await sentAndConfirmed(1);
+    await getPool().query("update batches set budget_credits = 1000 where id = $1", [batchId]);
     await cycle(batchId, 1);
     await approveFrame(ana, videos[0].id, await firstCandidate(videos[0].id));
     await advanceBatch(batchId, deps);
@@ -523,11 +496,17 @@ describe("clip bloqueado por el filtro de Higgsfield", () => {
 
     await advanceBatch(batchId, deps);
     expect((await getBatchFor(ana, batchId)).status).not.toBe("pausado");
-    expect((await getVideoFor(ana, videos[0].id)).ownerAnswers.map((a) => a.key)).toContain("sys:bloqueo-1");
+    const video = await getVideoFor(ana, videos[0].id);
+    // La imagen deja de estar aprobada (el motivo queda en su ronda) y el desglose se rehace con la indicación.
+    expect(video.approvedFrameResultId).toBeNull();
+    expect(video.ownerAnswers.find((a) => a.key.startsWith("sys:imagen-bloqueada-"))?.inBrief).toBe(true);
     expect((await getPool().query("select status from video_analyses where video_id = $1 order by id desc limit 1", [videos[0].id])).rows[0].status).toBe("queued");
+    // El modelo no se cambia.
+    expect(video.clipModel).toBe("seedance_2_5");
     await runQueuedAnalyses();
     await advanceBatch(batchId, deps);
-    expect((await generations()).filter((g) => g.kind === "clip").map((g) => g.status)).toEqual(["failed", "intent"]);
+    // Sale una imagen nueva (para la revisión del dueño); el clip espera a que la apruebe.
+    expect((await generations()).filter((g) => g.kind === "frame").map((g) => g.status)).toEqual(["done", "intent"]);
   });
 });
 

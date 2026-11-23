@@ -157,6 +157,10 @@ const FRAME_SNAPSHOT = [
   "frameCount",
 ] as const satisfies ReadonlyArray<keyof Video>;
 
+/** Lo que lleva siempre la imagen inicial al final del prompt (regla fija de fondos). */
+export const NO_PEOPLE_PICTURES =
+  "No framed pictures, posters, photos, artworks, screens or figures showing people, faces, celebrities or characters anywhere on the walls, mirrors or background; keep walls plain or with decor without people, and no third-party brands or logos.";
+
 export const buildFrameRequest: RequestBuilder = async (user, video, deps) => {
   await requireAnalysisDone(video);
   const refs = await manifestRefsFor(user, video);
@@ -165,7 +169,9 @@ export const buildFrameRequest: RequestBuilder = async (user, video, deps) => {
   if (!hasManualEnvironment(imageManifest(video, { ...refs, pinterest: [] }))) await requirePinterestRefs(video.id);
   const manifest = imageManifest(video, await manifestRefsFor(user, video));
   // Con la sala elegida, el prompt reescrito con el método aprobado (la sala descrita elemento a elemento).
-  const prompt = await framePromptFor(video.id, video.imagePrompt!, manifest);
+  // Regla fija (23/11/2026, lote 3): un póster con una persona famosa en la pared hizo que Higgsfield
+  // bloqueara los clips. Toda imagen inicial lo prohíbe, escriba lo que escriba el desglose.
+  const prompt = `${(await framePromptFor(video.id, video.imagePrompt!, manifest)).trim()} ${NO_PEOPLE_PICTURES}`;
   if (manifest.some((item) => item.source.kind === "avatar_pending")) throw new HttpError(400, NO_AUTO_AVATAR);
   const errors = checkImagePrompt(prompt, manifest).filter((issue) => issue.level === "error");
   if (errors.length > 0) throw new HttpError(400, errors.map((issue) => issue.message).join(" "), PROMPT_ERROR);

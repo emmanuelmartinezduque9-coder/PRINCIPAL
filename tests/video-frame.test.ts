@@ -18,8 +18,7 @@ import {
   getImageModel,
   IMAGE_MODEL_SETTING,
   rejectFrame,
-  setImageModel,
-} from "@/server/videos/frame";
+  setImageModel, NO_PEOPLE_PICTURES } from "@/server/videos/frame";
 import { finalizeGeneration, quoteGeneration, requestGeneration, submitGeneration, type GenDeps } from "@/server/videos/generations";
 import { createVideo, getVideoFor, updateVideoChoices, type Video } from "@/server/videos/videos";
 import { POST as aprobarRoute } from "@/app/api/videos/[videoId]/imagen/aprobar/route";
@@ -166,7 +165,8 @@ describe("petición de la imagen inicial", () => {
     const manifestMediaIds = ["media-1", "media-2", "media-3", "media-4"];
     expect(request).toEqual({
       model: "nano_banana_2_1",
-      prompt: v.imagePrompt,
+      // Siempre con la regla fija de fondos sin personas al final.
+      prompt: `${v.imagePrompt!.trim()} ${NO_PEOPLE_PICTURES}`,
       aspectRatio: "9:16",
       resolution: "2k",
       medias: manifestMediaIds.map((value) => ({ role: "image_references", value })),
