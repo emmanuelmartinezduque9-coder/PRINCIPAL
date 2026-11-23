@@ -32,7 +32,7 @@ import {
   ytDlpArgs,
   ytDlpAudioArgs,
 } from "../agente-mac/lib.mjs";
-import { instagramCookies, parseCount, profileOf, tiktokProfileFrom } from "../agente-mac/perfil.mjs";
+import { canonicalReel, CHROME, BRAVE, headlessBrowser, instagramCookies, parseCount, profileOf, tiktokProfileFrom } from "../agente-mac/perfil.mjs";
 import { SONG_LINK_HOSTS as SERVER_SONG_HOSTS, songLinkOf } from "@/lib/links";
 import { LINK_HOSTS as SERVER_HOSTS, linkOf } from "@/server/agent";
 
@@ -703,6 +703,14 @@ describe("perfiles de cuentas (1.5.0)", () => {
     expect(await runOnce(config(), deps)).toBe("failed");
     expect(paths().some((p) => p.startsWith("PUT "))).toBe(false);
     expect(calls.at(-1)!.body).toEqual({ ok: false, uploadId: PERFIL.uploadId, error: "[aviso] Instagram enseña un aviso" });
+  });
+
+  it("los reels con la cuenta en la ruta quedan en la forma estándar; Chrome antes que Brave", () => {
+    expect(canonicalReel("https://www.instagram.com/frozenglow.us/reel/DgD4Rb6IArA/")).toBe("https://www.instagram.com/reel/DgD4Rb6IArA/");
+    expect(canonicalReel("https://www.instagram.com/p/ABC/")).toBe("https://www.instagram.com/p/ABC/");
+    expect(headlessBrowser(() => true)).toBe(CHROME);
+    expect(headlessBrowser((b: string) => b === BRAVE)).toBe(BRAVE);
+    expect(headlessBrowser(() => false)).toBeNull();
   });
 
   it("entiende enlaces de perfil, cookies y vistas abreviadas", () => {

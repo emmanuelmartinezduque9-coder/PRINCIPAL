@@ -164,3 +164,14 @@ con su sesión (el agente lo detecta y lo dice: `[aviso]`). Solo lo puede resolv
   van con el mismo patrón que el mockup.
 - Medir si la búsqueda web trae suficientes cifras de Instagram/TikTok; si no, un proveedor de datos
   (Apify o similar) como fuente adicional para la investigación.
+
+### Sesión de Instagram desde Chrome (23/11/2026)
+Emmanuel no puede quitar el aviso de su cuenta en Brave y tiene otra cuenta de Instagram, sin aviso,
+iniciada en **Google Chrome**. `exportar-sesion.sh` copia ahora la sesión del primer navegador que
+la tenga: los perfiles de Chrome (Default, Profile 1…) y, de reserva, Brave. El navegador sin
+ventana es Chrome si está instalado (si no, Brave); las cookies se le dan aparte, así que nunca se
+abre ni se toca el perfil real de ningún navegador. Comprobado con @frozenglow.us: cabecera
+(«Pajamas inspired by Frozen»), enlace de la tienda (`fronzenglow.com/products/frozenglow-pajama-set`,
+que no es Shopify: se lee su página) y 12 reels con vistas y miniatura. Los reels con la cuenta en la
+ruta (`/frozenglow.us/reel/…`) se dejan como `/reel/…` para yt-dlp, y el nombre de la cuenta ya no
+se toma por un enlace aunque parezca un dominio.

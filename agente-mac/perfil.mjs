@@ -17,6 +17,9 @@ import os from "node:os";
 import path from "node:path";
 
 export const BRAVE = "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser";
+export const CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
+/** El navegador sin ventana: Chrome si está; si no, Brave. Las cookies se le dan aparte. */
+export const headlessBrowser = (exists = existsSync) => [CHROME, BRAVE].find((b) => exists(b)) ?? null;
 /** Cuántos reels se leen de un perfil. */
 export const MAX_REELS = 15;
 const PAGE_WAIT_MS = 12_000;
@@ -72,6 +75,12 @@ export function parseCount(text) {
   return Math.round(value * factor);
 }
 
+/** `instagram.com/<cuenta>/reel/<código>/` → `https://www.instagram.com/reel/<código>/` (la forma que entiende yt-dlp). */
+export function canonicalReel(url) {
+  const m = url.match(/instagram\.com\/(?:[^/]+\/)?(reel|p|tv)\/([A-Za-z0-9_-]+)/);
+  return m ? `https://www.instagram.com/${m[1] === "tv" ? "reel" : m[1]}/${m[2]}/` : url;
+}
+
 // ───────────────────────── Instagram con Brave sin ventana ─────────────────────────
 
 /** Lo que se evalúa dentro de la página del perfil (sin depender de clases internas de Instagram). */
@@ -81,12 +90,17 @@ const READ_PAGE = `(() => {
   const login = !!document.querySelector('input[name="username"]') || /\\/accounts\\/login/.test(location.pathname);
   const aviso = !document.querySelector('header') && document.querySelectorAll('a[href*="/reel/"], a[href*="/p/"]').length === 0 && body.length < 1500 ? body.slice(0, 300) : null;
   const header = document.querySelector('header');
-  const enlaces = [...(header?.querySelectorAll('a[href^="http"]') || [])].map(a => a.href).filter(h => !/instagram\\.com/.test(h));
+  const unwrap = (h) => { try { const u = new URL(h); if (/^l\\.instagram\\.com$/.test(u.hostname)) return u.searchParams.get('u'); return h; } catch { return null; } };
+  const enlaces = [...(header?.querySelectorAll('a[href^="http"]') || [])].map(a => unwrap(a.href)).filter(h => h && !/(^|\\.)instagram\\.com/.test(new URL(h).hostname));
+  for (const m of text(header).matchAll(/\\b((?:https?:\\/\\/)?(?:[a-z0-9-]+\\.)+(?:com|de|shop|store|net|co|io|us|eu|it|fr|es|at|ch)(?:\\/[^\\s]*)?)/gi)) {
+    const raw = m[1].startsWith('http') ? m[1] : 'https://' + m[1];
+    if (!/instagram\\.com/i.test(raw) && !enlaces.includes(raw)) enlaces.push(raw);
+  }
   const meta = (n) => document.querySelector('meta[property="' + n + '"], meta[name="' + n + '"]')?.content || null;
   const reels = [...document.querySelectorAll('a[href*="/reel/"], a[href*="/p/"]')].map(a => ({
     url: a.href.split('?')[0],
     vistasTexto: text(a).split(' ').find(t => /^[\\d.,]+\\s*(k|K|M|Mio\\.?|Tsd\\.?|mil)?$/.test(t)) || null,
-    miniatura: a.querySelector('img')?.src || null,
+    miniatura: a.querySelector('img')?.src || ([...a.querySelectorAll('*')].map(el => getComputedStyle(el).backgroundImage).find(b => b && b.startsWith('url('))?.slice(5, -2)) || null,
     texto: a.querySelector('img')?.alt || null,
   }));
   return JSON.stringify({ login, aviso, texto: body.slice(0, 300), titulo: document.title, cabecera: text(header).slice(0, 1500), enlaces, descripcion: meta('og:description') || meta('description'), reels });
@@ -117,8 +131,8 @@ async function cdp(wsUrl) {
 }
 
 /** Lee un perfil de Instagram con Brave sin ventana. `deps.sleep` para esperar. */
-export async function readInstagramProfile(usuario, { cookiesFile, brave = BRAVE, sleep }) {
-  if (!existsSync(brave)) return { ok: false, codigo: "sin_brave", error: "No está Brave en /Applications: hace falta para leer perfiles de Instagram." };
+export async function readInstagramProfile(usuario, { cookiesFile, brave = headlessBrowser(), sleep }) {
+  if (!brave) return { ok: false, codigo: "sin_brave", error: "No está Chrome ni Brave en /Applications: hace falta uno para leer perfiles de Instagram." };
   let cookiesText = "";
   try {
     cookiesText = await fs.readFile(cookiesFile, "utf8");
@@ -164,8 +178,8 @@ export async function readInstagramProfile(usuario, { cookiesFile, brave = BRAVE
     }
     const reels = [];
     for (const reel of reelsPage.reels ?? []) {
-      if (reels.some((r) => r.url === reel.url)) continue;
-      reels.push({ url: reel.url, vistas: parseCount(reel.vistasTexto), texto: reel.texto, miniatura: reel.miniatura });
+      if (reels.some((r) => r.url === canonicalReel(reel.url))) continue;
+      reels.push({ url: canonicalReel(reel.url), vistas: parseCount(reel.vistasTexto), texto: reel.texto, miniatura: reel.miniatura });
       if (reels.length >= MAX_REELS) break;
     }
     return {
@@ -175,7 +189,8 @@ export async function readInstagramProfile(usuario, { cookiesFile, brave = BRAVE
         usuario,
         cabecera: reelsPage.cabecera ?? "",
         descripcion: reelsPage.descripcion ?? null,
-        enlaces: [...new Set(reelsPage.enlaces ?? [])].slice(0, 5),
+        // Sin el propio nombre de la cuenta (`frozenglow.us` parece una web, pero no lo es).
+        enlaces: [...new Set(reelsPage.enlaces ?? [])].filter((h) => { try { return new URL(h).hostname.replace(/^www\./, "") !== usuario.toLowerCase(); } catch { return false; } }).slice(0, 5),
         reels,
       },
     };

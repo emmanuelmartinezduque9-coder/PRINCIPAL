@@ -117,10 +117,10 @@ bash agente-mac/instalar.sh
 
 ## 1.5.0: leer perfiles de Instagram y TikTok (23/11/2026)
 
-Para dar de alta un producto pegando solo la cuenta. Instagram se lee con un Brave sin ventana (una
-carpeta temporal, nunca tu perfil de Brave) y tu sesión de Instagram guardada en
+Para dar de alta un producto pegando solo la cuenta. Instagram se lee con un Chrome (o Brave) sin ventana
+(una carpeta temporal, nunca tus perfiles de navegador) y tu sesión de Instagram guardada en
 `~/.principal-agente-instagram.txt` (aparte del archivo de cookies de yt-dlp). Si Instagram cierra la sesión, vuelve a guardarla:
 
     bash agente-mac/exportar-sesion.sh
 
-(hace falta haber entrado en instagram.com con Brave). TikTok se lee con yt-dlp.
+(copia la sesión de Chrome, del perfil que tenga Instagram iniciado; si no hay, de Brave). TikTok se lee con yt-dlp.
