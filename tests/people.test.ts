@@ -3,7 +3,7 @@ import { getPool } from "@/db/client";
 import { setAssignments } from "@/server/access";
 import { acceptInvite, getSessionUser, login, resetLoginAttempts, type AuthUser } from "@/server/auth";
 import { readCredential, saveCredential } from "@/server/credentials";
-import { invitePerson, listPeople, setPersonDisabled } from "@/server/people";
+import { invitePerson, listPeople, passwordLink, setPersonDisabled } from "@/server/people";
 import { listProductsFor } from "@/server/products";
 import { setUserCap } from "@/server/spend";
 import { makeProduct, makeUser, TEST_PASSWORD } from "./helpers/fixtures";
@@ -37,6 +37,29 @@ beforeEach(async () => {
   cookieToken = undefined;
   dueno = await makeUser("dueno", { name: "Dueña" });
   ana = await makeUser("colaborador", { name: "Ana", email: "ana@example.com" });
+});
+
+describe("contraseña nueva para quien ya tiene cuenta", () => {
+  it("el dueño crea un enlace de un solo uso: cambia la contraseña, conserva el papel y cierra sus sesiones", async () => {
+    const before = await login("ana@example.com", TEST_PASSWORD);
+    const { link } = await passwordLink(dueno, ana.id, "https://x.test");
+    const nueva = "otra-clave-larga-1234";
+    const user = await acceptInvite(tokenFrom(link), nueva);
+    expect(user).toMatchObject({ id: ana.id, role: "colaborador" });
+    expect(await getSessionUser(before!.token)).toBeNull();
+    expect(await login("ana@example.com", nueva)).not.toBeNull();
+    await expect(acceptInvite(tokenFrom(link), nueva)).rejects.toThrow(/ya se ha usado/);
+  });
+
+  it("solo el dueño, solo personas existentes y activas; un enlace nuevo anula el anterior", async () => {
+    await expect(passwordLink(ana, dueno.id, "https://x.test")).rejects.toMatchObject({ status: 403 });
+    await expect(passwordLink(dueno, 999999, "https://x.test")).rejects.toMatchObject({ status: 404 });
+    const first = await passwordLink(dueno, ana.id, "https://x.test");
+    await passwordLink(dueno, ana.id, "https://x.test");
+    await expect(acceptInvite(tokenFrom(first.link), "otra-clave-larga-1234")).rejects.toThrow(/ya se ha usado/);
+    await setPersonDisabled(dueno, ana.id, true);
+    await expect(passwordLink(dueno, ana.id, "https://x.test")).rejects.toMatchObject({ status: 409 });
+  });
 });
 
 describe("invitar", () => {

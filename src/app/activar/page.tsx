@@ -60,9 +60,21 @@ function ActivateForm() {
       />
       <AuthField label="Repítela" name="repeat" type="password" autoComplete="new-password" minLength={10} required />
       {error ? (
-        <p role="alert" className="flex gap-2 rounded-lg bg-destructive/10 px-3 py-2 text-sm">
-          <CircleAlert className="mt-0.5 size-4 shrink-0 text-destructive" /> {error}
-        </p>
+        <div role="alert" className="flex flex-col gap-2 rounded-lg bg-destructive/10 px-3 py-2 text-sm">
+          <p className="flex gap-2">
+            <CircleAlert className="mt-0.5 size-4 shrink-0 text-destructive" /> {error}
+          </p>
+          {/ya se ha usado|caducado/.test(error) ? (
+            // El enlace era para crear la contraseña una vez: la cuenta ya existe y es para siempre.
+            <p className="text-muted-foreground">
+              Si ya creaste tu contraseña, tu cuenta sigue activa:{" "}
+              <a href="/login" className="font-medium text-foreground underline underline-offset-2">
+                entra con tu correo y tu contraseña
+              </a>
+              . Si la olvidaste, pide al dueño un enlace nuevo de contraseña.
+            </p>
+          ) : null}
+        </div>
       ) : null}
       <button
         type="submit"

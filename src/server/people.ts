@@ -122,6 +122,30 @@ export async function invitePerson(
   return { link: `${origin}/activar?token=${encodeURIComponent(token)}`, expiresAt: values.expiresAt };
 }
 
+/**
+ * Enlace para que una persona que YA tiene cuenta elija una contraseña nueva (la olvidó o perdió
+ * el acceso). Es una invitación de un solo uso con su mismo papel: al usarla solo cambia la
+ * contraseña (nunca el papel) y cierra sus sesiones (`acceptInvite`). Los enlaces anteriores sin
+ * usar de ese correo dejan de valer. Solo el dueño, y nunca para una cuenta desactivada.
+ */
+export async function passwordLink(owner: AuthUser, userId: number, origin: string): Promise<{ link: string; expiresAt: Date }> {
+  requireOwner(owner);
+  if (!isId(userId)) throw new HttpError(404, "Persona no encontrada.");
+  const [person] = await getDb()
+    .select({ email: schema.users.email, name: schema.users.name, role: schema.users.role, disabledAt: schema.users.disabledAt })
+    .from(schema.users)
+    .where(eq(schema.users.id, userId));
+  if (!person) throw new HttpError(404, "Persona no encontrada.");
+  if (person.disabledAt) throw new HttpError(409, "Esa cuenta está desactivada: reactívala primero.");
+  const { token, values } = buildInvite(person.email, person.name, { role: person.role as Role, invitedBy: owner.id });
+  await getDb().transaction(async (tx) => {
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${"invite:" + person.email}))`);
+    await tx.delete(schema.invites).where(and(eq(schema.invites.email, person.email), isNull(schema.invites.usedAt)));
+    await tx.insert(schema.invites).values(values);
+  });
+  return { link: `${origin}/activar?token=${encodeURIComponent(token)}`, expiresAt: values.expiresAt };
+}
+
 /** Cancela las invitaciones sin usar de un correo: sus enlaces dejan de valer. */
 export async function cancelInvitation(owner: AuthUser, email: string): Promise<void> {
   requireOwner(owner);

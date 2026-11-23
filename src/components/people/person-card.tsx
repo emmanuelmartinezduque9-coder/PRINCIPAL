@@ -1,7 +1,7 @@
 "use client";
 
 import { useQueryClient } from "@tanstack/react-query";
-import { CircleAlert, Loader2, ShieldCheck, UserMinus, Wallet } from "lucide-react";
+import { CircleAlert, Copy, KeyRound, Loader2, ShieldCheck, UserMinus, Wallet } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
@@ -143,10 +143,87 @@ function DisableDialog({ person }: { person: PersonView }) {
 }
 
 /**
+ * «Nueva contraseña»: un enlace de un solo uso (7 días) para que la persona, que ya tiene cuenta,
+ * elija una contraseña nueva. Su acceso y sus productos no cambian.
+ */
+function PasswordLinkDialog({ person }: { person: PersonView }) {
+  const [open, setOpen] = useState(false);
+  const [link, setLink] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  async function create() {
+    setBusy(true);
+    setError(null);
+    try {
+      const result = await api<{ link: string }>(`/api/personas/${person.id}/contrasena`, { method: "POST" });
+      setLink(result.link);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "No se pudo crear el enlace.");
+    } finally {
+      setBusy(false);
+    }
+  }
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(link ?? "");
+      toast.success("Enlace copiado.");
+    } catch {
+      toast.error("No se pudo copiar: selecciónalo y cópialo a mano.");
+    }
+  }
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        setOpen(next);
+        if (!next) {
+          setLink(null);
+          setError(null);
+        }
+      }}
+    >
+      <DialogTrigger asChild>
+        <Button variant="outline" className="h-9 gap-1.5 px-2.5">
+          <KeyRound aria-hidden />
+          Contraseña
+        </Button>
+      </DialogTrigger>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Nueva contraseña para {person.name}</DialogTitle>
+          <DialogDescription>
+            Su cuenta ya existe y es para siempre: para entrar usa la página normal con su correo y su contraseña. Si la olvidó, mándale este enlace (un solo uso, 7 días) y elegirá una nueva.
+          </DialogDescription>
+        </DialogHeader>
+        {link ? (
+          <div className="flex gap-2">
+            <Input readOnly value={link} onFocus={(e) => e.currentTarget.select()} aria-label="Enlace para la contraseña nueva" />
+            <Button className="h-9 gap-1.5 px-3" onClick={() => void copy()}>
+              <Copy aria-hidden />
+              Copiar
+            </Button>
+          </div>
+        ) : (
+          <Button className="h-11 text-base" disabled={busy} onClick={() => void create()}>
+            {busy ? <Loader2 className="animate-spin" /> : null}
+            Crear enlace
+          </Button>
+        )}
+        {error ? (
+          <p role="alert" className="flex gap-2 text-sm text-destructive">
+            <CircleAlert className="mt-0.5 size-4 shrink-0" /> {error}
+          </p>
+        ) : null}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/**
  * Rejilla compartida por la cabecera y las filas: tabla en el ordenador; tarjeta en pantallas
  * estrechas. Columnas fijas para gasto y acciones: así cabecera y filas quedan alineadas.
  */
-export const TABLE_COLUMNS = "lg:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)_13rem_19.5rem] lg:gap-x-5";
+export const TABLE_COLUMNS = "lg:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)_13rem_26rem] lg:gap-x-5";
 const ROW_GRID = `md:grid md:grid-cols-2 md:items-center md:gap-x-6 md:gap-y-3 lg:gap-y-0 ${TABLE_COLUMNS}`;
 
 /** Importe sin la moneda, para «0,00 de 12,50 US$». */
@@ -243,6 +320,7 @@ export function PersonCard({ person, products }: { person: PersonView; products:
             <>
               <AssignDialog person={person} products={products} />
               <CapDialog person={person} />
+              <PasswordLinkDialog person={person} />
               <DisableDialog person={person} />
             </>
           )}
