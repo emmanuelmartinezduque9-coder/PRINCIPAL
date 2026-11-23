@@ -13,8 +13,8 @@ import type { Product } from "@/server/products";
 import {
   approveFrame,
   buildFrameRequest,
+  DEFAULT_FRAME_COUNT,
   DEFAULT_IMAGE_MODEL,
-  FRAME_CANDIDATES,
   getImageModel,
   IMAGE_MODEL_SETTING,
   rejectFrame,
@@ -156,8 +156,9 @@ const approvedOf = async () => (await getVideoFor(ana, v.id)).approvedFrameResul
 describe("petición de la imagen inicial", () => {
   it("la petición lleva el modelo por defecto, 2K vertical y las referencias en el orden del manifiesto", async () => {
     const { request, count } = await buildFrameRequest(ana, v, deps);
-    expect(count).toBe(FRAME_CANDIDATES);
-    expect(count).toBe(2);
+    // Regla fija del dueño: una imagen por vídeo salvo que pida más.
+    expect(count).toBe(DEFAULT_FRAME_COUNT);
+    expect(count).toBe(1);
     // Composición, avatar, artículo y entorno, en ese orden.
     const manifestMediaIds = ["media-1", "media-2", "media-3", "media-4"];
     expect(request).toEqual({
@@ -424,6 +425,8 @@ describe("aprobar y rechazar la imagen", () => {
   });
 
   it("un clip fallido no ata la imagen: se puede aprobar otra o rechazarla", async () => {
+    // Dos imágenes porque así lo pide la tarjeta (por defecto es una).
+    await getPool().query("update videos set frame_count = 2 where id = $1", [v.id]);
     const resultId = await frameDone();
     await approveFrame(ana, v.id, resultId);
     await insertClip("failed");
@@ -492,6 +495,8 @@ describe("rutas de la imagen", () => {
     process.env.PRINCIPAL_HIGGSFIELD_FAKE = "1";
     const local = getHiggsfield();
     await as(ana);
+    // Dos imágenes porque así lo pide la tarjeta (por defecto es una).
+    await getPool().query("update videos set frame_count = 2 where id = $1", [v.id]);
 
     const quote = await presupuestoRoute(post({}), params(v.id));
     expect(quote.status).toBe(200);

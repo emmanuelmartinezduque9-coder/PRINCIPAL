@@ -1,6 +1,6 @@
 import "@/jobs/video-jobs"; // define `video.finalizar`, que encola la consulta de las generaciones
 import { handle } from "@/server/http";
-import { batchView, getBatchFor, pollBatchGenerations, setBatchAutoAnalyze } from "@/server/videos/batches";
+import { batchView, getBatchFor, pollBatchGenerations, setBatchAutoAnalyze, setBatchFrameCount } from "@/server/videos/batches";
 import { autoView } from "@/server/videos/lote";
 
 // Solo dígitos: "1e3" o "12abc" no se convierten en otro id válido.
@@ -22,11 +22,14 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
   });
 }
 
-/** Cambia «Desglosar al subir»: `{ autoAnalyze }` → `{ batch }`. Solo quien creó el lote. */
+/** Cambia «Desglosar al subir» (`{ autoAnalyze }`) o las imágenes por vídeo (`{ frameCount }`, 1–4) → `{ batch }`. Solo quien creó el lote. */
 export async function PATCH(request: Request, { params }: { params: Promise<{ id: string }> }) {
   return handle(async (user) => {
     const { id } = await params;
     const body = (await request.json().catch(() => null)) as Record<string, unknown> | null;
+    if (body?.frameCount !== undefined && body.autoAnalyze === undefined) {
+      return Response.json({ batch: await setBatchFrameCount(user!, parseId(id), body.frameCount) });
+    }
     return Response.json({ batch: await setBatchAutoAnalyze(user!, parseId(id), body?.autoAnalyze) });
   });
 }

@@ -917,7 +917,8 @@ export async function updatePrompts(
   if (Object.keys(changes).length > 0) {
     const [updated] = await getDb()
       .update(schema.videos)
-      .set({ ...changes, updatedAt: new Date() })
+      // Corregir un prompt responde a la pregunta con la que se paró el flujo automático.
+      .set({ ...changes, autoStop: null, updatedAt: new Date() })
       .where(and(eq(schema.videos.id, video.id), eq(schema.videos.createdBy, user.id)))
       .returning();
     if (!updated) throw new HttpError(404, "Vídeo no encontrado.");

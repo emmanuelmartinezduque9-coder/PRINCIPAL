@@ -1,7 +1,7 @@
 import "@/jobs/video-jobs"; // define `lote.avanzar`
 import { handle } from "@/server/http";
 import { rejectFrame } from "@/server/videos/frame";
-import { kickBatchOfVideo } from "@/server/videos/lote";
+import { kickVideo } from "@/server/videos/autopilot";
 
 const parseId = (value: string) => (/^[1-9]\d{0,15}$/.test(value) ? Number(value) : Number.NaN);
 
@@ -12,7 +12,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ vid
     const body = (await request.json().catch(() => null)) as Record<string, unknown> | null;
     await rejectFrame(user!, parseId(videoId), typeof body?.reason === "string" ? body.reason : "");
     // Si el vídeo es de un lote que va solo: con todas aprobadas empiezan los clips; un rechazo se regenera.
-    await kickBatchOfVideo(parseId(videoId));
+    await kickVideo(parseId(videoId));
     return Response.json({ ok: true });
   });
 }

@@ -31,8 +31,7 @@ import { formatUsd } from "@/lib/money";
 import { cn } from "@/lib/utils";
 import { AutoAction, AutoStepper, PauseBanner, SendBatchButton } from "./auto-send";
 import type { VariantJson } from "./batch-fields";
-import { AutoAnalyzeSwitch, GroupHeader, RiskChip, RowActions } from "./board-parts";
-import { BulkGenerate } from "./bulk-generate";
+import { AutoAnalyzeSwitch, FrameCountPicker, GroupHeader, RowActions } from "./board-parts";
 import { checkLink, EditReferenceField, rowSupportsEditReference } from "./edit-reference";
 import {
   analysisState,
@@ -491,13 +490,11 @@ export function BatchBoard({ batchId }: { batchId: number }) {
   // Con el estado de la fila en ese momento (`rowState`): en cuanto la fila cambia, el aviso ya no se enseña.
   const [notices, setNotices] = useState<Record<number, { message: string; at: string }>>({});
   /** La acción en bloque en marcha: solo una a la vez, así nunca hay más de 2 peticiones en vuelo. */
-  const [running, setRunning] = useState<null | "breakdown" | "download" | "edited" | "generate">(null);
+  const [running, setRunning] = useState<null | "breakdown" | "download" | "edited">(null);
   const inFlight = useRef(false);
   const [downloaded, setDownloaded] = useState(0);
   /** «Por revisar»: solo las filas con algo que mirar. */
   const [onlyReview, setOnlyReview] = useState(false);
-  /** «Generar imágenes/clips» abierto desde el menú «…». */
-  const [bulk, setBulk] = useState<null | "frame" | "clip">(null);
 
   const back = { href: "/lotes", label: "Lotes" };
   if (query.isLoading) return <BoardSkeleton />;
@@ -525,9 +522,7 @@ export function BatchBoard({ batchId }: { batchId: number }) {
   const refresh = () => void client.invalidateQueries({ queryKey: ["batch", batchId] });
   const uploadOf = (row: BatchRowJson): LocalUpload => uploads[row.id] ?? { kind: "idle" };
   const forBreakdown = rows.filter(ready.breakdown);
-  const forFrame = rows.filter(ready.frame);
   const forReview = rows.filter(ready.review);
-  const forClip = rows.filter(ready.clip);
   const forDownload = rows.filter(ready.download);
   const forEdited = rows.filter(ready.edited);
   // Todos los vídeos con un montaje terminado (también los de otras personas que quien mira ve).
@@ -549,7 +544,8 @@ export function BatchBoard({ batchId }: { batchId: number }) {
   /** Se puede cambiar el enlace: es suyo, quien mira tiene Mac, y el enlace falló o la referencia aún no está lista. */
   const canChangeLink = (row: BatchRowJson) =>
     row.mine && mac.own && (failedLink(row) !== null || (row.referenceStatus !== "ready" && row.referenceStatus !== "processing" && uploadOf(row).kind !== "uploading"));
-  const anyBulk = forBreakdown.length + forFrame.length + forReview.length + forClip.length + forDownload.length + forEdited.length > 0;
+  // Sin «Generar imágenes/clips»: el lote las pide solo (regla fija del dueño, 23/11/2026).
+  const anyBulk = forBreakdown.length + forReview.length + forDownload.length + forEdited.length > 0;
 
   async function breakdownAll() {
     if (inFlight.current) return;
@@ -597,11 +593,6 @@ export function BatchBoard({ batchId }: { batchId: number }) {
     }
   }
 
-  const generating = (on: boolean) => {
-    inFlight.current = on;
-    setRunning(on ? "generate" : null);
-  };
-
   /** Lo mismo que decide `AutoAction`: hay algo que hacer ahora en el paso en que va el lote. */
   const autoActs = (auto.status === "preguntas" && (auto.questions > 0 || auto.readyToConfirm)) || (auto.status === "revision_imagenes" && forReview.length > 0);
   const finished = auto.status === "listo" || auto.status === "montado";
@@ -636,24 +627,12 @@ export function BatchBoard({ batchId }: { batchId: number }) {
                     Desglosar ({forBreakdown.length})
                   </DropdownMenuItem>
                 ) : null}
-                {forFrame.length > 0 ? (
-                  <DropdownMenuItem onSelect={() => setBulk("frame")}>
-                    <Sparkles aria-hidden />
-                    Generar imágenes ({forFrame.length})
-                  </DropdownMenuItem>
-                ) : null}
                 {forReview.length > 0 ? (
                   <DropdownMenuItem asChild>
                     <Link href={`/lotes/${batchId}/revisar`}>
                       <ImageIcon aria-hidden />
                       Revisar imágenes ({forReview.length})
                     </Link>
-                  </DropdownMenuItem>
-                ) : null}
-                {forClip.length > 0 ? (
-                  <DropdownMenuItem onSelect={() => setBulk("clip")}>
-                    <Sparkles aria-hidden />
-                    Generar clips ({forClip.length})
                   </DropdownMenuItem>
                 ) : null}
                 {forDownload.length > 0 ? (
@@ -708,9 +687,6 @@ export function BatchBoard({ batchId }: { batchId: number }) {
       {/* Dónde están los vídeos terminados y cómo bajarlos al iPhone: arriba, destacado al terminar. */}
       <FinishedDownloads batchId={batchId} editedCount={editedTotal} total={rows.length} finished={auto.status === "montado"} />
 
-      {/* Siempre montadas: un envío en bloque sigue enseñando sus resultados aunque ya no quede ninguna fila lista. */}
-      <BulkGenerate kind="frame" rows={forFrame} disabled={running !== null} onRunning={generating} onResults={note} open={bulk === "frame"} onOpenChange={(o) => setBulk(o ? "frame" : null)} />
-      <BulkGenerate kind="clip" rows={forClip} disabled={running !== null} onRunning={generating} onResults={note} open={bulk === "clip"} onOpenChange={(o) => setBulk(o ? "clip" : null)} />
 
       {rows.length === 0 ? (
         <EmptyState icon={Film} title="Este lote no tiene vídeos que puedas ver" />
@@ -781,7 +757,6 @@ export function BatchBoard({ batchId }: { batchId: number }) {
                               {row.title}
                             </Link>
                             <KindChip row={row} />
-                            <RiskChip risks={row.risks} />
                           </div>
                           {row.link ? (
                             <div className="mt-0.5 flex min-w-0">
@@ -878,7 +853,10 @@ export function BatchBoard({ batchId }: { batchId: number }) {
         <ActionBar
           aside={
             auto.status === "borrador" ? (
-              <AutoAnalyzeSwitch batchId={batchId} value={data.batch.autoAnalyze} editable={data.batch.mine} />
+              <div className="flex flex-wrap items-center gap-x-3">
+                <AutoAnalyzeSwitch batchId={batchId} value={data.batch.autoAnalyze} editable={data.batch.mine} />
+                <FrameCountPicker batchId={batchId} value={data.batch.frameCount} editable={data.batch.mine} />
+              </div>
             ) : (
               <span className="px-1 text-sm text-muted-foreground tabular-nums">
                 {done}/{rows.length} clips

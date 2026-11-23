@@ -12,8 +12,8 @@ import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import type { ClipResolution } from "@/server/videos/videos";
 import { GenerationNotice, Generating } from "./generation-status";
-import { canRequestRound, RUNNING_STATUSES, secondsLabel, textHash, thumbUrl, type VideoJson, type VideoViewJson } from "./labels";
-import { QuoteCard } from "./quote-card";
+import { AutoNotice } from "./auto-status";
+import { canRequestRound, RUNNING_STATUSES, secondsLabel, thumbUrl, type VideoJson, type VideoViewJson } from "./labels";
 import { onRadioKeyDown, radioTabIndex } from "./radio-keys";
 import { RejectDialog } from "./reject-dialog";
 import { NoRegenerationsLeft, RegenerationsLeft } from "./step-frame";
@@ -25,12 +25,7 @@ const RESOLUTIONS: Array<{ value: ClipResolution; note?: string }> = [
   { value: "1080p" },
 ];
 
-/**
- * Guardar la resolución del clip. La caché del vídeo solo cambia con lo que devuelve el servidor:
- * así el presupuesto (cuya clave lleva la resolución guardada) nunca se pide con una resolución que
- * el servidor aún no tiene. Al guardarse cambia esa clave y el presupuesto se vuelve a pedir solo una
- * vez (sin invalidarlo aparte).
- */
+/** Guardar la resolución del clip. La caché del vídeo solo cambia con lo que devuelve el servidor. */
 function useSaveResolution(video: VideoJson) {
   const client = useQueryClient();
   return useMutation({
@@ -78,6 +73,20 @@ function ResolutionPicker({ video, save }: { video: VideoJson; save: ReturnType<
           </button>
         );
       })}
+    </div>
+  );
+}
+
+/**
+ * «Resolución del clip», antes de que se genere (va en el desglose: el clip se pide solo en cuanto
+ * se aprueba la imagen). 480p por defecto (regla del motor: luego se sube a 1080p).
+ */
+export function ClipResolutionField({ video, readOnly }: { video: VideoJson; readOnly: boolean }) {
+  const save = useSaveResolution(video);
+  return (
+    <div className="flex flex-col gap-2">
+      <span className="text-sm font-semibold">Resolución del clip</span>
+      {readOnly ? <span className="text-sm tabular-nums">{video.clipResolution}</span> : <ResolutionPicker video={video} save={save} />}
     </div>
   );
 }
@@ -209,11 +218,9 @@ function HookLength({ hook }: { hook: NonNullable<VideoViewJson["hook"]> }) {
 /** Paso «Clip»: reproductor vertical y, al lado, resolución y precio, aprobar, rechazar y descargar. */
 export function StepClip({
   view,
-  onGoToBreakdown,
   onGoToFrame,
 }: {
   view: VideoViewJson;
-  onGoToBreakdown: () => void;
   onGoToFrame: () => void;
 }) {
   const { video, clip, mine } = view;
@@ -221,13 +228,13 @@ export function StepClip({
   const { approve, reject } = useGenerationActions(video.id, "clip");
   const result = current?.status === "done" ? current.results.find((r) => r.ok && r.url) : undefined;
   const reviewing = result !== undefined && current!.rejectReason === null;
+  // Sin rondas posibles y nada que aprobar: «Has usado las 2 regeneraciones…».
   const canRequest = mine && canRequestRound(clip);
   // Un clip fallido deja cambiar la imagen: sin imagen aprobada, primero hay que aprobar una.
   const needsFrame = view.frame.approvedResultId === null;
   const closed = current !== null && (current.status === "failed" || current.rejectReason !== null);
   const approved = result !== undefined && clip.approvedResultId === result.id;
   const downloadable = clip.approvedResultId !== null || result !== undefined;
-  const saveResolution = useSaveResolution(video);
   const hookOnly = video.kind === "solo_gancho";
 
   return (
@@ -242,20 +249,12 @@ export function StepClip({
         {canRequest && needsFrame ? (
           <Button variant="outline" className="h-11 gap-2" onClick={onGoToFrame}>
             <ImageIcon data-icon="inline-start" />
-            Aprobar una imagen
+            Aprobar la imagen
           </Button>
-        ) : canRequest ? (
-          <QuoteCard
-            videoId={video.id}
-            kind="clip"
-            label={current && current.status !== "not_sent" ? "Volver a generar" : "Generar clip"}
-            refreshKey={`${current?.id ?? 0}-${current?.status ?? ""}-${current?.rejectReason ?? ""}-${video.clipResolution}-${textHash(video.videoPrompt)}`}
-            onGoToBreakdown={onGoToBreakdown}
-            blocked={saveResolution.isPending}
-          >
-            <ResolutionPicker video={video} save={saveResolution} />
-          </QuoteCard>
-        ) : null}
+        ) : (
+          // Sin precio ni «Generar clip»: se pide solo en cuanto la imagen está aprobada.
+          <AutoNotice view={view} step="clip" />
+        )}
 
         {reviewing && mine ? (
           <div className="panel flex flex-col gap-3 p-5">

@@ -19,6 +19,7 @@ import { getVariantFor } from "@/server/variants";
 import { checkImagePrompt, checkVideoPrompt, type PromptIssue } from "@/server/videos/prompt-check";
 import { generationView, type GenerationView } from "@/server/videos/generations";
 import type { EditView } from "@/server/videos/edits";
+import type { AutoStatus } from "@/server/videos/autopilot";
 
 /**
  * Vídeos de un producto. Toda función que recibe un `videoId` empieza por `getVideoFor`, que pasa
@@ -305,6 +306,13 @@ export async function checkVariantChoice(user: AuthUser, productId: number, valu
 }
 
 /** Lo que se puede cambiar de un vídeo con `updateVideoChoices` (sin comprobar aún). */
+/** Una imagen por vídeo salvo que el dueño pida más (regla fija, 23/11/2026). */
+export const DEFAULT_FRAME_COUNT = 1;
+export const MAX_FRAME_COUNT = 4;
+export const isFrameCount = (value: unknown): value is number =>
+  Number.isSafeInteger(value) && (value as number) >= 1 && (value as number) <= MAX_FRAME_COUNT;
+const BAD_FRAME_COUNT = `Elige entre 1 y ${MAX_FRAME_COUNT} imágenes.`;
+
 export interface VideoChoicesInput {
   title?: string;
   avatarPhotoId?: number | null;
@@ -323,6 +331,8 @@ export interface VideoChoicesInput {
   note?: unknown;
   /** «Referencia de edición»: un enlace admitido, o `null` / vacío para quitarla. */
   editReferenceUrl?: unknown;
+  /** Imágenes por ronda (1–4), o `null` para la del lote (o 1). */
+  frameCount?: unknown;
 }
 
 /**
@@ -366,12 +376,18 @@ export async function updateVideoChoices(user: AuthUser, videoId: number, input:
   const briefChanged = Object.keys(changes).length > 0;
   const editReferenceUrl = checkEditReferenceUrl(input.editReferenceUrl);
   if (editReferenceUrl !== undefined) changes.editReferenceUrl = editReferenceUrl;
+  // Cuántas imágenes: tampoco llega al desglose.
+  if (input.frameCount !== undefined) {
+    if (input.frameCount !== null && !isFrameCount(input.frameCount)) throw new HttpError(400, BAD_FRAME_COUNT);
+    changes.frameCount = input.frameCount;
+  }
 
   if (Object.keys(changes).length === 0) return video;
   const [updated] = await getDb()
     .update(schema.videos)
     // Un duplicado que esperaba a que lo cambiaran ya puede tener su desglose automático.
-    .set({ ...changes, ...(briefChanged ? { skipAutoAnalysis: false } : {}), updatedAt: new Date() })
+    // Un cambio de quien lo creó responde a la pregunta con la que se paró el flujo automático: sigue solo.
+    .set({ ...changes, ...(briefChanged ? { skipAutoAnalysis: false } : {}), autoStop: null, updatedAt: new Date() })
     .where(and(eq(schema.videos.id, video.id), eq(schema.videos.createdBy, user.id)))
     .returning();
   if (!updated) throw new HttpError(404, NOT_FOUND);
@@ -445,6 +461,10 @@ export async function readVideoFrame(user: AuthUser, videoId: number, index: num
 
 export interface VideoView {
   video: Video;
+  /** Qué está haciendo el flujo automático (`autopilot.ts`): sin botones de «¿generar?». */
+  auto: AutoStatus;
+  /** Imágenes que pide cada ronda (la de la tarjeta, la del lote o 1). */
+  frameCount: number;
   /** «Indicaciones» del lote para el producto de este vídeo (llegan al desglose), o `null`. */
   productNotes: string | null;
   mine: boolean;
@@ -668,7 +688,15 @@ export async function videoView(user: AuthUser, videoId: number): Promise<VideoV
     clip: await generationView(video, "clip", user.id),
     costs: await costsOfVideo(video),
     ...(await editParts(user, video)),
+    ...(await autoParts(user, video)),
   };
+}
+
+/** El estado del flujo automático y cuántas imágenes por ronda. Se cargan al pedirlo (importan este módulo). */
+async function autoParts(user: AuthUser, video: Video): Promise<Pick<VideoView, "auto" | "frameCount">> {
+  const { autoStatusOf } = await import("@/server/videos/autopilot");
+  const { frameCountOf } = await import("@/server/videos/frame");
+  return { auto: await autoStatusOf(user, video), frameCount: await frameCountOf(video) };
 }
 
 /** El montaje del vídeo y sus rótulos. `edits.ts` importa este módulo: se carga al pedirlo, sin ciclo al arrancar. */

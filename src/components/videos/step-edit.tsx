@@ -69,7 +69,8 @@ export function StepEdit({ view }: { view: VideoViewJson }) {
       <aside className="flex flex-col gap-4 lg:sticky lg:top-6" aria-label="Montaje">
         <EditNotice edit={edit} />
         <EditDownload videoId={video.id} edit={edit} />
-        <StartEditButton videoId={video.id} edit={edit} />
+        {/* El primer montaje se pide solo al terminar el clip: aquí solo «Volver a montar». */}
+        {edit.latest !== null || edit.status === "fallido" ? <StartEditButton videoId={video.id} edit={edit} /> : null}
         <SelfCheck edit={edit} />
         <EditTexts key={`${view.editTexts.main}|${view.editTexts.cta}`} view={view} />
       </aside>

@@ -433,6 +433,13 @@ export const batches = pgTable(
     resumedAt: instant("resumed_at"),
     /** Reserva de quien está avanzando el lote (un solo avance a la vez). */
     advancingAt: instant("advancing_at"),
+    /** Imágenes iniciales por vídeo (1–4) para los vídeos del lote que no piden otra cifra. Por defecto 1. */
+    frameCount: integer("frame_count").notNull().default(1),
+    /**
+     * Con todo respondido, el presupuesto se autoriza solo (sin «Confirmar»). Los lotes de antes del
+     * 23/11/2026 quedan en `false` y siguen esperando su confirmación.
+     */
+    autoConfirm: boolean("auto_confirm").notNull().default(true),
   },
   (t) => [
     index("batches_created_by").on(t.createdBy, t.createdAt),
@@ -655,6 +662,19 @@ export const videos = pgTable(
     /** Rótulos del montaje (el principal y el CTA). Los propone el desglose; quien creó el vídeo o el dueño los cambia. */
     editMainText: text("edit_main_text"),
     editCtaText: text("edit_cta_text"),
+    /**
+     * Imágenes iniciales por ronda que pidió el dueño en la tarjeta (1–4). `null`: las del lote o,
+     * sin lote, 1 (regla fija del dueño: una imagen por vídeo salvo que pida más).
+     */
+    frameCount: integer("frame_count"),
+    /**
+     * Desde cuándo el vídeo va solo (`autopilot.ts`): desglose → imagen → clip → montaje sin botones.
+     * Los vídeos nuevos nacen con la fecha; los de antes del 23/11/2026 quedan `null` hasta que quien
+     * los creó los abre (así publicar no gasta créditos en vídeos viejos).
+     */
+    autoSince: instant("auto_since").defaultNow(),
+    /** Por qué el flujo automático se ha parado en este vídeo (p. ej. sin saldo), apto para la persona; `null` si sigue. */
+    autoStop: text("auto_stop"),
     createdAt: instant("created_at").notNull().defaultNow(),
     updatedAt: instant("updated_at").notNull().defaultNow(),
   },

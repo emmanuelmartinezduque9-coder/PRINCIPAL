@@ -1,7 +1,7 @@
 "use client";
 
 import { useQueryClient } from "@tanstack/react-query";
-import { Clapperboard, Copy, Loader2, Package, Trash2, TriangleAlert } from "lucide-react";
+import { Clapperboard, Copy, Loader2, Package, Trash2 } from "lucide-react";
 import { useId, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -11,32 +11,15 @@ import { MAX_PRODUCT_NOTES } from "@/components/videos/brief-labels";
 import { useReferenceUploads } from "@/components/videos/upload-provider";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import { Segmented } from "@/components/videos/segmented";
 import type { VariantJson } from "./batch-fields";
 import { linkLabel } from "@/lib/links";
 import { EditReferenceButton, EditReferenceField } from "./edit-reference";
 import { Indications } from "./indications";
-import { RISK_LABELS, type BatchRowJson, type BatchViewJson } from "./labels";
+import type { BatchRowJson, BatchViewJson } from "./labels";
 import { Switch } from "@/components/ui/switch";
 
 type GroupJson = BatchViewJson["groups"][number];
-
-/** Los riesgos del desglose: un aviso pequeño con cuántos; el detalle, al pasar por encima. */
-export function RiskChip({ risks }: { risks: BatchRowJson["risks"] }) {
-  if (risks.length === 0) return null;
-  const detail = risks.map((risk) => `${RISK_LABELS[risk.kind]}: ${risk.detail}`).join("\n");
-  const kinds = [...new Set(risks.map((risk) => RISK_LABELS[risk.kind]))];
-  return (
-    <span
-      title={detail}
-      tabIndex={0}
-      aria-label={`Riesgos: ${detail}`}
-      className="inline-flex h-5 max-w-56 shrink-0 items-center gap-1 rounded-md bg-warning/15 px-1.5 text-[11px] font-medium text-warning-ink outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
-    >
-      <TriangleAlert className="size-3 shrink-0" aria-hidden />
-      <span className="truncate">{kinds.length === 1 ? kinds[0] : `${kinds[0]} +${kinds.length - 1}`}</span>
-    </span>
-  );
-}
 
 /**
  * Cabecera de un producto del lote: portada grande, nombre, cuántos vídeos, las variantes que
@@ -253,5 +236,37 @@ export function AutoAnalyzeSwitch({ batchId, value, editable }: { batchId: numbe
       <Switch id={id} checked={value} disabled={!editable || saving} onCheckedChange={(next) => void change(next)} />
       Desglosar al subir
     </label>
+  );
+}
+
+const FRAME_COUNT_OPTIONS = (["1", "2", "3", "4"] as const).map((value) => ({ value, label: value }));
+
+/** «Imágenes por vídeo» del lote (1 por defecto: regla fija del dueño). Solo quien lo creó lo cambia. */
+export function FrameCountPicker({ batchId, value, editable }: { batchId: number; value: number; editable: boolean }) {
+  const client = useQueryClient();
+  const [saving, setSaving] = useState(false);
+  async function change(next: string) {
+    if (Number(next) === value) return;
+    setSaving(true);
+    try {
+      await api(`/api/lotes/${batchId}`, { method: "PATCH", body: JSON.stringify({ frameCount: Number(next) }) });
+      await client.invalidateQueries({ queryKey: ["batch", batchId] });
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "No se pudo guardar.");
+    } finally {
+      setSaving(false);
+    }
+  }
+  return (
+    <div className="flex h-9 items-center gap-2.5 px-1 text-sm text-muted-foreground">
+      <span>Imágenes por vídeo</span>
+      <Segmented
+        label="Imágenes por vídeo"
+        options={FRAME_COUNT_OPTIONS}
+        value={String(value) as (typeof FRAME_COUNT_OPTIONS)[number]["value"]}
+        onChange={(next) => void change(next)}
+        disabled={!editable || saving}
+      />
+    </div>
   );
 }

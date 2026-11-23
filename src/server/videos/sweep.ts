@@ -5,6 +5,7 @@ import { ANALYSIS_INTERRUPTED, ANALYSIS_STALE_MS, autoAnalyzePending, failOrphan
 import { settleEditedBatches } from "@/server/videos/edits";
 import { sweepGenerations, type GenDeps } from "@/server/videos/generations";
 import { advanceRunningBatches } from "@/server/videos/lote";
+import { advanceSoloVideos } from "@/server/videos/autopilot";
 import { cleanStaleUploads, PREPARE_FAILED } from "@/server/videos/upload";
 
 /**
@@ -82,6 +83,11 @@ export async function videoSweep(now: Date = new Date(), deps: GenDeps = {}): Pr
     await advanceRunningBatches(deps);
   } catch (error) {
     console.error("[videos] No se pudieron avanzar los lotes:", error);
+  }
+  try {
+    await advanceSoloVideos(now, deps);
+  } catch (error) {
+    console.error("[videos] No se pudieron avanzar los vídeos sueltos:", error);
   }
   try {
     await settleEditedBatches();

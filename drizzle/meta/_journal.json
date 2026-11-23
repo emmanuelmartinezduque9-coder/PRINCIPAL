@@ -218,6 +218,13 @@
       "when": 1795401789401,
       "tag": "0030_perfiles_de_cuentas",
       "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1795402324532,
+      "tag": "0031_flujo_automatico",
+      "breakpoints": true
     }
   ]
 }

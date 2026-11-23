@@ -21,5 +21,6 @@ Contra `docs/reglas-motor-del-dueno.md`.
 | 8 | Envío único, reconciliación por ID, inciertos sin reenviar | Hecho (núcleo de gasto) |
 | 8 | Cola con concurrencia por etapa, reutilizar subidas por hash | Hecho (pg-boss, `ensureMedia`) |
 | 8 | Métricas: tiempo a frames, créditos por vídeo, tasa de regeneración | Falta |
+| 10 | Flujo automático sin avisos ni botones de «¿generar?», 1 imagen por vídeo por defecto, solo preguntas obligatorias | Hecho el 23/11 (`autopilot.ts` para el vídeo suelto; el lote se autoriza solo; `tests/flujo-automatico.test.ts`) |
 
 Orden de trabajo: 1) modelos en la tarjeta (Genjutsu / Wan) con un frame por toma; 2) revisión automática de frames; 3) referencias múltiples y Pinterest; 4) upscale y descripciones; 5) métricas.

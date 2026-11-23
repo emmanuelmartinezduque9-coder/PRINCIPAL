@@ -22,7 +22,10 @@ import {
   checkSongChoice,
   checkVariantChoice,
   createVideo,
+  DEFAULT_FRAME_COUNT,
   getVideoFor,
+  isFrameCount,
+  MAX_FRAME_COUNT,
   insertVideo,
   productNotesOf,
   referenceOutdated,
@@ -62,14 +65,15 @@ async function visibleProducts(user: AuthUser): Promise<Map<number, string>> {
  * Crea un lote vacío con nombre (1–100 caracteres; la pantalla pone uno automático si se deja
  * vacío) y «Desglosar al subir» (encendido si no se dice).
  */
-export async function createBatch(user: AuthUser, name: string, options: { autoAnalyze?: unknown } = {}): Promise<Batch> {
+export async function createBatch(user: AuthUser, name: string, options: { autoAnalyze?: unknown; frameCount?: unknown } = {}): Promise<Batch> {
   const clean = typeof name === "string" ? name.trim() : "";
   if (!clean) throw new HttpError(400, "Escribe el nombre del lote.");
   if (clean.length > MAX_NAME) throw new HttpError(400, `El nombre no puede tener más de ${MAX_NAME} caracteres.`);
   if (options.autoAnalyze !== undefined && typeof options.autoAnalyze !== "boolean") throw new HttpError(400, "Valor no válido.");
+  if (options.frameCount !== undefined && !isFrameCount(options.frameCount)) throw new HttpError(400, BAD_FRAME_COUNT);
   const [batch] = await getDb()
     .insert(batches)
-    .values({ name: clean, createdBy: user.id, autoAnalyze: options.autoAnalyze ?? true })
+    .values({ name: clean, createdBy: user.id, autoAnalyze: options.autoAnalyze ?? true, frameCount: options.frameCount ?? DEFAULT_FRAME_COUNT })
     .returning();
   return batch;
 }
@@ -86,6 +90,16 @@ export async function setBatchAutoAnalyze(user: AuthUser, batchId: number, autoA
   const batch = await ownBatch(user, batchId);
   if (typeof autoAnalyze !== "boolean") throw new HttpError(400, "Valor no válido.");
   const [updated] = await getDb().update(batches).set({ autoAnalyze }).where(eq(batches.id, batch.id)).returning();
+  return updated;
+}
+
+const BAD_FRAME_COUNT = `Elige entre 1 y ${MAX_FRAME_COUNT} imágenes por vídeo.`;
+
+/** Imágenes por vídeo del lote (1–4; por defecto 1). Solo quien creó el lote. */
+export async function setBatchFrameCount(user: AuthUser, batchId: number, frameCount: unknown): Promise<Batch> {
+  const batch = await ownBatch(user, batchId);
+  if (!isFrameCount(frameCount)) throw new HttpError(400, BAD_FRAME_COUNT);
+  const [updated] = await getDb().update(batches).set({ frameCount }).where(eq(batches.id, batch.id)).returning();
   return updated;
 }
 
@@ -407,7 +421,7 @@ export interface BatchGroup {
 }
 
 export interface BatchView {
-  batch: { id: number; name: string; createdAt: Date; createdBy: number; mine: boolean; autoAnalyze: boolean };
+  batch: { id: number; name: string; createdAt: Date; createdBy: number; mine: boolean; autoAnalyze: boolean; frameCount: number };
   /** Los productos del lote, en el orden de su primer vídeo. */
   groups: BatchGroup[];
   rows: BatchRow[];
