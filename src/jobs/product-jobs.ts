@@ -1,7 +1,7 @@
 import { defineJob, defineSchedule } from "@/jobs/registry";
 import { StepFailedError } from "@/jobs/steps";
 import { advanceIntake, INTAKE_JOB, INTAKE_SWEEP, intakeSweep } from "@/server/product-intake";
-import { RESEARCH_JOB, runResearch } from "@/server/product-research";
+import { RESEARCH_JOB, RESEARCH_SWEEP, researchSweep, runResearch } from "@/server/product-research";
 
 /**
  * Trabajos de los productos: el alta desde un enlace y la búsqueda de nicho, ángulo o audiencia.
@@ -30,3 +30,6 @@ defineJob<{ researchId: number }>(
   },
   "Buscar nicho, ángulo o audiencia",
 );
+
+/** Cada minuto: las búsquedas que esperan las cifras del Mac o una ronda nueva de candidatos. */
+defineSchedule(RESEARCH_SWEEP, "* * * * *", () => researchSweep());

@@ -23,8 +23,8 @@ export const headlessBrowser = (exists = existsSync) => [CHROME, BRAVE].find((b)
 /** Cuántos reels se leen de un perfil. */
 export const MAX_REELS = 15;
 const PAGE_WAIT_MS = 12_000;
-const START_TIMEOUT_MS = 20_000;
-const UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
+export const START_TIMEOUT_MS = 20_000;
+export const UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
 
 /** ¿Es un perfil (no un vídeo suelto)? Devuelve `{ red, usuario }` o `null`. */
 export function profileOf(url) {
@@ -49,12 +49,17 @@ export function profileOf(url) {
 
 /** Cookies de Instagram del archivo Netscape, listas para el navegador. */
 export function instagramCookies(text) {
+  return siteCookies(text, ["instagram.com"]);
+}
+
+/** Cookies de esos sitios (y sus subdominios) del archivo Netscape, listas para el navegador. */
+export function siteCookies(text, sites) {
   const cookies = [];
   for (const raw of text.split("\n")) {
     const line = raw.startsWith("#HttpOnly_") ? raw.slice(10) : raw;
     if (!line || line.startsWith("#")) continue;
     const p = line.split("\t");
-    if (p.length < 7 || !p[0].includes("instagram.com")) continue;
+    if (p.length < 7 || !sites.some((site) => p[0].replace(/^\./, "").endsWith(site))) continue;
     cookies.push({ name: p[5], value: p[6].trim(), domain: p[0], path: p[2] || "/", secure: p[3] === "TRUE" });
   }
   return cookies;
@@ -106,7 +111,7 @@ const READ_PAGE = `(() => {
   return JSON.stringify({ login, aviso, texto: body.slice(0, 300), titulo: document.title, cabecera: text(header).slice(0, 1500), enlaces, descripcion: meta('og:description') || meta('description'), reels });
 })()`;
 
-async function cdp(wsUrl) {
+export async function cdp(wsUrl) {
   const ws = new WebSocket(wsUrl);
   await new Promise((resolve, reject) => {
     ws.addEventListener("open", resolve, { once: true });

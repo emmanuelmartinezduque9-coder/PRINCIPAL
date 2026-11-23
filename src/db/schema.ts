@@ -1094,13 +1094,16 @@ export const agentTasks = pgTable(
     uniqueIndex("agent_tasks_one_active_media_fetch")
       .on(t.url)
       .where(sql`${t.kind} = 'media_fetch' and ${t.status} in ('queued', 'leased')`),
+    uniqueIndex("agent_tasks_one_active_market_data")
+      .on(t.url)
+      .where(sql`${t.kind} = 'market_data' and ${t.status} in ('queued', 'leased')`),
     uniqueIndex("agent_tasks_one_active_profile_fetch")
       .on(t.url)
       .where(sql`${t.kind} = 'profile_fetch' and ${t.status} in ('queued', 'leased')`),
     uniqueIndex("agent_tasks_one_active_pinterest_search")
       .on(t.url)
       .where(sql`${t.kind} = 'pinterest_search' and ${t.status} in ('queued', 'leased')`),
-    check("agent_tasks_kind_valid", sql`${t.kind} in ('link_download', 'song_download', 'montaje', 'media_fetch', 'profile_fetch', 'pinterest_search')`),
+    check("agent_tasks_kind_valid", sql`${t.kind} in ('link_download', 'song_download', 'montaje', 'media_fetch', 'profile_fetch', 'pinterest_search', 'market_data')`),
     // Una referencia y un montaje son siempre de un vídeo; una canción, de ninguno.
     check("agent_tasks_target_valid", sql`(${t.kind} in ('link_download', 'montaje')) = (${t.videoId} is not null)`),
     check("agent_tasks_status_valid", sql`${t.status} in ('queued', 'leased', 'done', 'failed')`),
@@ -1343,8 +1346,17 @@ export const productResearch = pgTable(
       .references(() => products.id, { onDelete: "cascade" }),
     /** `nicho`, `angulo` o `audiencia`. */
     kind: text("kind").notNull(),
-    /** `en_cola`, `buscando`, `hecho` o `fallido`. */
+    /** `en_cola`, `buscando`, `esperando_datos` (el Mac trae las cifras), `hecho` o `fallido`. */
     status: text("status").notNull().default("en_cola"),
+    /** Fase 1: candidatos con sus consultas (Claude con búsqueda web). */
+    candidates: jsonb("candidates"),
+    /** Fase 2: las cifras que trajo el Mac (Amazon, anuncios de Meta, TikTok, YouTube). */
+    data: jsonb("data"),
+    dataTaskId: bigint("data_task_id", { mode: "number" }),
+    /** Rondas hechas sin datos suficientes (se reintenta solo). */
+    attempts: integer("attempts").notNull().default(0),
+    /** No antes de esta hora (reintento). */
+    availableAt: instant("available_at"),
     /** Indicación opcional de la persona («que no sea para niños»…). */
     note: text("note"),
     result: jsonb("result"),
@@ -1356,7 +1368,7 @@ export const productResearch = pgTable(
   },
   (t) => [
     check("product_research_kind_valid", sql`${t.kind} in ('nicho', 'angulo', 'audiencia')`),
-    check("product_research_status_valid", sql`${t.status} in ('en_cola', 'buscando', 'hecho', 'fallido')`),
+    check("product_research_status_valid", sql`${t.status} in ('en_cola', 'buscando', 'esperando_datos', 'hecho', 'fallido')`),
     index("product_research_product_idx").on(t.productId),
   ],
 );

@@ -32,6 +32,7 @@ import {
   ytDlpArgs,
   ytDlpAudioArgs,
 } from "../agente-mac/lib.mjs";
+import { amazonUrl, boughtLastMonth, metaTotal, youtubeFrom } from "../agente-mac/datos.mjs";
 import { canonicalReel, CHROME, BRAVE, headlessBrowser, instagramCookies, parseCount, profileOf, tiktokProfileFrom } from "../agente-mac/perfil.mjs";
 import { SONG_LINK_HOSTS as SERVER_SONG_HOSTS, songLinkOf } from "@/lib/links";
 import { LINK_HOSTS as SERVER_HOSTS, linkOf } from "@/server/agent";
@@ -516,8 +517,8 @@ describe("canciones", () => {
     };
   }
 
-  it("el Mac es de la versión 1.6.0 (trae enlaces, lee perfiles y busca en Pinterest)", () => {
-    expect(VERSION).toBe("1.6.0");
+  it("el Mac es de la versión 1.7.0 (trae enlaces, lee perfiles, busca en Pinterest y mide datos de mercado)", () => {
+    expect(VERSION).toBe("1.7.0");
   });
 
   it("saca el audio como MP3 con una lista de argumentos fija y el enlace detrás de `--`", () => {
@@ -635,7 +636,7 @@ describe("enlaces del montaje en la nube", () => {
 
   it("el programa del Mac pide siempre `enlace_medio` y ya no monta", () => {
     const source = fsSync.readFileSync(path.resolve(__dirname, "..", "agente-mac", "agente.mjs"), "utf8");
-    expect(source).toContain('config.puede = ["enlace_medio", "perfil", "pinterest"]');
+    expect(source).toContain('config.puede = ["enlace_medio", "perfil", "pinterest", "datos"]');
     expect(source).not.toMatch(/montaje"|checkMontaje|montar_auto/);
   });
 
@@ -723,6 +724,31 @@ describe("perfiles de cuentas (1.5.0)", () => {
     expect(tiktokProfileFrom({ title: "Tienda", entries: [{ url: "https://www.tiktok.com/@t/video/1", view_count: 5000, title: "Hola" }] }, "t").reels).toEqual([
       { url: "https://www.tiktok.com/@t/video/1", vistas: 5000, texto: "Hola", miniatura: null },
     ]);
+  });
+});
+
+describe("datos de mercado (1.7.0)", () => {
+  const DATOS = { taskId: 13, kind: "datos", url: "https://www.amazon.de/?principal=1", datos: { pais: "DE", consultas: [{ texto: "Harry Potter Schlafanzug Damen", anuncios: "Harry Potter Pyjama" }] }, uploadId: "d".repeat(32), chunkBytes: CHUNK, maxBytes: 3 * 1024 * 1024 };
+
+  it("mide las consultas que manda la web, sube el JSON y termina", async () => {
+    let asked: unknown = null;
+    const collect = async (spec: unknown) => {
+      asked = spec;
+      return { pais: "DE", consultas: [{ consulta: "Harry Potter Schlafanzug Damen", amazon: { resultados: 66 } }] };
+    };
+    const deps = { ...depsWith(fakeFetch(claimed(DATOS)), fakeSpawn()), collectMarketData: collect };
+    expect(await runOnce({ ...config(), puede: ["datos"] }, deps)).toBe("done");
+    expect(asked).toEqual({ country: "DE", queries: DATOS.datos.consultas });
+    const sent = Buffer.concat(calls.filter((call) => call.method === "PUT").map((call) => call.body as Buffer));
+    expect(JSON.parse(sent.toString()).consultas[0].amazon.resultados).toBe(66);
+    expect(leftovers()).toEqual([]);
+  });
+
+  it("lee las cifras de Amazon, Meta y YouTube", () => {
+    expect([metaTotal("~1.100 resultados"), metaTotal("1.234 Ergebnisse"), metaTotal("No hay ningún anuncio que coincida"), metaTotal("nada")]).toEqual([1100, 1234, 0, null]);
+    expect([boughtLastMonth("100+ Mal im letzten Monat gekauft"), boughtLastMonth("1.000+ Mal im letzten Monat gekauft"), boughtLastMonth(null)]).toEqual([100, 1000, null]);
+    expect(youtubeFrom({ entries: [{ url: "https://www.youtube.com/watch?v=a", title: "HP", view_count: 13873 }] }, "hp").videos).toEqual([{ url: "https://www.youtube.com/watch?v=a", titulo: "HP", vistas: 13873 }]);
+    expect(amazonUrl("IT", "pigiama")).toBe("https://www.amazon.it/s?k=pigiama");
   });
 });
 
@@ -877,7 +903,7 @@ describe("instalar.sh", () => {
     const first = run();
     expect(first.status, first.stderr).toBe(0);
     const dest = path.join(home, ".principal-tools", "agente-mac");
-    expect(fsSync.readdirSync(dest).sort()).toEqual(["README.md", "agente.mjs", "lib.mjs", "perfil.mjs"]);
+    expect(fsSync.readdirSync(dest).sort()).toEqual(["README.md", "agente.mjs", "datos.mjs", "lib.mjs", "perfil.mjs"]);
     expect(fsSync.readFileSync(path.join(dest, "lib.mjs"), "utf8")).toBe(fsSync.readFileSync(path.join(ROOT, "agente-mac", "lib.mjs"), "utf8"));
 
     const plistPath = path.join(home, "Library", "LaunchAgents", "com.principal.agente.plist");

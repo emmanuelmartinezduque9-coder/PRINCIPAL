@@ -108,7 +108,11 @@
       "docs/piloto-pedido-54/indicaciones-del-dueno.md",
       "docs/reglas-origen/skills-codex/angulos-de-venta/SKILL.md",
       "docs/superpowers/specs/2026-11-22-plataforma-y-motor-angulos-design.md"
-    ]
+    ],
+    "replacesSha256": [
+      "199f308aa35412321f9209722f5efe9c47892e2c62bb83208034086d9172cd6d"
+    ],
+    "updateNote": "Corrección de Emmanuel (23/11/2026): solo propuestas con cifras reales medidas (Amazon, anuncios de Meta, TikTok, YouTube); nada de hipótesis."
   },
   {
     "slug": "referencias-pinterest",

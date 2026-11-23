@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { existsSync } from "node:fs";
 import { profileOf, readInstagramProfile, tiktokProfileArgs, tiktokProfileFrom } from "./perfil.mjs";
+import { collectMarketData, youtubeFrom, youtubeSearchArgs } from "./datos.mjs";
 
 /**
  * Archivo de cookies exportado de Brave (formato Netscape, modo 600). El programa corre con launchd y
@@ -26,7 +27,7 @@ export function cookieArgs(file = COOKIES_FILE, exists = existsSync) {
   return exists(file) ? ["--cookies", file] : ["--cookies-from-browser", "brave"];
 }
 
-export const VERSION = "1.6.0";
+export const VERSION = "1.7.0";
 
 /** Sitios de los que se descarga, con sus subdominios. La misma lista que el servidor. */
 export const LINK_HOSTS = ["instagram.com", "tiktok.com", "youtube.com", "youtu.be", "facebook.com", "fb.watch"];
@@ -433,6 +434,42 @@ async function readProfile(config, deps, task, file) {
   return { ok: true };
 }
 
+/**
+ * Datos de mercado (`datos`): Amazon, anuncios de Meta, TikTok (con sesión) y YouTube de cada
+ * consulta (`datos.mjs`). Deja el JSON en `file`. Mientras trabaja, renueva la reserva cada minuto.
+ */
+async function marketData(config, deps, task, file) {
+  const spec = task.datos && typeof task.datos === "object" ? task.datos : null;
+  if (!spec || !Array.isArray(spec.consultas) || typeof spec.pais !== "string") return { ok: false, error: "La tarea de datos no trae consultas" };
+  const youtube = async (query) => {
+    const ran = await runTool(config, deps, task, config.ytDlp ?? "yt-dlp", youtubeSearchArgs(query), {
+      timeoutMs: YT_DLP_TIMEOUT_MS,
+      capture: true,
+      messages: { failed: (d) => `yt-dlp no pudo buscar en YouTube${d ? `: ${d}` : ""}`, timedOut: "yt-dlp tardó demasiado buscando en YouTube" },
+    });
+    return ran.ok ? youtubeFrom(JSON.parse(ran.stdout), query) : null;
+  };
+  let lost = false;
+  const beat = setInterval(() => {
+    call(config, deps, "POST", `/api/agente/tareas/${task.taskId}/latido`)
+      .then((r) => {
+        if (r?.status === 409) lost = true;
+      })
+      .catch(() => {});
+  }, LEASE_BEAT_MS);
+  try {
+    const collect = deps.collectMarketData ?? collectMarketData;
+    const data = await collect({ country: spec.pais, queries: spec.consultas }, { sessionFile: config.instagramSession ?? INSTAGRAM_SESSION_FILE, sleep: deps.sleep, youtube });
+    if (lost) return { lost: true };
+    await deps.fs.writeFile(file, JSON.stringify(data));
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, error: `No se pudieron buscar los datos: ${messageOf(error)}` };
+  } finally {
+    clearInterval(beat);
+  }
+}
+
 /** Solo se pide el buscador de pines de Pinterest (lo que manda la web para `pinterest`). */
 export function allowedPinterestUrl(value) {
   try {
@@ -566,17 +603,20 @@ export async function runOnce(config, deps) {
   const song = task.kind === "cancion";
   const profile = task.kind === "perfil";
   const pinterest = task.kind === "pinterest";
+  const datos = task.kind === "datos";
   // Aunque la web ya lo comprobó, este Mac no lanza yt-dlp con un enlace de fuera de la lista.
-  if (!(pinterest ? allowedPinterestUrl(task.url) : song ? allowedSongUrl(task.url) : allowedUrl(task.url))) return giveUp("El enlace no es de un sitio admitido");
+  if (!datos && !(pinterest ? allowedPinterestUrl(task.url) : song ? allowedSongUrl(task.url) : allowedUrl(task.url))) return giveUp("El enlace no es de un sitio admitido");
 
   // Carpeta temporal propia (solo la puede leer este usuario: `mkdtemp` la crea con 700).
   const dir = await deps.fs.mkdtemp(path.join(config.tmpDir ?? os.tmpdir(), TMP_PREFIX));
-  const file = path.join(dir, song ? SONG_FILE : profile ? "perfil.json" : pinterest ? "pinterest.json" : "video.mp4");
+  const file = path.join(dir, song ? SONG_FILE : profile ? "perfil.json" : pinterest ? "pinterest.json" : datos ? "datos.json" : "video.mp4");
   const url = new URL(task.url).href;
   const maxMb = song ? 25 : 100;
   try {
-    log(pinterest ? "Buscando referencias en Pinterest" : profile ? `Leyendo el perfil ${task.url}` : `Descargando ${task.url}`);
-    const downloaded = pinterest
+    log(datos ? "Buscando datos de mercado (Amazon, anuncios de Meta, TikTok, YouTube)" : pinterest ? "Buscando referencias en Pinterest" : profile ? `Leyendo el perfil ${task.url}` : `Descargando ${task.url}`);
+    const downloaded = datos
+      ? await marketData(config, deps, task, file)
+      : pinterest
       ? await searchPinterest(deps, task, file)
       : profile
         ? await readProfile(config, deps, task, file)

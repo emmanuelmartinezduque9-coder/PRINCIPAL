@@ -232,6 +232,13 @@
       "when": 1795404058635,
       "tag": "0032_referencias_pinterest",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1795406844516,
+      "tag": "0033_datos_de_mercado",
+      "breakpoints": true
     }
   ]
 }

@@ -16,7 +16,7 @@ type Kind = "nicho" | "angulo" | "audiencia";
 interface ResearchRow {
   id: number;
   kind: Kind;
-  status: "en_cola" | "buscando" | "hecho" | "fallido";
+  status: "en_cola" | "buscando" | "esperando_datos" | "hecho" | "fallido";
   note: string | null;
   result: Serialized<ResearchResult> | null;
   error: string | null;
@@ -31,7 +31,6 @@ const KINDS: Array<{ kind: Kind; field: "niche" | "angle" | "audience"; label: s
 const LEVEL: Record<string, { text: string; className: string }> = {
   ventas_verificadas: { text: "Ventas verificadas", className: "bg-emerald-100 text-emerald-900" },
   senales_de_demanda: { text: "Señales de demanda", className: "bg-sky-100 text-sky-900" },
-  hipotesis: { text: "Hipótesis", className: "bg-muted text-muted-foreground" },
 };
 const SATURATION: Record<string, string> = { alta: "muy saturado", media: "algo saturado", baja: "poco saturado", sin_datos: "sin datos suficientes" };
 
@@ -46,7 +45,7 @@ export function FocusPanel({ product }: { product: ProductView }) {
   const query = useQuery({
     queryKey: ["research", product.id],
     queryFn: () => api<{ research: ResearchRow[] }>(`/api/productos/${product.id}/alternativas`),
-    refetchInterval: (q) => (q.state.data?.research.some((r) => r.status === "en_cola" || r.status === "buscando") ? 5_000 : false),
+    refetchInterval: (q) => (q.state.data?.research.some((r) => ["en_cola", "buscando", "esperando_datos"].includes(r.status)) ? 5_000 : false),
   });
   const rows = query.data?.research ?? [];
 
@@ -103,7 +102,7 @@ export function FocusPanel({ product }: { product: ProductView }) {
             ))}
           </div>
           <p className="text-sm text-muted-foreground">
-            Busca en internet en el país del producto (vídeos y sus vistas, anuncios activos, tiendas y más vendidos) y trae propuestas con pruebas. Cada búsqueda cuesta unos céntimos de Claude.
+            Propone candidatos y tu Mac los mide con cifras reales en el país del producto: Amazon (resultados, valoraciones, compras del último mes), anuncios activos en Meta, vídeos y vistas en YouTube y TikTok. Solo se enseña lo que tiene cifras. Tarda unos minutos y cuesta unos céntimos de Claude.
           </p>
         </div>
       </Panel>
@@ -119,11 +118,12 @@ function ResearchCard({ row, onUse }: { row: ResearchRow; onUse: (field: "niche"
   const meta = KINDS.find((k) => k.kind === row.kind)!;
   const date = new Date(row.createdAt).toLocaleString("es-ES", { dateStyle: "short", timeStyle: "short" });
   const title = `${meta.label} diferente · ${date}`;
-  if (row.status === "en_cola" || row.status === "buscando") {
+  if (row.status === "en_cola" || row.status === "buscando" || row.status === "esperando_datos") {
+    const text = row.error ?? (row.status === "esperando_datos" ? "Tu Mac está midiendo Amazon, los anuncios de Meta y los vídeos…" : "Buscando candidatos en internet…");
     return (
       <Panel title={title}>
         <p className="flex items-center gap-2 text-sm text-muted-foreground" role="status">
-          <Loader2 className="size-4 animate-spin" aria-hidden /> Buscando en internet…{row.error ? ` ${row.error}` : ""}
+          <Loader2 className="size-4 animate-spin" aria-hidden /> {text}
         </p>
       </Panel>
     );
@@ -145,7 +145,7 @@ function ResearchCard({ row, onUse }: { row: ResearchRow; onUse: (field: "niche"
         <p>
           <span className="font-medium">Situación actual ({SATURATION[now.saturacion] ?? now.saturacion}):</span> {now.resumen}
         </p>
-        <Evidence items={now.pruebas} />
+        <Evidence items={now.pruebas.filter((e) => e.comprobada)} />
       </div>
       <ol className="flex flex-col gap-4">
         {propuestas.map((p, i) => (
@@ -165,7 +165,7 @@ function ResearchCard({ row, onUse }: { row: ResearchRow; onUse: (field: "niche"
                 ))}
               </ul>
             ) : null}
-            <Evidence items={p.pruebas} />
+            <Evidence items={p.pruebas.filter((e) => e.comprobada)} />
             <div>
               <Button variant="outline" className="h-9 px-3" onClick={() => onUse(meta.field, p.titulo)}>
                 <Check className="size-4" aria-hidden /> Usar este {meta.label.toLowerCase()}
@@ -191,7 +191,6 @@ function Evidence({ items }: { items: Array<{ fuente: string; dato: string; url:
             <a href={e.url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-0.5 underline underline-offset-2">
               ver <ExternalLink className="size-3" aria-hidden />
             </a>
-            {e.comprobada ? null : <span className="text-amber-700"> (enlace sin comprobar)</span>}
           </span>
         </li>
       ))}

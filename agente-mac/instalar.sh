@@ -91,7 +91,7 @@ fi
 
 # 3. El programa.
 mkdir -p "$DESTINO" "$(dirname "$PLIST")" "$(dirname "$REGISTRO")"
-cp "$ORIGEN/agente.mjs" "$ORIGEN/lib.mjs" "$ORIGEN/perfil.mjs" "$ORIGEN/README.md" "$DESTINO/"
+cp "$ORIGEN/agente.mjs" "$ORIGEN/lib.mjs" "$ORIGEN/perfil.mjs" "$ORIGEN/datos.mjs" "$ORIGEN/README.md" "$DESTINO/"
 echo "Programa copiado a $DESTINO"
 
 # 4. launchd: rutas completas, sin ~ ni PATH del terminal.

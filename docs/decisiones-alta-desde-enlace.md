@@ -185,3 +185,36 @@ avisos de marca en cualquier campo; (2) Higgsfield bloqueó el mockup por su fil
 prompt nombraba personajes) → el prompt describe por formas y colores, sin franquicias ni
 personajes, y un mockup bloqueado se reintenta **una vez solo** con el otro Nano Banana y el prompt
 neutro.
+
+## «Nicho y ángulos» con datos reales (23/11/2026, corrección de Emmanuel)
+
+Lo que vio Emmanuel con el pijama de FrostNacht: «sin datos suficientes… la búsqueda web se bloqueó
+tras la primera consulta», y propuestas «Hipótesis» sin pruebas. Causas: (1) la búsqueda web nueva de
+Claude lanza consultas desde código y agotaba enseguida el tope de 10; (2) los resultados de búsqueda
+casi nunca traen vistas, anuncios activos ni ventas. Codex tampoco tenía fuentes de datos: miraba
+con el navegador (reels, tiendas) y lo apuntaba a mano.
+
+Ahora, en tres fases (`src/server/product-research.ts`):
+1. **Candidatos** (Claude + búsqueda web, 15 búsquedas y 6 páginas): 6–8 candidatos y las consultas
+   que hay que medir (texto de comprador para Amazon/TikTok/YouTube y palabras cortas para Meta),
+   también las del producto actual.
+2. **Cifras** medidas desde el Mac del dueño (agente **1.7.0**, tarea `market_data`,
+   `agente-mac/datos.mjs`) con un Chrome sin ventana: **Amazon del país** (resultados, valoraciones,
+   «X Mal im letzten Monat gekauft», anuncios), **Biblioteca de anuncios de Meta** del país (anuncios
+   activos y anunciantes; no necesita sesión), **YouTube** (vídeos y vistas con yt-dlp) y **TikTok**
+   solo si Chrome tiene la sesión de TikTok (ahora no la tiene: TikTok pide iniciar sesión para buscar).
+   Instagram ya no enseña cuántas publicaciones tiene un hashtag: descartado.
+3. **Ranking** (Claude sin búsqueda) ordenado por las cifras. Cada prueba tiene que citar una dirección
+   que esté en los datos; las que no, se quitan; una propuesta sin pruebas se descarta. Si no queda
+   ninguna, otra ronda con candidatos nuevos, sola (hasta 3), sin enseñar conjeturas. Sin Mac:
+   «Esperando a tu Mac para buscar los datos…». El nivel «hipótesis» ya no existe.
+
+Prueba real (local, Claude de verdad, cifras medidas desde este Mac) con FrostNacht en Alemania:
+Harry Potter (pijama Gryffindor con 744 valoraciones, 0 anuncios activos en Meta, 13.873 vistas en
+YouTube), versión para hombre (6.095 valoraciones del pijama de franela; con brillo solo 35
+resultados), pijama cálido (4.695 valoraciones y 50 compras el último mes, pero 2.000 resultados) y
+Wicked (100 valoraciones, 1 anunciante). 0,25 $ de Claude. Se endureció la regla de que un producto
+solo cuenta si su título corresponde al candidato.
+
+Sin coste extra: no se ha contratado ninguna API de pago. Si hiciera falta TikTok sin sesión o más
+volumen, opciones de pago (pedir OK antes): Apify (actores de TikTok/Meta/Amazon, pago por resultado).

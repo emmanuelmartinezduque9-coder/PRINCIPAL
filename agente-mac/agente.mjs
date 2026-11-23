@@ -119,7 +119,9 @@ async function waitForTools() {
 // Desde 1.5.0 también lee perfiles de Instagram (con Brave sin ventana y la sesión guardada) y de
 // TikTok, para dar de alta un producto pegando solo la cuenta.
 // Desde 1.6.0 busca en Pinterest las referencias de las imágenes cuando Pinterest no deja a la nube.
-config.puede = ["enlace_medio", "perfil", "pinterest"];
+// Desde 1.7.0 busca datos de mercado reales (Amazon, anuncios de Meta, TikTok, YouTube) para
+// «Buscar nicho / ángulo / audiencia».
+config.puede = ["enlace_medio", "perfil", "pinterest", "datos"];
 log("Listo para traer enlaces (también los que pide el montaje en la nube).");
 
 let connected = null;

@@ -3,7 +3,9 @@ import { z } from "zod";
 import { getPool } from "@/db/client";
 import { createGateway, trailingJson, WEB_SEARCH_MICROS, webSourcesOf } from "@/llm/gateway";
 import type { AuthUser } from "@/server/auth";
-import { listResearch, requestResearch, runResearch, type ResearchAnswer } from "@/server/product-research";
+import { listResearch, queriesOf, requestResearch, runResearch, WAITING_FOR_MAC } from "@/server/product-research";
+import { getDb, schema } from "@/db/client";
+import { appendTaskChunk, claimTask, createAgentToken, finishTask } from "@/server/agent";
 import { getProductFor, updateProduct } from "@/server/products";
 import { seedRules } from "@/server/rules";
 import { fakeMessages, type FakeReply } from "./helpers/fake-llm";
@@ -99,7 +101,7 @@ describe("pasarela con búsqueda en internet", () => {
   });
 });
 
-describe("buscar nicho, ángulo o audiencia diferente", () => {
+describe("buscar nicho, ángulo o audiencia diferente (con cifras del Mac)", () => {
   let dueno: AuthUser;
   beforeEach(async () => {
     await truncateAll();
@@ -107,58 +109,117 @@ describe("buscar nicho, ángulo o audiencia diferente", () => {
     dueno = await makeUser("dueno");
   });
 
-  const ANSWER: ResearchAnswer = {
-    situacionActual: { resumen: "El pijama del Grinch tiene decenas de cuentas en Alemania.", saturacion: "alta", pruebas: [{ fuente: "TikTok", dato: "1,2 M visualizaciones", url: SEEN }] },
-    propuestas: [
-      {
-        titulo: "Pijama de Harry Potter",
-        porQue: "Es el pijama temático más vendido en Amazon.de.",
-        enVideo: "Familia en pijama de Hogwarts abriendo regalos.",
-        ganchos: ["Der Schlafanzug, den jeder Potter-Fan will", "Weihnachten in Hogwarts"],
-        nivel: "senales_de_demanda",
-        pruebas: [
-          { fuente: "Amazon.de", dato: "n.º 1 en pijamas, 4 312 valoraciones", url: "https://www.amazon.de/bestsellers" },
-          { fuente: "Meta", dato: "35 anuncios activos", url: "https://www.facebook.com/ads/library/?q=inventado" },
-        ],
-      },
+  const CANDIDATES = {
+    actual: [{ texto: "Frozen Schlafanzug Damen", anuncios: "Frozen Pyjama" }],
+    candidatos: [
+      { titulo: "Pijama de Harry Potter", porQue: "x", consultas: [{ texto: "Harry Potter Schlafanzug Damen", anuncios: "Harry Potter Pyjama" }] },
+      { titulo: "Pijama de Stitch", porQue: "y", consultas: [{ texto: "Stitch Schlafanzug Damen", anuncios: "Stitch Pyjama" }] },
     ],
-    limitaciones: "Sin datos de ventas propias.",
   };
+  const AMAZON_HP = "https://www.amazon.de/s?k=Harry%20Potter%20Schlafanzug%20Damen";
+  const META_HP = "https://www.facebook.com/ads/library/?q=Harry%20Potter%20Pyjama";
+  const DATA = {
+    pais: "DE",
+    consultas: [
+      { consulta: "Frozen Schlafanzug Damen", amazon: { url: "https://www.amazon.de/s?k=Frozen", resultados: 410, productos: [] }, meta: { url: "https://www.facebook.com/ads/library/?q=Frozen", anunciosActivos: 1100, anunciantes: [] } },
+      { consulta: "Harry Potter Schlafanzug Damen", amazon: { url: AMAZON_HP, resultados: 66, productos: [{ titulo: "Gryffindor", url: "https://www.amazon.de/dp/HP", valoraciones: 744 }] }, meta: { url: META_HP, anunciosActivos: 3, anunciantes: [] } },
+    ],
+  };
+  const RANKING = {
+    situacionActual: { resumen: "Frozen está saturado.", saturacion: "alta", pruebas: [{ fuente: "Meta", dato: "~1.100 anuncios activos", url: "https://www.facebook.com/ads/library/?q=Frozen" }] },
+    propuestas: [
+      { titulo: "Pijama de Harry Potter", porQue: "Mucha demanda y poca competencia", enVideo: "v", ganchos: ["a", "b"], nivel: "senales_de_demanda", pruebas: [{ fuente: "Amazon.de", dato: "744 valoraciones", url: "https://www.amazon.de/dp/HP" }, { fuente: "Meta", dato: "3 anuncios", url: META_HP }, { fuente: "Inventada", dato: "x", url: "https://inventada.example" }] },
+      { titulo: "Pijama de Stitch", porQue: "?", enVideo: "v", ganchos: ["a", "b"], nivel: "senales_de_demanda", pruebas: [{ fuente: "Inventada", dato: "1 M", url: "https://inventada.example/2" }] },
+    ],
+    limitaciones: "Sin sesión de TikTok.",
+  };
+  const json = (data: unknown) => `\`\`\`json\n${JSON.stringify(data)}\n\`\`\``;
 
-  it("guarda las propuestas con pruebas comprobadas y sin inventar; la persona elige", async () => {
-    const product = await makeProduct(dueno, { name: "FestKapuze", summary: "Pijama del Grinch" });
-    await updateProduct(dueno, product.id, { niche: "Grinch" });
-    const row = await requestResearch(dueno, product.id, { kind: "nicho", note: "el Grinch está saturado" });
-    await expect(requestResearch(dueno, product.id, { kind: "nicho" })).rejects.toMatchObject({ status: 409 });
-    await expect(requestResearch(dueno, product.id, { kind: "otra" })).rejects.toMatchObject({ status: 400 });
+  async function macDelivers(data: unknown) {
+    const [agent] = await getDb().select().from(schema.agents);
+    const task = await claimTask(agent.id, new Date(), { can: ["datos"] });
+    expect(task).toMatchObject({ kind: "datos" });
+    const bytes = Buffer.from(JSON.stringify(data));
+    await appendTaskChunk(agent.id, task!.taskId, task!.uploadId, 0, bytes);
+    await finishTask(agent.id, task!.taskId, { ok: true, uploadId: task!.uploadId, totalBytes: bytes.length });
+    return task as unknown as { datos: { pais: string; consultas: Array<{ texto: string; anuncios: string }> } };
+  }
 
-    const { client, calls } = fakeMessages([searched(`\`\`\`json\n${JSON.stringify(ANSWER)}\n\`\`\``)]);
-    await runResearch(row.id, { gateway: createGateway({ client }) });
+  it("candidatos → el Mac mide → solo se enseñan propuestas con cifras de los datos", async () => {
+    const product = await makeProduct(dueno, { name: "FrostNacht", summary: "Pijama que brilla" });
+    await updateProduct(dueno, product.id, { niche: "Frozen" });
+    await createAgentToken(dueno, "Mac");
+    const row = await requestResearch(dueno, product.id, { kind: "nicho", note: "Frozen saturado" });
+    const { client, calls } = fakeMessages([searched(json(CANDIDATES)), { text: JSON.stringify(RANKING), usage: { inputTokens: 100, outputTokens: 100 } }]);
+    const deps = { gateway: createGateway({ client }), macOnline: async () => true };
 
-    const brief = JSON.stringify(calls[0].messages);
-    expect(brief).toContain("Nicho actual: Grinch");
-    expect(brief).toContain("el Grinch está saturado");
-    const system = JSON.stringify(calls[0].system);
-    expect(system).toContain("NICHO diferente");
-    expect(system).toContain("Sin avisos de marca");
+    // Fase 1: candidatos con búsqueda web (15 búsquedas) y tarea de datos para el Mac.
+    await runResearch(row.id, deps);
+    expect(calls[0].tools?.[0]).toMatchObject({ type: "web_search_20260209", max_uses: 15 });
+    let [saved] = await listResearch(dueno, product.id);
+    expect(saved.status).toBe("esperando_datos");
+    expect(saved.error).toContain("Tu Mac está midiendo");
 
-    const [saved] = await listResearch(dueno, product.id);
+    // El Mac recibe las consultas: la del producto actual primero.
+    const task = await macDelivers(DATA);
+    expect(task.datos).toEqual({
+      pais: "DE",
+      consultas: [
+        { texto: "Frozen Schlafanzug Damen", anuncios: "Frozen Pyjama" },
+        { texto: "Harry Potter Schlafanzug Damen", anuncios: "Harry Potter Pyjama" },
+        { texto: "Stitch Schlafanzug Damen", anuncios: "Stitch Pyjama" },
+      ],
+    });
+
+    // Fase 3: ranking sin búsqueda web, con las cifras.
+    await runResearch(row.id, deps);
+    expect(calls[1].tools).toBeUndefined();
+    expect(JSON.stringify(calls[1].messages)).toContain("744");
+    [saved] = await listResearch(dueno, product.id);
     expect(saved.status).toBe("hecho");
-    const result = saved.result as { propuestas: Array<{ pruebas: Array<{ url: string; comprobada: boolean }> }>; situacionActual: { pruebas: Array<{ comprobada: boolean }> } };
-    expect(result.situacionActual.pruebas[0].comprobada).toBe(true);
-    expect(result.propuestas[0].pruebas.map((p) => p.comprobada)).toEqual([true, false]);
-
-    await updateProduct(dueno, product.id, { niche: "Pijama de Harry Potter" });
-    expect((await getProductFor(dueno, product.id)).niche).toBe("Pijama de Harry Potter");
+    const result = saved.result as { propuestas: Array<{ titulo: string; pruebas: Array<{ url: string }> }>; situacionActual: { pruebas: unknown[] } };
+    // La de Stitch no tenía cifras de los datos: fuera. A la de Harry Potter se le quita la prueba inventada.
+    expect(result.propuestas.map((p) => p.titulo)).toEqual(["Pijama de Harry Potter"]);
+    expect(result.propuestas[0].pruebas.map((p) => p.url)).toEqual(["https://www.amazon.de/dp/HP", META_HP]);
+    expect(result.situacionActual.pruebas).toHaveLength(1);
   });
 
-  it("un fallo de Claude queda como búsqueda fallida con el motivo", async () => {
+  it("sin Mac espera («Esperando a tu Mac…») y no enseña nada", async () => {
     const product = await makeProduct(dueno);
-    const row = await requestResearch(dueno, product.id, { kind: "audiencia" });
-    const { client } = fakeMessages([searched("no hay json")]);
-    await runResearch(row.id, { gateway: createGateway({ client }) });
+    const row = await requestResearch(dueno, product.id, { kind: "angulo" });
+    const { client } = fakeMessages([searched(json(CANDIDATES))]);
+    await runResearch(row.id, { gateway: createGateway({ client }), macOnline: async () => false });
     const [saved] = await listResearch(dueno, product.id);
-    expect(saved.status).toBe("fallido");
-    expect(saved.error).toContain("Vuelve a pulsar");
+    expect(saved).toMatchObject({ status: "esperando_datos", error: WAITING_FOR_MAC, result: null });
+  });
+
+  it("si ninguna propuesta tiene cifras, se buscan otros candidatos solos (sin enseñar conjeturas)", async () => {
+    const product = await makeProduct(dueno);
+    await createAgentToken(dueno, "Mac");
+    const row = await requestResearch(dueno, product.id, { kind: "audiencia" });
+    const empty = { ...RANKING, propuestas: [RANKING.propuestas[1]] };
+    const { client } = fakeMessages([searched(json(CANDIDATES)), { text: JSON.stringify(empty) }]);
+    const deps = { gateway: createGateway({ client }), macOnline: async () => true };
+    await runResearch(row.id, deps);
+    await macDelivers(DATA);
+    await runResearch(row.id, deps);
+    const [saved] = await listResearch(dueno, product.id);
+    expect(saved).toMatchObject({ status: "en_cola", attempts: 1, candidates: null, result: null });
+    expect(saved.availableAt).not.toBeNull();
+  });
+
+  it("las consultas a medir no se repiten y son 10 como mucho", () => {
+    const many = { actual: [{ texto: "A", anuncios: "a" }], candidatos: Array.from({ length: 12 }, (_, i) => ({ titulo: `C${i}`, porQue: "", consultas: [{ texto: i === 0 ? "a" : `Q${i}`, anuncios: "" }] })) };
+    const queries = queriesOf(many);
+    expect(queries).toHaveLength(10);
+    expect(queries[0]).toEqual({ texto: "A", anuncios: "a" });
+    expect(queries[1]).toEqual({ texto: "Q1", anuncios: "Q1" });
+  });
+
+  it("nicho, ángulo o audiencia; una sola búsqueda del mismo tipo a la vez", async () => {
+    const product = await makeProduct(dueno);
+    await requestResearch(dueno, product.id, { kind: "nicho" });
+    await expect(requestResearch(dueno, product.id, { kind: "nicho" })).rejects.toMatchObject({ status: 409 });
+    await expect(requestResearch(dueno, product.id, { kind: "otra" })).rejects.toMatchObject({ status: 400 });
   });
 });

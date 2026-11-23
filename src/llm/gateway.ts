@@ -43,7 +43,9 @@ const WEB_SEARCH_RESULT_TOKENS = 6_000;
 /** Precio de cada búsqueda: 10 US$ por cada 1 000 (precios de Anthropic, 23-11-2026). Leer páginas no se cobra aparte. */
 export const WEB_SEARCH_MICROS = 10_000;
 /** Lo más que se deja buscar y leer en una llamada. */
-const MAX_WEB_USES = 12;
+const MAX_WEB_USES = 25;
+/** Vueltas del servidor que se reservan como mucho con búsqueda (cada una relee lo encontrado). */
+const WEB_ROUNDS = 4;
 /** Veces que se continúa una respuesta que el servidor pausó (`pause_turn`) en mitad de las búsquedas. */
 const MAX_CONTINUATIONS = 2;
 
@@ -323,8 +325,10 @@ function worstCaseMicros(tier: ModelTier, params: CreateParams, web?: WebAccess)
   if (web) {
     // Cada vuelta del servidor vuelve a leer todo lo encontrado hasta entonces: como mucho una
     // vuelta por búsqueda o lectura, más la última, con todo lo encontrado.
+    // La búsqueda nueva agrupa consultas desde código y el servidor reutiliza la caché: como mucho
+    // unas pocas vueltas releen todo lo encontrado (medido: ~0,25 US$ con 20 búsquedas).
     const found = (web.searches * WEB_SEARCH_RESULT_TOKENS + web.fetches * WEB_FETCH_MAX_TOKENS) * 3;
-    chars = (chars + found) * (web.searches + web.fetches + 1);
+    chars = (chars + found) * Math.min(web.searches + web.fetches + 1, WEB_ROUNDS);
   }
   let micros = estimateMaxCostMicros(MODELS[tier], chars, params.max_tokens);
   const fallback = FALLBACK_MODELS[tier];
