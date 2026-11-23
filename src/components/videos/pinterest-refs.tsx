@@ -24,7 +24,7 @@ export function PinterestRefs({ pinterest, compact = false }: { pinterest: Pinte
   const waiting = WAITING[pinterest.status];
   return (
     <section className={compact ? "flex flex-col gap-1.5" : "panel flex flex-col gap-2 p-4"} aria-label="Referencias de Pinterest">
-      <h3 className="text-xs font-medium text-muted-foreground">Referencias de Pinterest aprobadas</h3>
+      <h3 className="text-xs font-medium text-muted-foreground">Referencias que se usan (elegidas solas de tus aprobadas · no hay que hacer nada)</h3>
       {pinterest.refs.length > 0 ? (
         <ul className="flex flex-wrap gap-2">
           {pinterest.refs.map((ref) => (
@@ -54,7 +54,7 @@ export function PinterestRefs({ pinterest, compact = false }: { pinterest: Pinte
       ) : null}
       <Dialog open={zoomed !== null} onOpenChange={(open) => !open && setZoomed(null)}>
         <DialogContent className="max-w-2xl">
-          <DialogTitle className="text-sm font-medium">Referencia de Pinterest</DialogTitle>
+          <DialogTitle className="text-sm font-medium">Referencia que se usa</DialogTitle>
           {zoomed ? (
             <>
               {/* eslint-disable-next-line @next/next/no-img-element -- enlace firmado del almacén */}
