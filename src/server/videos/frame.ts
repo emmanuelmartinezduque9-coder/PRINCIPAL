@@ -16,7 +16,7 @@ import {
 } from "@/server/videos/generations";
 import { imageManifest, type ManifestItem } from "@/server/videos/manifest";
 import { addApprovedToBank, framePromptFor, hasManualEnvironment, readPinterestImage, requirePinterestRefs } from "@/server/videos/pinterest";
-import { checkImagePrompt } from "@/server/videos/prompt-check";
+import { checkImagePrompt, PROMPT_ERROR } from "@/server/videos/prompt-check";
 import {
   BRIEF_CHANGED,
   DEFAULT_FRAME_COUNT,
@@ -168,7 +168,7 @@ export const buildFrameRequest: RequestBuilder = async (user, video, deps) => {
   const prompt = await framePromptFor(video.id, video.imagePrompt!, manifest);
   if (manifest.some((item) => item.source.kind === "avatar_pending")) throw new HttpError(400, NO_AUTO_AVATAR);
   const errors = checkImagePrompt(prompt, manifest).filter((issue) => issue.level === "error");
-  if (errors.length > 0) throw new HttpError(400, errors.map((issue) => issue.message).join(" "));
+  if (errors.length > 0) throw new HttpError(400, errors.map((issue) => issue.message).join(" "), PROMPT_ERROR);
 
   const model = await getImageModel();
   const medias: HfMediaRef[] = [];

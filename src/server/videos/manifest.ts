@@ -239,12 +239,51 @@ function genjutsuClipManifest(video: Video, refs: ManifestRefs, model: Exclude<C
   ];
 }
 
+/** ¿El prompt cita `image [N]` (también «image N» o «Image [N]»)? */
+const cites = (prompt: string, index: number) => new RegExp(`(?<![\\p{L}\\p{N}_])image\\s*\\[?\\s*${index}\\s*\\]?(?!\\d)`, "iu").test(prompt);
+
 /**
- * El prompt que se envía: el del vídeo y, en Object Swap y Wan, la frase de Codex que vincula la
- * imagen del entorno nuevo (el desglose aún no la conoce: se elige después).
+ * La frase de Codex (`genjutsu.prompt_estandar`) que explica una imagen adjunta: la apertura
+ * aprobada, la identidad, el artículo, la caja o el entorno nuevo.
+ */
+function roleSentence(item: ManifestItem): string | null {
+  const tag = item.tag;
+  switch (item.role) {
+    case "imagen_aprobada":
+      return `Use ${tag} as the exact human-approved clean opening frame, preserving its hand placement, camera angle, lighting and scene.`;
+    case "avatar":
+      return `Replace the main person with the person in ${tag}, using that portrait only for identity; preserve the original action and camera framing.`;
+    case "articulo":
+      return `Replace every visible instance of the unboxed physical product with ${tag}, preserving realistic size relative to the hands and surroundings.`;
+    case "embalaje":
+      return `Replace every visible instance of the closed retail packaging with ${tag}, preserving realistic size relative to the hands and surroundings.`;
+    case "entorno":
+    case "pinterest":
+      return `Replace every original location with the real environment in ${tag}. Preserve the SOURCE camera angle, subject scale and action, adapting this environment rather than copying its photographic framing.`;
+    default:
+      return null;
+  }
+}
+
+/**
+ * El prompt que se envía con Genjutsu y Wan: el del vídeo y, para cada imagen adjunta que no cita,
+ * la frase de Codex con su papel (como `prompt_estandar`). Así toda imagen que se adjunta va
+ * citada y explicada aunque el desglose se haya dejado una (p. ej. la caja) o aún no la conociera
+ * (el entorno nuevo se elige después): un olvido del prompt nunca para el vídeo ni el lote. Con
+ * Seedance, el prompt tal cual.
  */
 export function clipPromptFor(prompt: string, manifest: ManifestItem[]): string {
-  const room = manifest.find((item) => item.tag !== SOURCE_VIDEO_TAG && (item.role === "pinterest" || item.role === "entorno") && isSourceVideoManifest(manifest));
-  if (!room || new RegExp(`image\\s*\\[${room.index}\\]`).test(prompt)) return prompt;
-  return `${prompt.trim()} Replace every original location with the real environment in ${room.tag}. Preserve the SOURCE camera angle, subject scale and action, adapting this environment rather than copying its photographic framing.`;
+  if (!isSourceVideoManifest(manifest)) return prompt;
+  // Un desglose que citó al estilo de Seedance: misma numeración de imágenes (la aprobada es la 1).
+  prompt = prompt.replace(/@\s*Video\s*1\b/gi, "the source video").replace(/@\s*Image\s*(\d+)/gi, "image [$1]");
+  const missing = manifest
+    .filter((item) => item.tag !== SOURCE_VIDEO_TAG && !cites(prompt, item.index))
+    .map(roleSentence)
+    .filter((sentence): sentence is string => sentence !== null);
+  if (missing.length === 0) return prompt;
+  // Antes del cierre de textos de Codex («No text overlays, no captions.»), si lo lleva.
+  const text = prompt.trim();
+  const closing = /\s*No text overlays, no captions\.?\s*$/i;
+  const match = closing.exec(text);
+  return match ? `${text.slice(0, match.index)} ${missing.join(" ")} ${match[0].trim()}` : `${text} ${missing.join(" ")}`;
 }

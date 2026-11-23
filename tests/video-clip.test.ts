@@ -272,7 +272,10 @@ describe("modelo del clip: las opciones de Codex", () => {
     expect(request.medias[1]).toEqual({ role: "image_references", value: approvedJobId });
     expect(request.medias).toHaveLength(5);
     expect(request.prompt).toBe(
-      `${GENJUTSU_PROMPT} Replace every original location with the real environment in image [4]. Preserve the SOURCE camera angle, subject scale and action, adapting this environment rather than copying its photographic framing.`,
+      GENJUTSU_PROMPT.replace(
+        " No text overlays, no captions.",
+        " Replace every original location with the real environment in image [4]. Preserve the SOURCE camera angle, subject scale and action, adapting this environment rather than copying its photographic framing. No text overlays, no captions.",
+      ),
     );
   });
 
@@ -292,10 +295,32 @@ describe("modelo del clip: las opciones de Codex", () => {
     await expect(buildClipRequest(ana, await fresh(), deps)).rejects.toMatchObject({ status: 409, message: expect.stringMatching(/Object Swap necesita/) });
   });
 
-  it("con Genjutsu, citar las imágenes con @ es un error (van como image [N])", async () => {
+  it("con Genjutsu, un prompt que cita al estilo de Seedance (@Image2) se pasa a image [N] y vale", async () => {
     await readyForClip();
     await withModel("auto", "hf_mult_motion_control", PROMPT);
-    await expect(buildClipRequest(ana, await fresh(), deps)).rejects.toMatchObject({ status: 400 });
+    const { request } = await buildClipRequest(ana, await fresh(), deps);
+    expect(request.prompt).toContain("the source video gives only the camera movement");
+    expect(request.prompt).toContain("The woman is image [2]. The bottle is image [3].");
+    expect(request.prompt).not.toContain("@");
+  });
+
+  it("cada imagen adjunta va citada y explicada: si el desglose se deja una (la caja), la aplicación añade su frase de Codex y no para nada", async () => {
+    await readyForClip();
+    await addProductPhoto(ana, producto.id, red, "embalaje");
+    const sinCaja =
+      "Use the source video as the authority for every action, cut and timing. Use image [1] as the human-approved clean opening frame. " +
+      "Replace the woman with the person in image [2]. The bottle is the exact product in image [3]. No text overlays, no captions.";
+    await withModel("auto", "hf_mult_motion_control", sinCaja);
+    const { request } = await buildClipRequest(ana, await fresh(), deps);
+    expect(request.medias).toHaveLength(5);
+    expect(request.prompt).toBe(
+      sinCaja.replace(
+        " No text overlays, no captions.",
+        " Replace every visible instance of the closed retail packaging with image [4], preserving realistic size relative to the hands and surroundings. No text overlays, no captions.",
+      ),
+    );
+    // La vista del vídeo tampoco lo enseña como error.
+    expect((await videoView(ana, v.id)).videoIssues.filter((issue) => issue.level === "error")).toEqual([]);
   });
 
   it("cambiar el modelo deja el desglose por repetir (el prompt del clip se escribe para el modelo)", async () => {

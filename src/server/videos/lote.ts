@@ -19,6 +19,7 @@ import { approveFrame } from "@/server/videos/frame";
 import { MAX_REGENERATIONS, quoteGeneration, requestGeneration, type GenDeps, type GenerationKind } from "@/server/videos/generations";
 import { clipModelProblem, getVideoFor, setVideoSong, referenceOutdated, REFERENCE_OUTDATED, staleness, updateVideoChoices, withProductNotes, type Video } from "@/server/videos/videos";
 import { CLIP_MODEL_LABEL, CLIP_MODELS, SEEDANCE, sourceProblem } from "@/lib/clip-models";
+import { isPromptProblem, PROMPT_ERROR } from "@/server/videos/prompt-check";
 
 /**
  * «Enviar lote»: el dueño envía el lote una vez y no se le molesta más.
@@ -739,10 +740,52 @@ const KIND_WORD: Record<GenerationKind, string> = { frame: "la imagen", clip: "e
 /** «Buscando referencias de Pinterest…» o «se vuelven a buscar»: no es un fallo, se espera (regla fija: nunca sin ellas). */
 const isPinterestWait = (message: string) => message === PINTEREST_PENDING || message.startsWith("No se encontraron referencias de Pinterest");
 
+/** Desgloses que se rehacen solos por un prompt con errores antes de parar (cada uno cuesta en Claude). */
+export const MAX_PROMPT_REDOS = 2;
+
+/**
+ * Rehace el desglose de un vídeo cuyo prompt no pasa la comprobación. `false` si ya se rehízo
+ * `MAX_PROMPT_REDOS` veces hoy (entonces sí se para: algo no cuadra y repetir solo gastaría).
+ */
+async function redoPrompt(user: AuthUser, row: Row): Promise<boolean> {
+  const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
+  const recent = row.analyses.filter((analysis) => analysis.createdAt >= since).length;
+  if (recent > MAX_PROMPT_REDOS) return false;
+  try {
+    await requestAnalysis(user, row.video.id);
+    console.warn(`[lotes] Vídeo ${row.video.id}: el prompt no pasaba la comprobación; se rehace el desglose.`);
+  } catch (error) {
+    if (!(error instanceof HttpError)) throw error;
+    // Ya hay uno en marcha: se espera a que termine.
+  }
+  return true;
+}
+
+/**
+ * Pausas antiguas por un error de prompt (antes de que se corrigiera solo): el lote vuelve a donde
+ * estaba y sigue, sin que el dueño tenga que pulsar nada.
+ */
+async function resumePromptPauses(): Promise<void> {
+  const paused = await getDb().select().from(schema.batches).where(eq(schema.batches.status, "pausado"));
+  for (const batch of paused) {
+    const pause = batch.pause;
+    if (!pause || pause.kind !== "fallo" || !isPromptProblem(pause.reason)) continue;
+    const [resumed] = await getDb()
+      .update(schema.batches)
+      .set({ status: pause.from, pause: null, resumedAt: new Date() })
+      .where(and(eq(schema.batches.id, batch.id), eq(schema.batches.status, "pausado")))
+      .returning();
+    if (resumed) console.warn(`[lotes] lote ${batch.id}: reanudado solo (la pausa era un prompt interno: ${pause.reason})`);
+  }
+}
+
 /** Un error del núcleo al presupuestar o pedir: qué hacer con él. */
-async function onRequestError(batch: Batch, row: Row, kind: GenerationKind, error: unknown): Promise<"skip"> {
+async function onRequestError(user: AuthUser, batch: Batch, row: Row, kind: GenerationKind, error: unknown): Promise<"skip"> {
   if (!(error instanceof HttpError)) throw error;
   const { message, status } = error;
+  // Un prompt interno con errores no se le pregunta al dueño (regla fija, 23/11/2026): se rehace el
+  // desglose de ese vídeo (como mucho `MAX_PROMPT_REDOS` veces) y el lote sigue con los demás.
+  if (error.code === PROMPT_ERROR && (await redoPrompt(user, row))) return "skip";
   // Otra petición se adelantó o el seguimiento aún comprueba un envío dudoso: se mira en el siguiente avance.
   if (status === 409 && (message.startsWith("Ya hay una generación") || message.startsWith("Estamos comprobando"))) return "skip";
   // Aún se buscan las referencias de Pinterest de la imagen (o se vuelven a buscar): el siguiente avance lo repite.
@@ -772,7 +815,7 @@ async function requestFor(user: AuthUser, batch: Batch, rows: Row[], row: Row, k
   try {
     quote = await quoteGeneration(user, row.video.id, kind, deps);
   } catch (error) {
-    await onRequestError(batch, row, kind, error);
+    await onRequestError(user, batch, row, kind, error);
     return false;
   }
   const estimates = batch.estimates ?? {};
@@ -819,7 +862,7 @@ async function requestFor(user: AuthUser, batch: Batch, rows: Row[], row: Row, k
     await requestGeneration(user, row.video.id, kind, { expectedCredits: quote.credits }, deps);
     return true;
   } catch (error) {
-    await onRequestError(batch, row, kind, error);
+    await onRequestError(user, batch, row, kind, error);
     return false;
   }
 }
@@ -836,6 +879,8 @@ async function autoConfirmBatch(user: AuthUser, batch: Batch, rows: Row[], deps:
   const failed = quote.rows.find((r) => r.error !== null);
   if (failed) {
     const row = rows.find((r) => r.video.id === failed.videoId)!;
+    // Un prompt interno con errores se rehace solo (nunca se pregunta).
+    if (isPromptProblem(failed.error!) && (await redoPrompt(user, row))) return;
     await pauseBatch(batch, { kind: "fallo", reason: `${row.video.title}: ${failed.error}`, videoId: row.video.id, kindOf: "frame" });
   }
   if (quote.balance !== null && quote.balance < quote.total) {
@@ -1068,6 +1113,11 @@ async function logBatchStates(): Promise<void> {
 
 /** Para el seguimiento de cada minuto: avanza cada lote que va solo, uno detrás de otro. */
 export async function advanceRunningBatches(deps: GenDeps = {}): Promise<void> {
+  try {
+    await resumePromptPauses();
+  } catch (error) {
+    console.error("[lotes] No se pudieron reanudar las pausas por prompt:", error);
+  }
   try {
     await logBatchStates();
   } catch (error) {

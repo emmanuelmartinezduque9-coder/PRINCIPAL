@@ -15,7 +15,7 @@ import { linkOf } from "@/lib/links";
 import { analysisStaleness, answersText, checkKindInput, cleanNote, isAvatarMode, type AvatarMode, type VideoKind } from "@/server/videos/brief";
 import { bodiesOfVideo, checkVideoBodies, type VideoBody } from "@/server/videos/bodies";
 import { analysisCostMicros, costsOfVideo, type VideoCosts } from "@/server/videos/costs";
-import { clipManifest, imageManifest, type ManifestItem, type ManifestRefs } from "@/server/videos/manifest";
+import { clipManifest, imageManifest, type ManifestItem, type ManifestRefs, clipPromptFor } from "@/server/videos/manifest";
 import { pinterestView, readyPinterest, withPinterestRoles, type PinterestView } from "@/server/videos/pinterest";
 import { getVariantFor } from "@/server/variants";
 import { checkImagePrompt, checkVideoPrompt, type PromptIssue } from "@/server/videos/prompt-check";
@@ -665,7 +665,8 @@ export function promptIssues(video: Video, refs: ManifestRefs): { imageIssues: P
   return {
     // El papel de las fotos de Pinterest se añade al pedir la imagen (`withPinterestRoles`): se comprueba igual.
     imageIssues: video.imagePrompt === null ? [] : checkImagePrompt(withPinterestRoles(video.imagePrompt, imageManifest(video, refs)), imageManifest(video, refs)),
-    videoIssues: video.videoPrompt === null ? [] : checkVideoPrompt(video.videoPrompt, clipManifest(video, refs)),
+    // Con Genjutsu y Wan, las imágenes que el prompt no cita las explica la aplicación al pedir el clip (`clipPromptFor`).
+    videoIssues: video.videoPrompt === null ? [] : checkVideoPrompt(clipPromptFor(video.videoPrompt, clipManifest(video, refs)), clipManifest(video, refs)),
   };
 }
 

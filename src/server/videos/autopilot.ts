@@ -9,6 +9,7 @@ import { briefOf } from "@/server/videos/brief";
 import "@/server/videos/frame";
 import "@/server/videos/clip";
 import { quoteGeneration, requestGeneration, type GenDeps, type GenerationKind } from "@/server/videos/generations";
+import { PROMPT_ERROR } from "@/server/videos/prompt-check";
 import { kickBatchOfVideo, stageOf, type Stage } from "@/server/videos/lote";
 import { getVideoFor, latestDoneAnalysis, referenceOutdated, requireVideoOwner, withProductNotes, type Video } from "@/server/videos/videos";
 
@@ -96,8 +97,26 @@ async function requestAuto(user: AuthUser, video: Video, kind: GenerationKind, d
   } catch (error) {
     if (!(error instanceof HttpError)) throw error;
     if (isWait(error)) return;
+    // Un prompt interno con errores no se pregunta (regla fija): se rehace el desglose, como mucho dos veces al día.
+    if (error.code === PROMPT_ERROR && (await redoPrompt(user, video))) return;
     await stop(video.id, error.message);
   }
+}
+
+/** Rehace el desglose de un vídeo cuyo prompt no pasa la comprobación; `false` si ya se rehízo dos veces hoy. */
+async function redoPrompt(user: AuthUser, video: Video): Promise<boolean> {
+  const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
+  const [{ n }] = await getDb()
+    .select({ n: sql<number>`count(*)::int` })
+    .from(schema.videoAnalyses)
+    .where(and(eq(schema.videoAnalyses.videoId, video.id), gte(schema.videoAnalyses.createdAt, since)));
+  if (n > 2) return false;
+  try {
+    await requestAnalysis(user, video.id);
+  } catch (error) {
+    if (!(error instanceof HttpError)) throw error;
+  }
+  return true;
 }
 
 /** El vídeo suelto y quien lo creó (activo), si el flujo automático lo lleva; si no, `null`. */

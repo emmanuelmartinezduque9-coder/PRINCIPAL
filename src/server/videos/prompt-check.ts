@@ -29,6 +29,17 @@ export const PROMPT_BLACKLIST = [
   "glowing skin",
 ] as const;
 
+/** Código del 400 de un prompt con errores (`HttpError.code`): lo arregla el propio flujo, nunca se le pregunta al dueño. */
+export const PROMPT_ERROR = "prompt";
+
+/**
+ * ¿Es una pausa de lote antigua por un error de prompt (algo interno, que el flujo corrige solo)?
+ * Por el texto de los mensajes de esta comprobación.
+ */
+export function isPromptProblem(message: string): boolean {
+  return /Falta decir para qué sirve|no existe: este clip lleva|cita las imágenes como|Escribe las referencias exactamente|es una palabra vetada|Escribe el prompt en párrafos|No pongas direcciones|El prompt está vacío/.test(message);
+}
+
 export interface PromptIssue {
   level: "error" | "aviso";
   message: string;

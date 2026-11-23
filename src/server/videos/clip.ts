@@ -17,7 +17,7 @@ import { getProductFor } from "@/server/products";
 import { fileSlug } from "@/server/videos/filename";
 import { asHttp, registerRequestBuilder, type GenDeps, type RequestBuilder } from "@/server/videos/generations";
 import { clipManifest, clipPromptFor, type ManifestItem } from "@/server/videos/manifest";
-import { checkVideoPrompt } from "@/server/videos/prompt-check";
+import { checkVideoPrompt, PROMPT_ERROR } from "@/server/videos/prompt-check";
 import {
   BRIEF_CHANGED,
   clipDurationSeconds,
@@ -135,7 +135,7 @@ export const buildClipRequest: RequestBuilder = async (user, video, deps) => {
   if (manifest.some((item) => item.source.kind === "avatar_pending")) throw new HttpError(409, NO_AUTO_AVATAR);
   const prompt = clipPromptFor(video.videoPrompt ?? "", manifest);
   const error = checkVideoPrompt(prompt, manifest).find((issue) => issue.level === "error");
-  if (error) throw new HttpError(400, error.message);
+  if (error) throw new HttpError(400, error.message, PROMPT_ERROR);
 
   const medias: HfMediaRef[] = [];
   // Una a una y en orden: así la numeración de `@ImageN` / `image [N]` es la del manifiesto.

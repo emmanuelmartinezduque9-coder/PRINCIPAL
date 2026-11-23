@@ -26,7 +26,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { api } from "@/lib/api";
 import { formatUsd } from "@/lib/money";
 import { cn } from "@/lib/utils";
-import type { FrameUse } from "@/server/videos/manifest";
+import { clipPromptFor, type FrameUse } from "@/server/videos/manifest";
 import { checkImagePrompt, checkVideoPrompt, type PromptIssue } from "@/server/videos/prompt-check";
 import { frameUrl, secondsLabel, type AnalysisJson, type RiskKind, type VideoJson, type VideoViewJson } from "./labels";
 import { PromptEditor } from "./prompt-editor";
@@ -382,7 +382,7 @@ function Prompts({ view, draft, setDraft }: { view: VideoViewJson; draft: Prompt
     [mine, video.imagePrompt, draft.imagePrompt, imagePrompt, view.imageManifest, view.imageIssues],
   );
   const videoIssues: PromptIssue[] = useMemo(
-    () => (mine && (video.videoPrompt !== null || draft.videoPrompt !== undefined) ? checkVideoPrompt(videoPrompt, view.clipManifest) : view.videoIssues),
+    () => (mine && (video.videoPrompt !== null || draft.videoPrompt !== undefined) ? checkVideoPrompt(clipPromptFor(videoPrompt, view.clipManifest), view.clipManifest) : view.videoIssues),
     [mine, video.videoPrompt, draft.videoPrompt, videoPrompt, view.clipManifest, view.videoIssues],
   );
 

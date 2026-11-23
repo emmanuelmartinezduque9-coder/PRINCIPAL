@@ -18,6 +18,7 @@ import { approveFrame, rejectFrame } from "@/server/videos/frame";
 import { finalizeGeneration, requestGeneration, submitGeneration, type GenDeps } from "@/server/videos/generations";
 import {
   advanceBatch,
+  advanceRunningBatches,
   answerQuestion,
   approveAllFrames,
   AUTO_PARALLEL,
@@ -223,6 +224,21 @@ async function committed(batchId: number): Promise<number> {
 }
 
 // ───────────────────────── Estados ─────────────────────────
+
+describe("pausas por algo interno", () => {
+  it("una pausa antigua por un prompt interno se quita sola y el lote vuelve a donde estaba; una de saldo no", async () => {
+    const prompt = await createBatch(ana, "Prompt");
+    const saldo = await createBatch(ana, "Saldo");
+    const pause = (reason: string, kind: string) => JSON.stringify({ kind, reason, from: "clips", extraCredits: 0, videoId: null, kindOf: "clip", quoted: null });
+    await getPool().query("update batches set status = 'pausado', pause = $2::jsonb where id = $1", [prompt.id, pause("Video 2: Falta decir para qué sirve image [4].", "fallo")]);
+    await getPool().query("update batches set status = 'pausado', pause = $2::jsonb where id = $1", [saldo.id, pause("No tienes créditos suficientes en Higgsfield.", "saldo")]);
+    await advanceRunningBatches(deps);
+    // Sin vídeos, al reanudarse sigue avanzando (aquí hasta «listo»): lo que cuenta es que ya no está en pausa.
+    expect((await getBatchFor(ana, prompt.id)).status).not.toBe("pausado");
+    expect((await getBatchFor(ana, prompt.id)).pause).toBeNull();
+    expect((await getBatchFor(ana, saldo.id)).status).toBe("pausado");
+  });
+});
 
 describe("estados del envío", () => {
   it("borrador → preguntas → imágenes → revisión → clips → listo, sin molestar entre medias", async () => {
