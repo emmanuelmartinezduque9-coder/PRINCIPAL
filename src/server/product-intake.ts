@@ -475,6 +475,8 @@ export interface IntakeResult extends Omit<IntakeAnswer, "fuentes"> {
   sinVideo: boolean;
   /** El mockup ya se reintentó tras un bloqueo del filtro de Higgsfield. */
   mockupReintento?: boolean;
+  /** Cuántos reintentos lleva tras bloqueos del filtro (ver `MOCKUP_BLOCKED_PROMPTS`). */
+  mockupIntentos?: number;
   costeMicros: number;
 }
 
@@ -778,8 +780,9 @@ async function stepMockup(row: Intake, owner: AuthUser, deps: IntakeDeps): Promi
     if (job?.status === "failed") {
       // Bloqueado por el filtro de Higgsfield: un reintento solo, con el otro modelo y un prompt neutro.
       const blocked = job.failure === "nsfw" || job.failure === "ip_detected";
-      if (blocked && result && !result.mockupReintento) {
-        const retried = { ...result, mockupReintento: true };
+      const tries = result?.mockupIntentos ?? (result?.mockupReintento ? 1 : 0);
+      if (blocked && result && tries < MOCKUP_BLOCKED_PROMPTS.length) {
+        const retried = { ...result, mockupReintento: true, mockupIntentos: tries + 1 };
         await save(row.id, { result: retried }, now);
         return stepMockup({ ...row, result: retried, mockupStatus: "pendiente", mockupJobId: null }, owner, deps);
       }
@@ -797,8 +800,8 @@ async function stepMockup(row: Intake, owner: AuthUser, deps: IntakeDeps): Promi
     const photo = await readProductPhoto(owner, photoId);
     const mediaId = await ensureMedia(owner.id, { bytes: photo.data, filename: `referencia-${photoId}.jpg`, contentType: photo.mime, type: "image" }, { higgsfield: hf });
     const request: HfImageRequest = {
-      model: result?.mockupReintento ? otherImageModel(await getImageModel()) : await getImageModel(),
-      prompt: (result?.mockupReintento ? MOCKUP_FALLBACK_PROMPT : result?.promptMockup?.trim() || MOCKUP_FALLBACK_PROMPT).slice(0, 3000),
+      model: mockupTry(result) === 1 ? otherImageModel(await getImageModel()) : await getImageModel(),
+      prompt: (mockupTry(result) > 0 ? MOCKUP_BLOCKED_PROMPTS[mockupTry(result) - 1] : result?.promptMockup?.trim() || MOCKUP_FALLBACK_PROMPT).slice(0, 3000),
       aspectRatio: "1:1",
       resolution: "2k",
       medias: [{ role: "image_references", value: mediaId }],
@@ -821,6 +824,19 @@ async function stepMockup(row: Intake, owner: AuthUser, deps: IntakeDeps): Promi
     throw error;
   }
 }
+
+/**
+ * Prompts para cuando el filtro de Higgsfield bloquea el mockup (estampados con personajes): primero
+ * el neutro con el otro modelo; después, la prenda o el producto plegado con el estampado pequeño y
+ * suave (mismos colores y formas, menos reconocible).
+ */
+export const MOCKUP_BLOCKED_PROMPTS = [
+  MOCKUP_FALLBACK_PROMPT,
+  "Photorealistic commercial product photograph of the product in the reference image, neatly folded or arranged as a catalog flat-lay, seen slightly from above, on a neutral medium-gray seamless backdrop (roughly #929396), soft even studio light, subtle contact shadow, generous margins. Keep the exact colors, fabric, trims and overall pattern layout, but render any printed illustration small, soft and low-contrast, as a generic decorative pattern without recognizable characters, logos or text. No hands, no people, no props.",
+];
+
+/** Qué intento de mockup toca (0: el prompt de Claude; 1 y 2: los de `MOCKUP_BLOCKED_PROMPTS`). */
+const mockupTry = (result: IntakeResult | null): number => result?.mockupIntentos ?? (result?.mockupReintento ? 1 : 0);
 
 /** El otro Nano Banana (para reintentar un mockup que el filtro bloqueó). */
 const otherImageModel = (model: ImageModel): ImageModel => IMAGE_MODELS.find((m) => m !== model) ?? model;
@@ -852,7 +868,11 @@ export async function requestMockup(user: AuthUser, productId: number, acceptCre
       .values({ productId: product.id, url: product.sourceUrl ?? "https://principal.local/manual", kind: "web", country: product.countries[0] ?? "DE", createdBy: user.id, status: "mockup" })
       .returning();
   }
-  const fresh = intake.result ? { ...(intake.result as IntakeResult), mockupReintento: false } : intake.result;
+  // Tras un bloqueo del filtro de Higgsfield se sigue por el siguiente intento, no desde el principio.
+  const previous = intake.result as IntakeResult | null;
+  const blockedBefore = intake.mockupStatus === "fallido" && (intake.mockupNote ?? "").includes("filtro");
+  const nextTry = blockedBefore ? Math.min(mockupTry(previous) + 1, MOCKUP_BLOCKED_PROMPTS.length) : 0;
+  const fresh = previous ? { ...previous, mockupReintento: nextTry > 0, mockupIntentos: nextTry } : intake.result;
   return save(intake.id, { result: fresh, status: "mockup", mockupStatus: "pendiente", mockupJobId: null, mockupOkCredits: ok ?? intake.mockupOkCredits, mockupNote: "Preparando el mockup…", message: "Generando el mockup sobre fondo gris…", createdBy: user.id }, new Date());
 }
 

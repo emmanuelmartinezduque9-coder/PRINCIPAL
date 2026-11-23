@@ -15,6 +15,7 @@ import {
   isPrivateAddress,
   latestIntake,
   MAC_WAIT_MS,
+  MOCKUP_BLOCKED_PROMPTS,
   MOCKUP_FALLBACK_PROMPT,
   PROFILE_RETRY_MS,
   WAITING_FOR_MAC,
@@ -191,12 +192,18 @@ describe("alta desde un enlace", () => {
     expect(submits[1].request.model).not.toBe(submits[0].request.model);
     expect(submits[1].request.prompt).toBe(MOCKUP_FALLBACK_PROMPT);
     expect((await intakeViewFor(dueno, product.id))?.mockupStatus).toBe("enviado");
-    // Un segundo bloqueo ya no se reintenta: se dice y queda el botón.
+    // Segundo bloqueo: el producto plegado con el estampado suave.
     const second = Object.keys(hf.state.jobs)[1];
     hf.state.jobs[second] = { ...hf.state.jobs[second], status: "failed", failure: "ip_detected" };
     await advanceIntake(intake.id, d);
+    const third = hf.calls.filter((c) => c.method === "submitImages")[2].args as { request: { prompt: string } };
+    expect(third.request.prompt).toBe(MOCKUP_BLOCKED_PROMPTS[1]);
+    // Un tercer bloqueo ya no se reintenta: se dice y queda el botón.
+    const last = Object.keys(hf.state.jobs)[2];
+    hf.state.jobs[last] = { ...hf.state.jobs[last], status: "failed", failure: "ip_detected" };
+    await advanceIntake(intake.id, d);
     expect(await intakeViewFor(dueno, product.id)).toMatchObject({ status: "listo", mockupStatus: "fallido" });
-    expect(hf.calls.filter((c) => c.method === "submitImages")).toHaveLength(2);
+    expect(hf.calls.filter((c) => c.method === "submitImages")).toHaveLength(3);
   });
 
   it("si Claude no lo identifica, lo dice claro y no gasta en Higgsfield", async () => {
