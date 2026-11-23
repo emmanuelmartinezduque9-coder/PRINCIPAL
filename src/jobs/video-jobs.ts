@@ -11,6 +11,7 @@ import { processReference } from "@/server/videos/intake";
 import { PINTEREST_JOB, runPinterest } from "@/server/videos/pinterest";
 import { archiveSweep } from "@/server/videos/archive";
 import { videoSweep } from "@/server/videos/sweep";
+import { linkThumbSweep, makeLinkThumb, THUMB_JOB } from "@/server/link-thumbs";
 import { REFERENCE_JOB } from "@/server/videos/upload";
 
 /**
@@ -100,6 +101,19 @@ defineJob<{ videoId: number }>(
   },
   "Seguir con el vídeo",
 );
+
+/** La portada de un enlace de referencia (de la nube o, si no, del primer fotograma de su vídeo). */
+defineJob<{ linkMediaId: number }>(
+  THUMB_JOB,
+  async ({ linkMediaId }) => {
+    if (typeof linkMediaId !== "number") throw new StepFailedError("Datos del trabajo no válidos.");
+    await makeLinkThumb(linkMediaId);
+  },
+  "Portada del enlace",
+);
+
+/** Cada minuto: las portadas cuyo vídeo trajo el Mac (o que se quedaron a medias). */
+defineSchedule("enlaces.portadas", "* * * * *", () => linkThumbSweep());
 
 /** Cada minuto: subidas abandonadas, referencias atascadas, desgloses que no terminan y generaciones en curso o en duda. */
 defineSchedule("video.seguimiento", "* * * * *", () => videoSweep());

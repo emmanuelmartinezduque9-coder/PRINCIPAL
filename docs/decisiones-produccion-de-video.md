@@ -884,3 +884,9 @@ que pasa también los `auto` de antes a Motion Transfer: salía el mismo modelo)
 aplicación cuando Genjutsu no puede sigue igual: tramo de menos de 3 s → Seedance; clip bloqueado por
 el filtro de Higgsfield → se rehace la imagen inicial sin cuadros ni pósteres con personas, después
 hasta 2 reintentos con el prompt sin marcas y, si sigue, una pausa clara.
+- **Portada de cada enlace** (24/11/2026): en «Nuevo lote» (en cuanto se pega), en el tablero y en la
+  pantalla del vídeo mientras la referencia no está preparada (después, su primer fotograma).
+  `src/server/link-thumbs.ts`: oEmbed (TikTok, YouTube) u `og:image` (Instagram, Facebook); si no
+  hay, el primer fotograma del vídeo del enlace, traído por yt-dlp en la nube o por el Mac
+  (`link-media.ts`), que queda en el almacén. JPEG de 360 px en `link_media.thumb` y copia en
+  `portadas/<id>.jpg`. Mientras no hay, «Cargando portada…»; si no se puede, el icono del enlace.

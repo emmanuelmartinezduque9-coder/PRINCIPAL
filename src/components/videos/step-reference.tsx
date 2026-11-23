@@ -15,6 +15,7 @@ import { Progress } from "@/components/ui/progress";
 import { api } from "@/lib/api";
 import { linkLabel, linkOf } from "@/lib/links";
 import { cn } from "@/lib/utils";
+import { LinkThumb } from "./link-thumb";
 import type { HiggsfieldStatus } from "@/server/higgsfield";
 import type { AvatarMode } from "@/server/videos/brief";
 import { AVATAR_MODE_LABELS, avatarModeOf } from "./brief-labels";
@@ -215,9 +216,15 @@ function LinkPending({ link, compact }: { link: NonNullable<VideoViewJson["link"
     );
   }
   return (
-    <div className="flex min-h-60 flex-col items-center justify-center gap-3 rounded-xl bg-muted/40 px-6 text-center text-sm text-muted-foreground" role="status">
-      <Loader2 className="size-6 animate-spin" aria-hidden />
-      <span className="text-foreground">{text}</span>
+    <div className="flex min-h-60 flex-col items-center justify-center gap-3 rounded-xl bg-muted/40 px-6 py-6 text-center text-sm text-muted-foreground" role="status">
+      {/* La portada del enlace, para saber cuál es sin abrirlo. */}
+      <div className="relative aspect-[9/16] w-28 overflow-hidden rounded-lg ring-1 ring-foreground/10">
+        <LinkThumb url={link.url} />
+      </div>
+      <span className="flex items-center gap-2 text-foreground">
+        <Loader2 className="size-4 animate-spin" aria-hidden />
+        {text}
+      </span>
       <span className="max-w-full truncate text-xs" title={link.url}>
         {host} {code}
       </span>

@@ -22,6 +22,7 @@ import type { ProductPhoto } from "@/components/videos/labels";
 import { useReferenceUploads } from "@/components/videos/upload-provider";
 import { useMac } from "@/components/videos/use-mac";
 import { api, ApiError } from "@/lib/api";
+import { LinkThumb } from "@/components/videos/link-thumb";
 import { linkLabel, parsePastedLinks } from "@/lib/links";
 import { cn } from "@/lib/utils";
 import { useAvatars } from "@/components/avatars/avatars-screen";
@@ -71,7 +72,7 @@ const rowName = (row: Row) => {
   return code ? `${host} ${code}` : host;
 };
 
-/** Miniatura 9:16 de la tarjeta: el primer fotograma del archivo, o el icono del enlace. */
+/** Miniatura 9:16 de la tarjeta: el primer fotograma del archivo, o la portada del enlace. */
 function RowPreview({ row }: { row: Row }) {
   return (
     <div className="relative grid h-[6.25rem] w-14 shrink-0 place-items-center overflow-hidden rounded-lg bg-muted text-muted-foreground ring-1 ring-foreground/[0.06] max-sm:hidden">
@@ -80,7 +81,7 @@ function RowPreview({ row }: { row: Row }) {
       ) : row.source.type === "missing" ? (
         <FileVideo className="size-5" aria-hidden />
       ) : (
-        <Link2 className="size-5" aria-hidden />
+        <LinkThumb url={row.source.url} />
       )}
     </div>
   );

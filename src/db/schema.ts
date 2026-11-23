@@ -1327,6 +1327,14 @@ export const linkMedia = pgTable(
     /** `null` (aún no), `done` o `failed` (rea-video no pudo; no se repite). */
     breakdownStatus: text("breakdown_status"),
     error: text("error"),
+    /**
+     * Portada del enlace para las tarjetas (`src/server/link-thumbs.ts`): `null` (nadie la ha pedido),
+     * `pending`, `ready` (JPEG en `thumb` y copia en el almacén, `thumb_key`) o `failed`.
+     */
+    thumbStatus: text("thumb_status"),
+    thumbKey: text("thumb_key"),
+    thumb: bytea("thumb"),
+    thumbError: text("thumb_error"),
     createdAt: instant("created_at").notNull().defaultNow(),
     updatedAt: instant("updated_at").notNull().defaultNow(),
   },

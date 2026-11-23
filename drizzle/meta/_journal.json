@@ -351,6 +351,13 @@
       "when": 1795476182709,
       "tag": "0049_referencias_a_mano",
       "breakpoints": true
+    },
+    {
+      "idx": 50,
+      "version": "7",
+      "when": 1795476485521,
+      "tag": "0050_portadas_de_enlaces",
+      "breakpoints": true
     }
   ]
 }
