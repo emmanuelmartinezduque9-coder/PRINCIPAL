@@ -308,7 +308,8 @@ export function BatchQuestions({ batchId }: { batchId: number }) {
         ) : (
           <EmptyState icon={auto.readyToConfirm ? PartyPopper : Loader2} tone={auto.readyToConfirm ? "success" : "busy"} title={auto.readyToConfirm ? "Sin preguntas" : "Desglosando…"} />
         )}
-        <BudgetPanel batchId={batchId} ready={auto.readyToConfirm} waiting={Math.max(0, waiting)} />
+        {/* Lotes nuevos: con todo respondido se autoriza solo y empieza a generar (sin «Confirmar»). */}
+        {auto.autoConfirm ? null : <BudgetPanel batchId={batchId} ready={auto.readyToConfirm} waiting={Math.max(0, waiting)} />}
       </div>
     </div>
   );

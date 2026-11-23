@@ -84,3 +84,15 @@ Comprueba primero los payloads y las transiciones con recibos existentes o simul
 7. Entrega. Verifica archivos finales, alemán, descripciones, audio, correspondencia con las tarjetas y que la carpeta contiene todos los vídeos esperados antes de anunciar el lote como listo.
 
 Implementa primero los puntos donde se pierden selecciones o se duplican envíos. Después mejora concurrencia y reutilización. Muestra qué comprobaste con archivos, recibos o pruebas reproducibles, qué cambió en la práctica y qué depende todavía del proveedor.
+
+---
+
+## 10. Reglas fijas del flujo (Emmanuel, 23/11/2026)
+
+Añadidas tras los vídeos de prueba del 23/11 (EisWerk, vídeo 2): el paso «Desglose» enseñaba tarjetas amarillas de «riesgos» y se quedaba parado, y el paso «Imagen» pedía «Generar 2 imágenes · Esto cuesta 4 créditos». Emmanuel no lee análisis ni avisos.
+
+* **Flujo automático.** Referencia → desglose → imagen → clip → montaje se encadenan solos, dentro de los topes de gasto, el saldo y el presupuesto del lote. El envío del pedido (crear el vídeo o enviar el lote) autoriza los frames necesarios: no hay botones de «¿generar?» ni de «Confirmar» el presupuesto.
+* **Sin avisos.** Los riesgos del desglose son instrucciones internas que el motor aplica en los prompts. No se enseñan como avisos ni paran el flujo; como mucho, plegados en «Detalles técnicos».
+* **Una imagen por vídeo por defecto** (como el motor de Codex: un frame por clip). Más solo si Emmanuel lo especifica en la tarjeta o en el lote.
+* **Solo preguntas obligatorias.** El flujo se para únicamente con una pregunta concreta que solo él puede decidir (avatar obligatorio sin elegir, variante, canción, falta un archivo, no hay saldo o se pasa del presupuesto) y sigue solo en cuanto responde. Nunca preguntas por preguntar.
+* La aprobación visual de la imagen (punto 2) sigue siendo la única parada rutinaria; tras ella, clip y montaje van sin otra ronda. Un rechazo se regenera solo dentro de sus rondas.

@@ -2,6 +2,7 @@ import "@/jobs/video-jobs"; // define `video.finalizar`, que encola la consulta 
 import { badRequest, handle } from "@/server/http";
 import { checkPromptInput, updatePrompts } from "@/server/videos/analysis";
 import { pollVideoGenerations } from "@/server/videos/generations";
+import { armOnOpen, kickVideo } from "@/server/videos/autopilot";
 import { checkSongChoice, getVideoFor, isClipResolution, setVideoSong, updateVideoChoices, videoView } from "@/server/videos/videos";
 
 const parseId = (value: string) => (/^[1-9]\d{0,15}$/.test(value) ? Number(value) : Number.NaN);
@@ -15,6 +16,8 @@ export async function GET(_request: Request, { params }: { params: Promise<{ vid
   return handle(async (user) => {
     const { videoId } = await params;
     const id = parseId(videoId);
+    // Un vídeo suelto de antes del flujo automático empieza a ir solo cuando quien lo creó lo abre.
+    await armOnOpen(user!, id);
     await pollVideoGenerations(user!, id);
     return Response.json(await videoView(user!, id));
   });
@@ -27,7 +30,7 @@ const isPhotoChoice = (value: unknown) => value === undefined || value === null 
  * `environmentPhotoId` (id o `null`), `avatarMode`, `variantId` (una variante del producto o `null`), `clipResolution`,
  * `kind`, `adaptation`, `hookSeconds`, `bodyClipIds`, `note`, `imagePrompt`, `videoPrompt`, `frameUse` o
  * `songId` (la «Música»: id de una canción o `null` para el audio original) o `editReferenceUrl` (la
- * «Referencia de edición»: un enlace admitido, o `null` para quitarla; solo se guarda). Solo quien creó el vídeo. Con algún prompt o `frameUse`, la
+ * «Referencia de edición»: un enlace admitido, o `null` para quitarla; solo se guarda) o `frameCount` (imágenes por ronda, 1–4, o `null`). Solo quien creó el vídeo. Con algún prompt o `frameUse`, la
  * respuesta lleva también los avisos de los prompts (`imageIssues`, `videoIssues`).
  */
 export async function PUT(request: Request, { params }: { params: Promise<{ videoId: string }> }) {
@@ -35,7 +38,7 @@ export async function PUT(request: Request, { params }: { params: Promise<{ vide
     const { videoId } = await params;
     const body = (await request.json().catch(() => null)) as Record<string, unknown> | null;
     const input = body && typeof body === "object" && !Array.isArray(body) ? body : {};
-    const { title, avatarPhotoId, avatarLibraryId, environmentPhotoId, avatarMode, variantId, clipResolution, kind, adaptation, hookSeconds, bodyClipIds, note, imagePrompt, videoPrompt, frameUse, songId, editReferenceUrl } =
+    const { title, avatarPhotoId, avatarLibraryId, environmentPhotoId, avatarMode, variantId, clipResolution, kind, adaptation, hookSeconds, bodyClipIds, note, imagePrompt, videoPrompt, frameUse, songId, editReferenceUrl, frameCount } =
       input;
     if (title !== undefined && typeof title !== "string") return badRequest("Escribe el título del vídeo.");
     if (!isPhotoChoice(avatarPhotoId)) return badRequest("Elige una foto con papel «Avatar» de este producto.");
@@ -64,11 +67,16 @@ export async function PUT(request: Request, { params }: { params: Promise<{ vide
       bodyClipIds,
       note,
       editReferenceUrl,
+      frameCount,
     });
     if (songId !== undefined) video = await setVideoSong(user!, id, songId);
-    if (imagePrompt === undefined && videoPrompt === undefined && frameUse === undefined) return Response.json({ video });
+    if (imagePrompt === undefined && videoPrompt === undefined && frameUse === undefined) {
+      await kickVideo(id);
+      return Response.json({ video });
+    }
     const issues = await updatePrompts(user!, id, prompts);
     video = await getVideoFor(user!, id);
+    await kickVideo(id);
     return Response.json({ video, ...issues });
   });
 }

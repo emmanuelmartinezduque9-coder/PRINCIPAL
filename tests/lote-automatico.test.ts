@@ -43,7 +43,9 @@ vi.mock("next/headers", () => ({
 
 /**
  * «Enviar lote» de principio a fin con Claude y Higgsfield simulados. Precios del simulado: cada
- * imagen inicial 4 créditos (2 candidatas × 2) y cada clip de 6 s a 480p, 18 créditos.
+ * imagen 2 créditos y cada clip de 6 s a 480p, 18 créditos. Estas pruebas usan un lote de los de
+ * «Confirmar» que pide 2 imágenes por vídeo (4 créditos); el lote nuevo (1 imagen, sin confirmar)
+ * va en «Flujo automático del lote», al final.
  */
 
 const FRAME = 4;
@@ -124,8 +126,10 @@ async function readyReference(videoId: number): Promise<void> {
 }
 
 /** Un lote de Ana con `n` vídeos con su referencia lista y el avatar elegido. */
-async function batchWith(n: number, options: { avatar?: boolean } = {}): Promise<{ batchId: number; videos: Video[] }> {
+async function batchWith(n: number, options: { avatar?: boolean; automatic?: boolean } = {}): Promise<{ batchId: number; videos: Video[] }> {
   const batch = await createBatch(ana, "Lote", { autoAnalyze: false });
+  // Por defecto, un lote de los de «Confirmar» con 2 imágenes por vídeo (las cifras de estas pruebas).
+  if (!options.automatic) await getPool().query("update batches set auto_confirm = false, frame_count = 2 where id = $1", [batch.id]);
   const videos: Video[] = [];
   for (let i = 0; i < n; i++) {
     const video = await addVideoToBatch(ana, batch.id, { productId: producto.id, avatarPhotoId: avatar, avatarMode: "elegido" });

@@ -27,8 +27,11 @@ import { getVideoFor, setVideoSong, referenceOutdated, REFERENCE_OUTDATED, stale
  *    las de la aplicación (falta la foto del artículo, quién sale, un enlace que falló, un desglose
  *    fallido, un riesgo que bloquea…). Las respuestas se guardan en el vídeo y vuelven a Claude: al
  *    quedar respondidas, el desglose se repite con ellas (`answersText` en `brief.ts`).
- * 3. `quoteBatch` / `confirmBatch`: un solo presupuesto (todas las imágenes + una estimación de
- *    todos los clips) y una sola confirmación; se guarda lo autorizado (`budget_credits`).
+ * 3. Presupuesto: con todo respondido, el avance lo autoriza solo (`autoConfirmBatch`, regla fija
+ *    del dueño del 23/11/2026: sin botones de «¿generar?»): todas las imágenes (1 por vídeo salvo
+ *    que pida más) + una estimación de todos los clips; se guarda lo autorizado (`budget_credits`).
+ *    Sin saldo para todo, o si algo no se puede presupuestar, se para con ese único motivo. Los
+ *    lotes de antes (`auto_confirm` = false) siguen con su «Confirmar» (`quoteBatch` / `confirmBatch`).
  * 4. `advanceBatch` (trabajo `lote.avanzar` y el seguimiento de cada minuto): pide cada imagen y,
  *    cuando TODAS están aprobadas, cada clip. Siempre por `requestGeneration` (el núcleo del
  *    dinero: su precio fresco, `expectedCredits`, su instantánea y su envío único), como mucho 2 a
@@ -791,9 +794,35 @@ async function requestFor(user: AuthUser, batch: Batch, rows: Row[], row: Row, k
   }
 }
 
-/** «Preguntas»: pide el desglose de lo que ya no tiene nada pendiente (p. ej. tras responder). */
-async function advanceQuestions(user: AuthUser, rows: Row[]): Promise<void> {
+/**
+ * Con todo respondido y desglosado: autoriza el presupuesto solo y pasa a «Imágenes» (como
+ * `confirmBatch`, sin botón). Si algo no se puede presupuestar o no hay saldo para todo, se para
+ * con ese motivo (la única pregunta: «Continuar» o «Saltar este vídeo»).
+ */
+async function autoConfirmBatch(user: AuthUser, batch: Batch, rows: Row[], deps: GenDeps): Promise<void> {
+  const quote = await quoteRows(user, rows, deps);
+  const failed = quote.rows.find((r) => r.error !== null);
+  if (failed) {
+    const row = rows.find((r) => r.video.id === failed.videoId)!;
+    await pauseBatch(batch, { kind: "fallo", reason: `${row.video.title}: ${failed.error}`, videoId: row.video.id, kindOf: "frame" });
+  }
+  if (quote.balance !== null && quote.balance < quote.total) {
+    await pauseBatch(batch, {
+      kind: "saldo",
+      reason: `No tienes créditos suficientes en Higgsfield para el lote: hacen falta unos ${quote.total} y tienes ${quote.balance}.`,
+    });
+  }
+  const estimates = Object.fromEntries(quote.rows.map((r) => [String(r.videoId), { frame: r.frame!, clip: r.clip! }]));
+  const updated = await moveBatch(batch, "imagenes", { budgetCredits: quote.total, estimates, confirmedAt: new Date(), pause: null });
+  if (updated) await kickBatch(updated);
+}
+
+/** «Preguntas»: pide el desglose de lo que ya no tiene nada pendiente (p. ej. tras responder) y, con todo listo, sigue solo. */
+async function advanceQuestions(user: AuthUser, batch: Batch, rows: Row[], deps: GenDeps): Promise<void> {
   const asks = await askRows(user, rows);
+  if (batch.autoConfirm && rows.length > 0 && rows.every((row) => asks.get(row.video.id)?.state === "ready")) {
+    return autoConfirmBatch(user, batch, rows, deps);
+  }
   for (const row of rows) {
     if (asks.get(row.video.id)?.state !== "needsAnalysis") continue;
     const notes = await withProductNotes(row.video);
@@ -886,7 +915,7 @@ export async function advanceBatch(batchId: number, deps: GenDeps = {}): Promise
   try {
     const user = await getActiveUser(batch.createdBy);
     if (!user) return;
-    if (batch.status === "preguntas") await advanceQuestions(user, await rowsOf(user, batch));
+    if (batch.status === "preguntas") await advanceQuestions(user, batch, await rowsOf(user, batch), deps);
     else await advanceGenerations(user, batch, deps);
   } catch (error) {
     if (!(error instanceof Paused)) throw error;
@@ -924,8 +953,10 @@ export interface AutoView {
   steps: { preguntas: number; imagenes: number; revision: number; clips: number; montaje: number };
   /** Preguntas abiertas (solo en «Preguntas»). */
   questions: number;
-  /** Todo respondido y desglosado: falta confirmar el presupuesto. */
+  /** Todo respondido y desglosado: falta confirmar el presupuesto (solo en lotes de antes del flujo automático). */
   readyToConfirm: boolean;
+  /** El presupuesto se autoriza solo al quedar todo respondido. */
+  autoConfirm: boolean;
 }
 
 /** El estado del envío automático para el tablero (`GET /api/lotes/[id]`). */
@@ -952,6 +983,7 @@ export async function autoView(user: AuthUser, batch: Batch): Promise<AutoView> 
       montaje: countIf((row) => row.video.editStatus === "hecho"),
     },
     questions: asked.reduce((n, a) => n + (a.state === "questions" ? a.questions.length : 0), 0),
-    readyToConfirm: batch.status === "preguntas" && rows.length > 0 && asked.every((a) => a.state === "ready"),
+    readyToConfirm: !batch.autoConfirm && batch.status === "preguntas" && rows.length > 0 && asked.every((a) => a.state === "ready"),
+    autoConfirm: batch.autoConfirm,
   };
 }

@@ -1,6 +1,6 @@
 import { and, eq, notInArray } from "drizzle-orm";
 import type { HfMediaRef } from "@/connectors/higgsfield";
-import { getSetting, schema, setSetting } from "@/db/client";
+import { getDb, getSetting, schema, setSetting } from "@/db/client";
 import type { AuthUser } from "@/server/auth";
 import { ensureMedia } from "@/server/higgsfield";
 import { HttpError } from "@/server/http";
@@ -18,6 +18,8 @@ import { imageManifest, type ManifestItem } from "@/server/videos/manifest";
 import { checkImagePrompt } from "@/server/videos/prompt-check";
 import {
   BRIEF_CHANGED,
+  DEFAULT_FRAME_COUNT,
+  isFrameCount,
   latestDoneAnalysis,
   manifestRefsFor,
   NO_AUTO_AVATAR,
@@ -29,7 +31,7 @@ import {
 } from "@/server/videos/videos";
 
 /**
- * Imagen inicial: la petición a Nano Banana (2 candidatas, 2K, 9:16) con las referencias en el
+ * Imagen inicial: la petición a Nano Banana (1 imagen por defecto, 2K, 9:16) con las referencias en el
  * orden del manifiesto, y aprobar o rechazar con motivo. El dinero (presupuesto, envío único,
  * seguimiento) lo pone `generations.ts`; este módulo registra el constructor `frame` al importarse,
  * así que lo importan las rutas que piden una imagen.
@@ -40,7 +42,21 @@ export type ImageModel = (typeof IMAGE_MODELS)[number];
 /** El que usa el dueño (decisión del 22/11): Nano Banana 2.1, siempre a 2K. */
 export const DEFAULT_IMAGE_MODEL: ImageModel = "nano_banana_2_1";
 export const IMAGE_MODEL_SETTING = "video.imageModel";
-export const FRAME_CANDIDATES = 2;
+/**
+ * Regla fija del dueño (23/11/2026, como el motor de Codex: un frame por clip): **una imagen por
+ * vídeo** salvo que pida más en la tarjeta (`videos.frame_count`) o en el lote (`batches.frame_count`).
+ */
+export { DEFAULT_FRAME_COUNT, isFrameCount, MAX_FRAME_COUNT } from "@/server/videos/videos";
+
+/** Cuántas imágenes pide cada ronda de este vídeo: la de la tarjeta, si no la del lote, si no 1. */
+export async function frameCountOf(video: Pick<Video, "frameCount" | "batchId">): Promise<number> {
+  if (isFrameCount(video.frameCount)) return video.frameCount;
+  if (video.batchId !== null) {
+    const [batch] = await getDb().select({ frameCount: schema.batches.frameCount }).from(schema.batches).where(eq(schema.batches.id, video.batchId));
+    if (batch && isFrameCount(batch.frameCount)) return batch.frameCount;
+  }
+  return DEFAULT_FRAME_COUNT;
+}
 
 /** Nombre de cada modelo en pantalla. */
 export const IMAGE_MODEL_NAMES: Record<ImageModel, string> = {
@@ -132,6 +148,7 @@ const FRAME_SNAPSHOT = [
   "adaptation",
   "hookSeconds",
   "note",
+  "frameCount",
 ] as const satisfies ReadonlyArray<keyof Video>;
 
 export const buildFrameRequest: RequestBuilder = async (user, video, deps) => {
@@ -148,7 +165,7 @@ export const buildFrameRequest: RequestBuilder = async (user, video, deps) => {
   for (const item of manifest) medias.push({ role: "image_references", value: await mediaOf(user, video, item, deps) });
   return {
     request: { model, prompt, aspectRatio: "9:16", resolution: "2k", medias },
-    count: FRAME_CANDIDATES,
+    count: await frameCountOf(video),
     snapshot: videoSnapshot(video, FRAME_SNAPSHOT),
   };
 };

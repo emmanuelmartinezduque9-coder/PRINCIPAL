@@ -13,7 +13,6 @@ import {
   Save,
   Shuffle,
   Sparkles,
-  TriangleAlert,
   Type,
   UserRound,
   X,
@@ -31,6 +30,8 @@ import type { FrameUse } from "@/server/videos/manifest";
 import { checkImagePrompt, checkVideoPrompt, type PromptIssue } from "@/server/videos/prompt-check";
 import { frameUrl, secondsLabel, type AnalysisJson, type RiskKind, type VideoJson, type VideoViewJson } from "./labels";
 import { PromptEditor } from "./prompt-editor";
+import { Segmented } from "./segmented";
+import { ClipResolutionField } from "./step-clip";
 import { onRadioKeyDown, radioTabIndex } from "./radio-keys";
 
 const RISK_LABELS: Record<RiskKind, string> = {
@@ -107,10 +108,15 @@ function Requirement({ ok, icon: Icon, label }: { ok: boolean; icon: LucideIcon;
   );
 }
 
-/** Antes del primer desglose: qué falta y el botón. */
+/**
+ * Antes del primer desglose: si no falta nada, se está pidiendo solo (sin botón); si falta algo
+ * obligatorio, lo que falta y el camino para ponerlo. Los vídeos de un lote o de antes del flujo
+ * automático conservan «Hacer el desglose».
+ */
 function StartPanel({ view, onGoToReference }: { view: VideoViewJson; onGoToReference: () => void }) {
   const { video, imageManifest, mine } = view;
   const request = useRequestAnalysis(video.id);
+  const automatic = view.auto.state !== "lote";
   // Preparada con otro gancho no cuenta: hay que volver a subirla.
   const reference = video.referenceStatus === "ready" && !view.referenceOutdated;
   const person = !["elegido", "biblioteca"].includes(video.avatarMode) || imageManifest.some((item) => item.role === "avatar");
@@ -118,6 +124,17 @@ function StartPanel({ view, onGoToReference }: { view: VideoViewJson; onGoToRefe
   const adapting = video.kind === "adaptacion_concepto";
   const adaptation = !adapting || !!video.adaptation?.trim();
   const ready = reference && person && article && adaptation;
+
+  if (ready && automatic) {
+    return (
+      <Panel>
+        <div className="flex min-h-72 flex-col items-center justify-center gap-3 text-sm text-muted-foreground" role="status">
+          <Loader2 className="size-6 animate-spin" aria-hidden />
+          Haciendo el desglose…
+        </div>
+      </Panel>
+    );
+  }
 
   return (
     <Panel className="mx-auto w-full max-w-xl items-center py-10 text-center">
@@ -137,7 +154,6 @@ function StartPanel({ view, onGoToReference }: { view: VideoViewJson; onGoToRefe
               {request.isPending ? <Loader2 className="animate-spin" aria-hidden /> : <Sparkles aria-hidden />}
               Hacer el desglose
             </Button>
-            <span className="text-xs text-muted-foreground">Usa la IA de Claude; cuesta unos céntimos.</span>
             <RequestError error={request.error} />
           </div>
         ) : (
@@ -234,19 +250,25 @@ function Adaptation({ analysis }: { analysis: NonNullable<AnalysisJson["result"]
   );
 }
 
-function Risks({ analysis }: { analysis: NonNullable<AnalysisJson["result"]> }) {
+/**
+ * Los «riesgos» del desglose son instrucciones internas que el motor ya aplica en los prompts (regla
+ * fija del dueño, 23/11/2026): no son avisos ni paran nada. Solo se pueden consultar plegados.
+ */
+export function InternalNotes({ analysis }: { analysis: NonNullable<AnalysisJson["result"]> }) {
   if (analysis.risks.length === 0) return null;
   return (
-    <ul className="grid gap-2 md:grid-cols-2" aria-label="Riesgos">
-      {analysis.risks.map((risk, index) => (
-        <li key={index} className="flex gap-2.5 rounded-lg bg-warning/10 px-3 py-2.5 text-sm ring-1 ring-warning/25">
-          <TriangleAlert className="mt-0.5 size-4 shrink-0 text-warning-ink" aria-hidden />
-          <span className="min-w-0">
-            <span className="font-semibold">{RISK_LABELS[risk.kind] ?? risk.kind}.</span> {risk.detail}
-          </span>
-        </li>
-      ))}
-    </ul>
+    <details className="group text-sm text-muted-foreground">
+      <summary className="cursor-pointer rounded outline-none select-none hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50">
+        Detalles técnicos
+      </summary>
+      <ul className="mt-2 flex flex-col gap-1.5" aria-label="Instrucciones internas del motor">
+        {analysis.risks.map((risk, index) => (
+          <li key={index} className="text-pretty">
+            <span className="font-medium text-foreground">{RISK_LABELS[risk.kind] ?? risk.kind}:</span> {risk.detail}
+          </li>
+        ))}
+      </ul>
+    </details>
   );
 }
 
@@ -302,6 +324,41 @@ function FrameUsePicker({ video, readOnly }: { video: VideoJson; readOnly: boole
   );
 }
 
+const FRAME_COUNTS = ["1", "2", "3", "4"] as const;
+
+/**
+ * «Imágenes»: cuántas imágenes iniciales pide cada ronda. 1 por defecto (regla fija del dueño);
+ * más solo si él lo elige aquí (o en el lote). Se guarda al elegir.
+ */
+function FrameCountPicker({ view, readOnly }: { view: VideoViewJson; readOnly: boolean }) {
+  const client = useQueryClient();
+  const { video } = view;
+  const save = useMutation({
+    mutationFn: (frameCount: number) => api<{ video: VideoJson }>(`/api/videos/${video.id}`, { method: "PUT", body: JSON.stringify({ frameCount }) }),
+    onError: (error) => toast.error(error instanceof Error ? error.message : "No se pudo guardar."),
+    onSettled: () => client.invalidateQueries({ queryKey: ["video", video.id] }),
+  });
+  const value = String(save.isPending && save.variables ? save.variables : view.frameCount) as (typeof FRAME_COUNTS)[number];
+  return (
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+      <span className="text-sm font-semibold">Imágenes</span>
+      {readOnly ? (
+        <span className="text-sm tabular-nums">{view.frameCount}</span>
+      ) : (
+        <Segmented
+          label="Imágenes"
+          options={FRAME_COUNTS.map((n) => ({ value: n, label: n }))}
+          value={value}
+          disabled={save.isPending}
+          onChange={(next) => {
+            if (Number(next) !== view.frameCount) save.mutate(Number(next));
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
 /** Cambios de los prompts aún sin guardar (lo que no se ha tocado no está). */
 export type PromptDraft = { imagePrompt?: string; videoPrompt?: string };
 type SetDraft = React.Dispatch<React.SetStateAction<PromptDraft>>;
@@ -350,6 +407,8 @@ function Prompts({ view, draft, setDraft }: { view: VideoViewJson; draft: Prompt
 
   return (
     <div className="flex flex-col gap-5">
+      <FrameCountPicker view={view} readOnly={!mine} />
+      <ClipResolutionField video={video} readOnly={!mine} />
       <FrameUsePicker video={video} readOnly={!mine} />
       <PromptEditor
         label="Imagen inicial"
@@ -500,9 +559,14 @@ export function StepBreakdown({
         </div>
       ) : null}
 
-      {stale ? (
-        <div role="status" className="flex flex-wrap items-center gap-3 rounded-xl bg-warning/10 px-4 py-3 text-sm ring-1 ring-warning/25">
-          <TriangleAlert className="size-4 shrink-0 text-warning-ink" aria-hidden />
+      {stale && view.auto.state !== "lote" && !view.referenceOutdated ? (
+        <p role="status" className="flex items-center gap-2.5 text-sm text-muted-foreground">
+          <Loader2 className="size-4 shrink-0 animate-spin" aria-hidden />
+          Rehaciendo el desglose con los cambios…
+        </p>
+      ) : stale ? (
+        <div role="status" className="flex flex-wrap items-center gap-3 rounded-xl bg-muted px-4 py-3 text-sm">
+          <RefreshCw className="size-4 shrink-0 text-muted-foreground" aria-hidden />
           <span className="min-w-0 flex-1">
             {view.referenceOutdated
               ? "El gancho ha cambiado: vuelve a subir el vídeo de referencia."
@@ -529,7 +593,7 @@ export function StepBreakdown({
               }
             >
               <p className={cn("text-lg leading-snug font-medium text-pretty", stale && "text-muted-foreground")}>{result.conceptLogic}</p>
-              <Risks analysis={result} />
+              <InternalNotes analysis={result} />
             </Panel>
             <Panel title="Planos" actions={<span className="text-sm text-muted-foreground tabular-nums">{result.shots.length}</span>}>
               <Shots view={view} analysis={result} showFrames={!stale} />

@@ -790,3 +790,31 @@ El dueño pidió que la app se viera profesional e intuitiva, con imágenes ante
 - **Se guarda al preparar la referencia** (`video_reference_audio`, una fila por vídeo): `extractAudio` en `src/server/media/ffmpeg.ts` saca la primera pista, desde 0 y 60 s como mucho, en M4A AAC 128 kb/s (≤ 5 MB). Si la referencia no trae audio o falla, la referencia sigue lista y no hay fila. Una referencia nueva sustituye el audio; «Duplicar» lo copia.
 - **Ficha** (`EditSpec.referenceAudio`, solo sin canción): `{ source: "web", url: /api/agente/tareas/{id}/audio-referencia }` si está guardado (la ruta, con la misma reserva y ficha que la de la canción); si no y la referencia vino de un enlace, `{ source: "enlace", url }` y el Mac la trae con yt-dlp; si no, `null`.
 - **Mac 1.3.1**: descarga ese audio y lo pasa en la ficha local (`referenceAudio.path`); si el enlace no se puede traer, monta sin él y lo avisa. **`montar_auto.py`**: modo «referencia» = audio externo del montador (`mode: externo`, `offset: 0`): suena desde 0, sin alinear ningún drop, y se recorta a lo que dure el montaje.
+
+## Flujo automático sin avisos ni «¿generar?» (23/11/2026)
+
+Emmanuel vio en el vídeo 2 de EisWerk tarjetas amarillas de riesgos en «Desglose» y el botón
+«Generar 2 imágenes · Esto cuesta 4 créditos» en «Imagen». Reglas fijas nuevas (ver `CLAUDE.md` y
+el punto 10 de `docs/reglas-motor-del-dueno.md`). Cómo quedó:
+
+- **Vídeo suelto** (`src/server/videos/autopilot.ts`, trabajo `video.automatico` y el seguimiento de
+  cada minuto): con la referencia lista pide el desglose; con el desglose hecho, la imagen; con la
+  imagen aprobada, el clip; con el clip hecho, el montaje. Siempre por el núcleo del dinero
+  (`requestGeneration` con el precio fresco). Se avisa al terminar la referencia, el desglose y cada
+  generación, y al aprobar o rechazar.
+- **Paradas**: solo con una pregunta (`videos.auto_stop`): sin saldo, un fallo de Higgsfield (no se
+  repite solo porque cuesta), Higgsfield sin conectar… Se ve en la pantalla con «Seguir»
+  (`POST /api/videos/[id]/seguir`). Cambiar el vídeo o un prompt también la responde. Lo obligatorio
+  de la tarjeta (avatar, foto del artículo, adaptación) se pregunta tal cual, sin gastar nada.
+- **Vídeos viejos**: `videos.auto_since` es `null` en los vídeos de antes del cambio; empiezan a ir
+  solos cuando quien los creó los abre. Así publicar no gasta créditos en vídeos de prueba olvidados.
+- **Una imagen por vídeo**: `videos.frame_count` (tarjeta, en el paso «Desglose» → «Imágenes») y
+  `batches.frame_count` (tablero del lote en borrador, «Imágenes por vídeo»); sin nada, 1.
+- **Lote**: con todo respondido, el avance autoriza solo el presupuesto (`autoConfirmBatch`); sin
+  saldo para todo o con un vídeo que no se puede presupuestar, se pausa con ese motivo. Los lotes de
+  antes (`batches.auto_confirm` = false) conservan su «Confirmar». Se quitan del tablero los
+  «Generar imágenes / clips» manuales y el aviso de riesgos de cada fila.
+- **Pantalla**: el desglose ya no pinta riesgos (plegados en «Detalles técnicos»), ni «Hacer el
+  desglose»; la imagen y el clip no tienen tarjeta de precio (se borró `quote-card.tsx`); la
+  resolución del clip y el nº de imágenes se eligen en el desglose, antes de generar; el montaje solo
+  ofrece «Volver a montar». La pantalla sigue sola al paso más avanzado mientras no se elija otro.

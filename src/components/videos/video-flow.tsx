@@ -11,6 +11,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { api, ApiError } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import type { AuthUser } from "@/server/auth";
+import { AutoQuestion } from "./auto-status";
 import { CostSummary } from "./cost-summary";
 import { RUNNING_STATUSES, type FlowStep, type ProductPhoto, type VideoViewJson } from "./labels";
 import { StepBreakdown, type PromptDraft } from "./step-breakdown";
@@ -43,6 +44,8 @@ function pollEvery(view: VideoViewJson | undefined): number | false {
   if (generations.includes("unknown")) return 15_000;
   // Un montaje en la cola o montándose.
   if (view.edit.status === "en_cola" || view.edit.status === "montando") return 5000;
+  // El flujo automático va a pedir lo siguiente (desglose, imagen, clip o montaje).
+  if (view.auto.state === "working" || view.auto.state === "off") return 3000;
   return false;
 }
 
@@ -142,9 +145,10 @@ export function VideoFlow({ productId, videoId, initialStep }: { productId: numb
 }
 
 /**
- * El vídeo ya cargado. El paso que se abre se decide una sola vez al llegar (el más avanzado con
- * algo hecho): elegir el avatar no cambia de paso. Un paso que deja de poderse abrir (p. ej. se
- * rechaza la imagen aprobada en otra pestaña) cede al último que sí se puede.
+ * El vídeo ya cargado. Mientras la persona no elige un paso, la pantalla sigue al flujo automático
+ * (el paso más avanzado con algo hecho: al llegar la imagen, pasa a «Imagen»). En cuanto elige uno,
+ * se queda ahí. Un paso que deja de poderse abrir (p. ej. se rechaza la imagen aprobada en otra
+ * pestaña) cede al último que sí se puede.
  */
 function FlowBody({
   view: data,
@@ -168,7 +172,7 @@ function FlowBody({
     (!["elegido", "biblioteca"].includes(video.avatarMode) || imageManifest.some((item) => item.role === "avatar")) &&
     (video.kind !== "adaptacion_concepto" || !!video.adaptation?.trim());
   const breakdownDone = analysis?.status === "done" && !analysis.stale;
-  const [chosen, setChosen] = useState<FlowStep>(() => initialStep ?? firstStep(data, referenceDone));
+  const [chosen, setChosen] = useState<FlowStep | null>(initialStep ?? null);
   const [draft, setDraft] = useState<PromptDraft>({});
   const select = (step: FlowStep) => {
     setChosen(step);
@@ -177,7 +181,9 @@ function FlowBody({
 
   // Solo los pasos que ya se pueden abrir: ninguno bloqueado ni «próximamente».
   const reachable = reachableSteps(data);
-  const current = reachable.includes(chosen) ? chosen : reachable[reachable.length - 1];
+  const followed = firstStep(data, referenceDone);
+  const wanted = chosen ?? followed;
+  const current = reachable.includes(wanted) ? wanted : reachable[reachable.length - 1];
   const allSteps: Step<FlowStep>[] = [
     { key: "referencia", label: "Referencia", icon: Film, done: referenceDone },
     { key: "desglose", label: "Desglose", icon: ScanSearch, done: breakdownDone },
@@ -201,14 +207,17 @@ function FlowBody({
 
       <Stepper steps={steps} current={current} onSelect={select} />
 
+      {/* La única pregunta obligatoria con la que se paró (en Imagen y Clip va junto al resultado). */}
+      {current !== "imagen" && current !== "clip" ? <AutoQuestion view={data} /> : null}
+
       {current === "referencia" ? (
         <StepReference view={data} photos={photos} upload={upload.state} onUpload={upload.start} />
       ) : current === "desglose" ? (
         <StepBreakdown view={data} draft={draft} setDraft={setDraft} onGoToReference={() => select("referencia")} />
       ) : current === "imagen" ? (
-        <StepFrame view={data} onGoToClip={() => select("clip")} onGoToBreakdown={() => select("desglose")} />
+        <StepFrame view={data} onGoToClip={() => select("clip")} />
       ) : current === "clip" ? (
-        <StepClip view={data} onGoToBreakdown={() => select("desglose")} onGoToFrame={() => select("imagen")} />
+        <StepClip view={data} onGoToFrame={() => select("imagen")} />
       ) : (
         <StepEdit view={data} />
       )}

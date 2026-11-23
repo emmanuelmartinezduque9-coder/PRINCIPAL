@@ -4,7 +4,8 @@ import { probeConnections } from "@/server/higgsfield";
 import { ANALYSIS_JOB, runAnalysis } from "@/server/videos/analysis";
 import { FINALIZE_JOB, finalizeGeneration, SUBMIT_JOB, submitGeneration } from "@/server/videos/generations";
 import { startBatchEdits } from "@/server/videos/edits";
-import { ADVANCE_JOB, advanceBatch, kickBatchOfGeneration, onBatchReady } from "@/server/videos/lote";
+import { ADVANCE_JOB, advanceBatch, onBatchReady } from "@/server/videos/lote";
+import { advanceVideo, AUTO_JOB, kickVideo, kickVideoOfAnalysis, kickVideoOfGeneration } from "@/server/videos/autopilot";
 import { processReference } from "@/server/videos/intake";
 import { archiveSweep } from "@/server/videos/archive";
 import { videoSweep } from "@/server/videos/sweep";
@@ -27,6 +28,8 @@ defineJob<{ videoId: number; uploadId: string }>(
   async ({ videoId, uploadId }) => {
     if (typeof videoId !== "number" || typeof uploadId !== "string") throw new StepFailedError("Datos del trabajo no válidos.");
     await processReference(videoId, uploadId);
+    // Con la referencia lista, el vídeo sigue solo (desglose y lo demás).
+    await kickVideo(videoId);
   },
   "Preparar el vídeo de referencia",
 );
@@ -37,6 +40,8 @@ defineJob<{ analysisId: number }>(
   async ({ analysisId }) => {
     if (typeof analysisId !== "number") throw new StepFailedError("Datos del trabajo no válidos.");
     await runAnalysis(analysisId);
+    // Con el desglose hecho, la imagen se pide sola (vídeo suelto) o el lote sigue.
+    await kickVideoOfAnalysis(analysisId);
   },
   "Desglosar el vídeo de referencia",
 );
@@ -60,8 +65,8 @@ defineJob<{ generationId: number }>(
   async ({ generationId }) => {
     if (typeof generationId !== "number") throw new StepFailedError("Datos del trabajo no válidos.");
     await finalizeGeneration(generationId);
-    // Si el vídeo es de un lote que va solo, sigue sin esperar al seguimiento.
-    await kickBatchOfGeneration(generationId);
+    // El vídeo (o su lote) sigue sin esperar al seguimiento.
+    await kickVideoOfGeneration(generationId);
   },
   "Guardar los resultados de Higgsfield",
 );
@@ -77,6 +82,19 @@ defineJob<{ batchId: number }>(
     await advanceBatch(batchId);
   },
   "Avanzar el lote",
+);
+
+/**
+ * Flujo automático de un vídeo suelto (`autopilot.ts`): pide lo siguiente que toque (desglose,
+ * imagen, clip, montaje). Repetirlo no envía dos veces.
+ */
+defineJob<{ videoId: number }>(
+  AUTO_JOB,
+  async ({ videoId }) => {
+    if (typeof videoId !== "number") throw new StepFailedError("Datos del trabajo no válidos.");
+    await advanceVideo(videoId);
+  },
+  "Seguir con el vídeo",
 );
 
 /** Cada minuto: subidas abandonadas, referencias atascadas, desgloses que no terminan y generaciones en curso o en duda. */

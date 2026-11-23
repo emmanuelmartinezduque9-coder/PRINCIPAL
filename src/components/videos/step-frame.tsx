@@ -6,17 +6,15 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
+import { AutoNotice } from "./auto-status";
 import { GenerationNotice, Generating } from "./generation-status";
 import {
-  canRequestRound,
   RUNNING_STATUSES,
-  textHash,
   thumbUrl,
   type GenerationJson,
   type GenerationResult,
   type VideoViewJson,
 } from "./labels";
-import { QuoteCard } from "./quote-card";
 import { RejectDialog } from "./reject-dialog";
 import { ResultImage } from "./result-image";
 import { useGenerationActions } from "./use-generation";
@@ -143,7 +141,7 @@ function Candidates({ view, generation, canAct }: { view: VideoViewJson; generat
           <span className="font-medium text-foreground">Rechazadas:</span> {current.rejectReason}
         </p>
       ) : null}
-      <ul className="grid max-w-[600px] grid-cols-2 gap-5" aria-label="Candidatas">
+      <ul className={cn("grid max-w-[600px] gap-5", current.results.length > 1 ? "grid-cols-2" : "max-w-[300px] grid-cols-1")} aria-label="Candidatas">
         {current.results.map((result, index) => (
           <Candidate
             key={result.id}
@@ -171,11 +169,12 @@ function Candidates({ view, generation, canAct }: { view: VideoViewJson; generat
   );
 }
 
-/** Hueco vacío o en marcha, con la forma de las dos candidatas. */
-function Placeholder({ running }: { running: boolean }) {
+/** Hueco vacío o en marcha, con la forma de las candidatas (1 por defecto). */
+function Placeholder({ running, count }: { running: boolean; count: number }) {
+  const slots = Array.from({ length: Math.max(1, Math.min(count, 2)) }, (_, i) => i);
   return (
-    <div className="relative grid max-w-[600px] grid-cols-2 gap-5" aria-hidden={!running}>
-      {[0, 1].map((i) => (
+    <div className={cn("relative grid max-w-[600px] gap-5", slots.length > 1 ? "grid-cols-2" : "max-w-[300px] grid-cols-1")} aria-hidden={!running}>
+      {slots.map((i) => (
         <div key={i} className="grid aspect-[9/16] place-items-center rounded-xl border border-dashed bg-muted/40 text-muted-foreground">
           {running ? null : <ImageIcon className="size-7 opacity-50" aria-hidden />}
         </div>
@@ -189,8 +188,12 @@ function Placeholder({ running }: { running: boolean }) {
   );
 }
 
-/** Paso «Imagen»: las dos candidatas grandes y, al lado, el precio, aprobar o rechazar. */
-export function StepFrame({ view, onGoToClip, onGoToBreakdown }: { view: VideoViewJson; onGoToClip: () => void; onGoToBreakdown: () => void }) {
+/**
+ * Paso «Imagen»: la imagen (1 por defecto; las que pida la tarjeta o el lote) grande y, al lado,
+ * aprobar o rechazar. Se genera sola al terminar el desglose: sin precio ni botón de «Generar»
+ * (regla fija del dueño, 23/11/2026). Un rechazo se regenera solo, dentro de sus rondas.
+ */
+export function StepFrame({ view, onGoToClip }: { view: VideoViewJson; onGoToClip: () => void }) {
   const { video, frame, clip, mine } = view;
   const current = frame.current;
   const { reject } = useGenerationActions(video.id, "frame");
@@ -200,26 +203,17 @@ export function StepFrame({ view, onGoToClip, onGoToBreakdown }: { view: VideoVi
   const clipLocks = clip.current !== null && !CLIP_RELEASES_FRAME.includes(clip.current.status);
   const canAct = mine && !clipLocks;
   const reviewing = hasResults && current.rejectReason === null;
-  const canRequest = mine && canRequestRound(frame);
-  // Nada que aprobar: la última ronda falló o se rechazó.
-  const closed = current !== null && (current.status === "failed" || current.rejectReason !== null);
+  // Nada que aprobar y sin rondas: la última falló o se rechazó y ya no quedan.
+  const closed = current !== null && (current.status === "failed" || current.rejectReason !== null) && frame.regenerationsLeft <= 0;
+  const several = hasResults && current.results.length > 1;
 
   return (
     <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,600px)_340px] lg:gap-8">
-      <div className="min-w-0">{hasResults ? <Candidates view={view} generation={frame} canAct={canAct} /> : <Placeholder running={running} />}</div>
+      <div className="min-w-0">{hasResults ? <Candidates view={view} generation={frame} canAct={canAct} /> : <Placeholder running={running} count={view.frameCount} />}</div>
 
       <aside className="flex flex-col gap-4 lg:sticky lg:top-6" aria-label="Imagen inicial">
         <GenerationNotice videoId={video.id} kind="frame" current={current} />
-
-        {canRequest ? (
-          <QuoteCard
-            videoId={video.id}
-            kind="frame"
-            label={current && current.status !== "not_sent" ? "Volver a generar" : "Generar 2 imágenes"}
-            refreshKey={`${current?.id ?? 0}-${current?.status ?? ""}-${current?.rejectReason ?? ""}-${textHash(video.imagePrompt)}`}
-            onGoToBreakdown={onGoToBreakdown}
-          />
-        ) : null}
+        <AutoNotice view={view} step="imagen" />
 
         {reviewing && frame.approvedResultId !== null ? (
           <Button className="h-11 gap-2" onClick={onGoToClip}>
@@ -230,12 +224,17 @@ export function StepFrame({ view, onGoToClip, onGoToBreakdown }: { view: VideoVi
 
         {reviewing && canAct ? (
           <div className="panel flex flex-col gap-3 p-5">
-            <RejectDialog label="Rechazar las dos" title="¿Por qué no valen?" pending={reject.isPending} onReject={(reason) => reject.mutateAsync(reason)} />
+            <RejectDialog
+              label={several ? (current.results.length === 2 ? "Rechazar las dos" : "Rechazar todas") : "Rechazar"}
+              title={several ? "¿Por qué no valen?" : "¿Por qué no vale?"}
+              pending={reject.isPending}
+              onReject={(reason) => reject.mutateAsync(reason)}
+            />
             <RegenerationsLeft left={frame.regenerationsLeft} />
           </div>
         ) : null}
 
-        {mine && closed && !canRequest ? <NoRegenerationsLeft what="imagen" /> : null}
+        {mine && closed ? <NoRegenerationsLeft what="imagen" /> : null}
       </aside>
     </div>
   );
