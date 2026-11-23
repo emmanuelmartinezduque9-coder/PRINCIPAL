@@ -41,4 +41,4 @@ Las pruebas `tests/flujo-automatico.test.ts` fijan estas reglas: si una cambia, 
 - Está en código, no solo en texto: `src/server/videos/pinterest.ts` (búsqueda, elección con visión,
   almacén), `frame.ts` (la imagen no se pide sin ellas) y `reglas/referencias-pinterest.md` (qué buscar
   según la escena). No lo quites ni lo hagas opcional sin una orden expresa del dueño.
-
+- **Lo que ya funcionaba en Codex (`/Volumes/T7/AUTOMATIZACION SEGA`) se copia tal cual y después se mejora.** Nunca se rehace desde cero ni se «compara»: prompts, skills de Nano Banana, referencias, montaje.
