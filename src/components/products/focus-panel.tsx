@@ -137,7 +137,16 @@ function ResearchCard({ row, onUse }: { row: ResearchRow; onUse: (field: "niche"
       </Panel>
     );
   }
-  const { situacionActual: now, propuestas, limitaciones } = row.result;
+  const { situacionActual: now, limitaciones } = row.result;
+  // Solo propuestas con cifras comprobadas (las búsquedas antiguas podían traer «hipótesis»).
+  const propuestas = row.result.propuestas.filter((p) => p.pruebas.some((e) => e.comprobada));
+  if (propuestas.length === 0) {
+    return (
+      <Panel title={title}>
+        <p className="text-sm text-muted-foreground">Esta búsqueda no trajo cifras reales. Pulsa «Buscar {meta.label.toLowerCase()} diferente» para repetirla con datos medidos.</p>
+      </Panel>
+    );
+  }
   return (
     <Panel title={title}>
       {row.note ? <p className="text-sm text-muted-foreground">Indicación: {row.note}</p> : null}
