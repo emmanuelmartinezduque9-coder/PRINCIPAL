@@ -51,7 +51,7 @@ startWorker().then(
           "FalterPfote",
           "activos/falterpfote/funcionamiento-c67c4de4926b8503.png",
           6,
-          "Las alas tienen que ser las alas de mariposa proyectadas de FalterPfote (foto de funcionamiento), no las del vídeo original",
+          "Las alas siguen con forma de plumas: tienen que ser alas de mariposa (dos por lado, redondeadas, con nervaduras) como en la foto de funcionamiento",
         ),
       )
       .catch((error) => console.error("[imagen] No se pudo preparar la foto de funcionamiento de FalterPfote:", error));
