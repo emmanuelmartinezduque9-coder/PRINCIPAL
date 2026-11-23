@@ -118,7 +118,8 @@ async function waitForTools() {
 // Solo necesita yt-dlp y ffmpeg, que ya hacen falta para todo lo demás.
 // Desde 1.5.0 también lee perfiles de Instagram (con Brave sin ventana y la sesión guardada) y de
 // TikTok, para dar de alta un producto pegando solo la cuenta.
-config.puede = ["enlace_medio", "perfil"];
+// Desde 1.6.0 busca en Pinterest las referencias de las imágenes cuando Pinterest no deja a la nube.
+config.puede = ["enlace_medio", "perfil", "pinterest"];
 log("Listo para traer enlaces (también los que pide el montaje en la nube).");
 
 let connected = null;

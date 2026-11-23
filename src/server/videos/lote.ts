@@ -13,6 +13,7 @@ import { missingForAnalysis, requestAnalysis, type Analysis } from "@/server/vid
 import { getBatchFor, type Batch } from "@/server/videos/batches";
 import { briefOf, type OwnerAnswer } from "@/server/videos/brief";
 import { estimateClipCredits } from "@/server/videos/clip";
+import { PINTEREST_PENDING } from "@/server/videos/pinterest";
 // Registra el constructor de la imagen inicial (`frame`) en las generaciones.
 import "@/server/videos/frame";
 import { MAX_REGENERATIONS, quoteGeneration, requestGeneration, type GenDeps, type GenerationKind } from "@/server/videos/generations";
@@ -711,12 +712,17 @@ async function pauseBatch(batch: Batch, pause: Omit<BatchPause, "from" | "extraC
 
 const KIND_WORD: Record<GenerationKind, string> = { frame: "la imagen", clip: "el clip" };
 
+/** «Buscando referencias de Pinterest…» o «se vuelven a buscar»: no es un fallo, se espera (regla fija: nunca sin ellas). */
+const isPinterestWait = (message: string) => message === PINTEREST_PENDING || message.startsWith("No se encontraron referencias de Pinterest");
+
 /** Un error del núcleo al presupuestar o pedir: qué hacer con él. */
 async function onRequestError(batch: Batch, row: Row, kind: GenerationKind, error: unknown): Promise<"skip"> {
   if (!(error instanceof HttpError)) throw error;
   const { message, status } = error;
   // Otra petición se adelantó o el seguimiento aún comprueba un envío dudoso: se mira en el siguiente avance.
   if (status === 409 && (message.startsWith("Ya hay una generación") || message.startsWith("Estamos comprobando"))) return "skip";
+  // Aún se buscan las referencias de Pinterest de la imagen (o se vuelven a buscar): el siguiente avance lo repite.
+  if (status === 409 && isPinterestWait(message)) return "skip";
   // El precio subió entre el presupuesto y el apunte: el siguiente avance vuelve a presupuestar.
   if (status === 409 && message.startsWith("El precio ha cambiado")) return "skip";
   if (status === 409 && message.startsWith("No tienes créditos suficientes")) {
@@ -801,6 +807,8 @@ async function requestFor(user: AuthUser, batch: Batch, rows: Row[], row: Row, k
  */
 async function autoConfirmBatch(user: AuthUser, batch: Batch, rows: Row[], deps: GenDeps): Promise<void> {
   const quote = await quoteRows(user, rows, deps);
+  // Aún se buscan las referencias de Pinterest de alguna imagen (regla fija): se espera a la siguiente pasada.
+  if (quote.rows.some((r) => r.error !== null && isPinterestWait(r.error))) return;
   const failed = quote.rows.find((r) => r.error !== null);
   if (failed) {
     const row = rows.find((r) => r.video.id === failed.videoId)!;

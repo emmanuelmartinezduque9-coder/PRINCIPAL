@@ -31,6 +31,7 @@ import { PUT as putVideo } from "@/app/api/videos/[videoId]/route";
 import { fakeMessages, type FakeCall } from "./helpers/fake-llm";
 import { makeProduct, makeUser, TEST_PASSWORD } from "./helpers/fixtures";
 import { truncateAll } from "./helpers/global-setup";
+import { instantPinterest } from "./helpers/pinterest";
 
 const cookie = vi.hoisted(() => ({ value: undefined as string | undefined }));
 vi.mock("next/headers", () => ({
@@ -91,6 +92,8 @@ const videoParams = (videoId: number) => ({ params: Promise.resolve({ videoId: S
 
 beforeEach(async () => {
   await truncateAll();
+  // Regla fija: la imagen lleva siempre Pinterest; aquí se resuelve al momento con una foto.
+  instantPinterest(() => images.k);
   resetLoginAttempts();
   delete process.env.PRINCIPAL_AUTH;
   cookie.value = undefined;
@@ -391,12 +394,18 @@ describe("avatar de la biblioteca y automático en los vídeos", () => {
     const fake = createFakeHiggsfield();
     const built = await buildFrameRequest(ana, v, { higgsfield: fake.port });
     const uploads = fake.calls.filter((c) => c.method === "uploadMedia").map((c) => c.args as { filename: string; bytes: Buffer });
-    expect(uploads.map((u) => u.filename)).toEqual([`fotograma-${v.id}.jpg`, `avatar-${mujer30.id}.jpg`, expect.stringMatching(/^foto-\d+\.jpg$/)]);
+    // Y al final, la referencia de Pinterest (regla fija: siempre).
+    expect(uploads.map((u) => u.filename)).toEqual([
+      `fotograma-${v.id}.jpg`,
+      `avatar-${mujer30.id}.jpg`,
+      expect.stringMatching(/^foto-\d+\.jpg$/),
+      expect.stringMatching(/^pinterest-[0-9a-f]{16}\.jpg$/),
+    ]);
     expect(uploads[1].bytes.equals(images.b)).toBe(true);
-    expect(built.request.medias).toHaveLength(3);
+    expect(built.request.medias).toHaveLength(4);
     // Otra vez: ya está subido.
     await buildFrameRequest(ana, v, { higgsfield: fake.port });
-    expect(fake.calls.filter((c) => c.method === "uploadMedia")).toHaveLength(3);
+    expect(fake.calls.filter((c) => c.method === "uploadMedia")).toHaveLength(4);
 
     // Un avatar retirado o inexistente no se puede elegir; ni con otro modo.
     await updateAvatar(dueno, mujer70.id, { retired: true });

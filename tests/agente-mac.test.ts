@@ -516,8 +516,8 @@ describe("canciones", () => {
     };
   }
 
-  it("el Mac es de la versión 1.5.0 (trae enlaces y lee perfiles)", () => {
-    expect(VERSION).toBe("1.5.0");
+  it("el Mac es de la versión 1.6.0 (trae enlaces, lee perfiles y busca en Pinterest)", () => {
+    expect(VERSION).toBe("1.6.0");
   });
 
   it("saca el audio como MP3 con una lista de argumentos fija y el enlace detrás de `--`", () => {
@@ -635,7 +635,7 @@ describe("enlaces del montaje en la nube", () => {
 
   it("el programa del Mac pide siempre `enlace_medio` y ya no monta", () => {
     const source = fsSync.readFileSync(path.resolve(__dirname, "..", "agente-mac", "agente.mjs"), "utf8");
-    expect(source).toContain('config.puede = ["enlace_medio", "perfil"]');
+    expect(source).toContain('config.puede = ["enlace_medio", "perfil", "pinterest"]');
     expect(source).not.toMatch(/montaje"|checkMontaje|montar_auto/);
   });
 
@@ -709,7 +709,7 @@ describe("perfiles de cuentas (1.5.0)", () => {
     expect(canonicalReel("https://www.instagram.com/frozenglow.us/reel/DgD4Rb6IArA/")).toBe("https://www.instagram.com/reel/DgD4Rb6IArA/");
     expect(canonicalReel("https://www.instagram.com/p/ABC/")).toBe("https://www.instagram.com/p/ABC/");
     expect(headlessBrowser(() => true)).toBe(CHROME);
-    expect(headlessBrowser((b: string) => b === BRAVE)).toBe(BRAVE);
+    expect(headlessBrowser((b) => b === BRAVE)).toBe(BRAVE);
     expect(headlessBrowser(() => false)).toBeNull();
   });
 

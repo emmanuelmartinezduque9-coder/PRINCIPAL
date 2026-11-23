@@ -33,6 +33,7 @@ import { POST as enviarRoute } from "@/app/api/lotes/[id]/enviar/route";
 import { fakeMessages, type FakeCall } from "./helpers/fake-llm";
 import { makeProduct, makeUser, TEST_PASSWORD } from "./helpers/fixtures";
 import { truncateAll } from "./helpers/global-setup";
+import { instantPinterest } from "./helpers/pinterest";
 
 const cookie = vi.hoisted(() => ({ value: undefined as string | undefined }));
 vi.mock("next/headers", () => ({
@@ -92,6 +93,8 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await truncateAll();
+  // Regla fija: la imagen lleva siempre Pinterest; aquí se resuelve al momento con una foto.
+  instantPinterest(() => jpeg);
   resetLoginAttempts();
   delete process.env.PRINCIPAL_AUTH;
   cookie.value = undefined;

@@ -1,3 +1,4 @@
+import { pinterestView, type PinterestView } from "@/server/videos/pinterest";
 import { and, asc, count, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import { getDb, schema } from "@/db/client";
 import { createVideoFromLink } from "@/server/agent";
@@ -404,6 +405,8 @@ export interface BatchRow {
   clipReady: boolean;
   /** El montaje en el Mac: en qué punto está, la última versión montada y si quien mira puede pedirlo. */
   edit: EditView;
+  /** «Referencias de Pinterest» de la imagen inicial (`null`: sin desglose o con entorno puesto a mano). */
+  pinterest: PinterestView | null;
 }
 
 /**
@@ -500,7 +503,12 @@ export async function batchView(user: AuthUser, batchId: number): Promise<BatchV
     list.map(async (video): Promise<BatchRow> => {
       const analysis = analysisOf.get(video.id);
       const fresh = analysis ? staleness(analysis, { ...video, productNotes: notesOf.get(video.productId) ?? null }) : null;
-      const [frame, clip, costs] = await Promise.all([generationView(video, "frame", user.id), generationView(video, "clip", user.id), costsOfVideo(video)]);
+      const [frame, clip, costs, pinterest] = await Promise.all([
+        generationView(video, "frame", user.id),
+        generationView(video, "clip", user.id),
+        costsOfVideo(video),
+        video.environmentPhotoId === null ? pinterestView(video.id) : null,
+      ]);
       const clipUrl = clipUrls.get(video.id) ?? null;
       return {
         id: video.id,
@@ -537,6 +545,7 @@ export async function batchView(user: AuthUser, batchId: number): Promise<BatchV
         costs,
         clipReady: clipUrl !== null,
         edit: editsOf.get(video.id)!,
+        pinterest,
       };
     }),
   );

@@ -26,7 +26,7 @@ export function cookieArgs(file = COOKIES_FILE, exists = existsSync) {
   return exists(file) ? ["--cookies", file] : ["--cookies-from-browser", "brave"];
 }
 
-export const VERSION = "1.5.0";
+export const VERSION = "1.6.0";
 
 /** Sitios de los que se descarga, con sus subdominios. La misma lista que el servidor. */
 export const LINK_HOSTS = ["instagram.com", "tiktok.com", "youtube.com", "youtu.be", "facebook.com", "fb.watch"];
@@ -433,6 +433,36 @@ async function readProfile(config, deps, task, file) {
   return { ok: true };
 }
 
+/** Solo se pide el buscador de pines de Pinterest (lo que manda la web para `pinterest`). */
+export function allowedPinterestUrl(value) {
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" && url.hostname === "www.pinterest.com" && url.pathname === "/resource/BaseSearchResource/get/";
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Busca en Pinterest desde este Mac (`pinterest`): la misma petición que hace la web de Pinterest,
+ * con las cabeceras que manda la web de PRINCIPAL, cuando Pinterest no deja buscar a la nube. Deja
+ * la respuesta tal cual (JSON) en `file`; la web saca de ella los pines.
+ */
+async function searchPinterest(deps, task, file) {
+  const headers = task.headers && typeof task.headers === "object" ? task.headers : {};
+  let response;
+  try {
+    response = await deps.fetch(task.url, { headers, signal: AbortSignal.timeout(30_000) });
+  } catch (error) {
+    return { ok: false, error: `Pinterest no respondió: ${error instanceof Error ? error.message : "error"}` };
+  }
+  const text = await response.text().catch(() => "");
+  if (!response.ok) return { ok: false, error: `Pinterest respondió ${response.status}` };
+  if (!text.startsWith("{")) return { ok: false, error: "Pinterest no devolvió datos de búsqueda" };
+  await deps.fs.writeFile(file, text);
+  return { ok: true };
+}
+
 /** El título que dejó yt-dlp: la primera línea, sin espacios de más y recortada; `null` si no hay. */
 export async function readTitle(fs, file) {
   const text = await fs.readFile(file, "utf8").catch(() => "");
@@ -535,17 +565,22 @@ export async function runOnce(config, deps) {
   // Una canción trae el audio (MP3); un perfil, sus datos (JSON); lo demás (`referencia`, `enlace_medio`), el vídeo.
   const song = task.kind === "cancion";
   const profile = task.kind === "perfil";
+  const pinterest = task.kind === "pinterest";
   // Aunque la web ya lo comprobó, este Mac no lanza yt-dlp con un enlace de fuera de la lista.
-  if (!(song ? allowedSongUrl(task.url) : allowedUrl(task.url))) return giveUp("El enlace no es de un sitio admitido");
+  if (!(pinterest ? allowedPinterestUrl(task.url) : song ? allowedSongUrl(task.url) : allowedUrl(task.url))) return giveUp("El enlace no es de un sitio admitido");
 
   // Carpeta temporal propia (solo la puede leer este usuario: `mkdtemp` la crea con 700).
   const dir = await deps.fs.mkdtemp(path.join(config.tmpDir ?? os.tmpdir(), TMP_PREFIX));
-  const file = path.join(dir, song ? SONG_FILE : profile ? "perfil.json" : "video.mp4");
+  const file = path.join(dir, song ? SONG_FILE : profile ? "perfil.json" : pinterest ? "pinterest.json" : "video.mp4");
   const url = new URL(task.url).href;
   const maxMb = song ? 25 : 100;
   try {
-    log(profile ? `Leyendo el perfil ${task.url}` : `Descargando ${task.url}`);
-    const downloaded = profile ? await readProfile(config, deps, task, file) : await download(config, deps, task, song ? ytDlpAudioArgs(url, dir) : ytDlpArgs(url, file));
+    log(pinterest ? "Buscando referencias en Pinterest" : profile ? `Leyendo el perfil ${task.url}` : `Descargando ${task.url}`);
+    const downloaded = pinterest
+      ? await searchPinterest(deps, task, file)
+      : profile
+        ? await readProfile(config, deps, task, file)
+        : await download(config, deps, task, song ? ytDlpAudioArgs(url, dir) : ytDlpArgs(url, file));
     if (downloaded.lost) return lost();
     if (downloaded.local) {
       // Cosa de este Mac, no del enlace: no se da por fallido.
@@ -555,7 +590,7 @@ export async function runOnce(config, deps) {
     if (!downloaded.ok) return await giveUp(downloaded.error);
 
     const size = await sizeOf(deps.fs, file);
-    const what = song ? "La canción" : profile ? "El perfil" : "El vídeo";
+    const what = song ? "La canción" : profile ? "El perfil" : pinterest ? "La búsqueda" : "El vídeo";
     if (!size) return await giveUp(`yt-dlp no dejó ningún archivo (puede que ${what.toLowerCase()} pese más de ${maxMb} MB)`);
     if (task.maxBytes > 0 && size > task.maxBytes) return await giveUp(`${what} descargad${song ? "a" : "o"} pesa más de ${maxMb} MB`);
 

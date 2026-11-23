@@ -109,5 +109,18 @@
       "docs/reglas-origen/skills-codex/angulos-de-venta/SKILL.md",
       "docs/superpowers/specs/2026-11-22-plataforma-y-motor-angulos-design.md"
     ]
+  },
+  {
+    "slug": "referencias-pinterest",
+    "title": "Referencias de Pinterest",
+    "description": "Regla fija: cada imagen inicial lleva fotos reales de Pinterest (también al regenerar), salvo que el dueño ponga una referencia a mano. Qué buscar según la escena y cómo elegir.",
+    "file": "referencias-pinterest.md",
+    "source": "docs/reglas-origen/skills-codex/fondos-pinterest-por-toma/SKILL.md",
+    "sources": [
+      "docs/reglas-origen/skills-codex/fondos-pinterest-por-toma/SKILL.md",
+      "docs/reglas-origen/skills-codex/fondos-pinterest-por-toma/references/criterios-seleccion-manual.md",
+      "docs/casos/referencias-pinterest/regla-refinada-propuesta.md",
+      "docs/reglas-motor-del-dueno.md"
+    ]
   }
 ]

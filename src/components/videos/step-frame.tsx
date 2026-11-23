@@ -15,6 +15,7 @@ import {
   type GenerationResult,
   type VideoViewJson,
 } from "./labels";
+import { PinterestRefs } from "./pinterest-refs";
 import { RejectDialog } from "./reject-dialog";
 import { ResultImage } from "./result-image";
 import { useGenerationActions } from "./use-generation";
@@ -214,6 +215,8 @@ export function StepFrame({ view, onGoToClip }: { view: VideoViewJson; onGoToCli
       <aside className="flex flex-col gap-4 lg:sticky lg:top-6" aria-label="Imagen inicial">
         <GenerationNotice videoId={video.id} kind="frame" current={current} />
         <AutoNotice view={view} step="imagen" />
+
+        <PinterestRefs pinterest={view.pinterest} />
 
         {reviewing && frame.approvedResultId !== null ? (
           <Button className="h-11 gap-2" onClick={onGoToClip}>

@@ -39,6 +39,8 @@ function pollEvery(view: VideoViewJson | undefined): number | false {
   const status = view.analysis?.status;
   if (status === "queued" || status === "running") return 2000;
   if (status === "paused") return 10_000;
+  // Las referencias de Pinterest de la imagen buscándose (o esperando al Mac).
+  if (view.pinterest && ["pending", "searching", "waiting_mac"].includes(view.pinterest.status)) return 4000;
   const generations = [view.frame.current?.status, view.clip.current?.status];
   if (generations.some((s) => s !== undefined && RUNNING_STATUSES.includes(s))) return 3000;
   if (generations.includes("unknown")) return 15_000;

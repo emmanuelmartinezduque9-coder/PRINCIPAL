@@ -2,6 +2,8 @@
 
 Texto íntegro de las reglas que Emmanuel entregó el 22/11/2026 tras la primera prueba de lote (la imagen inicial salió mal). Son los criterios de aceptación del motor. Vienen de su automatización anterior; donde nombran piezas de aquel sistema (`AGENTS.md`, `reference_music_match.py`, recibos, SHA256…) se aplican a su equivalente en PRINCIPAL. Qué está aplicado y qué falta: `docs/reglas-motor-estado.md`.
 
+> **Regla fija añadida el 23/11/2026 (pedida tres veces): referencias de Pinterest SIEMPRE.** Cada imagen inicial lleva fotos reales de Pinterest como referencia de entorno y realismo, también al regenerar una rechazada. La búsqueda aprende de las referencias que el dueño eligió a mano en escenas parecidas (p. ej. «salón con decoración navideña» → `Wohnzimmer Weihnachten Sofa Handyfoto`). Única excepción: una referencia puesta a mano en la tarjeta o el vídeo; entonces no se busca. Detalle: `reglas/referencias-pinterest.md` y `docs/decisiones-referencias-pinterest.md`.
+
 ---
 
 Eres responsable de mejorar el motor de producción de vídeos de Emmanuel. Trabaja sobre la aplicación, el catálogo, la memoria, la cola y los conectores existentes. El objetivo es producir más vídeos simultáneamente, reducir tiempo y créditos por vídeo utilizable, y mejorar la calidad de las imágenes y los clips. El resultado esperado es una implementación comprobable que funcione desde la interfaz hasta la entrega. Usa las reglas de abajo como criterios de aceptación.

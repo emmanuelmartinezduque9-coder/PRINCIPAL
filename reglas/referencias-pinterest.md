@@ -1,0 +1,67 @@
+# Referencias de Pinterest
+
+**Regla fija del dueño (23/11/2026). Por defecto, siempre:** cada imagen inicial que se genera con Nano Banana lleva fotos reales de Pinterest como referencia de entorno y realismo. También al regenerar una imagen rechazada. Dan mucho realismo y calidad, que es lo que el dueño busca.
+
+**Única excepción:** si el dueño pone una referencia de entorno a mano en la tarjeta o en el vídeo, esa manda y **no** se busca en Pinterest para ese vídeo.
+
+La aplicación lo hace sola: al terminar el desglose busca, elige, guarda y adjunta. La imagen no se pide sin estas fotos. En la tarjeta se ven como «Referencias de Pinterest».
+
+## 1. Para qué sirve la foto
+
+1. Aporta **lugar, luz y ambiente**: el sitio real, sus muebles, materiales, decoración, objetos de uso y el aspecto natural de una foto vertical de móvil. Su luz observada manda sobre la luz de toda la escena.
+2. **No aporta** personas, caras, ropa, poses, producto, textos, rótulos, logos ni lo que salga en pantallas. La identidad sale solo del avatar; el producto, de sus fotos; el encuadre, la distancia, el ángulo, las manos y la acción, del fotograma original (image 1).
+3. Va detrás de las demás referencias. El prompt dice su número real y su papel: «image N … is a real everyday phone photo found on Pinterest … Use it as the environment and realism reference … Its observed practical lighting is the authority for the light of the whole scene … Do not copy any person, face, text, logo, watermark or screen content».
+
+## 2. Orden de decisión
+
+Producto → acción de la toma → espacio → cámara. No elegir solo una habitación bonita.
+
+- Disfrutar en casa: salón. Preparar: cocina con encimera libre. Comprar: tienda real con mercancía. Usar herramientas de pelo: peluquería.
+- Sacar algo del congelador exige un congelador abierto (su interior y su puerta). Un salón no sirve para eso aunque el resto del vídeo pase en un salón.
+- Temporada solo si la escena la pide (si la escena es navideña, Navidad). Día o noche, los dos valen; manda lo que diga la tarjeta.
+
+## 3. Cómo se busca (consultas que funcionaron)
+
+Consultas cortas (3–7 palabras): tipo de sitio + punto de vista si importa + temporada si corresponde + palabras de foto cotidiana (gemütlich, Alltag, echtes Zuhause, Handyfoto, cozy, real). La primera, en el idioma del mercado; otra puede ir en inglés. Nunca «interior design», «luxury», «showroom», «architecture», «render», «aesthetic».
+
+| Escena | Consultas que se usaron para escenas así |
+|---|---|
+| Salón navideño, sofá, tele | `Wohnzimmer Weihnachten Fernseher Sofa echtes Zuhause` · `Wohnzimmer Weihnachten Sofa Handyfoto` · `gemütliches Wohnzimmer Weihnachten Sofa Perspektive Couchtisch` |
+| Salón con ventana o de día | `Weihnachten Wohnzimmer Fenster mein Zuhause` · `christmas living room sofa daylight` |
+| Salón normal (sin Navidad) | `wohnzimmer wohnung alltag` · `cozy living room couch pov blanket tv` |
+| Cocina | `Weihnachten Küche` · `christmas kitchen real home` · `Küche Arbeitsplatte Alltag Fenster Tageslicht` |
+| Dormitorio | `Weihnachten Schlafzimmer SoLebIch` · `Bett Laptop Decke Fenster pov` |
+| Rincón gamer o escritorio | `Christmas gaming setup room cozy` · `pastel blue pink cozy desk setup real room chair` |
+| Casa por fuera de noche | `Einfamilienhaus außen Weihnachten nachts` |
+| Calle o plaza con nieve | `Garmisch Partenkirchen Winter Marktplatz` · `germany snow street night` · `germany house entrance snow` |
+| Congelador | `open home freezer kitchen eye level photo` · `Gefrierschrank offen Küche Alltag` |
+| Supermercado / tienda | `Lidl innen` · `Action Weihnachtsdeko laden` · `Kaufhaus Haushaltswaren Deutschland` · `<cadena> <país o ciudad> interior checkout aisle photo` |
+| Autoservicio, POV de coche | `McDrive Deutschland` · `mcdonalds drive thru car pov` · `car driver seat pov winter` |
+| Peluquería | `Friseursalon Deutschland Innen` · `Friseursalon Deutschland Bedienplatz Spiegel Innenansicht Alltag` |
+| Interior de coche | `Volkswagen Golf Innenraum` |
+| Tienda de animales | `pet shop interior dog toys` |
+| Tienda de nicho (caballos) | `tack shop shopping inside` |
+| Camino o calle tranquila | `park path` · `Schleichweg` |
+
+En Alemania, si la tarjeta no dice tienda, elegir con lógica de producto entre Lidl, Action, Aldi y MediaMarkt. Nunca una cadena de otro país (Target en una prueba para Alemania). El idioma del pin o la decoración no prueban el país.
+
+## 4. Cómo se elige (con visión, mirando cada candidata)
+
+**Vale** una foto que:
+- es una foto real de móvil, o lo parece: casa o tienda habitada (mantas, tazas, mandos, zapatillas, platos), luz práctica del sitio, encuadre algo imperfecto, sin simetría de catálogo;
+- es el mismo tipo de sitio que la toma y deja que la acción quepa (superficie, aparato, altura y dirección de cámara compatibles con el fotograma original);
+- respeta la época y la luz pedidas.
+
+**No vale** una foto que:
+1. no es un lugar (producto, textura, collage, plano de detalle);
+2. es un render, una imagen hecha con IA, un showroom, un catálogo, una foto de interiorismo demasiado perfecta o de una web de inmobiliaria o turismo;
+3. lleva texto, frases, rótulos o marcas de agua encima;
+4. está dominada por una persona con la cara visible;
+5. es otro tipo de sitio que la toma, o una tienda sin mercancía a la venta;
+6. tiene una perspectiva imposible para el encuadre o se ve mal.
+
+Se eligen como mucho dos, de mejor a peor. Si ninguna vale, se reformula la búsqueda; nunca se sustituye por fotos de webs de turismo, inmobiliarias o páginas oficiales.
+
+## 5. Guardar y reutilizar
+
+Cada foto se guarda una vez, por su huella, en el almacén (`principal-medios`), con la consulta, el pin, la dirección de la imagen y el motivo de la elección. Se reutiliza al regenerar la misma imagen. Si Pinterest no deja buscar desde la nube, la búsqueda se hace desde el Mac del dueño.

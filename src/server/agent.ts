@@ -1,4 +1,13 @@
 import { appendProfileChunk, claimProfileTask, failProfileTask, finishProfileTask, PROFILE_TASK, type ClaimedProfileFetch, type ProfileFetchResult } from "@/server/link-profiles";
+import {
+  appendPinterestChunk,
+  claimPinterestTask,
+  failPinterestTask,
+  finishPinterestTask,
+  PINTEREST_TASK,
+  type ClaimedPinterestSearch,
+  type PinterestSearchResult,
+} from "@/server/pinterest-searches";
 import crypto from "node:crypto";
 import { and, asc, eq, gte, inArray, isNull, lt, lte, max, ne, notExists, or, sql, type SQL } from "drizzle-orm";
 import { getDb, schema } from "@/db/client";
@@ -68,9 +77,10 @@ export const MAX_LEASE_AGE_MS = 30 * 60_000;
  * Los tipos de tarea que un Mac puede pedir además de enlaces y canciones (los que dice que sabe
  * hacer al reclamar): `enlace_medio` = traer el vídeo de un enlace para el montaje en la nube
  * (programa 1.4.0); `perfil` = leer el perfil de una cuenta de Instagram o TikTok para el alta de
- * productos (1.5.0). El montaje en el Mac (`montaje`, 1.3.x) se retiró el 23/11/2026: ahora monta la nube.
+ * productos (1.5.0); `pinterest` = buscar en Pinterest las referencias de una imagen cuando Pinterest
+ * no deja a la nube (1.6.0). El montaje en el Mac (`montaje`, 1.3.x) se retiró el 23/11/2026: ahora monta la nube.
  */
-export const OPTIONAL_TASKS = ["enlace_medio", "perfil"] as const;
+export const OPTIONAL_TASKS = ["enlace_medio", "perfil", "pinterest"] as const;
 export type OptionalTask = (typeof OPTIONAL_TASKS)[number];
 /**
  * Lo más que espera una tarea en la cola desde que se pegó el enlace, con el Mac vivo: da para que
@@ -352,7 +362,9 @@ export type ClaimedTask =
   /** `enlace_medio`: traer el vídeo de un enlace que necesita el montaje en la nube y entregarlo. */
   | ClaimedMediaFetch
   /** `perfil`: leer el perfil de una cuenta (Instagram con Brave, TikTok con yt-dlp) y entregarlo en JSON. */
-  | ClaimedProfileFetch;
+  | ClaimedProfileFetch
+  /** `pinterest`: pedir una búsqueda de Pinterest desde el Mac y entregar la respuesta (JSON). */
+  | ClaimedPinterestSearch;
 
 /**
  * El Mac se lleva la tarea más antigua de la cola de su dueño, o `null` si no hay: las de varios
@@ -369,6 +381,8 @@ export async function claimTask(agentId: number, now: Date = new Date(), options
     options.can?.includes("enlace_medio") ? undefined : ne(agentTasks.kind, MEDIA_FETCH_TASK),
     // Ni leer perfiles (anterior a 1.5.0).
     options.can?.includes("perfil") ? undefined : ne(agentTasks.kind, PROFILE_TASK),
+    // Ni buscar en Pinterest (anterior a 1.6.0).
+    options.can?.includes("pinterest") ? undefined : ne(agentTasks.kind, PINTEREST_TASK),
   );
   // Un reintento automático espera a su hora.
   const queued = and(
@@ -393,6 +407,11 @@ export async function claimTask(agentId: number, now: Date = new Date(), options
     if (candidate.kind === PROFILE_TASK) {
       const profile = await claimProfileTask(candidate.id, queued, leaseValues(agentId, now));
       if (profile) return profile;
+      continue;
+    }
+    if (candidate.kind === PINTEREST_TASK) {
+      const search = await claimPinterestTask(candidate.id, queued, leaseValues(agentId, now));
+      if (search) return search;
       continue;
     }
     if (candidate.videoId === null) {
@@ -486,11 +505,12 @@ export async function appendTaskChunk(
   // Primero, que la reserva y su sesión sean las de quien llama; solo entonces se prolonga.
   if (!isId(taskId)) throw taskLost();
   const [held] = await getDb().select({ kind: agentTasks.kind, uploadId: agentTasks.uploadId }).from(agentTasks).where(leasedBy(agentId, taskId));
-  if (held?.kind === SONG_TASK || held?.kind === MEDIA_FETCH_TASK || held?.kind === PROFILE_TASK) {
+  if (held?.kind === SONG_TASK || held?.kind === MEDIA_FETCH_TASK || held?.kind === PROFILE_TASK || held?.kind === PINTEREST_TASK) {
     // Una canción, un vídeo de enlace para el montaje o un perfil: su sesión es la de la propia tarea.
     if (held.uploadId !== uploadId) throw taskLost();
     await extendLease(agentId, taskId, now);
     if (held.kind === PROFILE_TASK) return appendProfileChunk(taskId, uploadId, index, bytes);
+    if (held.kind === PINTEREST_TASK) return appendPinterestChunk(taskId, uploadId, index, bytes);
     return held.kind === SONG_TASK ? appendSongChunk(taskId, uploadId, index, bytes) : appendMediaFetchChunk(taskId, uploadId, index, bytes);
   }
   if (!held || (await agentUploadId(taskId)) !== uploadId) throw taskLost();
@@ -532,6 +552,8 @@ export async function finishTask(agentId: number, taskId: number, result: TaskRe
   if (found.kind === MEDIA_FETCH_TASK) return finishMediaFetchTask(agentId, taskId, result as MediaFetchResult, { now: () => now });
   // Un perfil se cierra (y se guarda) en `link-profiles`.
   if (found.kind === PROFILE_TASK) return finishProfileTask(agentId, taskId, result as ProfileFetchResult, now);
+  // Una búsqueda de Pinterest se cierra (y se guarda) en `pinterest-searches`.
+  if (found.kind === PINTEREST_TASK) return finishPinterestTask(agentId, taskId, result as PinterestSearchResult, now);
   // Una canción se cierra (y se guarda) en `song-downloads`.
   if (found.videoId === null) return finishSongTask(agentId, taskId, result, now);
   const task = { ...found, videoId: found.videoId };
@@ -605,6 +627,7 @@ async function failTask(task: { id: number; videoId: number | null; kind: string
   const { videoId } = task;
   if (task.kind === MEDIA_FETCH_TASK) return failMediaFetchTask(task, condition, reason, now);
   if (task.kind === PROFILE_TASK) return failProfileTask(task, condition, reason, now);
+  if (task.kind === PINTEREST_TASK) return failPinterestTask(task, condition, reason, now);
   if (videoId === null) {
     const [before] = await getDb().select({ uploadId: agentTasks.uploadId }).from(agentTasks).where(eq(agentTasks.id, task.id));
     const [closed] = await getDb()

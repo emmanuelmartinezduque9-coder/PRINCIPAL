@@ -1097,7 +1097,10 @@ export const agentTasks = pgTable(
     uniqueIndex("agent_tasks_one_active_profile_fetch")
       .on(t.url)
       .where(sql`${t.kind} = 'profile_fetch' and ${t.status} in ('queued', 'leased')`),
-    check("agent_tasks_kind_valid", sql`${t.kind} in ('link_download', 'song_download', 'montaje', 'media_fetch', 'profile_fetch')`),
+    uniqueIndex("agent_tasks_one_active_pinterest_search")
+      .on(t.url)
+      .where(sql`${t.kind} = 'pinterest_search' and ${t.status} in ('queued', 'leased')`),
+    check("agent_tasks_kind_valid", sql`${t.kind} in ('link_download', 'song_download', 'montaje', 'media_fetch', 'profile_fetch', 'pinterest_search')`),
     // Una referencia y un montaje son siempre de un vídeo; una canción, de ninguno.
     check("agent_tasks_target_valid", sql`(${t.kind} in ('link_download', 'montaje')) = (${t.videoId} is not null)`),
     check("agent_tasks_status_valid", sql`${t.status} in ('queued', 'leased', 'done', 'failed')`),
@@ -1356,4 +1359,83 @@ export const productResearch = pgTable(
     check("product_research_status_valid", sql`${t.status} in ('en_cola', 'buscando', 'hecho', 'fallido')`),
     index("product_research_product_idx").on(t.productId),
   ],
+);
+
+// ───────────────────────── Referencias de Pinterest ─────────────────────────
+
+/**
+ * Las fotos de Pinterest guardadas para reutilizarlas (regla fija del dueño, 23/11/2026: cada
+ * imagen inicial lleva referencias reales de Pinterest salvo que él ponga una a mano). Una fila por
+ * archivo (por su huella SHA-256): el archivo vive en el almacén (`object_key`) o, sin almacén, en
+ * `data`. Ver `src/server/videos/pinterest.ts` y `reglas/referencias-pinterest.md`.
+ */
+export const pinterestImages = pgTable("pinterest_images", {
+  sha256: text("sha256").primaryKey(),
+  mime: text("mime").notNull(),
+  bytes: integer("bytes").notNull(),
+  width: integer("width"),
+  height: integer("height"),
+  /** Clave en el almacén (`pinterest/<sha256>.jpg`); `null` si no hay almacén y va en `data`. */
+  objectKey: text("object_key"),
+  data: bytea("data"),
+  /** La dirección de la imagen en Pinterest (i.pinimg.com) y el pin. */
+  sourceUrl: text("source_url").notNull(),
+  pinId: text("pin_id"),
+  createdAt: instant("created_at").notNull().defaultNow(),
+});
+
+/**
+ * La búsqueda de referencias de Pinterest de un vídeo para un desglose: la escena (lugar, época,
+ * luz, estilo), las consultas, y las fotos elegidas en orden. Se hace sola al terminar el desglose
+ * (y si falta, antes de pedir la imagen); la imagen inicial no se pide sin ella salvo que el vídeo
+ * tenga una referencia de entorno puesta a mano.
+ */
+export const videoPinterestRefs = pgTable(
+  "video_pinterest_refs",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    videoId: bigint("video_id", { mode: "number" })
+      .notNull()
+      .references(() => videos.id, { onDelete: "cascade" }),
+    analysisId: bigint("analysis_id", { mode: "number" })
+      .notNull()
+      .references(() => videoAnalyses.id, { onDelete: "cascade" }),
+    /** `pending` (por buscar), `searching`, `waiting_mac` (Pinterest no deja al servidor: lo busca el Mac), `ready`, `failed`. */
+    status: text("status").notNull().default("pending"),
+    scene: jsonb("scene"),
+    queries: jsonb("queries"),
+    /** Las elegidas, en orden: `{ sha256, query, pinId, sourceUrl, reason }[]`. */
+    refs: jsonb("refs"),
+    error: text("error"),
+    attempts: integer("attempts").notNull().default(0),
+    createdAt: instant("created_at").notNull().defaultNow(),
+    updatedAt: instant("updated_at").notNull().defaultNow(),
+  },
+  (t) => [
+    unique("video_pinterest_refs_video_analysis").on(t.videoId, t.analysisId),
+    check("video_pinterest_refs_status_valid", sql`${t.status} in ('pending', 'searching', 'waiting_mac', 'ready', 'failed')`),
+  ],
+);
+
+/**
+ * Resultados de una consulta en Pinterest (caché y puente con el Mac): si Pinterest no deja buscar
+ * al servidor, la consulta se pide al Mac del dueño (tarea `pinterest_search`) y su respuesta llega aquí.
+ */
+export const pinterestSearches = pgTable(
+  "pinterest_searches",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    query: text("query").notNull().unique(),
+    /** `pending` (esperando al Mac), `ready` o `failed`. */
+    status: text("status").notNull().default("pending"),
+    /** `servidor` o `mac`. */
+    via: text("via"),
+    results: jsonb("results"),
+    agentTaskId: bigint("agent_task_id", { mode: "number" }).references((): AnyPgColumn => agentTasks.id, { onDelete: "set null" }),
+    error: text("error"),
+    failures: integer("failures").notNull().default(0),
+    createdAt: instant("created_at").notNull().defaultNow(),
+    updatedAt: instant("updated_at").notNull().defaultNow(),
+  },
+  (t) => [check("pinterest_searches_status_valid", sql`${t.status} in ('pending', 'ready', 'failed')`)],
 );

@@ -1,0 +1,652 @@
+import crypto from "node:crypto";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { and, desc, eq, inArray, lt, or, sql } from "drizzle-orm";
+import { z } from "zod";
+import { getDb, schema } from "@/db/client";
+import { enqueueJob } from "@/jobs/boss";
+import { runStep, stepKey, StepFailedError, type JobContext } from "@/jobs/steps";
+import { imagePart, textPart, type LlmContent } from "@/llm/content";
+import { getGateway, type LlmGateway } from "@/llm/gateway";
+import { getObjectStore } from "@/lib/object-store";
+import { getActiveUser } from "@/server/auth";
+import { HttpError } from "@/server/http";
+import { makeThumbnail } from "@/server/media/ffmpeg";
+import { searchPins, type PinCandidate } from "@/server/pinterest-searches";
+import { getProductFor } from "@/server/products";
+import { loadRules } from "@/server/rules";
+import type { ManifestItem } from "@/server/videos/manifest";
+
+/**
+ * Referencias de Pinterest de la imagen inicial. Regla fija del dueño (23/11/2026, pedida tres
+ * veces): **por defecto, siempre** se buscan fotos reales de Pinterest para cada imagen, también
+ * al regenerar una rechazada; solo si el vídeo lleva una referencia de entorno puesta a mano no se
+ * busca. Ver `reglas/referencias-pinterest.md` y `docs/decisiones-referencias-pinterest.md`.
+ *
+ * Al terminar un desglose se apunta una búsqueda (`video_pinterest_refs`, una por desglose) y se
+ * encola `video.pinterest`:
+ *  1. Claude lee el desglose (lugar, época, luz, estilo, acción) y escribe 2–3 consultas como las
+ *     que el dueño usaba a mano (reglas `referencias-pinterest`).
+ *  2. Se busca en Pinterest desde la nube; si Pinterest no deja, desde el Mac del dueño.
+ *  3. Claude mira las candidatas con visión y elige las mejores (fotos reales de móvil, sin texto
+ *     ni marcas de agua, con el sitio y la luz que pide la toma).
+ *  4. Se descargan a tamaño original, se guardan una vez por huella en el almacén y quedan listas.
+ * La imagen inicial no se pide sin ellas (`pinterestRefsForFrame`): van detrás de las demás
+ * referencias, con su papel escrito en el prompt (`withPinterestRoles`).
+ */
+
+export const PINTEREST_JOB = "video.pinterest";
+/** Cuántas fotos de Pinterest acompañan a cada imagen inicial. */
+export const MAX_PINTEREST_REFS = 2;
+/** Candidatas que mira Claude, como mucho. */
+const MAX_CANDIDATES = 24;
+/** Lado largo de las miniaturas que mira Claude y de las fotos que se guardan. */
+const THUMB_SIDE = 474;
+const STORED_SIDE = 2048;
+/** Intentos automáticos de una búsqueda que falló antes de pararse y decirlo. */
+export const MAX_PINTEREST_ATTEMPTS = 3;
+/** Una búsqueda en marcha sin novedades desde hace esto se vuelve a lanzar. */
+const STALE_SEARCH_MS = 10 * 60_000;
+/** Una búsqueda pendiente sin trabajo en la cola desde hace esto se vuelve a encolar. */
+const REQUEUE_MS = 2 * 60_000;
+
+/** Lo que dice la imagen mientras se buscan (la petición espera; el lote lo vuelve a intentar solo). */
+export const PINTEREST_PENDING = "Buscando referencias de Pinterest para esta imagen; se pide en cuanto estén.";
+const PINTEREST_FAILED = "No se encontraron referencias de Pinterest para esta imagen";
+
+const runs = schema.videoPinterestRefs;
+const images = schema.pinterestImages;
+type Run = typeof runs.$inferSelect;
+
+export interface PinterestScene {
+  /** El sitio de la toma, en español («salón con decoración navideña»). */
+  place: string;
+  season: string | null;
+  light: string;
+  style: string;
+  /** Lo que tiene que verse para que la acción quepa (congelador abierto, encimera libre…). */
+  needs: string;
+  queries: string[];
+}
+
+export interface PinterestRef {
+  sha256: string;
+  query: string;
+  pinId: string;
+  sourceUrl: string;
+  reason: string;
+}
+
+// ───────────────────────── Referencias manuales ─────────────────────────
+
+/**
+ * ¿El vídeo lleva una referencia de entorno puesta a mano? Entonces no se busca en Pinterest
+ * (excepción del dueño). Mira el manifiesto, no solo la columna: una foto de entorno que ya no
+ * existe con ese papel no cuenta.
+ */
+export function hasManualEnvironment(manifest: Pick<ManifestItem, "role">[]): boolean {
+  return manifest.some((item) => item.role === "entorno");
+}
+
+// ───────────────────────── Prompt ─────────────────────────
+
+const list = (tags: string[]) => (tags.length === 1 ? tags[0] : `${tags.slice(0, -1).join(", ")} and ${tags.at(-1)}`);
+
+/**
+ * El párrafo que da su papel a las fotos de Pinterest, con sus números reales. Se añade al final del
+ * prompt de la imagen al pedirla (el desglose escribe el prompt antes de que existan). Sin fotos de
+ * Pinterest en el manifiesto, el prompt tal cual.
+ */
+export function withPinterestRoles(prompt: string, manifest: ManifestItem[]): string {
+  const tags = manifest.filter((item) => item.source.kind === "pinterest").map((item) => item.tag);
+  if (tags.length === 0) return prompt;
+  const which = tags.length === 1 ? `${tags[0]} is a real everyday phone photo` : `${list(tags)} are real everyday phone photos`;
+  return `${prompt.trimEnd()}\n\n${which} found on Pinterest for this exact kind of place. Use ${tags.length === 1 ? "it" : "them"} as the environment and realism reference: the real place, its furniture, materials, decoration, lived-in details and the natural look of a vertical phone photo. Its observed practical lighting is the authority for the light of the whole scene. Rebuild the background of image 1 in that style so it reads as the same kind of real lived-in place, not a set. Keep the framing, camera distance, angle, pose, hands and action of image 1, the person's identity only from the avatar reference and the product only from its own references. Do not copy any person, face, text, logo, watermark or screen content from ${tags.length === 1 ? "that photo" : "those photos"}.`;
+}
+
+// ───────────────────────── Guardar y leer fotos ─────────────────────────
+
+const sha256 = (data: Buffer) => crypto.createHash("sha256").update(data).digest("hex");
+const objectKeyOf = (hash: string) => `pinterest/${hash}.jpg`;
+
+/** Guarda una foto (ya en JPEG) una sola vez por huella: en el almacén si lo hay; si no, en la base de datos. */
+export async function storePinterestImage(data: Buffer, source: { url: string; pinId: string; width: number | null; height: number | null }): Promise<string> {
+  const hash = sha256(data);
+  const [existing] = await getDb().select({ sha256: images.sha256 }).from(images).where(eq(images.sha256, hash));
+  if (existing) return hash;
+  const store = getObjectStore();
+  let objectKey: string | null = null;
+  if (store) {
+    objectKey = objectKeyOf(hash);
+    await store.putBuffer(objectKey, data, { contentType: "image/jpeg", cacheControl: "private, max-age=31536000, immutable" });
+  }
+  await getDb()
+    .insert(images)
+    .values({
+      sha256: hash,
+      mime: "image/jpeg",
+      bytes: data.length,
+      width: source.width,
+      height: source.height,
+      objectKey,
+      data: objectKey ? null : data,
+      sourceUrl: source.url,
+      pinId: source.pinId || null,
+    })
+    .onConflictDoNothing();
+  return hash;
+}
+
+/** El contenido de una foto de Pinterest guardada. 404 si no existe. */
+export async function readPinterestImage(hash: string): Promise<{ mime: string; data: Buffer }> {
+  if (!/^[0-9a-f]{64}$/.test(hash)) throw new HttpError(404, "Foto no encontrada.");
+  const [row] = await getDb().select().from(images).where(eq(images.sha256, hash));
+  if (!row) throw new HttpError(404, "Foto no encontrada.");
+  if (row.data) return { mime: row.mime, data: Buffer.from(row.data) };
+  const store = getObjectStore();
+  if (!store || !row.objectKey) throw new HttpError(404, "Foto no encontrada.");
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "pinterest-"));
+  try {
+    const file = path.join(dir, "foto.jpg");
+    await store.download(row.objectKey, file);
+    return { mime: row.mime, data: await fs.readFile(file) };
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+/** Enlace para ver la foto en la web: firmado del almacén si está allí; si no, la ruta propia. */
+export async function pinterestImageUrl(hash: string): Promise<string> {
+  const [row] = await getDb().select({ objectKey: images.objectKey }).from(images).where(eq(images.sha256, hash));
+  const store = getObjectStore();
+  if (row?.objectKey && store) return store.signedUrl(row.objectKey);
+  return `/api/pinterest/${hash}`;
+}
+
+// ───────────────────────── Estado por vídeo ─────────────────────────
+
+/** Solo para pruebas: en vez de encolar la búsqueda, la resuelve al momento (o `null` para quitarlo). */
+let instantForTests: ((run: Run) => Promise<void>) | null = null;
+export function setPinterestForTests(resolve: ((run: Run) => Promise<void>) | null): void {
+  instantForTests = resolve;
+}
+
+/** Solo para pruebas: deja lista la búsqueda con estas fotos ya guardadas. */
+export async function markPinterestReadyForTests(runId: number, refs: PinterestRef[]): Promise<void> {
+  await setRun(runId, { status: "ready", refs, error: null });
+}
+
+/** El último desglose hecho del vídeo (el que da el prompt de la imagen). */
+async function latestDoneAnalysisId(videoId: number): Promise<number | null> {
+  const [row] = await getDb()
+    .select({ id: schema.videoAnalyses.id })
+    .from(schema.videoAnalyses)
+    .where(and(eq(schema.videoAnalyses.videoId, videoId), eq(schema.videoAnalyses.status, "done")))
+    .orderBy(desc(schema.videoAnalyses.version))
+    .limit(1);
+  return row?.id ?? null;
+}
+
+async function runOf(videoId: number, analysisId: number): Promise<Run | null> {
+  const [row] = await getDb().select().from(runs).where(and(eq(runs.videoId, videoId), eq(runs.analysisId, analysisId)));
+  return row ?? null;
+}
+
+async function enqueue(run: Pick<Run, "id" | "videoId">): Promise<void> {
+  const [video] = await getDb()
+    .select({ createdBy: schema.videos.createdBy, productId: schema.videos.productId })
+    .from(schema.videos)
+    .where(eq(schema.videos.id, run.videoId));
+  if (!video) return;
+  await enqueueJob(PINTEREST_JOB, { userId: video.createdBy, productId: video.productId }, { runId: run.id });
+}
+
+/**
+ * Apunta (si no está) la búsqueda de Pinterest del vídeo para ese desglose y la encola. Con
+ * `retry`, una búsqueda fallida vuelve a empezar (con intentos de nuevo). No hace nada si ya está
+ * lista o en marcha. Nunca lanza por la cola: el seguimiento la vuelve a encolar.
+ */
+export async function ensurePinterestRun(videoId: number, analysisId: number, options: { retry?: boolean } = {}): Promise<Run> {
+  await getDb().insert(runs).values({ videoId, analysisId }).onConflictDoNothing();
+  let run = (await runOf(videoId, analysisId))!;
+  if (run.status === "failed" && options.retry) {
+    [run] = await getDb()
+      .update(runs)
+      .set({ status: "pending", error: null, attempts: 0, scene: null, queries: null, refs: null, updatedAt: new Date() })
+      .where(and(eq(runs.id, run.id), eq(runs.status, "failed")))
+      .returning();
+    run ??= (await runOf(videoId, analysisId))!;
+  }
+  if (run.status === "pending" && instantForTests) {
+    await instantForTests(run);
+    return (await runOf(videoId, analysisId))!;
+  }
+  if (run.status === "pending") {
+    try {
+      await enqueue(run);
+    } catch (error) {
+      console.error(`[pinterest] No se pudo encolar la búsqueda ${run.id}:`, error);
+    }
+  }
+  return run;
+}
+
+/** Al terminar un desglose: si el vídeo no lleva entorno puesto a mano, se buscan sus referencias. */
+export async function startPinterestAfterAnalysis(videoId: number, analysisId: number): Promise<void> {
+  const [video] = await getDb().select({ environmentPhotoId: schema.videos.environmentPhotoId }).from(schema.videos).where(eq(schema.videos.id, videoId));
+  if (!video || video.environmentPhotoId !== null) return;
+  await ensurePinterestRun(videoId, analysisId);
+}
+
+/**
+ * Las huellas de las fotos de Pinterest listas para la imagen inicial del vídeo (su último desglose
+ * hecho), en orden. Vacío si aún no hay desglose o no están listas.
+ */
+export async function readyPinterestRefs(videoId: number): Promise<string[]> {
+  const analysisId = await latestDoneAnalysisId(videoId);
+  if (analysisId === null) return [];
+  const run = await runOf(videoId, analysisId);
+  if (run?.status !== "ready") return [];
+  return ((run.refs as PinterestRef[] | null) ?? []).map((ref) => ref.sha256);
+}
+
+/**
+ * Antes de pedir la imagen inicial (también al regenerar): sin entorno puesto a mano, tienen que
+ * estar sus fotos de Pinterest. Si no están, se ponen en marcha y 409 (`PINTEREST_PENDING`: el
+ * lote lo vuelve a intentar solo). Si fallaron todos los intentos, 409 con el motivo y se vuelve a
+ * intentar desde cero (no se genera nunca sin ellas).
+ */
+export async function requirePinterestRefs(videoId: number): Promise<void> {
+  const analysisId = await latestDoneAnalysisId(videoId);
+  if (analysisId === null) return; // Sin desglose ya lo para `requireAnalysisDone`.
+  const run = await ensurePinterestRun(videoId, analysisId);
+  if (run.status === "ready" && Array.isArray(run.refs) && run.refs.length > 0) return;
+  if (run.status === "failed") {
+    await ensurePinterestRun(videoId, analysisId, { retry: true });
+    throw new HttpError(409, `${PINTEREST_FAILED}: ${run.error ?? "Pinterest no respondió"}. Se vuelve a buscar.`);
+  }
+  throw new HttpError(409, PINTEREST_PENDING);
+}
+
+/** Lo que enseña la tarjeta del vídeo: «Referencias de Pinterest» con sus miniaturas. */
+export interface PinterestView {
+  status: Run["status"];
+  error: string | null;
+  scene: PinterestScene | null;
+  refs: Array<PinterestRef & { url: string }>;
+}
+
+/** La búsqueda del último desglose hecho del vídeo, para la pantalla; `null` si no hay (o lleva entorno a mano). */
+export async function pinterestView(videoId: number): Promise<PinterestView | null> {
+  const analysisId = await latestDoneAnalysisId(videoId);
+  if (analysisId === null) return null;
+  const run = await runOf(videoId, analysisId);
+  if (!run) return null;
+  const refs = (run.refs as PinterestRef[] | null) ?? [];
+  return {
+    status: run.status,
+    error: run.error,
+    scene: (run.scene as PinterestScene | null) ?? null,
+    refs: await Promise.all(refs.map(async (ref) => ({ ...ref, url: await pinterestImageUrl(ref.sha256) }))),
+  };
+}
+
+/** Las búsquedas de varios vídeos a la vez (el tablero de un lote), por vídeo. */
+export async function pinterestViews(videoIds: number[]): Promise<Map<number, PinterestView>> {
+  const out = new Map<number, PinterestView>();
+  for (const id of videoIds) {
+    const view = await pinterestView(id);
+    if (view) out.set(id, view);
+  }
+  return out;
+}
+
+// ───────────────────────── Claude: consultas y elección ─────────────────────────
+
+const RULE_SLUG = "referencias-pinterest";
+
+const sceneSchema: z.ZodType<PinterestScene> = z.object({
+  place: z.string().min(1).describe("El tipo de sitio de la toma, en español y concreto (p. ej. «salón con decoración navideña», «cocina con isla»)."),
+  season: z.string().nullable().describe("Época o temporada si cuenta (Navidad, verano…), o null."),
+  light: z.string().min(1).describe("La luz del sitio (lámparas cálidas de tarde, luz de ventana de día…), en español."),
+  style: z.string().min(1).describe("Estilo y nivel de la casa o tienda (casa alemana normal, habitada…), en español."),
+  needs: z.string().min(1).describe("Lo que tiene que verse en la foto para que la acción de la toma quepa, en español."),
+  queries: z
+    .array(z.string().min(3).max(90))
+    .min(2)
+    .max(3)
+    .describe("2–3 búsquedas para el buscador de Pinterest, de 3 a 7 palabras, como las del dueño: la primera en el idioma del mercado."),
+});
+
+const pickSchema = z.object({
+  picks: z
+    .array(z.object({ n: z.number().int().min(1), reason: z.string().min(1).describe("Por qué vale, en español y en una frase.") }))
+    .max(MAX_PINTEREST_REFS)
+    .describe("Las mejores, de mejor a peor; vacío si ninguna vale."),
+  rejected: z.string().describe("En una frase, qué falla en las que no valen."),
+});
+
+const PLAN_INSTRUCTIONS = `Preparas la búsqueda en Pinterest de las fotos reales que acompañarán a la imagen inicial de un anuncio como referencia de realismo y de entorno (lugar, luz, decoración, aspecto de foto de móvil). Sigue la regla «Referencias de Pinterest»: decide en el orden producto → acción de la toma → espacio → cámara, y escribe consultas como las que el dueño usaba a mano para casos parecidos.
+
+Mira el primer fotograma de la referencia (la composición que se conserva) y el desglose. Describe el sitio de la toma (place), la época (season, solo si cuenta: si la escena es navideña, Navidad), la luz, el estilo de la casa o tienda y lo que tiene que verse para que quepa la acción (needs).
+
+Después escribe 2 o 3 consultas para el buscador de Pinterest (queries): cortas (3–7 palabras), con el tipo de sitio, el punto de vista si importa (pov, Perspektive), la temporada solo si corresponde y palabras de foto cotidiana (gemütlich, Alltag, cozy, real). La primera, en el idioma del mercado del anuncio; otra puede ir en inglés. Nada de «interior design», «luxury», «showroom», «architecture», «render», «aesthetic». Nada de marcas ajenas salvo una tienda que la toma pida.`;
+
+const PICK_INSTRUCTIONS = `Eliges, entre fotos candidatas encontradas en Pinterest, las que servirán de referencia de realismo y de entorno para la imagen inicial de un anuncio (no aportan personas, producto ni encuadre: eso sale de otras referencias). Sigue la regla «Referencias de Pinterest».
+
+Vale una foto que:
+- es una foto real hecha con móvil (o lo parece): casa o tienda habitada, objetos cotidianos, luz práctica del sitio, encuadre algo imperfecto;
+- es el mismo tipo de sitio que pide la toma y deja que la acción quepa (superficies, aparatos, altura y dirección de cámara compatibles con el primer fotograma de la referencia);
+- respeta la época y la luz pedidas.
+
+Rechaza la foto que: no es un lugar (producto, textura, collage, plano de detalle); es un render, una imagen hecha con IA, un showroom, un catálogo o una foto de interiorismo demasiado perfecta; lleva texto, rótulos, frases o marcas de agua encima; está dominada por una persona con la cara visible; es otro tipo de sitio; tiene una perspectiva imposible para el encuadre o se ve mal.
+
+Elige como mucho ${MAX_PINTEREST_REFS}, de mejor a peor, por su número de candidata. Si ninguna vale, no elijas ninguna.`;
+
+/** Los textos del desglose que describen la escena (sin los prompts largos). */
+function analysisText(result: Record<string, unknown> | null): string {
+  if (!result) return "";
+  const shots = Array.isArray(result.shots) ? (result.shots as Array<Record<string, unknown>>) : [];
+  const adaptation = Array.isArray(result.adaptation) ? (result.adaptation as Array<Record<string, unknown>>) : [];
+  return [
+    typeof result.conceptLogic === "string" ? `Lógica del concepto: ${result.conceptLogic}` : "",
+    ...shots.map((shot, i) => `Toma ${i + 1}: se ve ${String(shot.seen ?? "")}; acción: ${String(shot.action ?? "")}`),
+    ...adaptation.slice(0, 6).map((row) => `Adaptación: ${String(row.original ?? "")} → ${String(row.equivalent ?? "")} (se conserva: ${String(row.kept ?? "")})`),
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+async function fetchBytes(url: string): Promise<Buffer> {
+  const response = await fetch(url, {
+    headers: { "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36" },
+    signal: AbortSignal.timeout(30_000),
+  });
+  if (!response.ok) throw new Error(`Pinterest respondió ${response.status} al bajar la foto.`);
+  return Buffer.from(await response.arrayBuffer());
+}
+
+/** Lo que se puede cambiar en las pruebas. */
+export interface PinterestDeps {
+  gateway?: LlmGateway;
+  fetchImage?: (url: string) => Promise<Buffer>;
+  /** Para buscar en Pinterest (las pruebas no salen a internet). */
+  search?: typeof searchPins;
+  now?: Date;
+}
+
+// ───────────────────────── El trabajo ─────────────────────────
+
+async function setRun(runId: number, changes: Partial<typeof runs.$inferInsert>): Promise<void> {
+  await getDb()
+    .update(runs)
+    .set({ ...changes, updatedAt: new Date() })
+    .where(eq(runs.id, runId));
+}
+
+async function failRun(run: Run, message: string): Promise<void> {
+  const attempts = run.attempts + 1;
+  if (attempts < MAX_PINTEREST_ATTEMPTS) {
+    // Otra vez desde el principio (otras consultas), sin molestar.
+    await setRun(run.id, { status: "pending", attempts, error: message, scene: null, queries: null, refs: null });
+    return;
+  }
+  await setRun(run.id, { status: "failed", attempts, error: message });
+}
+
+/**
+ * Hace la búsqueda `runId`: consultas, búsqueda (nube o Mac), elección y guardado. Si tiene que
+ * esperar al Mac, se queda en `waiting_mac` y el seguimiento la vuelve a encolar cuando el Mac
+ * contesta. Repetirla no cobra dos veces a Claude (cada llamada va en su paso).
+ */
+export async function runPinterest(runId: number, deps: PinterestDeps = {}): Promise<void> {
+  const [run] = await getDb().select().from(runs).where(eq(runs.id, runId));
+  if (!run || run.status === "ready" || run.status === "failed") return;
+  const [video] = await getDb().select().from(schema.videos).where(eq(schema.videos.id, run.videoId));
+  const [analysis] = await getDb().select().from(schema.videoAnalyses).where(eq(schema.videoAnalyses.id, run.analysisId));
+  if (!video || !analysis) return;
+  if (video.environmentPhotoId !== null) {
+    // El dueño puso una referencia de entorno a mano: no se busca (y no se adjunta nada de Pinterest).
+    await setRun(run.id, { status: "ready", refs: [], error: null });
+    return;
+  }
+  const user = await getActiveUser(video.createdBy);
+  if (!user) throw new StepFailedError("Esta cuenta está desactivada.");
+  await setRun(run.id, { status: "searching" });
+
+  const ctx: JobContext = { jobName: PINTEREST_JOB, userId: video.createdBy, productId: video.productId };
+  const gateway = deps.gateway ?? getGateway();
+  const product = await getProductFor(user, video.productId);
+  const rules = await loadRules([RULE_SLUG]);
+  const [frame] = await getDb()
+    .select({ mime: schema.videoFrames.mime, data: schema.videoFrames.data })
+    .from(schema.videoFrames)
+    .where(eq(schema.videoFrames.videoId, video.id))
+    .orderBy(schema.videoFrames.index)
+    .limit(1);
+  const frameJpeg = frame ? await makeThumbnail(Buffer.from(frame.data), "image", 768) : null;
+  const month = (deps.now ?? new Date()).toLocaleDateString("es-ES", { month: "long" });
+
+  // 1. Escena y consultas.
+  let scene = run.scene as PinterestScene | null;
+  if (!scene) {
+    const content: LlmContent = [
+      textPart(
+        [
+          `Producto: ${product.name}`,
+          `Qué hace: ${product.summary}`,
+          `Idioma del anuncio: ${product.language}`,
+          `Países: ${product.countries.join(", ")}`,
+          `Mes actual: ${month}`,
+          video.note ? `Cambios pedidos para este vídeo: ${video.note}` : "",
+          video.adaptation ? `Adaptación pedida: ${video.adaptation}` : "",
+          "",
+          "Desglose de la referencia:",
+          analysisText(analysis.result as Record<string, unknown> | null),
+        ]
+          .filter((line) => line !== null)
+          .join("\n"),
+      ),
+      ...(frameJpeg ? [textPart("Primer fotograma de la referencia (la composición que se conserva):"), imagePart(frameJpeg, "image/jpeg")] : []),
+    ];
+    const planned = await runStep(ctx, stepKey(ctx, "consultas", { runId: run.id, attempt: run.attempts }), async () => {
+      const answer = await gateway.call({
+        tier: "medium",
+        stepKey: stepKey(ctx, "consultas", { runId: run.id, attempt: run.attempts }),
+        userId: ctx.userId,
+        productId: ctx.productId,
+        rules,
+        instructions: PLAN_INSTRUCTIONS,
+        content,
+        maxTokens: 4_000,
+        schema: sceneSchema,
+      });
+      return answer.data!;
+    });
+    scene = { ...planned, queries: [...new Set(planned.queries.map((q) => q.trim()).filter(Boolean))] };
+    await setRun(run.id, { scene, queries: scene.queries });
+  }
+
+  // 2. Buscar (nube; si no deja, el Mac).
+  const search = deps.search ?? searchPins;
+  const found: Array<PinCandidate & { query: string }> = [];
+  const seen = new Set<string>();
+  const failures: string[] = [];
+  for (const query of scene.queries) {
+    const state = await search(query, { now: deps.now });
+    if (state.status === "waiting_mac") {
+      await setRun(run.id, { status: "waiting_mac" });
+      return;
+    }
+    if (state.status === "failed") {
+      failures.push(state.error);
+      continue;
+    }
+    for (const candidate of state.candidates) {
+      if (seen.has(candidate.imageUrl)) continue;
+      seen.add(candidate.imageUrl);
+      found.push({ ...candidate, query });
+    }
+  }
+  // Repartidas entre las consultas (las primeras de cada una), hasta `MAX_CANDIDATES`.
+  const perQuery = Math.ceil(MAX_CANDIDATES / Math.max(1, scene.queries.length));
+  const shortlist = scene.queries.flatMap((query) => found.filter((c) => c.query === query).slice(0, perQuery)).slice(0, MAX_CANDIDATES);
+  if (shortlist.length === 0) {
+    await failRun(run, failures[0] ?? "Pinterest no devolvió ninguna foto para estas búsquedas");
+    return;
+  }
+
+  // 3. Elegir con visión.
+  const fetchImage = deps.fetchImage ?? fetchBytes;
+  const thumbs: Array<{ candidate: (typeof shortlist)[number]; jpeg: Buffer }> = [];
+  await Promise.all(
+    shortlist.map(async (candidate, i) => {
+      try {
+        thumbs[i] = { candidate, jpeg: await makeThumbnail(await fetchImage(candidate.thumbUrl), "image", THUMB_SIDE) };
+      } catch {
+        // Una miniatura que no baja no se enseña.
+      }
+    }),
+  );
+  const shown = thumbs.filter(Boolean);
+  if (shown.length === 0) {
+    await failRun(run, "No se pudo bajar ninguna foto de Pinterest");
+    return;
+  }
+  const pickContent: LlmContent = [
+    textPart(
+      [
+        `Producto: ${product.name}. Países: ${product.countries.join(", ")}.`,
+        `Sitio de la toma: ${scene.place}. Época: ${scene.season ?? "sin época concreta"}. Luz: ${scene.light}. Estilo: ${scene.style}.`,
+        `Tiene que verse: ${scene.needs}.`,
+      ].join("\n"),
+    ),
+    ...(frameJpeg ? [textPart("Primer fotograma de la referencia (composición que se conserva):"), imagePart(frameJpeg, "image/jpeg")] : []),
+    ...shown.flatMap((item, i) => [textPart(`Candidata ${i + 1} (búsqueda «${item.candidate.query}»)`), imagePart(item.jpeg, "image/jpeg")]),
+  ];
+  const picked = await runStep(ctx, stepKey(ctx, "eleccion", { runId: run.id, attempt: run.attempts }), async () => {
+    const answer = await gateway.call({
+      tier: "medium",
+      stepKey: stepKey(ctx, "eleccion", { runId: run.id, attempt: run.attempts }),
+      userId: ctx.userId,
+      productId: ctx.productId,
+      rules,
+      instructions: PICK_INSTRUCTIONS,
+      content: pickContent,
+      maxTokens: 3_000,
+      schema: pickSchema,
+    });
+    return answer.data!;
+  });
+  const chosen = [...new Map(picked.picks.filter((p) => p.n >= 1 && p.n <= shown.length).map((p) => [p.n, p])).values()].slice(0, MAX_PINTEREST_REFS);
+  if (chosen.length === 0) {
+    await failRun(run, `Ninguna foto de Pinterest valía (${picked.rejected})`);
+    return;
+  }
+
+  // 4. Bajar a tamaño original y guardar.
+  const refs: PinterestRef[] = [];
+  for (const pick of chosen) {
+    const { candidate } = shown[pick.n - 1];
+    let jpeg: Buffer | null = null;
+    for (const url of [candidate.imageUrl, candidate.mediumUrl].filter((u): u is string => !!u)) {
+      try {
+        jpeg = await makeThumbnail(await fetchImage(url), "image", STORED_SIDE);
+        break;
+      } catch {
+        // Se prueba con la siguiente versión.
+      }
+    }
+    if (!jpeg) continue;
+    const hash = await storePinterestImage(jpeg, { url: candidate.imageUrl, pinId: candidate.pinId, width: candidate.width, height: candidate.height });
+    refs.push({ sha256: hash, query: candidate.query, pinId: candidate.pinId, sourceUrl: candidate.imageUrl, reason: pick.reason });
+  }
+  if (refs.length === 0) {
+    await failRun(run, "No se pudieron bajar las fotos elegidas de Pinterest");
+    return;
+  }
+  await setRun(run.id, { status: "ready", refs, error: null });
+  console.log(
+    `[pinterest] Vídeo ${video.id} (${product.name}): ${refs.length} referencia(s) para «${scene.place}» (${scene.queries.join(" | ")}): ${refs.map((r) => r.sha256).join(", ")}`,
+  );
+}
+
+// ───────────────────────── Seguimiento ─────────────────────────
+
+/** Vídeos que se ponen en marcha por pasada, como mucho (cada uno son dos llamadas a Claude). */
+const BACKFILL_PER_SWEEP = 5;
+/** Solo desgloses de estos últimos días (los viejos se buscan al pedir su imagen). */
+const BACKFILL_DAYS = 7;
+
+/**
+ * Vídeos que aún esperan su imagen (sin imagen aprobada), sin entorno a mano y con un desglose
+ * reciente hecho sin búsqueda de Pinterest (p. ej. desglosados antes de esta regla): se ponen en
+ * marcha ya, para que la tarjeta las enseñe antes de pedir la imagen.
+ */
+async function startMissingRuns(now: Date): Promise<void> {
+  const since = new Date(now.getTime() - BACKFILL_DAYS * 24 * 60 * 60_000);
+  const { rows } = await getDb().execute<{ video_id: string; analysis_id: string }>(sql`
+    select v.id as video_id, a.id as analysis_id
+    from videos v
+    join lateral (
+      select id, updated_at from video_analyses
+      where video_id = v.id and status = 'done'
+      order by version desc limit 1
+    ) a on true
+    where v.environment_photo_id is null
+      and v.approved_frame_result_id is null
+      and a.updated_at > ${since}
+      and not exists (select 1 from video_pinterest_refs r where r.video_id = v.id and r.analysis_id = a.id)
+    order by a.updated_at desc
+    limit ${BACKFILL_PER_SWEEP}`);
+  for (const row of rows) {
+    try {
+      await ensurePinterestRun(Number(row.video_id), Number(row.analysis_id));
+    } catch (error) {
+      console.error(`[pinterest] No se pudo poner en marcha la búsqueda del vídeo ${row.video_id}:`, error);
+    }
+  }
+}
+
+/**
+ * Dentro del seguimiento de vídeos (cada minuto): vuelve a encolar las búsquedas pendientes sin
+ * novedades, las que esperaban al Mac (cuando ya contestó o se cansó) y las que se quedaron a
+ * medias. Devuelve cuántas encoló.
+ */
+export async function sweepPinterest(now: Date = new Date()): Promise<number> {
+  await startMissingRuns(now);
+  const rows = await getDb()
+    .select()
+    .from(runs)
+    .where(
+      or(
+        and(eq(runs.status, "pending"), lt(runs.updatedAt, new Date(now.getTime() - REQUEUE_MS))),
+        eq(runs.status, "waiting_mac"),
+        and(eq(runs.status, "searching"), lt(runs.updatedAt, new Date(now.getTime() - STALE_SEARCH_MS))),
+      ),
+    )
+    .limit(50);
+  let queued = 0;
+  for (const run of rows) {
+    if (run.status === "waiting_mac") {
+      const queries = ((run.queries as string[] | null) ?? []).map((q) => q.replace(/\s+/g, " ").trim().toLowerCase());
+      const waiting = queries.length
+        ? await getDb()
+            .select({ id: schema.pinterestSearches.id })
+            .from(schema.pinterestSearches)
+            .where(and(inArray(schema.pinterestSearches.query, queries), eq(schema.pinterestSearches.status, "pending")))
+        : [];
+      if (waiting.length > 0) continue;
+    }
+    if (run.status === "searching") await setRun(run.id, { status: "pending" });
+    else await setRun(run.id, {});
+    try {
+      await enqueue(run);
+      queued += 1;
+    } catch (error) {
+      console.error(`[pinterest] No se pudo volver a encolar la búsqueda ${run.id}:`, error);
+    }
+  }
+  return queued;
+}
