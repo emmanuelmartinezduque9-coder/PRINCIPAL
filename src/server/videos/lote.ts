@@ -14,6 +14,7 @@ import { getBatchFor, type Batch } from "@/server/videos/batches";
 import { briefOf, type OwnerAnswer } from "@/server/videos/brief";
 import { estimateClipCredits } from "@/server/videos/clip";
 import { PINTEREST_PENDING } from "@/server/videos/pinterest";
+import { expectsEffectPass } from "@/server/videos/efecto";
 // Registra el constructor de la imagen inicial (`frame`) en las generaciones.
 import { approveFrame, rejectFrame } from "@/server/videos/frame";
 import { BLOCKED, MAX_REGENERATIONS, quoteGeneration, SYSTEM_REJECT_PREFIX, requestGeneration, type GenDeps, type GenerationKind } from "@/server/videos/generations";
@@ -692,7 +693,9 @@ async function quoteRows(user: AuthUser, rows: Row[], deps: GenDeps): Promise<Ba
       const frame = await quoteGeneration(user, row.video.id, "frame", deps);
       balance = frame.balance;
       const clip = await estimateClipCredits(user, row.video, deps);
-      return { videoId: row.video.id, frame: frame.credits, clip, error: null };
+      // El paso del efecto del producto es una ronda de imagen más (una sola candidata): entra en el presupuesto.
+      const effect = (await expectsEffectPass(row.video.id)) ? frame.credits : 0;
+      return { videoId: row.video.id, frame: frame.credits + effect, clip, error: null };
     } catch (error) {
       if (!(error instanceof HttpError)) throw error;
       return { videoId: row.video.id, frame: null, clip: null, error: error.message };

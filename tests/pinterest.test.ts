@@ -100,6 +100,8 @@ const SCENE = {
 const COMPOSED = {
   productVisible: false,
   packagingVisible: false,
+  effectVisible: false,
+  effectPrompt: null,
   composition:
     "Use image 1 ONLY for the exact opening action and foreground arrangement: first-person view, two hands holding the round wrapped gift at 45 percent of frame width. Replace all original living room scenery with the exact living room in image {ROOM}. Do not copy the source shelves and mantel.",
   identity: "The hands and forearms are those of the woman in image {AVATAR} and only her, with fine creases and short natural nails.",
@@ -385,5 +387,74 @@ describe("una corrección automática no gasta regeneraciones", () => {
     const owner = [round("No me gusta"), round("Tampoco"), round("Otra vez no")];
     expect(stageOf(owner, false, at)).toBe("maxed");
     expect(stageOf([round("No me gusta"), round("Tampoco"), round(`${SYSTEM_REJECT_PREFIX}alas de mariposa`)], false, at)).toBe("need");
+  });
+});
+
+describe("paso del efecto del producto (foto «Funcionando»)", () => {
+  it("tras la imagen principal se pide sola la edición del efecto; si la comprobación falla se repite una vez y no más", async () => {
+    const { afterFrameDone, EFFECT_PROMPT_START } = await import("@/server/videos/efecto");
+    const { vi } = await import("vitest");
+    const working = (await addProductPhoto(ana, producto.id, Buffer.concat([jpeg, Buffer.from("efecto")]), "funcionamiento")).id;
+    expect(working).toBeGreaterThan(0);
+    // El prompt con sala dice que el efecto se ve y trae el prompt corto del paso.
+    const effectPrompt = "Edit image 1. Change only the two glowing projections; draw the exact butterfly wings of image 2. Not feathers.";
+    const composed = { ...COMPOSED, productVisible: true, effectVisible: true, effectPrompt };
+    const { client } = fakeMessages([
+      { text: JSON.stringify(SCENE) },
+      { text: JSON.stringify({ picks: [{ n: 3, reason: "Sala." }, { n: 1, reason: "Realismo." }], rejected: "" }) },
+      { text: JSON.stringify(composed) },
+    ]);
+    await requirePinterestRefs(v.id).catch(() => {});
+    await runPinterest((await runOfVideo(v.id)).id, pinterestDeps({ gateway: createGateway({ client }) }));
+    v = await getVideoFor(ana, v.id);
+
+    vi.stubGlobal("fetch", (async () => new Response(new Uint8Array(jpeg), { status: 200 })) as typeof fetch);
+    const finish = async () => {
+      for (const jobId of Object.keys(fake.state.jobs)) {
+        if (fake.state.jobs[jobId].status !== "done") {
+          fake.state.jobs[jobId] = { jobId, status: "done", failure: null, error: null, urls: [`https://cdn.test/${jobId}.png`] };
+        }
+      }
+    };
+    const verdicts = (matches: boolean) => createGateway({ client: fakeMessages([{ text: JSON.stringify({ matches, reason: "forma" }) }]).client });
+
+    // 1. La imagen principal: al terminar, pasa sola al paso del efecto (sin gastar una regeneración).
+    const main = await requestGeneration(ana, v.id, "frame", { expectedCredits: 999 }, deps);
+    await submitGeneration(main.generationId, deps);
+    await finish();
+    await finalizeGeneration(main.generationId, deps);
+    await afterFrameDone(main.generationId);
+    const [mainRow] = await getDb().select().from(schema.generations).where(eq(schema.generations.id, main.generationId));
+    expect(mainRow.rejectReason).toBe("Corrección automática: paso del efecto (1)");
+
+    // 2. La ronda siguiente es la edición: image 1 = la imagen principal, image 2 = la foto de funcionamiento.
+    const effect1 = await requestGeneration(ana, v.id, "frame", { expectedCredits: 999 }, deps);
+    const [e1] = await getDb().select().from(schema.generations).where(eq(schema.generations.id, effect1.generationId));
+    const req1 = e1.request as { prompt: string; medias: Array<{ value: string }> };
+    expect(req1.prompt.startsWith(EFFECT_PROMPT_START)).toBe(true);
+    expect(req1.medias).toHaveLength(2);
+    expect(e1.count).toBe(1);
+    await submitGeneration(effect1.generationId, deps);
+    await finish();
+    await finalizeGeneration(effect1.generationId, deps);
+
+    // 3. La comprobación dice que no tiene la forma: se repite una vez, desde la misma imagen principal.
+    await afterFrameDone(effect1.generationId, { gateway: verdicts(false) });
+    const [e1After] = await getDb().select().from(schema.generations).where(eq(schema.generations.id, effect1.generationId));
+    expect(e1After.rejectReason).toBe("Corrección automática: paso del efecto (2)");
+    const effect2 = await requestGeneration(ana, v.id, "frame", { expectedCredits: 999 }, deps);
+    const [e2] = await getDb().select().from(schema.generations).where(eq(schema.generations.id, effect2.generationId));
+    const req2 = e2.request as { prompt: string; medias: Array<{ value: string }> };
+    expect(req2.medias[0].value).toBe(req1.medias[0].value);
+    expect(req2.prompt).toContain("The previous attempt kept the old shape");
+    await submitGeneration(effect2.generationId, deps);
+    await finish();
+    await finalizeGeneration(effect2.generationId, deps);
+
+    // 4. Segundo intento: aunque falle, no se repite más; la candidata queda para el dueño.
+    await afterFrameDone(effect2.generationId, { gateway: verdicts(false) });
+    const [e2After] = await getDb().select().from(schema.generations).where(eq(schema.generations.id, effect2.generationId));
+    expect(e2After.rejectReason).toBeNull();
+    vi.unstubAllGlobals();
   });
 });

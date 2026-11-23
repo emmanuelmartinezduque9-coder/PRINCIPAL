@@ -554,7 +554,13 @@ async function pickFromBank(
     error: null,
     framePrompt: composed.prompt,
     basePromptSha: composed.baseSha,
-    scene: { ...((current?.scene as object | null) ?? {}), productHidden: composed.productHidden, packagingHidden: composed.packagingHidden },
+    scene: {
+      ...((current?.scene as object | null) ?? {}),
+      productHidden: composed.productHidden,
+      packagingHidden: composed.packagingHidden,
+      effectVisible: composed.effectVisible,
+      effectPrompt: composed.effectPrompt,
+    },
   });
   console.log(`[pinterest] Prompt con la sala del vídeo ${run.videoId}:\n${composed.prompt}`);
   console.log(
@@ -621,6 +627,11 @@ const oneParagraph = z
 const composedSchema = z.object({
   productVisible: z.boolean().describe("Si el artículo o su efecto se ven en esta toma (false si aún está envuelto, tapado o fuera de plano)."),
   packagingVisible: z.boolean().describe("Si la caja o el envase del producto se ve en esta toma."),
+  effectVisible: z.boolean().describe("Si en esta toma se ve el efecto del producto funcionando (proyección, luz, resultado) y hay foto de funcionamiento."),
+  effectPrompt: z
+    .string()
+    .nullable()
+    .describe("Con effectVisible: el prompt corto, en inglés, del paso de edición del efecto (empieza por «Edit image 1.»); si no, null."),
   composition: oneParagraph.describe("Párrafo 1, en inglés."),
   identity: oneParagraph.describe("Párrafo 2, en inglés."),
   product: oneParagraph.describe("Párrafo 3, en inglés."),
@@ -647,6 +658,8 @@ Los demás objetos del fotograma que sostiene o toca la persona y que NO son el 
 
 En lighting, además de la luz de la sala, di cómo se vuelve a iluminar el sujeto (manos, brazos, persona, objeto) con esa misma luz: dirección, exposición, color, contraste, el lado en sombra, sombras de contacto y rebote de color, y que no conserva la luz de image 1. Nada de aspecto de recorte pegado.
 
+Decide también effectVisible: si en esta toma se ve el efecto del producto funcionando (una proyección, una luz, un resultado) y en los adjuntos hay foto de funcionamiento. Entonces escribe effectPrompt: el prompt corto de un segundo paso de edición, sobre la imagen ya generada (image 1) con la foto del producto funcionando (image 2), que cambia SOLO el efecto. En inglés, así (adaptándolo a lo que ves): «Edit image 1. Change only the [efecto, p. ej. two glowing light projections on the ground on each side of the dog]; keep everything else in image 1 exactly as it is: the same [lugar, luz, personas, manos, objetos], framing and camera. The [efecto] in image 1 may have the wrong shape. Erase it completely and draw instead the exact [efecto] of image 2: [forma, estructura, colores y detalles que ves en la foto de funcionamiento]. [Dónde empieza y cómo se apoya en la escena, en perspectiva, y el tinte de luz que deja cerca.] Not [formas incorrectas, p. ej. feathers, angel wings, dragon wings]. Do not copy the [sujeto], the floor or the background of image 2: from image 2 take only the shape, colours, details and glow of the effect. Vertical 9:16 phone photo, no text, no captions, no watermark.» Sin nombres de marca. Si no se ve el efecto, effectVisible false y effectPrompt null.
+
 No uses palabras de la lista negra de la regla. Nada de títulos en mayúsculas.`;
 
 /**
@@ -661,7 +674,14 @@ async function composeFramePrompt(
   rules: Awaited<ReturnType<typeof loadRules>>,
   refs: PinterestRef[],
   frameJpeg: Buffer | null,
-): Promise<{ prompt: string; baseSha: string; productHidden: boolean; packagingHidden: boolean } | null> {
+): Promise<{
+  prompt: string;
+  baseSha: string;
+  productHidden: boolean;
+  packagingHidden: boolean;
+  effectVisible: boolean;
+  effectPrompt: string | null;
+} | null> {
   const [video] = await getDb().select({ imagePrompt: schema.videos.imagePrompt }).from(schema.videos).where(eq(schema.videos.id, run.videoId));
   const base = video?.imagePrompt ?? null;
   if (!base) {
@@ -707,6 +727,8 @@ async function composeFramePrompt(
     baseSha: crypto.createHash("sha256").update(base).digest("hex"),
     productHidden: !written.productVisible,
     packagingHidden: !written.packagingVisible,
+    effectVisible: written.effectVisible && !!written.effectPrompt,
+    effectPrompt: written.effectVisible ? written.effectPrompt : null,
   };
 }
 

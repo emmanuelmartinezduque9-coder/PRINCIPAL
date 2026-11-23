@@ -6,6 +6,7 @@ import { FINALIZE_JOB, finalizeGeneration, SUBMIT_JOB, submitGeneration } from "
 import { startBatchEdits } from "@/server/videos/edits";
 import { ADVANCE_JOB, advanceBatch, onBatchReady } from "@/server/videos/lote";
 import { advanceVideo, AUTO_JOB, kickVideo, kickVideoOfAnalysis, kickVideoOfGeneration } from "@/server/videos/autopilot";
+import { afterFrameDone } from "@/server/videos/efecto";
 import { processReference } from "@/server/videos/intake";
 import { PINTEREST_JOB, runPinterest } from "@/server/videos/pinterest";
 import { archiveSweep } from "@/server/videos/archive";
@@ -66,6 +67,8 @@ defineJob<{ generationId: number }>(
   async ({ generationId }) => {
     if (typeof generationId !== "number") throw new StepFailedError("Datos del trabajo no válidos.");
     await finalizeGeneration(generationId);
+    // Paso del efecto del producto (si hace falta) y su comprobación, antes de que siga el vídeo.
+    await afterFrameDone(generationId);
     // El vídeo (o su lote) sigue sin esperar al seguimiento.
     await kickVideoOfGeneration(generationId);
   },

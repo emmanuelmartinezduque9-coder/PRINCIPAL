@@ -163,6 +163,21 @@ export const NO_PEOPLE_PICTURES =
 
 export const buildFrameRequest: RequestBuilder = async (user, video, deps) => {
   await requireAnalysisDone(video);
+  // Paso del efecto (orden del dueño, 23/11/2026; ver `efecto.ts`): si la ronda anterior se pasó a
+  // «paso del efecto», esta edita la imagen principal con la foto del producto funcionando.
+  const { buildEffectRequest, pendingEffectPass } = await import("@/server/videos/efecto");
+  const effect = await pendingEffectPass(video.id);
+  if (effect) {
+    const built = await buildEffectRequest(user, video.id, effect, deps);
+    if (built) {
+      const model = await getImageModel();
+      return {
+        request: { model, prompt: built.prompt, aspectRatio: "9:16", resolution: "2k", medias: built.medias },
+        count: 1,
+        snapshot: videoSnapshot(video, FRAME_SNAPSHOT),
+      };
+    }
+  }
   const refs = await manifestRefsFor(user, video);
   // Regla fija del dueño: sin referencia de entorno puesta a mano, siempre con fotos de Pinterest
   // (también al regenerar). Si aún no están, se buscan y esto espera (409).
