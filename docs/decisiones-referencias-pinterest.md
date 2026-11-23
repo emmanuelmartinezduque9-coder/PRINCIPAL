@@ -38,3 +38,15 @@ Las 2 fotos que la búsqueda nueva eligió para la escena de EisWerk le parecier
 - Hoy hay una imagen por vídeo, así que las referencias son de esa imagen. Cuando haya un frame por toma, la búsqueda irá por toma (misma tabla, una fila por toma).
 - No se verifica el país de la foto: el idioma del pin no lo prueba. Para tiendas concretas la regla pide la cadena en la consulta y la elección lo mira, pero no hay comprobación externa.
 - Pinterest puede cambiar su buscador; si deja de responder en la nube y en el Mac, la búsqueda falla con el motivo y la imagen espera (no se genera sin referencias).
+
+## El prompt con la sala: método aprobado copiado tal cual (23/11/2026, tarde)
+
+Las imágenes de la ronda 3 del vídeo 2 salieron casi iguales que sin referencias. El prompt real (volcado de producción) lo explica: el desglose, escrito antes de elegir la sala, se inventaba su propio salón («dark green sofa, wooden shelf…»), decía que image 1 es «la base» y las dos fotos solo aparecían al final en un párrafo genérico. Nano Banana ignora un cambio de fondo pedido así y devuelve la habitación del original.
+
+Se copia el método del sistema anterior (prompts aprobados en `/Volumes/T7/AUTOMATIZACION SEGA/Motor/order-preparation/app-01d9c7c947cb45aca4ea24b00fa5b216-6/frame-preparation/v2-c1-user-background-r3b-prepared/frame-001.txt` → `frames_salida/55ba5917_crudo.png`, y los de los pedidos 47 y 52; política de luz de `engine-backup/frame_realism.py`):
+
+- Tras elegir la sala del banco, Claude mira esa foto y el fotograma original y reescribe el prompt en los **ocho párrafos** de entonces: composición («Use image 1 ONLY for the exact opening action… Replace all original … scenery with the exact … in image N»), identidad, producto, **entorno** («Reference image N is the EXACT requested background, not an inspiration. Preserve its …» con 6–12 elementos y su posición, cámara dentro de esa sala), **luz** de esa foto + la frase fija `LIGHTING_POLICY` literal, **realismo** (la segunda foto, solo textura, párrafo literal), negativos y formato literales. Se guarda en `video_pinterest_refs.frame_prompt` con `{ROOM}`/`{REALISM}` y el constructor pone los números reales (`framePromptFor`). Si el prompt del vídeo cambia a mano, se vuelve al del desglose con el párrafo de papeles.
+- La primera foto elegida es el fondo exacto; la segunda, la de realismo (va última, como entonces).
+- Regla: `reglas/imagen-nano-banana.md`, «Fondo con referencia de salón o espacio», con los prompts aprobados A, C y D.
+
+Lo que no se copia tal cual: el orden de adjuntos de entonces era composición, producto visible, sala, avatar, realismo; aquí sigue siendo composición, avatar, artículo, embalaje, sala, realismo (los números del prompt son siempre los reales, que es lo que importa). Tampoco se pasa `thinking-level high`: el conector de Higgsfield de la aplicación no tiene ese ajuste.

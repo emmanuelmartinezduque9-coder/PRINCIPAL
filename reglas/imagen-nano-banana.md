@@ -2,6 +2,75 @@
 
 Esta es la guía única para generar las imágenes de este proyecto, por orden de Emmanuel del 01/10/2026. No combinar instrucciones creativas de otras guías de imagen. Las imágenes se generan con Nano Banana 2.1 a 2K, el modelo que usa Emmanuel; el modelo lo fija la aplicación y el dueño puede cambiarlo en Ajustes. Recoge la receta técnica de realismo del 03/10/2026 y los ejemplos validados por Emmanuel el 07/10/2026.
 
+## Fondo con referencia de salón o espacio: método aprobado, copiado tal cual (orden de Emmanuel, 23/11/2026)
+
+Cuando la imagen lleva una referencia de entorno (la foto del banco de referencias aprobadas o una puesta a mano), manda este método, que es el que daba las imágenes aprobadas del sistema anterior. Sobre el fondo y la luz prevalece sobre la regla 1 de abajo: de image 1 se conserva la acción y el primer plano, no la habitación. Nano Banana ignora los cambios de fondo pedidos de forma vaga («usa image N como fondo», «un salón alemán»): devuelve la habitación del original.
+
+El prompt va en ocho párrafos separados por una línea en blanco, en este orden:
+1. **Composición.** «Use image 1 ONLY for the exact opening action and foreground arrangement: …» (punto de vista, manos, objeto, tamaño en el encuadre en porcentaje, momento de la acción). Termina con «Replace all original [tipo de sala] scenery with the exact [sala] in image N.» Nombra los muebles del original que NO deben pasar («Do not copy the source wall TV/fireplace arrangement»).
+2. **Identidad.** Solo del avatar, con su número: «The person is the woman in image N and only her.» Manos, piel y ropa concretas.
+3. **Producto.** Si se ve, el artículo exacto con su número; si aún no se ve, «Do not show the … at this opening» y no se anticipa.
+4. **Entorno.** «Reference image N is the EXACT requested background, not an inspiration. Preserve its …» y la lista de 6 a 12 elementos que se ven en esa foto, cada uno con su posición (LEFT, RIGHT, centre, foreground). Después se mete la cámara dentro de esa sala: «Camera is seated on the foreground sofa looking into this same room.» «Preserve recognizable architecture, furniture, ornaments and natural spatial depth.» «Do not add a bed, laptop, … or other set dressing.» Nunca subir la cámara para que quepa la sala.
+5. **Luz.** «Match the actual … light in reference image N» con las fuentes y direcciones que se ven en la foto, y a continuación, literal:
+
+> When a room, space or environment reference is supplied, its observed lighting is the primary authority for the entire scene, overriding conflicting lighting in composition, avatar, product or style references and generic lighting recipes. Match its light direction, sources, colour temperature, intensity, contrast, exposure and falloff across the person, skin, clothing, hands, product and packaging. Re-light inserted elements to that environment, including cast and contact shadows, occlusion, reflections and colour bounce; match perspective, scale, depth, sharpness and image texture. Preserve real differences between illuminated and shaded areas: coherent integration does not mean flat or evenly filled lighting. No pasted cutouts, halos, floating objects, isolated portrait lighting or independent exposure. If no environment reference is supplied, retain the scene-specific lighting described above.
+
+6. **Realismo** (la segunda referencia, la última adjunta), literal:
+
+> Image N is realism reference only for texture. The scene-specific light in the previous paragraph controls all lighting; do not import the style photograph lighting or setting. If an environment reference is supplied, this style reference supplies texture only and must not override that environment lighting. Everyday phone-video softness varies with subject distance, light and movement; do not give skin, fabric and background identical fine detail. Do not copy its person, pose, face, clothing, product, logos or overlays. Preserve the identity and action already specified. No artificial HDR or cosmetic skin smoothing.
+
+7. **Negativos** propios de la toma: «NEGATIVE: no source captions, watermarks, interface, extra fingers, fused hands, floating objects, pasted edges, redesigned products, mixed identities, isolated portrait light or artificial background blur.»
+8. **Formato**: «Vertical 9:16 mobile frame. No captions, subtitles, emojis, overlays, play controls or interface. Only authentic physical package or storefront print belongs in the scene.»
+
+En la aplicación, los párrafos 5 (frase fija), 6, 7 y 8 los pone el código literalmente; Claude escribe los párrafos 1 a 5 mirando de verdad la foto de la sala, el fotograma original y el prompt del desglose (acción, identidad y producto se conservan de este).
+
+### Ejemplo aprobado A · salón navideño, manos con un regalo (EisWerk)
+Adjuntos: 1 fotograma original con sus rótulos, 2 la sala (foto elegida por Emmanuel), 3 la foto de realismo. Resultado aprobado: la sala de la referencia entera (chimenea de piedra, árbol blanco, vigas, sofás blancos) con las manos y el regalo del original.
+
+```
+Use image 1 ONLY for the exact opening action and foreground arrangement: first-person seated viewpoint, two natural hands holding the same opaque rounded Christmas gift, holly-pattern paper and red-white striped bow. Gift occupies about 45 percent of frame width, left hand supports it and right fingers rest by bow before unwrapping. Replace all original bedroom scenery with the exact living room in image 2. Keep fingers anatomically natural, subtly asymmetric and relaxed, touching paper with visible contact and weight. No added person or face.
+
+First-person view from the original seated position, no face or extra people. One natural adult pair of hands, left supporting the lower-left gift edge and right holding its right side by the ribbon. Preserve the original hand proportions and relaxed grip, without beauty retouching. Replace only cream sleeves with soft medium-grey fine-knit sleeves, not thick sculpted ribbing. Skin remains softly resolved at phone-camera distance, with small natural tonal differences, not waxy smoothing or exaggerated pores.
+
+Do not show the ice cream maker at this opening. The exact product is revealed only later in the video; never anticipate the reveal or add a retail box.
+
+Reference image 2 is the EXACT requested background, not an inspiration. Preserve its stone fireplace and television centrally, white Christmas tree with red and silver ornaments on the LEFT, gifts below, dark timber ceiling beams, grey walls, white sofas with red cushions and red blanket on the RIGHT. Camera is seated on the foreground sofa looking into this same room. Preserve recognizable architecture, furniture, ornaments and natural spatial depth. Do not add a bed, laptop, notebook, recipe book, food props or other set dressing. The wrapped Christmas gift is the sole foreground prop. Keep the action, hand positions and reveal timing intact.
+
+Match the actual diffuse neutral ambient light and ceiling light in reference image 2. Local warm light from the fireplace and tree stays local. Hands, sleeves and gift share this room light with contact shadows, believable scale and perspective. Natural room illumination, neutral skin tones and readable background detail. [frase fija de luz]
+
+[párrafo fijo de realismo con image 3]
+
+NEGATIVE: no source captions, watermarks, interface, extra fingers, fused hands, floating objects, pasted edges, redesigned products, mixed identities, isolated portrait light or artificial background blur.
+
+Vertical 9:16 mobile frame. No captions, subtitles, emojis, overlays, play controls or interface. Only authentic physical package or storefront print belongs in the scene.
+```
+
+### Ejemplo aprobado C · cocina (EisWerk)
+Adjuntos: 1 composición, 2 caja, 3 la cocina de referencia, 4 extra, 5 avatar hombre, 6 avatar mujer, 7 realismo.
+
+```
+Use image 1 only for the same two people, wardrobe, staging, relative scale, gesture and camera height. Replace its kitchen with image 3. Show her looking down and stirring ice cream by hand before she sees the gift. He approaches behind her holding the box against his torso.
+
+Adult woman in front, looking down with tired shoulders and one hand stirring; adult husband standing behind her, box supported with both hands. Natural posture, keep their eyes and hands distinct. The person is the woman in image 6 and only her. The husband is the man in image 5.
+
+EisWerk box containing exactly the turquoise ice cream maker. Show the model on the package, leave the machine inside.
+
+Image 3 supplies the exact kitchen. Camera looks across its gleaming white island toward white wall cabinets with two green wreaths, stainless microwave above range, charcoal base cabinets, under-cabinet light, and modest red and green Christmas decorations. Keep the chrome gooseneck faucet to one side and a snowman placemat on the near island. Position the tired woman stirring the bowl on the island and her husband approaching with the closed EisWerk box. Give both people floor space and keep their hands and the bowl unobstructed. Keep the action, hand positions and reveal timing intact.
+
+Neutral white ceiling light and small pools of warmer under-cabinet light, gentle kitchen reflections on steel and white stone. Match the supplied interior across skin, hair, carton, bowl and hands. [frase fija de luz]
+```
+
+### Ejemplo aprobado D · salón navideño, el hombre que entrega la caja (EisWerk)
+Adjuntos: 1 imagen ya aprobada (composición), 2 caja, 3 la sala, 4 realismo.
+
+```
+Replace only the room of image 1 with the real room in image 3: grey sectional sofa on left, Christmas tree behind left, television with red backlight on right above the white fireplace console and stockings, foreground grey ottoman and tray. Preserve the source action geometry and seated camera; position the man naturally in the room without flattening its depth or changing his size. Keep furnishings and perspective coherent with image 3.
+
+Image 3 is the lighting authority: soft daylight from the left window, warm tree lights and fireplace, restrained red television backlight near the right wall. Relight the man, face, hands, black hoodie and white carton with exactly this direction, intensity, colour balance, falloff and contrast. Add coherent contact shadows and subtle local colour bounce; no independent bright face or packaging lighting, no cutout edges. Preserve the room shadows and natural exposure. [frase fija de luz]
+```
+
+Fallos que lo enseñaron: «Use the real Christmas bedroom from image 2» y «German family kitchen, candid view» devolvieron la habitación del original y fueron rechazados; se aprobaron al escribir «EXACT requested background, not an inspiration» con la lista de elementos y sus posiciones, y «Do not add a bed, laptop, notebook…».
+
 ## Reglas fijas del frame (orden de Emmanuel, 22/11/2026)
 
 Estas reglas mandan sobre todo lo demás de esta guía. Salen del primer lote de prueba en la aplicación, cuya imagen salió mal: el modelo reinventó la escena en vez de replicar el fotograma (otra postura, una taza sin asa y con otra forma, un salón de catálogo y esquinas negras de lente).

@@ -15,7 +15,7 @@ import {
   type RequestBuilder,
 } from "@/server/videos/generations";
 import { imageManifest, type ManifestItem } from "@/server/videos/manifest";
-import { addApprovedToBank, hasManualEnvironment, readPinterestImage, requirePinterestRefs, withPinterestRoles } from "@/server/videos/pinterest";
+import { addApprovedToBank, framePromptFor, hasManualEnvironment, readPinterestImage, requirePinterestRefs } from "@/server/videos/pinterest";
 import { checkImagePrompt } from "@/server/videos/prompt-check";
 import {
   BRIEF_CHANGED,
@@ -164,7 +164,8 @@ export const buildFrameRequest: RequestBuilder = async (user, video, deps) => {
   // (también al regenerar). Si aún no están, se buscan y esto espera (409).
   if (!hasManualEnvironment(imageManifest(video, { ...refs, pinterest: [] }))) await requirePinterestRefs(video.id);
   const manifest = imageManifest(video, await manifestRefsFor(user, video));
-  const prompt = withPinterestRoles(video.imagePrompt!, manifest);
+  // Con la sala elegida, el prompt reescrito con el método aprobado (la sala descrita elemento a elemento).
+  const prompt = await framePromptFor(video.id, video.imagePrompt!, manifest);
   if (manifest.some((item) => item.source.kind === "avatar_pending")) throw new HttpError(400, NO_AUTO_AVATAR);
   const errors = checkImagePrompt(prompt, manifest).filter((issue) => issue.level === "error");
   if (errors.length > 0) throw new HttpError(400, errors.map((issue) => issue.message).join(" "));

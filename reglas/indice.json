@@ -60,9 +60,10 @@
       "4618a8ddecd2f303da03898610dd034371e89cf33f46dd8f60145399ee6eebfc",
       "bf5f918554eef6817b5a5345c6bd60ab7f1f9163f16742b8c76d3761f0a84dab",
       "78ddcf2b38d7f5274bbb5850ff83396da65210a9855e510e78916fe31b4e9bbb",
-      "83e999fe260e55617a83ba13f3064221c65bc14652f9c66791277ac673d2a809"
+      "83e999fe260e55617a83ba13f3064221c65bc14652f9c66791277ac673d2a809",
+      "f335e8dfdb3ac12713f5644418bd8e904924fca7c47754548dd1d3ba80161ef3"
     ],
-    "updateNote": "Reglas fijas del frame (23/11/2026): el producto del original siempre se sustituye por el artículo del encargo y se conservan las personas del original."
+    "updateNote": "Fondo con referencia (23/11): método aprobado del sistema anterior copiado tal cual (sala descrita elemento a elemento, luz de la sala manda)"
   },
   {
     "slug": "video-seedance",

@@ -246,6 +246,13 @@
       "when": 1795408165148,
       "tag": "0034_banco_referencias",
       "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "7",
+      "when": 1795409718938,
+      "tag": "0035_prompt_con_sala",
+      "breakpoints": true
     }
   ]
 }

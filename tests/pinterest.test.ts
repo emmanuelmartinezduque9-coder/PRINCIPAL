@@ -97,11 +97,22 @@ const SCENE = {
   queries: ["Wohnzimmer Weihnachten Sofa Handyfoto", "christmas living room sofa real home"],
 };
 
+const COMPOSED = {
+  composition:
+    "Use image 1 ONLY for the exact opening action and foreground arrangement: first-person view, two hands holding the round wrapped gift at 45 percent of frame width. Replace all original living room scenery with the exact living room in image {ROOM}. Do not copy the source shelves and mantel.",
+  identity: "The hands and forearms are those of the woman in image 2 and only her, with fine creases and short natural nails.",
+  product: "Do not show the ice cream maker at this opening; the gift stays wrapped and nothing is revealed.",
+  environment:
+    "Reference image {ROOM} is the EXACT requested background, not an inspiration. Preserve its fireplace with red stockings in the centre, lit tree on the LEFT and television above the fireplace. Camera is lying on the foreground bed looking into this same room. Never raise the camera just to fit the whole room.",
+  lighting: "Match the actual warm practical light of the fireplace and the tree lights in reference image {ROOM}, with soft contact shadows on the paper.",
+};
+
 /** Claude simulado: primero la escena y las consultas, después la elección (candidatas 3 y 1). */
 function gatewayFor(picks: Array<{ n: number; reason: string }> = [{ n: 3, reason: "Salón real de móvil con árbol." }, { n: 1, reason: "Sofá habitado y luz cálida." }]) {
   const { client, calls } = fakeMessages([
     { text: JSON.stringify(SCENE), usage: { inputTokens: 3000, outputTokens: 300 } },
     { text: JSON.stringify({ picks, rejected: "Las demás son de catálogo." }), usage: { inputTokens: 20000, outputTokens: 200 } },
+    { text: JSON.stringify(COMPOSED), usage: { inputTokens: 20000, outputTokens: 900 } },
   ]);
   return { gateway: createGateway({ client }), calls };
 }
@@ -234,7 +245,14 @@ describe("la imagen inicial lleva siempre referencias de Pinterest", () => {
     const image = request as { prompt: string; medias: Array<{ value: string }> };
     // Composición, avatar, artículo y las dos del banco.
     expect(image.medias).toHaveLength(5);
-    expect(image.prompt).toContain("image 4 and image 5 are real everyday phone photos of this kind of place, chosen and approved by the owner");
+    // El prompt reescrito con el método aprobado: la sala es image 4 y el realismo image 5.
+    expect(image.prompt).toContain("Replace all original living room scenery with the exact living room in image 4.");
+    expect(image.prompt).toContain("Reference image 4 is the EXACT requested background, not an inspiration.");
+    expect(image.prompt).toContain("When a room, space or environment reference is supplied, its observed lighting is the primary authority");
+    expect(image.prompt).toContain("Image 5 is realism reference only for texture.");
+    expect(image.prompt).toContain("NEGATIVE: no source captions");
+    expect(image.prompt).not.toContain("{ROOM}");
+    expect(image.prompt.split("\n\n")).toHaveLength(8);
     const uploaded = fake.calls.filter((c) => c.method === "uploadMedia").map((c) => (c.args as { filename: string }).filename);
     expect(uploaded.filter((name) => name.startsWith("pinterest-"))).toHaveLength(2);
   });
@@ -285,7 +303,7 @@ describe("la imagen inicial lleva siempre referencias de Pinterest", () => {
     const request = row.request as { prompt: string; medias: unknown[] };
     expect(row.round).toBe(2);
     expect(request.medias).toHaveLength(5);
-    expect(request.prompt).toContain("chosen and approved by the owner");
+    expect(request.prompt).toContain("EXACT requested background");
   });
 
   it("si no elige ninguna, lo vuelve a intentar antes de rendirse", async () => {

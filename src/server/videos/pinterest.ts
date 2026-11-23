@@ -16,7 +16,7 @@ import { makeThumbnail } from "@/server/media/ffmpeg";
 import type { PinCandidate, searchPins } from "@/server/pinterest-searches";
 import { readProductPhoto } from "@/server/photos";
 import { getProductFor } from "@/server/products";
-import { loadRules } from "@/server/rules";
+import { loadRules, RULE_SLUGS } from "@/server/rules";
 import type { ManifestItem } from "@/server/videos/manifest";
 
 /**
@@ -475,7 +475,7 @@ async function bankThumb(hash: string, cached: Buffer | null): Promise<Buffer | 
 
 const BANK_INSTRUCTIONS = `Eliges, del banco de referencias que el dueño ya eligió a mano y aprobó en lotes anteriores, las fotos que acompañarán a la imagen inicial de un anuncio como referencia de entorno y realismo (no aportan personas, producto ni encuadre: eso sale de otras referencias). Todas son válidas para él; tu trabajo es elegir la que mejor encaja con la escena.
 
-Elige por este orden: el mismo tipo de sitio que la toma y que la acción quepa (salón con sofá y árbol para una escena de sofá navideña; cocina para preparar; congelador para sacar algo del congelador; tienda para comprar); la época y la decoración (si la escena es navideña, una con decoración navideña clara); la luz y el momento del día del primer fotograma; el punto de vista (un POV desde el sofá si la toma lo es); y, a igualdad, una usada en la misma cuenta. Elige como mucho ${MAX_PINTEREST_REFS}, de mejor a peor, por su número. Si de verdad ninguna es del mismo tipo de sitio, elige la más cercana y dilo en el motivo.`;
+Elige por este orden: el mismo tipo de sitio que la toma y que la acción quepa (salón con sofá y árbol para una escena de sofá navideña; cocina para preparar; congelador para sacar algo del congelador; tienda para comprar); la época y la decoración (si la escena es navideña, una con decoración navideña clara); la luz y el momento del día del primer fotograma; el punto de vista (un POV desde el sofá si la toma lo es); y, a igualdad, una usada en la misma cuenta. Elige como mucho ${MAX_PINTEREST_REFS}, de mejor a peor, por su número: la primera será el fondo EXACTO de la imagen (la sala que se reproduce entera), así que tiene que ser del mismo tipo de sitio y dejar sitio a la acción; la segunda, si la eliges, solo aporta textura de foto real (realismo), así que basta con que sea una foto real cotidiana de luz parecida. Si de verdad ninguna es del mismo tipo de sitio, elige la más cercana y dilo en el motivo.`;
 
 /** Elige del banco con visión y deja lista la búsqueda (sin bajar nada: las fotos ya están en el almacén). */
 async function pickFromBank(
@@ -534,10 +534,125 @@ async function pickFromBank(
     const { row } = shown[pick.n - 1];
     return { sha256: row.sha256, query: `banco ${row.code}`, pinId: row.code, sourceUrl: `banco:${row.code}`, reason: pick.reason };
   });
-  await setRun(run.id, { status: "ready", refs, error: null });
+  const composed = await composeFramePrompt(run, ctx, gateway, rules, refs, frameJpeg);
+  if (!composed) return;
+  await setRun(run.id, { status: "ready", refs, error: null, framePrompt: composed.prompt, basePromptSha: composed.baseSha });
   console.log(
     `[pinterest] Vídeo ${run.videoId} (${product.name}): ${refs.length} referencia(s) del banco de aprobadas para «${scene.place}»: ${refs.map((r) => r.pinId).join(", ")} (${refs.map((r) => r.sha256).join(", ")})`,
   );
+}
+
+// ───────────────────────── Prompt con la sala (método aprobado) ─────────────────────────
+
+/**
+ * Método del sistema anterior, copiado tal cual (orden del dueño, 23/11/2026; ver
+ * `reglas/imagen-nano-banana.md`, «Fondo con referencia»). Ocho párrafos: composición, identidad,
+ * producto, entorno (la sala descrita elemento a elemento), luz + `LIGHTING_POLICY`, realismo,
+ * negativos y formato. Los cuatro últimos textos fijos son literales de los prompts aprobados.
+ */
+export const LIGHTING_POLICY =
+  "When a room, space or environment reference is supplied, its observed lighting is the primary authority for the entire scene, overriding conflicting lighting in composition, avatar, product or style references and generic lighting recipes. Match its light direction, sources, colour temperature, intensity, contrast, exposure and falloff across the person, skin, clothing, hands, product and packaging. Re-light inserted elements to that environment, including cast and contact shadows, occlusion, reflections and colour bounce; match perspective, scale, depth, sharpness and image texture. Preserve real differences between illuminated and shaded areas: coherent integration does not mean flat or evenly filled lighting. No pasted cutouts, halos, floating objects, isolated portrait lighting or independent exposure. If no environment reference is supplied, retain the scene-specific lighting described above.";
+const realismParagraph = (tag: string) =>
+  `${tag[0].toUpperCase()}${tag.slice(1)} is realism reference only for texture. The scene-specific light in the previous paragraph controls all lighting; do not import the style photograph lighting or setting. If an environment reference is supplied, this style reference supplies texture only and must not override that environment lighting. Everyday phone-video softness varies with subject distance, light and movement; do not give skin, fabric and background identical fine detail. Do not copy its person, pose, face, clothing, product, logos or overlays. Preserve the identity and action already specified. No artificial HDR or cosmetic skin smoothing.`;
+export const NEGATIVE_PARAGRAPH =
+  "NEGATIVE: no source captions, watermarks, interface, extra fingers, fused hands, floating objects, pasted edges, redesigned products, mixed identities, isolated portrait light or artificial background blur.";
+export const FORMAT_PARAGRAPH =
+  "Vertical 9:16 mobile frame. No captions, subtitles, emojis, overlays, play controls or interface. Only authentic physical package or storefront print belongs in the scene.";
+/** Marcas de los números de las dos fotos en el prompt guardado (se sustituyen al pedir la imagen). */
+export const ROOM_TAG = "{ROOM}";
+export const REALISM_TAG = "{REALISM}";
+
+const oneParagraph = z
+  .string()
+  .min(40)
+  .refine((text) => !/\n\s*\n/.test(text), "Un solo párrafo");
+const composedSchema = z.object({
+  composition: oneParagraph.describe("Párrafo 1, en inglés."),
+  identity: oneParagraph.describe("Párrafo 2, en inglés."),
+  product: oneParagraph.describe("Párrafo 3, en inglés."),
+  environment: oneParagraph.describe("Párrafo 4, en inglés: la sala de {ROOM} elemento a elemento con su posición."),
+  lighting: oneParagraph.describe("Párrafo 5, en inglés: la luz que se ve en {ROOM} (sin la frase fija, la añade la aplicación)."),
+});
+
+const COMPOSE_INSTRUCTIONS = `Reescribes el prompt de la imagen inicial de un anuncio con el método aprobado de la regla «Imágenes con Nano Banana», sección «Fondo con referencia de salón o espacio» (sigue sus ejemplos aprobados A, C y D al pie de la letra en estructura y tono). Tienes: el prompt del desglose (acción, identidad, producto y cambios que se conservan), el fotograma original (image 1) y la foto de la sala elegida, que es el fondo EXACTO.
+
+Escribe en inglés, en prosa corrida, cinco párrafos (cada uno de un solo bloque):
+1. composition: «Use image 1 ONLY for the exact opening action and foreground arrangement: …» con punto de vista, manos, objeto, su tamaño en porcentaje del ancho del encuadre y el momento de la acción, tal como dice el prompt del desglose. Termina con «Replace all original … scenery with the exact … in image {ROOM}.» y nombra los muebles y objetos del fondo del original que NO pasan («Do not copy the source …»). Quita los rótulos del original.
+2. identity: la identidad solo del avatar con su número, como en el desglose (manos, piel, ropa).
+3. product: el producto como en el desglose (si aún no se ve, no se anticipa ni se añade la caja).
+4. environment: «Reference image {ROOM} is the EXACT requested background, not an inspiration. Preserve its …» y entre 6 y 12 elementos que VES en esa foto, cada uno con su posición (LEFT, RIGHT, centre, foreground, background). Mete la cámara dentro de esa sala desde el punto de vista del fotograma original («Camera is … looking into this same room»), «Preserve recognizable architecture, furniture, ornaments and natural spatial depth.», «Do not add …» con lo que no debe aparecer, y «Never raise the camera just to fit the whole room.». Mantén la acción, las manos y el momento intactos.
+5. lighting: «Match the actual … light in reference image {ROOM}» con las fuentes, direcciones y temperatura que se ven en esa foto, y cómo comparten esa luz las manos, la persona y el objeto (sombras de contacto). Sin la frase fija de luz: la añade la aplicación.
+
+Cita la sala siempre como image {ROOM} (literal, con las llaves). Conserva exactamente los demás números de imagen del prompt del desglose. No uses palabras de la lista negra de la regla. Nada de títulos en mayúsculas.`;
+
+/**
+ * Escribe el prompt de la imagen con la sala elegida (método aprobado): Claude mira la sala y el
+ * fotograma original y escribe los párrafos 1–5; el código pone los fijos. `null` si no se pudo
+ * (la búsqueda queda para reintentarse).
+ */
+async function composeFramePrompt(
+  run: Run,
+  ctx: JobContext,
+  gateway: LlmGateway,
+  rules: Awaited<ReturnType<typeof loadRules>>,
+  refs: PinterestRef[],
+  frameJpeg: Buffer | null,
+): Promise<{ prompt: string; baseSha: string } | null> {
+  const [video] = await getDb().select({ imagePrompt: schema.videos.imagePrompt }).from(schema.videos).where(eq(schema.videos.id, run.videoId));
+  const base = video?.imagePrompt ?? null;
+  if (!base) {
+    await failRun(run, "El vídeo aún no tiene prompt de imagen");
+    return null;
+  }
+  const room = await makeThumbnail((await readPinterestImage(refs[0].sha256)).data, "image", 1024);
+  const content: LlmContent = [
+    textPart(`Prompt del desglose (lo que se conserva: acción, identidad, producto):\n${base}`),
+    ...(frameJpeg ? [textPart("image 1 — fotograma original (composición):"), imagePart(frameJpeg, "image/jpeg")] : []),
+    textPart("image {ROOM} — la sala elegida, fondo EXACTO:"),
+    imagePart(room, "image/jpeg"),
+  ];
+  const imageRules = await loadRules([RULE_SLUGS.imagen]);
+  const written = await runStep(ctx, stepKey(ctx, "prompt-sala", { runId: run.id, attempt: run.attempts, room: refs[0].sha256 }), async () => {
+    const answer = await gateway.call({
+      tier: "medium",
+      stepKey: stepKey(ctx, "prompt-sala", { runId: run.id, attempt: run.attempts, room: refs[0].sha256 }),
+      userId: ctx.userId,
+      productId: ctx.productId,
+      rules: [...imageRules, ...rules],
+      instructions: COMPOSE_INSTRUCTIONS,
+      content,
+      maxTokens: 6_000,
+      schema: composedSchema,
+    });
+    return answer.data!;
+  });
+  const paragraphs = [
+    written.composition.trim(),
+    written.identity.trim(),
+    written.product.trim(),
+    written.environment.trim(),
+    `${written.lighting.trim()} ${LIGHTING_POLICY}`,
+    ...(refs.length > 1 ? [realismParagraph(`image ${REALISM_TAG}`)] : []),
+    NEGATIVE_PARAGRAPH,
+    FORMAT_PARAGRAPH,
+  ];
+  return { prompt: paragraphs.join("\n\n"), baseSha: crypto.createHash("sha256").update(base).digest("hex") };
+}
+
+/**
+ * El prompt que se manda con la sala: el reescrito con el método aprobado si sigue valiendo (el
+ * prompt del vídeo no cambió), con los números reales de las fotos; si no, el del desglose con
+ * el párrafo de papeles (`withPinterestRoles`).
+ */
+export async function framePromptFor(videoId: number, imagePrompt: string, manifest: ManifestItem[]): Promise<string> {
+  const tags = manifest.filter((item) => item.source.kind === "pinterest").map((item) => item.tag);
+  if (tags.length === 0) return imagePrompt;
+  const analysisId = await latestDoneAnalysisId(videoId);
+  const run = analysisId === null ? null : await runOf(videoId, analysisId);
+  const sha = crypto.createHash("sha256").update(imagePrompt).digest("hex");
+  if (!run?.framePrompt || run.basePromptSha !== sha) return withPinterestRoles(imagePrompt, manifest);
+  const number = (tag: string) => tag.replace(/^image /, "");
+  return run.framePrompt.replaceAll(ROOM_TAG, number(tags[0])).replaceAll(REALISM_TAG, number(tags[1] ?? tags[0]));
 }
 
 // ───────────────────────── El trabajo ─────────────────────────

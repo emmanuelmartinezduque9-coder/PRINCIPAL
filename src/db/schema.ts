@@ -1418,6 +1418,13 @@ export const videoPinterestRefs = pgTable(
     queries: jsonb("queries"),
     /** Las elegidas, en orden: `{ sha256, query, pinId, sourceUrl, reason }[]`. */
     refs: jsonb("refs"),
+    /**
+     * El prompt de la imagen reescrito con el método aprobado (ocho párrafos, la sala descrita
+     * elemento a elemento), con `{ROOM}` y `{REALISM}` en lugar de los números de las dos fotos.
+     * Vale mientras el prompt del vídeo siga siendo el de `basePromptSha`.
+     */
+    framePrompt: text("frame_prompt"),
+    basePromptSha: text("base_prompt_sha"),
     error: text("error"),
     attempts: integer("attempts").notNull().default(0),
     createdAt: instant("created_at").notNull().defaultNow(),

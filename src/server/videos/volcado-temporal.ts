@@ -32,7 +32,8 @@ export async function dumpVideoForDebug(videoId: number): Promise<void> {
     .from(schema.videoAnalyses)
     .where(eq(schema.videoAnalyses.videoId, videoId));
   const manifest = imageManifest(video, await manifestRefsFor(user, video));
-  const json = { video: { id: video.id, kind: video.kind, note: video.note, adaptation: video.adaptation, imagePrompt: video.imagePrompt }, manifest, generations: gens, analyses };
+  const runs = await getDb().select().from(schema.videoPinterestRefs).where(eq(schema.videoPinterestRefs.videoId, videoId));
+  const json = { video: { id: video.id, kind: video.kind, note: video.note, adaptation: video.adaptation, imagePrompt: video.imagePrompt }, manifest, generations: gens, analyses, runs };
   await store.putBuffer(`${base}/datos.json`, Buffer.from(JSON.stringify(json, null, 2)), { contentType: "application/json" });
   for (const item of manifest) {
     const s = item.source;
