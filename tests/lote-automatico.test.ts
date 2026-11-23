@@ -482,16 +482,24 @@ describe("como mucho 2 a la vez y sin envíos dobles", () => {
 // ───────────────────────── Clips ─────────────────────────
 
 describe("clips", () => {
-  it("empiezan solos solo cuando TODAS las imágenes están aprobadas", async () => {
+  it("cada vídeo sigue solo: su clip en cuanto se aprueba su imagen y su montaje en cuanto acaba su clip", async () => {
     const { batchId, videos } = await sentAndConfirmed(3);
     await cycle(batchId, 3);
     expect(await statusOf(batchId)).toBe("revision_imagenes");
+    // Solo la primera aprobada: su clip sale ya, sin esperar a las otras dos.
     await approveFrame(ana, videos[0].id, await firstCandidate(videos[0].id));
-    await approveFrame(ana, videos[1].id, await firstCandidate(videos[1].id));
-    await cycle(batchId, 2);
-    expect((await generations()).filter((g) => g.kind === "clip")).toEqual([]);
+    await advanceBatch(batchId, deps);
+    expect((await active()).map((g) => [g.videoId, g.kind, g.quotedCredits])).toEqual([[videos[0].id, "clip", CLIP]]);
     expect(await statusOf(batchId)).toBe("revision_imagenes");
 
+    // Terminado su clip, se monta en la nube sin esperar a que el lote esté «listo».
+    await sendAndFinish();
+    await advanceBatch(batchId, deps);
+    expect((await getVideoFor(ana, videos[0].id)).editStatus).toBe("en_marcha");
+    expect((await getPool().query("select video_id as \"videoId\" from edit_runs")).rows).toEqual([{ videoId: videos[0].id }]);
+    expect((await getVideoFor(ana, videos[1].id)).editStatus).toBeNull();
+
+    await approveFrame(ana, videos[1].id, await firstCandidate(videos[1].id));
     await approveFrame(ana, videos[2].id, await firstCandidate(videos[2].id));
     await advanceBatch(batchId, deps);
     expect(await statusOf(batchId)).toBe("clips");

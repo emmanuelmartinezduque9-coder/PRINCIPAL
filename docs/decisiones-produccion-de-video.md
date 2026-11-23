@@ -818,3 +818,6 @@ el punto 10 de `docs/reglas-motor-del-dueno.md`). Cómo quedó:
   desglose»; la imagen y el clip no tienen tarjeta de precio (se borró `quote-card.tsx`); la
   resolución del clip y el nº de imágenes se eligen en el desglose, antes de generar; el montaje solo
   ofrece «Volver a montar». La pantalla sigue sola al paso más avanzado mientras no se elija otro.
+- **Cada vídeo del lote sigue solo** (petición de Emmanuel, 23/11/2026, como en Codex): en cuanto se
+  aprueba la imagen de un vídeo se pide su clip, y en cuanto su clip está hecho se monta en la nube y
+  aparece en «Vídeos terminados», sin esperar a las demás imágenes ni a que el lote esté `listo`.

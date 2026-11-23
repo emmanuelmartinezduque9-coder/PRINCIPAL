@@ -34,13 +34,15 @@ import { getVideoFor, setVideoSong, referenceOutdated, REFERENCE_OUTDATED, stale
  *    Sin saldo para todo, o si algo no se puede presupuestar, se para con ese único motivo. Los
  *    lotes de antes (`auto_confirm` = false) siguen con su «Confirmar» (`quoteBatch` / `confirmBatch`).
  * 4. `advanceBatch` (trabajo `lote.avanzar` y el seguimiento de cada minuto): pide cada imagen y,
- *    cuando TODAS están aprobadas, cada clip. Siempre por `requestGeneration` (el núcleo del
- *    dinero: su precio fresco, `expectedCredits`, su instantánea y su envío único), como mucho 2 a
- *    la vez. Si un precio supera lo previsto, el total pasaría de lo autorizado, falta saldo o algo
- *    falla, el lote queda `pausado` con el motivo y no se envía nada más hasta «Continuar».
+ *    en cuanto la de un vídeo está aprobada, su clip (sin esperar a las demás); en cuanto el clip de
+ *    un vídeo está hecho, lo monta en la nube (sin esperar al lote entero). Siempre por
+ *    `requestGeneration` (el núcleo del dinero: su precio fresco, `expectedCredits`, su instantánea
+ *    y su envío único), como mucho 2 a la vez. Si un precio supera lo previsto, el total pasaría de
+ *    lo autorizado, falta saldo o algo falla, el lote queda `pausado` con el motivo y no se envía
+ *    nada más hasta «Continuar».
  * 5. «Revisar imágenes» sigue siendo el paso humano; un rechazo se regenera solo (dentro de sus
  *    rondas y del presupuesto).
- * 6. Con todos los clips hechos, `listo` (y `onBatchReady`: el montaje en el Mac, `edits.ts`); con
+ * 6. Con todos los clips hechos, `listo` (y `onBatchReady`: monta lo que quede, `edits.ts`); con
  *    todos los montajes terminados (o fallidos con su motivo), `montado`.
  */
 
@@ -862,16 +864,14 @@ async function advanceGenerations(user: AuthUser, start: Batch, deps: GenDeps): 
   }
   if (!["imagenes", "revision_imagenes", "clips"].includes(batch.status)) return;
 
-  const kind: GenerationKind = batch.status === "clips" ? "clip" : "frame";
-  const stage = (row: Row) => (kind === "frame" ? frameStage(row, batch) : clipStage(row, batch));
-  for (const row of rows) {
-    const s = stage(row);
+  // Cada vídeo avanza por su cuenta (petición de Emmanuel, 23/11/2026): con su imagen aprobada se
+  // pide su clip sin esperar a las demás, y con su clip hecho se monta sin esperar al lote entero.
+  const pauseFor = async (row: Row, kind: GenerationKind, s: Stage) => {
     const list = kind === "frame" ? row.frames : row.clips;
     if (s === "failed") {
-      const last = list.at(-1)!;
       await pauseBatch(batch, {
         kind: "fallo",
-        reason: `${row.video.title}: ${last.error ?? "Higgsfield no ha podido generarlo."}`,
+        reason: `${row.video.title}: ${list.at(-1)?.error ?? "Higgsfield no ha podido generarlo."}`,
         videoId: row.video.id,
         kindOf: kind,
       });
@@ -884,18 +884,44 @@ async function advanceGenerations(user: AuthUser, start: Batch, deps: GenDeps): 
         kindOf: kind,
       });
     }
+  };
+  for (const row of rows) {
+    const frame = frameStage(row, batch);
+    await pauseFor(row, "frame", frame);
+    if (frame === "approved") await pauseFor(row, "clip", clipStage(row, batch));
   }
+
+  await startFinishedEdits(user, rows, batch);
+
   const busy = () => rows.filter((row) => row.frames.concat(row.clips).some((g) => BUSY_GENERATION.includes(g.status))).length;
   let slots = AUTO_PARALLEL - busy();
-  for (const row of rows) {
-    if (slots <= 0) break;
-    if (stage(row) !== "need") continue;
-    // El clip solo con la imagen aprobada (en «Clips» lo están todas).
-    if (kind === "clip" && row.video.approvedFrameResultId === null) continue;
-    if (await requestFor(user, batch, rows, row, kind, deps)) {
-      slots -= 1;
-      // Lo recién apuntado cuenta para el presupuesto y para los huecos de la siguiente fila.
-      rows = await rowsOf(user, batch);
+  // Primero las imágenes que faltan; después los clips de las imágenes ya aprobadas.
+  for (const kind of ["frame", "clip"] as const) {
+    for (const row of rows) {
+      if (slots <= 0) return;
+      if (kind === "frame" && frameStage(row, batch) !== "need") continue;
+      if (kind === "clip" && (frameStage(row, batch) !== "approved" || clipStage(row, batch) !== "need")) continue;
+      if (row.frames.concat(row.clips).some((g) => BUSY_GENERATION.includes(g.status))) continue;
+      if (await requestFor(user, batch, rows, row, kind, deps)) {
+        slots -= 1;
+        // Lo recién apuntado cuenta para el presupuesto y para los huecos de la siguiente fila.
+        rows = await rowsOf(user, batch);
+      }
+    }
+  }
+}
+
+/** Monta cada vídeo del lote cuyo clip ya está hecho y que aún no tiene montaje (ni en marcha). */
+async function startFinishedEdits(user: AuthUser, rows: Row[], batch: Batch): Promise<void> {
+  const ready = rows.filter((row) => row.video.editStatus === null && clipStage(row, batch) === "done");
+  if (ready.length === 0) return;
+  const { startEdit, ALREADY_RUNNING } = await import("@/server/videos/edits");
+  for (const row of ready) {
+    try {
+      await startEdit(user, row.video.id);
+    } catch (error) {
+      if (!(error instanceof HttpError)) throw error;
+      if (error.message !== ALREADY_RUNNING) console.warn(`[lotes] No se pudo montar el vídeo ${row.video.id}: ${error.message}`);
     }
   }
 }
