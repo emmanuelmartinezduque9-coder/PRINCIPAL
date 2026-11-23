@@ -447,7 +447,7 @@ function RowCard({
           <div className="min-w-48 flex-1 pt-0.5">
             <SourceName row={row} index={index} disabled={busy} onLink={(url) => onChange({ source: { type: "link", url } })} />
           </div>
-          <div className="flex shrink-0 items-center gap-1.5">
+          <div className="flex flex-wrap items-center justify-end gap-1.5">
             <VariantPicker variants={variants} coverPhotoId={coverPhotoId} value={row.variant} onChange={(variant) => onChange({ variant })} />
             <AvatarPicker
               avatars={avatars}
@@ -458,7 +458,7 @@ function RowCard({
             />
             <MusicPicker value={row.song} onChange={(song) => onChange({ song })} className="max-w-40" />
             <span title={row.clipModel === "auto" && groupClipModel !== "auto" ? `Del grupo: ${CLIP_MODEL_LABEL[groupClipModel]}` : CLIP_MODEL_HINT[row.clipModel]}>
-              <ClipModelSelect compact label={`Modelo de ${name}`} value={row.clipModel} onChange={(clipModel) => clipModel && onChange({ clipModel })} />
+              <ClipModelSelect compact label={`Modelo de ${name}`} value={row.clipModel} inherited={groupClipModel} onChange={(clipModel) => clipModel && onChange({ clipModel })} />
             </span>
             <span className="mx-1 h-5 w-px bg-border" aria-hidden />
             {editReference ? <EditReferenceButton value={row.editReference} inherited={groupEditReference} open={refOpen} onOpenChange={setRefOpen} /> : null}
@@ -604,7 +604,7 @@ function GroupHeader({
       </span>
       <div className="flex min-w-0 flex-1 flex-col gap-3">
         <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2">
-          <div className="flex min-w-0 items-center gap-2">
+          <div className="flex min-w-44 items-center gap-2">
             <ProductPicker products={products} value={group.productId} onChange={onProduct} />
             {group.rows.length > 0 ? (
               <span className="rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground tabular-nums">{group.rows.length}</span>

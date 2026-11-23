@@ -174,7 +174,7 @@ export function BriefPanel({ view }: { view: VideoViewJson }) {
 
   return (
     <Panel className="gap-4">
-      <div className="flex flex-col gap-3 md:flex-row md:items-center">
+      <div className="flex flex-col gap-3 md:flex-row md:flex-wrap md:items-center">
         <Segmented
           label="Tipo de vídeo"
           options={KINDS.map((value) => ({ value, label: KIND_LABELS[value].long, short: KIND_LABELS[value].short, icon: KIND_LABELS[value].icon }))}

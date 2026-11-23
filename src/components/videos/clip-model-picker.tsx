@@ -1,5 +1,6 @@
 "use client";
 
+import { Film } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { CLIP_MODEL_CHOICES, CLIP_MODEL_HINT, CLIP_MODEL_LABEL, isClipModelChoice, type ClipModelChoice } from "@/lib/clip-models";
 import { cn } from "@/lib/utils";
@@ -19,6 +20,7 @@ export function ClipModelSelect({
   label = "Modelo del vídeo",
   compact = false,
   allowNone = false,
+  inherited,
 }: {
   value: string;
   onChange: (next: ClipModelChoice | null) => void;
@@ -28,7 +30,10 @@ export function ClipModelSelect({
   compact?: boolean;
   /** En el grupo del lote: «Sin elegir» (cada vídeo con lo suyo). */
   allowNone?: boolean;
+  /** Con «Automático», el modelo que hereda del grupo (se enseña «Del grupo · …»). */
+  inherited?: ClipModelChoice;
 }) {
+  const fromGroup = value === "auto" && inherited !== undefined && inherited !== "auto";
   return (
     <Select
       value={value}
@@ -40,7 +45,8 @@ export function ClipModelSelect({
       }}
     >
       <SelectTrigger id={id} aria-label={label} className={cn(compact ? "h-8 w-auto gap-1.5 px-2.5 text-sm" : "w-full data-[size=default]:h-10")}>
-        <SelectValue />
+        {compact ? <Film className="size-3.5 text-muted-foreground" aria-hidden /> : null}
+        {fromGroup ? <span className="text-muted-foreground">Del grupo · {CLIP_MODEL_LABEL[inherited!].replace("Genjutsu · ", "")}</span> : <SelectValue />}
       </SelectTrigger>
       <SelectContent>
         {allowNone ? <SelectItem value={NO_GROUP_CHOICE}>Modelo: sin elegir</SelectItem> : null}
