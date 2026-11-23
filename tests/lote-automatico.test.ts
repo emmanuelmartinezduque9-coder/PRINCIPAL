@@ -19,6 +19,8 @@ import { finalizeGeneration, requestGeneration, submitGeneration, type GenDeps }
 import {
   advanceBatch,
   answerQuestion,
+  approveAllFrames,
+  AUTO_PARALLEL,
   autoView,
   batchQuestions,
   confirmBatch,
@@ -207,7 +209,7 @@ async function sentAndConfirmed(n: number): Promise<{ batchId: number; videos: V
 async function cycle(batchId: number, times = 1): Promise<void> {
   for (let i = 0; i < times; i++) {
     await advanceBatch(batchId, deps);
-    expect((await active()).length).toBeLessThanOrEqual(2);
+    expect((await active()).length).toBeLessThanOrEqual(AUTO_PARALLEL);
     await sendAndFinish();
   }
 }
@@ -249,9 +251,9 @@ describe("estados del envío", () => {
     expect(confirmed).toMatchObject({ status: "imagenes", budgetCredits: 66 });
     expect(confirmed.estimates![String(videos[0].id)]).toEqual({ frame: FRAME, clip: CLIP });
 
-    // Imágenes: de 2 en 2.
+    // Imágenes: todas a la vez.
     await advanceBatch(batchId, deps);
-    expect((await active()).map((g) => g.kind)).toEqual(["frame", "frame"]);
+    expect((await active()).map((g) => g.kind)).toEqual(["frame", "frame", "frame"]);
     await sendAndFinish();
     await cycle(batchId);
     expect((await generations()).filter((g) => g.kind === "frame" && g.status === "done")).toHaveLength(3);
@@ -261,9 +263,9 @@ describe("estados del envío", () => {
     for (const video of videos) await approveFrame(ana, video.id, await firstCandidate(video.id));
     await advanceBatch(batchId, deps);
     expect(await statusOf(batchId)).toBe("clips");
+    // Los 3 clips a la vez: con ellos hechos, el siguiente avance deja el lote `listo`.
+    expect((await active()).map((g) => g.kind)).toEqual(["clip", "clip", "clip"]);
     await sendAndFinish();
-    await cycle(batchId);
-    expect(ready).toEqual([]);
     await advanceBatch(batchId, deps);
     // `listo` y enseguida el montaje (`onBatchReady`): cada vídeo entra en la cola de la nube (sin Mac).
     expect(await statusOf(batchId)).toBe("listo");
@@ -457,9 +459,9 @@ describe("como mucho 2 a la vez y sin envíos dobles", () => {
     const { batchId } = await sentAndConfirmed(5);
     for (let i = 0; i < 4; i++) {
       await advanceBatch(batchId, deps);
-      expect((await active()).length).toBeLessThanOrEqual(2);
+      expect((await active()).length).toBeLessThanOrEqual(AUTO_PARALLEL);
       await advanceBatch(batchId, deps);
-      expect((await active()).length).toBeLessThanOrEqual(2);
+      expect((await active()).length).toBeLessThanOrEqual(AUTO_PARALLEL);
       await sendAndFinish();
     }
     expect((await generations()).filter((g) => g.kind === "frame")).toHaveLength(5);
@@ -468,11 +470,11 @@ describe("como mucho 2 a la vez y sin envíos dobles", () => {
   it("repetir el avance (o dos a la vez) no pide ni envía dos veces", async () => {
     const { batchId, videos } = await sentAndConfirmed(3);
     await Promise.all([advanceBatch(batchId, deps), advanceBatch(batchId, deps), advanceBatch(batchId, deps)]);
-    expect(await generations()).toHaveLength(2);
+    expect(await generations()).toHaveLength(3);
     // Aunque la reserva se pierda (proceso caído), repetirlo no apunta nada nuevo.
     await getPool().query("update batches set advancing_at = null");
     await advanceBatch(batchId, deps);
-    expect(await generations()).toHaveLength(2);
+    expect(await generations()).toHaveLength(3);
     // Y el núcleo no deja apuntar otra mientras hay una en marcha.
     await expect(requestGeneration(ana, videos[0].id, "frame", { expectedCredits: FRAME }, deps)).rejects.toMatchObject({ status: 409 });
     // El envío del trabajo repetido tampoco envía dos veces.
@@ -506,10 +508,37 @@ describe("clips", () => {
     await approveFrame(ana, videos[2].id, await firstCandidate(videos[2].id));
     await advanceBatch(batchId, deps);
     expect(await statusOf(batchId)).toBe("clips");
-    // Cada clip con su propio precio, de 2 en 2.
+    // Los dos clips que faltan, a la vez, cada uno con su propio precio.
     expect((await active()).map((g) => [g.kind, g.quotedCredits])).toEqual([
       ["clip", CLIP],
       ["clip", CLIP],
     ]);
+  });
+
+  it("«Aprobar todas» aprueba de un clic y todos los clips salen a la vez; rechazar una regenera solo esa", async () => {
+    // Un lote nuevo: se autoriza solo al enviarlo, con margen para regenerar.
+    const { batchId, videos } = await batchWith(3, { automatic: true });
+    await sendBatch(ana, batchId);
+    await runQueuedAnalyses();
+    await advanceBatch(batchId, deps);
+    expect(await statusOf(batchId)).toBe("imagenes");
+    await advanceBatch(batchId, deps);
+    // Las 3 imágenes a la vez.
+    expect((await active()).map((g) => g.kind)).toEqual(["frame", "frame", "frame"]);
+    await sendAndFinish();
+    await advanceBatch(batchId, deps);
+    expect(await statusOf(batchId)).toBe("revision_imagenes");
+
+    await rejectFrame(ana, videos[2].id, "La mano sale rara");
+    expect(await approveAllFrames(ana, batchId)).toEqual({ approved: 2 });
+    await advanceBatch(batchId, deps);
+    // Los clips de las 2 aprobadas y la imagen nueva solo del rechazado, todo a la vez.
+    expect((await active()).map((g) => [g.videoId, g.kind]).sort()).toEqual(
+      [
+        [videos[0].id, "clip"],
+        [videos[1].id, "clip"],
+        [videos[2].id, "frame"],
+      ].sort(),
+    );
   });
 });

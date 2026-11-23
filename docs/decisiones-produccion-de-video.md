@@ -868,3 +868,9 @@ Regla 6 del motor. Se copió lo que hacía Codex (paquete activo `test-hook-sele
   sube y envía de una vez (ya no hay «Crear y subir» y luego otro «Enviar lote» en el tablero). Todos
   los lotes se autorizan solos al quedar todo respondido (migración 0040: el lote 3 se paraba en
   «Preguntas 3/3» porque, al ser de antes, esperaba un «Confirmar y generar»).
+- **Todo a la vez** (23/11/2026): las imágenes de un lote se piden todas juntas y, al aprobar, todos
+  los clips juntos (`AUTO_PARALLEL` = 12); los montajes, 8 a la vez (`MONTAJE_CONCURRENCIA`; la
+  máquina de Railway tiene 24 vCPU y 24 GB y el pico medido fue 6,4 vCPU y 1,6 GB, sin coste fijo
+  extra). «Revisar imágenes» tiene «Aprobar todas» (un clic) y lleva al lote; rechazar una regenera
+  solo esa. El presupuesto automático incluye el margen de las 2 regeneraciones permitidas (migración
+  0041 para los lotes en marcha), así un rechazo no para el lote.

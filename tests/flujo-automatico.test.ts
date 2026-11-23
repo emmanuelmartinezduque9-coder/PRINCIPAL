@@ -313,7 +313,8 @@ describe("flujo automático del lote", () => {
     const batch = await getBatchFor(ana, batchId);
     expect(batch.status).toBe("imagenes");
     // 2 imágenes (1 por vídeo, 2 créditos) + 2 clips de Genjutsu Motion Transfer (el simulado cuenta 10 s: 30).
-    expect(batch.budgetCredits).toBe(2 * (2 + 30));
+    // Con el margen de las 2 regeneraciones permitidas (rechazar no para el lote).
+    expect(batch.budgetCredits).toBe(2 * (2 + 30) * 3);
     expect((await autoView(ana, batch)).readyToConfirm).toBe(false);
     await advanceBatch(batchId, deps);
     expect((await generations()).map((g) => [g.videoId, g.kind, g.count])).toEqual([

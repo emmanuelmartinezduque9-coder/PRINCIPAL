@@ -15,7 +15,7 @@ import { briefOf, type OwnerAnswer } from "@/server/videos/brief";
 import { estimateClipCredits } from "@/server/videos/clip";
 import { PINTEREST_PENDING } from "@/server/videos/pinterest";
 // Registra el constructor de la imagen inicial (`frame`) en las generaciones.
-import "@/server/videos/frame";
+import { approveFrame } from "@/server/videos/frame";
 import { MAX_REGENERATIONS, quoteGeneration, requestGeneration, type GenDeps, type GenerationKind } from "@/server/videos/generations";
 import { clipModelProblem, getVideoFor, setVideoSong, referenceOutdated, REFERENCE_OUTDATED, staleness, updateVideoChoices, withProductNotes, type Video } from "@/server/videos/videos";
 import { CLIP_MODEL_LABEL, CLIP_MODELS, SEEDANCE, sourceProblem } from "@/lib/clip-models";
@@ -53,8 +53,12 @@ export type BatchStatus = (typeof BATCH_STATUSES)[number];
 const RUNNING: BatchStatus[] = ["preguntas", "imagenes", "revision_imagenes", "clips"];
 
 export const ADVANCE_JOB = "lote.avanzar";
-/** Generaciones en marcha a la vez en un lote, como mucho. */
-export const AUTO_PARALLEL = 2;
+/**
+ * Generaciones en marcha a la vez en un lote, como mucho (petición de Emmanuel, 23/11/2026: todas
+ * las imágenes juntas y, al aprobar, todos los clips juntos). Cada una sigue pasando por el núcleo
+ * (precio fresco, presupuesto del lote y envío único).
+ */
+export const AUTO_PARALLEL = 12;
 /** Reserva de un avance: si el proceso se cae a mitad, pasado esto otro puede avanzar. */
 const ADVANCE_LEASE_MS = 5 * 60 * 1000;
 /** «Saltar este vídeo». */
@@ -841,7 +845,10 @@ async function autoConfirmBatch(user: AuthUser, batch: Batch, rows: Row[], deps:
     });
   }
   const estimates = Object.fromEntries(quote.rows.map((r) => [String(r.videoId), { frame: r.frame!, clip: r.clip! }]));
-  const updated = await moveBatch(batch, "imagenes", { budgetCredits: quote.total, estimates, confirmedAt: new Date(), pause: null });
+  // Se autoriza también el margen de las regeneraciones permitidas: rechazar una imagen la regenera
+  // sin parar el lote (el gasto real lo siguen limitando las rondas y el saldo).
+  const budgetCredits = quote.total * (1 + MAX_REGENERATIONS);
+  const updated = await moveBatch(batch, "imagenes", { budgetCredits, estimates, confirmedAt: new Date(), pause: null });
   if (updated) await kickBatch(updated);
 }
 
@@ -927,6 +934,37 @@ async function advanceGenerations(user: AuthUser, start: Batch, deps: GenDeps): 
       }
     }
   }
+}
+
+/**
+ * «Aprobar todas» en «Revisar imágenes» (lo normal: un clic): aprueba la primera imagen buena de
+ * cada vídeo propio del lote que espera revisión y avisa al lote, que pide todos los clips a la
+ * vez. Devuelve cuántas aprobó. Solo quien creó el lote.
+ */
+export async function approveAllFrames(user: AuthUser, batchId: number): Promise<{ approved: number }> {
+  const batch = await ownBatch(user, batchId);
+  const rows = await rowsOf(user, batch);
+  let approved = 0;
+  for (const row of rows) {
+    if (frameStage(row, batch) !== "done") continue;
+    const last = row.frames.at(-1)!;
+    const [result] = await getDb()
+      .select({ id: schema.generationResults.id })
+      .from(schema.generationResults)
+      .where(and(eq(schema.generationResults.generationId, last.id), eq(schema.generationResults.ok, true)))
+      .orderBy(asc(schema.generationResults.index))
+      .limit(1);
+    if (!result) continue;
+    try {
+      await approveFrame(user, row.video.id, result.id);
+      approved += 1;
+    } catch (error) {
+      if (!(error instanceof HttpError)) throw error;
+      console.warn(`[lotes] No se pudo aprobar la imagen del vídeo ${row.video.id}: ${error.message}`);
+    }
+  }
+  await kickBatch(batch);
+  return { approved };
 }
 
 /** Monta cada vídeo del lote cuyo clip ya está hecho y que aún no tiene montaje (ni en marcha). */

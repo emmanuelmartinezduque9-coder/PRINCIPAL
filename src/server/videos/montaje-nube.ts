@@ -25,7 +25,7 @@ import { batchOfVideo, cleanSelfCheck, failEdit, MAX_EDIT_BYTES, readReferenceAu
  * rótulos con `texto06b.py`, igual que el Swift del Mac) y rea-video para la referencia de edición.
  *
  * - **Varias personas a la vez**: cada proceso monta hasta `MONTAJE_CONCURRENCIA` vídeos a la vez
- *   (2 por defecto); el resto espera en la cola, por orden de llegada. Reservar es `for update
+ *   (8 por defecto); el resto espera en la cola, por orden de llegada. Reservar es `for update
  *   skip locked`: dos procesos nunca montan el mismo.
  * - **Latido** cada 30 s. Un montaje sin latido en 3 minutos (el proceso se reinició, una
  *   publicación nueva) vuelve a la cola; a los 3 intentos falla y el vídeo lo dice.
@@ -38,7 +38,8 @@ import { batchOfVideo, cleanSelfCheck, failEdit, MAX_EDIT_BYTES, readReferenceAu
  *   datos) y una versión nueva en `edits`.
  */
 
-export const MONTAJE_CONCURRENCY = Math.max(1, Math.min(8, Number(process.env.MONTAJE_CONCURRENCIA) || 2));
+/** 8 a la vez por defecto (23/11/2026: todos los montajes del lote juntos; la máquina de Railway tiene 24 vCPU y 24 GB). */
+export const MONTAJE_CONCURRENCY = Math.max(1, Math.min(8, Number(process.env.MONTAJE_CONCURRENCIA) || 8));
 export const RUN_HEARTBEAT_MS = 30_000;
 export const RUN_STALE_MS = 3 * 60_000;
 export const MAX_RUN_ATTEMPTS = 3;

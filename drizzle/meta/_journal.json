@@ -288,6 +288,13 @@
       "when": 1795443936349,
       "tag": "0040_lotes_se_autorizan_solos",
       "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "7",
+      "when": 1795447715701,
+      "tag": "0041_margen_regeneraciones_lote",
+      "breakpoints": true
     }
   ]
 }

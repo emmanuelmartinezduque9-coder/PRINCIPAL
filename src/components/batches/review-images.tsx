@@ -3,6 +3,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, ImageOff, Loader2, SearchX, ThumbsUp } from "lucide-react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { ActionBar } from "@/components/shell/action-bar";
@@ -179,6 +180,7 @@ function ReviewItem({
  */
 export function ReviewImages({ batchId }: { batchId: number }) {
   const client = useQueryClient();
+  const router = useRouter();
   const query = useQuery({
     queryKey: ["batch", batchId],
     queryFn: () => api<BatchViewJson>(`/api/lotes/${batchId}`),
@@ -226,6 +228,21 @@ export function ReviewImages({ batchId }: { batchId: number }) {
     } finally {
       await refresh();
       mark(row.id, undefined);
+    }
+  }
+
+  const [approvingAll, setApprovingAll] = useState(false);
+  /** «Aprobar todas»: lo normal, un clic. Luego, al lote: allí salen los clips y los montajes. */
+  async function approveAll() {
+    setApprovingAll(true);
+    try {
+      await api(`/api/lotes/${batchId}/aprobar-todas`, { method: "POST" });
+      await refresh();
+      router.push(`/lotes/${batchId}`);
+    } catch (error) {
+      toast.error(message(error, "No se pudieron aprobar."));
+    } finally {
+      setApprovingAll(false);
     }
   }
 
@@ -358,6 +375,12 @@ export function ReviewImages({ batchId }: { batchId: number }) {
           <Link href={`/lotes/${batchId}`} className={cn(buttonVariants({ variant: pending === 0 ? "default" : "outline" }), "h-10 px-4")}>
             Volver al lote
           </Link>
+          {pending > 0 ? (
+            <Button className="h-10 gap-2 px-5" disabled={approvingAll} onClick={() => void approveAll()}>
+              {approvingAll ? <Loader2 className="animate-spin" data-icon="inline-start" /> : <ThumbsUp data-icon="inline-start" />}
+              Aprobar todas ({pending})
+            </Button>
+          ) : null}
         </ActionBar>
       ) : null}
 
