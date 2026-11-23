@@ -309,6 +309,13 @@
       "when": 1795451126404,
       "tag": "0043_fondos_sin_personas",
       "breakpoints": true
+    },
+    {
+      "idx": 44,
+      "version": "7",
+      "when": 1795451540687,
+      "tag": "0044_clip_hecho_con_seedance",
+      "breakpoints": true
     }
   ]
 }
