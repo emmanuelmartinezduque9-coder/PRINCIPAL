@@ -1,0 +1,32 @@
+{
+  "created_at": "2026-11-14T00:15:58.516832Z",
+  "display_name": "Nano Banana Pro",
+  "id": "060ab8d0-a8b5-49b6-b819-113435765705",
+  "job_type": "nano_banana_pro",
+  "min_result_url": "https://d8j0ntlcm91z4.cloudfront.net/user_3K2PXlowqZBlWpF8Twpyltbd8YU/hf_20261114_001558_060ab8d0-a8b5-49b6-b819-113435765705_min.webp",
+  "params": {
+    "application": null,
+    "aspect_ratio": "1:1",
+    "batch_size": 1,
+    "height": 2048,
+    "input_image": null,
+    "input_images": [
+      {
+        "id": "648095ef-e10d-4650-b18a-8dbfcdff3730",
+        "type": "media_input",
+        "url": "https://d2ol7oe51mr4n9.cloudfront.net/user_3K2PXlowqZBlWpF8Twpyltbd8YU/648095ef-e10d-4650-b18a-8dbfcdff3730.png"
+      },
+      {
+        "id": "f6c7f862-22f9-4d98-87cc-0ff7d671a472",
+        "type": "media_input",
+        "url": "https://d2ol7oe51mr4n9.cloudfront.net/user_3K2PXlowqZBlWpF8Twpyltbd8YU/f6c7f862-22f9-4d98-87cc-0ff7d671a472.png"
+      }
+    ],
+    "prompt": "Photorealistic commercial product photograph of the exact appliance in the first reference. Second reference for detailing. Single white strawberry mini ice cream maker with removable white mug-shaped vessel and substantial white C-shaped mug handle on the right. Pose nearly front-on, handle perfectly side-on in silhouette; ample open space of clearly visible medium gray through the entire handle loop, visible upper and lower attachments. Entire handle in focus. Neutral medium-gray seamless backdrop and tabletop (roughly #929396); white materials distinctly brighter than background. Keep clear faceted lid and white strawberry printed domed motor unit, front switch, squat cup shape, original relative sizes, strawberries exactly as reference. Show lid top slightly from above. Single fully assembled unit on a subtle soft contact shadow, clean commercial photo, no food, cups, typography or graphics, generous margins.",
+    "resolution": "2k",
+    "surface": null,
+    "width": 2048
+  },
+  "result_url": "https://d8j0ntlcm91z4.cloudfront.net/user_3K2PXlowqZBlWpF8Twpyltbd8YU/hf_20261114_001558_060ab8d0-a8b5-49b6-b819-113435765705.png",
+  "status": "completed"
+}

@@ -14,7 +14,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
 
 /**
  * Cambia nombre, frase, idioma, países, el avatar habitual (`defaultAvatarMode`,
- * `defaultAvatarPhotoId`), el emoji (`emoji`: texto o `null`) o lo archiva (`archived`: solo el dueño). Un producto ajeno: el mismo 404 que al leerlo.
+ * `defaultAvatarPhotoId`), el emoji (`emoji`: texto o `null`) o lo archiva (`archived`: solo el dueño), y el nicho, la audiencia y el ángulo actuales. Un producto ajeno: el mismo 404 que al leerlo.
  */
 export async function PATCH(request: Request, { params }: { params: Promise<{ id: string }> }) {
   return handle(async (user) => {
@@ -33,6 +33,9 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
       defaultAvatarPhotoId: input.defaultAvatarPhotoId,
       emoji: input.emoji,
       archived: input.archived,
+      niche: input.niche,
+      audience: input.audience,
+      angle: input.angle,
     });
     return Response.json({ product });
   });

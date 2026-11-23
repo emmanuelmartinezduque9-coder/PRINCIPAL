@@ -1,0 +1,730 @@
+import dns from "node:dns/promises";
+import fs from "node:fs/promises";
+import net from "node:net";
+import os from "node:os";
+import path from "node:path";
+import { and, desc, eq, inArray, isNull, lt, or, sql } from "drizzle-orm";
+import { z } from "zod";
+import {
+  HiggsfieldConnectError,
+  HiggsfieldNotConnectedError,
+  HiggsfieldRejectedError,
+  HiggsfieldUnknownOutcomeError,
+  type HfImageRequest,
+  type HiggsfieldPort,
+} from "@/connectors/higgsfield/port";
+import { getHiggsfield } from "@/connectors/higgsfield";
+import { getDb, schema } from "@/db/client";
+import { imagePart, textPart, type LlmContent } from "@/llm/content";
+import { getGateway, LlmCallError, LlmCapReachedError, LlmInvalidOutputError, LlmNotConfiguredError, LlmRefusalError, LlmTruncatedError, type LlmGateway } from "@/llm/gateway";
+import { linkOf } from "@/lib/links";
+import { getObjectStore, type ObjectStore } from "@/lib/object-store";
+import { macOnline } from "@/server/agent-tasks";
+import { getActiveUser, type AuthUser } from "@/server/auth";
+import { ensureMedia } from "@/server/higgsfield";
+import { HttpError } from "@/server/http";
+import { downloadLinkMedia, ensureLinkMedia, fetchInCloud, macTaskStatus, requestFromMac, type FetchDeps } from "@/server/link-media";
+import { extractFrames, imageMimeOf, makeThumbnail, probeVideo } from "@/server/media/ffmpeg";
+import { addProductPhoto, listProductPhotos, readProductPhoto } from "@/server/photos";
+import { allProductNames, createProduct, getProductFor, setProductFacts, type Product } from "@/server/products";
+import { loadRules } from "@/server/rules";
+import { JobPausedError, runStep, StepFailedError } from "@/jobs/steps";
+import { getImageModel } from "@/server/videos/frame";
+
+/**
+ * Alta de un producto pegando solo un enlace y eligiendo el país («Nuevo producto»).
+ *
+ * 1. **trayendo**: si es un reel, el vídeo llega por el mismo camino que las referencias de
+ *    montaje (`link-media.ts`): yt-dlp en la nube y, si la nube no puede (Instagram), el Mac del
+ *    dueño. Si el Mac no responde, se dice claro y, pasado un rato, se sigue sin el vídeo.
+ * 2. **analizando**: Claude (nivel mediano, con búsqueda en internet) mira los fotogramas, la
+ *    tienda y lo que encuentre, y devuelve la ficha: qué es, qué hace, nicho, audiencia, ángulo,
+ *    marca propia y el prompt de la foto sobre gris. Una sola vez por alta (`runStep`).
+ * 3. **mockup**: la foto «artículo» sobre gris con Nano Banana en el Higgsfield de quien pidió el
+ *    alta. Si cuesta más de lo normal, espera a que la persona acepte el coste.
+ * 4. **listo** (o **fallido**, con el motivo en palabras sencillas).
+ *
+ * Lo avanza la tarea programada `producto.altas` (cada minuto) y un trabajo que se lanza al crear.
+ */
+
+export const INTAKE_JOB = "producto.alta";
+export const INTAKE_SWEEP = "producto.altas";
+
+/** Países que se pueden elegir y su idioma. */
+export const COUNTRY_LANGUAGE: Record<string, string> = { DE: "de", AT: "de", CH: "de", IT: "it" };
+const LANGUAGE_NAME: Record<string, string> = { de: "alemán", it: "italiano" };
+const COUNTRY_NAME: Record<string, string> = { DE: "Alemania", AT: "Austria", CH: "Suiza", IT: "Italia" };
+
+/** Cuánto se espera al Mac por un vídeo de Instagram antes de seguir sin él. */
+export const MAC_WAIT_MS = 10 * 60_000;
+/** Lo más que se espera a que Higgsfield termine el mockup. */
+export const MOCKUP_TIMEOUT_MS = 30 * 60_000;
+/** Un mockup normal (1 imagen 2K) cuesta pocos créditos; por encima de esto se pide el OK. */
+export const MOCKUP_NORMAL_CREDITS = 6;
+/** Fotogramas del reel que ve Claude. */
+const FRAME_COUNT = 8;
+/** Fotos de la tienda que ve Claude. */
+const SHOP_IMAGES = 3;
+/** Fotos subidas por la persona que ve Claude. */
+const UPLOADED_IMAGES = 3;
+const MAX_SHOP_PAGE_BYTES = 3 * 1024 * 1024;
+const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
+const MAX_RESULT_BYTES = 40 * 1024 * 1024;
+const LEASE_MS = 5 * 60_000;
+
+const PLACEHOLDER_NAME = "Producto nuevo";
+const PLACEHOLDER_SUMMARY = "Analizando el enlace…";
+
+const intakes = schema.productIntakes;
+type Intake = typeof intakes.$inferSelect;
+export type IntakeKind = "reel" | "cuenta" | "aliexpress" | "web";
+
+// ───────────────────────── El enlace ─────────────────────────
+
+const ALIEXPRESS = /(^|\.)aliexpress\.(com|us|de|es|fr|it|ru|co\.uk)$|^ali\.ski$/;
+
+/**
+ * El enlace tal como se guarda y qué es: un reel o vídeo (`reel`), una cuenta (`cuenta`) de
+ * Instagram o TikTok, un producto de AliExpress o una tienda (`web`). `null` si no se admite
+ * (solo `https`, sin usuario ni puerto).
+ */
+export function classifyLink(value: unknown): { url: string; kind: IntakeKind } | null {
+  if (typeof value !== "string") return null;
+  const text = value.trim();
+  if (!text || text.length > 2000) return null;
+  let url: URL;
+  try {
+    url = new URL(text);
+  } catch {
+    return null;
+  }
+  if (url.protocol !== "https:" || url.username || url.password || url.port) return null;
+  const host = url.hostname.toLowerCase();
+  if (ALIEXPRESS.test(host)) return { url: url.href, kind: "aliexpress" };
+  const social = linkOf(url.href);
+  if (social) {
+    const parts = url.pathname.split("/").filter(Boolean);
+    if (host === "instagram.com" || host.endsWith(".instagram.com")) {
+      if (parts.length === 0) return null;
+      const video = ["reel", "reels", "p", "tv", "stories"].includes(parts[0]) || parts[1] === "reel" || parts[1] === "p";
+      return { url: social, kind: video && parts.length >= 2 ? "reel" : "cuenta" };
+    }
+    if (host === "tiktok.com" || host.endsWith(".tiktok.com")) {
+      if (host.startsWith("vm.") || host.startsWith("vt.") || parts.includes("video") || parts.includes("photo")) return { url: social, kind: "reel" };
+      return parts[0]?.startsWith("@") ? { url: social, kind: "cuenta" } : null;
+    }
+    return { url: social, kind: "reel" };
+  }
+  if (isIpLiteral(host) || host === "localhost" || !host.includes(".")) return null;
+  return { url: url.href, kind: "web" };
+}
+
+function isIpLiteral(host: string): boolean {
+  return net.isIP(host.replace(/^\[|\]$/g, "")) !== 0;
+}
+
+/** Dirección privada, de bucle o reservada: el servidor nunca la pide. */
+export function isPrivateAddress(address: string): boolean {
+  if (net.isIPv4(address)) {
+    const [a, b] = address.split(".").map(Number);
+    return a === 0 || a === 10 || a === 127 || (a === 100 && b >= 64 && b <= 127) || (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || a >= 224;
+  }
+  const lower = address.toLowerCase();
+  if (lower.startsWith("::ffff:")) return isPrivateAddress(lower.slice(7));
+  return lower === "::" || lower === "::1" || lower.startsWith("fc") || lower.startsWith("fd") || lower.startsWith("fe80");
+}
+
+/**
+ * Pide una dirección pública de internet (para la página de la tienda y sus fotos): solo `https`,
+ * nunca a una dirección privada, sin seguir redirecciones a ciegas, con tope de tiempo y tamaño.
+ * `null` si no se pudo.
+ */
+async function fetchPublic(target: string, maxBytes: number, deps: IntakeDeps, redirects = 3): Promise<{ bytes: Buffer; type: string } | null> {
+  if (deps.fetchPublic) return deps.fetchPublic(target, maxBytes);
+  let url: URL;
+  try {
+    url = new URL(target);
+  } catch {
+    return null;
+  }
+  if (url.protocol !== "https:" || url.username || url.password) return null;
+  try {
+    const addresses = await dns.lookup(url.hostname, { all: true });
+    if (addresses.length === 0 || addresses.some((a) => isPrivateAddress(a.address))) return null;
+    const response = await fetch(url, {
+      redirect: "manual",
+      signal: AbortSignal.timeout(15_000),
+      headers: { "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130 Safari/537.36", "accept-language": "de-DE,de;q=0.9,en;q=0.8" },
+    });
+    if (response.status >= 300 && response.status < 400) {
+      const next = response.headers.get("location");
+      return next && redirects > 0 ? fetchPublic(new URL(next, url).href, maxBytes, deps, redirects - 1) : null;
+    }
+    if (!response.ok || !response.body) return null;
+    const chunks: Buffer[] = [];
+    let size = 0;
+    for await (const chunk of response.body as unknown as AsyncIterable<Uint8Array>) {
+      size += chunk.length;
+      if (size > maxBytes) return null;
+      chunks.push(Buffer.from(chunk));
+    }
+    return { bytes: Buffer.concat(chunks), type: response.headers.get("content-type") ?? "" };
+  } catch {
+    return null;
+  }
+}
+
+/** Título, descripción e imágenes del producto que se pueden sacar del HTML de una tienda. */
+export function shopFacts(html: string, base: string): { title: string | null; description: string | null; images: string[] } {
+  const meta = (name: string) => {
+    const re = new RegExp(`<meta[^>]+(?:property|name)=["']${name}["'][^>]*content=["']([^"']+)["']|<meta[^>]+content=["']([^"']+)["'][^>]*(?:property|name)=["']${name}["']`, "i");
+    const m = html.match(re);
+    return m ? decodeEntities((m[1] ?? m[2]).trim()) : null;
+  };
+  const images: string[] = [];
+  const add = (value: string | null | undefined) => {
+    if (!value) return;
+    try {
+      const url = new URL(value.replace(/\\u002F/g, "/").replace(/^\/\//, "https://"), base);
+      if (url.protocol === "https:" && !images.includes(url.href)) images.push(url.href);
+    } catch {
+      // dirección rota: se ignora
+    }
+  };
+  add(meta("og:image"));
+  const list = html.match(/"imagePathList"\s*:\s*\[([^\]]*)\]/);
+  if (list) for (const m of list[1].matchAll(/"([^"]+)"/g)) add(m[1]);
+  const title = meta("og:title") ?? html.match(/<title[^>]*>([^<]{1,300})<\/title>/i)?.[1]?.trim() ?? null;
+  return { title: title ? decodeEntities(title) : null, description: meta("og:description") ?? meta("description"), images: images.slice(0, 8) };
+}
+
+function decodeEntities(text: string): string {
+  return text.replace(/&amp;/g, "&").replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&lt;/g, "<").replace(/&gt;/g, ">");
+}
+
+// ───────────────────────── Crear ─────────────────────────
+
+export interface IntakeDeps {
+  gateway?: LlmGateway;
+  higgsfield?: HiggsfieldPort;
+  store?: ObjectStore | null;
+  runYtDlp?: FetchDeps["runYtDlp"];
+  fetchPublic?: (url: string, maxBytes: number) => Promise<{ bytes: Buffer; type: string } | null>;
+  macOnline?: () => Promise<boolean>;
+  now?: () => Date;
+}
+
+const nowOf = (deps: IntakeDeps) => deps.now?.() ?? new Date();
+
+/**
+ * Crea el producto con un nombre provisional y su alta automática. Lanza 400 si el enlace o el
+ * país no valen. Quien llama encola el trabajo (`INTAKE_JOB`) para empezar enseguida.
+ */
+export async function createProductFromLink(
+  user: AuthUser,
+  input: { url: unknown; country: unknown; waitForPhotos?: boolean },
+): Promise<{ product: Product; intake: Intake }> {
+  const link = classifyLink(input.url);
+  if (!link) throw new HttpError(400, "Pega un enlace https de un reel o una cuenta de Instagram/TikTok, de AliExpress o de una tienda.");
+  const country = typeof input.country === "string" ? input.country : "";
+  const language = COUNTRY_LANGUAGE[country];
+  if (!language) throw new HttpError(400, "Elige el país.");
+  let intake: Intake | null = null;
+  const product = await createProduct(
+    user,
+    { name: PLACEHOLDER_NAME, summary: PLACEHOLDER_SUMMARY, language, countries: [country] },
+    {
+      sourceUrl: link.url,
+      alsoInTx: async (tx, created) => {
+        [intake] = await tx
+          .insert(intakes)
+          .values({
+            productId: created.id,
+            url: link.url,
+            kind: link.kind,
+            country,
+            createdBy: user.id,
+            status: link.kind === "reel" ? "trayendo" : "analizando",
+            message: firstMessage(link.kind),
+            // Con fotos por subir, nadie la empieza hasta que lleguen (`startIntake`) o pasen unos minutos.
+            leaseUntil: input.waitForPhotos ? new Date(Date.now() + PHOTO_WAIT_MS) : null,
+          })
+          .returning();
+      },
+    },
+  );
+  return { product, intake: intake! };
+}
+
+function firstMessage(kind: IntakeKind): string {
+  if (kind === "reel") return "Trayendo el vídeo…";
+  if (kind === "cuenta") return "Buscando la cuenta y su producto en internet…";
+  return "Leyendo la tienda…";
+}
+
+/** Lo más que se espera a las fotos que la persona sube al crear el producto. */
+export const PHOTO_WAIT_MS = 3 * 60_000;
+
+/** Las fotos ya están subidas: el alta puede empezar. Devuelve el alta, o `null` si no hay. */
+export async function startIntake(user: AuthUser, productId: number): Promise<Intake | null> {
+  const product = await getProductFor(user, productId);
+  const row = await latestIntake(product.id);
+  if (!row) return null;
+  const [freed] = await getDb().update(intakes).set({ leaseUntil: null }).where(and(eq(intakes.id, row.id), eq(intakes.status, row.status))).returning();
+  return freed ?? row;
+}
+
+/** Vuelve a empezar el alta de un producto (otra fila; la anterior queda como historial). */
+export async function restartIntake(user: AuthUser, productId: number, input: { url?: unknown } = {}): Promise<Intake> {
+  const product = await getProductFor(user, productId);
+  const last = await latestIntake(product.id);
+  const link = classifyLink(input.url ?? last?.url ?? product.sourceUrl);
+  if (!link) throw new HttpError(400, "Este producto no tiene un enlace válido para analizar.");
+  const country = last?.country ?? product.countries[0] ?? "DE";
+  const [intake] = await getDb()
+    .insert(intakes)
+    .values({ productId: product.id, url: link.url, kind: link.kind, country, createdBy: user.id, status: link.kind === "reel" ? "trayendo" : "analizando", message: firstMessage(link.kind) })
+    .returning();
+  if (link.url !== product.sourceUrl) await setProductFacts(product.id, { sourceUrl: link.url });
+  return intake;
+}
+
+export async function latestIntake(productId: number): Promise<Intake | null> {
+  const [row] = await getDb().select().from(intakes).where(eq(intakes.productId, productId)).orderBy(desc(intakes.id)).limit(1);
+  return row ?? null;
+}
+
+// ───────────────────────── Avanzar ─────────────────────────
+
+/** Reserva el alta para este proceso; `null` si otro la tiene o ya terminó. */
+async function lease(intakeId: number, now: Date): Promise<Intake | null> {
+  const [row] = await getDb()
+    .update(intakes)
+    .set({ leaseUntil: new Date(now.getTime() + LEASE_MS) })
+    .where(
+      and(
+        eq(intakes.id, intakeId),
+        or(inArray(intakes.status, ["trayendo", "analizando", "mockup"]), inArray(intakes.mockupStatus, ["enviado"])),
+        or(isNull(intakes.leaseUntil), lt(intakes.leaseUntil, now)),
+      ),
+    )
+    .returning();
+  return row ?? null;
+}
+
+async function save(id: number, changes: Partial<typeof intakes.$inferInsert>, now: Date): Promise<Intake> {
+  const [row] = await getDb().update(intakes).set({ ...changes, updatedAt: now }).where(eq(intakes.id, id)).returning();
+  return row;
+}
+
+/** Avanza un alta todo lo que se pueda ahora (cada paso es seguro de repetir). */
+export async function advanceIntake(intakeId: number, deps: IntakeDeps = {}): Promise<void> {
+  let row = await lease(intakeId, nowOf(deps));
+  if (!row) return;
+  try {
+    const owner = await getActiveUser(row.createdBy);
+    if (!owner) {
+      await save(row.id, { status: "fallido", message: "La cuenta que pidió el alta está desactivada." }, nowOf(deps));
+      return;
+    }
+    if (row.status === "trayendo") row = await stepFetch(row, deps);
+    if (row.status === "analizando") row = await stepAnalyze(row, owner, deps);
+    if (row.status === "mockup" || row.mockupStatus === "enviado") row = await stepMockup(row, owner, deps);
+  } finally {
+    await getDb().update(intakes).set({ leaseUntil: null }).where(eq(intakes.id, intakeId));
+  }
+}
+
+/** Tarea programada: avanza todas las altas sin terminar. */
+export async function intakeSweep(deps: IntakeDeps = {}): Promise<void> {
+  const rows = await getDb()
+    .select({ id: intakes.id })
+    .from(intakes)
+    .where(or(inArray(intakes.status, ["trayendo", "analizando", "mockup"]), eq(intakes.mockupStatus, "enviado")))
+    .orderBy(intakes.id)
+    .limit(20);
+  for (const { id } of rows) {
+    try {
+      await advanceIntake(id, deps);
+    } catch (error) {
+      console.error(`[altas] El alta ${id} no pudo avanzar:`, error instanceof Error ? error.message : error);
+    }
+  }
+}
+
+// 1. Traer el vídeo ────────────────────────────────────────────
+
+async function stepFetch(row: Intake, deps: IntakeDeps): Promise<Intake> {
+  const now = nowOf(deps);
+  const store = deps.store === undefined ? getObjectStore() : deps.store;
+  const goOn = (message: string) => save(row.id, { status: "analizando", message }, now);
+  if (!store) return goOn("Sin almacén de archivos: se analiza el enlace sin el vídeo.");
+  let media = await ensureLinkMedia(row.url);
+  if (!media) return goOn("Analizando el enlace…");
+  if (row.linkMediaId !== media.id) row = await save(row.id, { linkMediaId: media.id }, now);
+  if (media.status === "pending" && !media.cloudTriedAt) {
+    await fetchInCloud(media, { store, runYtDlp: deps.runYtDlp, now: deps.now });
+    media = (await ensureLinkMedia(row.url))!;
+  }
+  if (media.status === "ready") return goOn("Mirando el vídeo y buscando el producto en internet…");
+  if (media.status === "failed") return goOn("No se pudo traer el vídeo; se analiza con lo que hay en internet.");
+
+  const task = await macTaskStatus(media);
+  if (task === null || task === "done" || task === "failed") {
+    if (!(await requestFromMac(media, now))) return goOn("La nube no pudo traer el vídeo y no hay Mac conectado: se analiza con lo que hay en internet.");
+  }
+  const waited = now.getTime() - row.createdAt.getTime();
+  const online = await (deps.macOnline ?? (() => macOnline(now)))();
+  if (waited >= MAC_WAIT_MS) {
+    return goOn(online ? "El Mac no trajo el vídeo a tiempo: se analiza con lo que hay en internet." : "El Mac no responde: se analiza sin el vídeo, solo con lo que hay en internet.");
+  }
+  const message = online
+    ? "Instagram no deja entrar a la nube: el vídeo lo está trayendo tu Mac…"
+    : "Instagram no deja entrar a la nube y tu Mac no responde. Enciéndelo y abre el agente de PRINCIPAL; si no, en unos minutos se sigue sin el vídeo.";
+  return row.message === message ? row : save(row.id, { message }, now);
+}
+
+// 2. Entender el producto ──────────────────────────────────────
+
+const intakeSchema = z.object({
+  identificado: z.boolean(),
+  motivo: z.string(),
+  producto: z.string(),
+  queHace: z.string(),
+  mecanismo: z.string(),
+  nicho: z.string(),
+  audiencia: z.string(),
+  anguloActual: z.string(),
+  emoji: z.string(),
+  marca: z.object({ nombre: z.string(), porQue: z.string(), alternativas: z.array(z.string()) }),
+  referencia: z.object({ tipo: z.enum(["fotograma", "foto_tienda", "foto_subida", "ninguna"]), numero: z.number().int() }),
+  promptMockup: z.string(),
+  fuentes: z.array(z.object({ url: z.string(), que: z.string() })),
+});
+export type IntakeAnswer = z.infer<typeof intakeSchema>;
+
+/** Lo que se guarda en `result`: la respuesta, con cada fuente marcada como comprobada o no. */
+export interface IntakeResult extends Omit<IntakeAnswer, "fuentes"> {
+  fuentes: Array<{ url: string; que: string; comprobada: boolean }>;
+  referenciaFotoId: number | null;
+  sinVideo: boolean;
+  costeMicros: number;
+}
+
+interface Inputs {
+  frames: Array<{ timeMs: number; jpeg: Buffer }>;
+  /** Fotos o capturas que subió la persona al crear el producto (opcionales). */
+  uploaded: Array<{ id: number; jpeg: Buffer }>;
+  shop: { title: string | null; description: string | null; images: Array<{ url: string; bytes: Buffer; mime: "image/jpeg" | "image/png" | "image/webp" }> };
+}
+
+async function gatherInputs(row: Intake, owner: AuthUser, deps: IntakeDeps): Promise<Inputs> {
+  const inputs: Inputs = { frames: [], uploaded: [], shop: { title: null, description: null, images: [] } };
+  const photos = (await listProductPhotos(owner, row.productId)).filter((p) => p.role !== "avatar" && p.role !== "entorno").slice(-UPLOADED_IMAGES);
+  for (const photo of photos) {
+    try {
+      const { data } = await readProductPhoto(owner, photo.id);
+      inputs.uploaded.push({ id: photo.id, jpeg: await makeThumbnail(data, "image", 1568) });
+    } catch {
+      // Una foto que no se puede leer no impide seguir.
+    }
+  }
+  if (row.kind === "reel" && row.linkMediaId) {
+    const store = deps.store === undefined ? getObjectStore() : deps.store;
+    const [media] = await getDb().select().from(schema.linkMedia).where(eq(schema.linkMedia.id, row.linkMediaId));
+    if (media?.status === "ready" && store) {
+      const dir = await fs.mkdtemp(path.join(os.tmpdir(), "alta-"));
+      try {
+        const file = path.join(dir, "video.mp4");
+        if (await downloadLinkMedia(media, file, { store })) {
+          const { durationMs } = await probeVideo(file);
+          const times = Array.from({ length: FRAME_COUNT }, (_, i) => Math.round(((i + 0.5) * durationMs) / FRAME_COUNT));
+          inputs.frames = await extractFrames(file, times);
+        }
+      } catch (error) {
+        console.warn(`[altas] No se pudieron sacar fotogramas del alta ${row.id}:`, error instanceof Error ? error.message : error);
+      } finally {
+        await fs.rm(dir, { recursive: true, force: true });
+      }
+    }
+  }
+  if (row.kind === "aliexpress" || row.kind === "web") {
+    const page = await fetchPublic(row.url, MAX_SHOP_PAGE_BYTES, deps);
+    if (page && /html/i.test(page.type || "text/html")) {
+      const facts = shopFacts(page.bytes.toString("utf8"), row.url);
+      inputs.shop.title = facts.title;
+      inputs.shop.description = facts.description;
+      for (const url of facts.images) {
+        if (inputs.shop.images.length >= SHOP_IMAGES) break;
+        const image = await fetchPublic(url, MAX_IMAGE_BYTES, deps);
+        const mime = image ? imageMimeOf(image.bytes.subarray(0, 16)) : null;
+        if (image && (mime === "image/jpeg" || mime === "image/png" || mime === "image/webp")) inputs.shop.images.push({ url, bytes: image.bytes, mime });
+      }
+    }
+  }
+  return inputs;
+}
+
+function intakeInstructions(row: Intake, language: string, brands: string[]): string {
+  const kindText: Record<IntakeKind, string> = {
+    reel: "un reel o vídeo de una cuenta que vende el producto",
+    cuenta: "la cuenta (perfil) de Instagram o TikTok de quien vende el producto; no tienes sus vídeos: búscala en internet (su tienda enlazada, sus vídeos más vistos, AliExpress, Amazon) para saber qué vende",
+    aliexpress: "un producto de AliExpress",
+    web: "la página de una tienda que vende el producto",
+  };
+  return [
+    "Eres el asistente que da de alta productos nuevos en PRINCIPAL, la web de Emmanuel para producir anuncios en vídeo de sus tiendas Shopify.",
+    `El enlace es ${kindText[row.kind as IntakeKind]}. Mercado: ${COUNTRY_NAME[row.country] ?? row.country} (idioma ${LANGUAGE_NAME[language] ?? language}).`,
+    "Aplica las reglas «Alta de producto desde un enlace» y «Nombres de marca». Usa la búsqueda en internet para identificar el artículo concreto y comprobar datos; mira primero el propio enlace con web_fetch.",
+    `Marcas que Emmanuel ya usa (no repitas sus raíces salvo que sea la misma familia): ${brands.join(", ") || "ninguna"}.`,
+    "Campos: `producto` (qué es, en español, corto), `queHace` (una frase sencilla en español), `mecanismo`, `nicho`, `audiencia` (quién compra y quién usa), `anguloActual` (con qué motivo se vende en la fuente), `emoji` (uno), `marca` (la mejor opción y dos alternativas, en el idioma del mercado, con el porqué en español), `referencia` (la imagen numerada donde mejor se ve el producto entero y limpio para el mockup: `fotograma`, `foto_tienda` o `foto_subida` con su número empezando en 1, o `ninguna`), `promptMockup` (en inglés, según la regla), `fuentes` (direcciones que de verdad consultaste y qué sacaste de cada una).",
+    "Si no puedes identificar el producto con seguridad, `identificado: false` y en `motivo` explica en una frase sencilla por qué y qué haría falta; deja el resto vacío. Si lo identificas, `motivo` puede quedar vacío o avisar de una duda.",
+  ].join("\n");
+}
+
+async function stepAnalyze(row: Intake, owner: AuthUser, deps: IntakeDeps): Promise<Intake> {
+  const now = nowOf(deps);
+  let product: Product;
+  try {
+    product = await getProductFor(owner, row.productId);
+  } catch {
+    return save(row.id, { status: "fallido", message: "Ya no tienes acceso a este producto." }, now);
+  }
+  const ctx = { jobName: INTAKE_JOB, userId: owner.id, productId: product.id };
+  let answer: { data: IntakeAnswer; webSources: string[]; costMicros: number; inputs: { frames: number; shop: number; shopUrls: string[] } };
+  let inputs: Inputs | null = null;
+  try {
+    answer = await runStep(ctx, `${INTAKE_JOB}:${row.id}:ficha`, async () => {
+      inputs = await gatherInputs(row, owner, deps);
+      const brands = (await allProductNames()).filter((n) => n !== PLACEHOLDER_NAME);
+      const content: LlmContent = [textPart(`Enlace: ${row.url}`)];
+      if (inputs.frames.length > 0) {
+        content.push(textPart(`Fotogramas del vídeo (${inputs.frames.length}):`));
+        inputs.frames.forEach((frame, i) => content.push(textPart(`Fotograma ${i + 1} — ${(frame.timeMs / 1000).toFixed(1)} s`), imagePart(frame.jpeg, "image/jpeg")));
+      } else if (row.kind === "reel") {
+        content.push(textPart("No se pudo traer el vídeo: identifícalo por el enlace y la búsqueda en internet."));
+      }
+      if (inputs.shop.title || inputs.shop.description) content.push(textPart(`Datos de la página: ${[inputs.shop.title, inputs.shop.description].filter(Boolean).join(" — ")}`));
+      inputs.shop.images.forEach((image, i) => content.push(textPart(`Foto de la tienda ${i + 1}`), imagePart(image.bytes, image.mime)));
+      inputs.uploaded.forEach((image, i) => content.push(textPart(`Foto subida ${i + 1} (la puso la persona: es el producto)`), imagePart(image.jpeg, "image/jpeg")));
+      const result = await (deps.gateway ?? getGateway()).call({
+        tier: "medium",
+        stepKey: `${INTAKE_JOB}:${row.id}`,
+        userId: owner.id,
+        productId: product.id,
+        rules: await loadRules(["alta-de-producto", "nombres-de-marca"]),
+        instructions: intakeInstructions(row, product.language, [...new Set(brands)]),
+        content,
+        maxTokens: 6_000,
+        schema: intakeSchema,
+        web: { searches: 5, fetches: 3, country: row.country },
+      });
+      return {
+        data: result.data!,
+        webSources: result.webSources,
+        costMicros: result.costMicros,
+        inputs: { frames: inputs.frames.length, shop: inputs.shop.images.length, shopUrls: inputs.shop.images.map((i) => i.url) },
+      };
+    });
+  } catch (error) {
+    if (error instanceof JobPausedError) return save(row.id, { message: "Se ha llegado al tope de gasto de Claude este mes: el alta sigue cuando haya saldo." }, now);
+    const message = gatewayMessage(error);
+    if (message) return save(row.id, { status: "fallido", message }, now);
+    throw error;
+  }
+
+  const { data } = answer;
+  const checked = new Set([...answer.webSources, row.url]);
+  const result: IntakeResult = {
+    ...data,
+    fuentes: data.fuentes.map((f) => ({ ...f, comprobada: checked.has(f.url) })),
+    referenciaFotoId: null,
+    sinVideo: row.kind === "reel" && answer.inputs.frames === 0,
+    costeMicros: answer.costMicros,
+  };
+
+  if (!data.identificado) {
+    await setProductFacts(product.id, { name: "Producto sin identificar", summary: data.motivo.trim() || "No se pudo identificar el producto del enlace." });
+    return save(row.id, { status: "fallido", result, message: `No se ha podido identificar el producto: ${data.motivo.trim() || "el enlace no deja ver qué vende"}. Prueba con el enlace de un reel concreto, o rellena el producto a mano.` }, now);
+  }
+
+  // La imagen de referencia del mockup se guarda como foto del producto (papel «Otra»).
+  result.referenciaFotoId = await saveReference(owner, product.id, row, data, deps);
+
+  await setProductFacts(product.id, {
+    name: data.marca.nombre || PLACEHOLDER_NAME,
+    summary: data.queHace || data.producto,
+    niche: data.nicho,
+    audience: data.audiencia,
+    angle: data.anguloActual,
+    ...(product.emoji ? {} : { emoji: data.emoji }),
+  });
+  const next: Partial<typeof intakes.$inferInsert> = result.referenciaFotoId
+    ? { status: "mockup", message: "Generando el mockup sobre fondo gris…" }
+    : { status: "listo", mockupStatus: "omitido", mockupNote: "No había una imagen clara del producto para el mockup: sube una foto y pulsa «Generar mockup».", message: null };
+  return save(row.id, { ...next, result }, now);
+
+  async function saveReference(user: AuthUser, productId: number, intake: Intake, answerData: IntakeAnswer, d: IntakeDeps): Promise<number | null> {
+    const ref = answerData.referencia;
+    let bytes: Buffer | null = null;
+    // Los fotogramas y fotos no se guardan en el paso: se vuelven a sacar (es gratis).
+    const fresh = (inputs as Inputs | null) ?? (await gatherInputs(intake, user, d));
+    // Una foto subida ya es del producto: sirve tal cual.
+    if (ref.tipo === "foto_subida") return fresh.uploaded[ref.numero - 1]?.id ?? fresh.uploaded[0]?.id ?? null;
+    if (ref.tipo === "fotograma") bytes = fresh.frames[ref.numero - 1]?.jpeg ?? fresh.frames[0]?.jpeg ?? null;
+    else if (ref.tipo === "foto_tienda") bytes = fresh.shop.images[ref.numero - 1]?.bytes ?? fresh.shop.images[0]?.bytes ?? null;
+    if (!bytes) return null;
+    try {
+      const jpeg = await makeThumbnail(bytes, "image", 2048);
+      const photo = await addProductPhoto(user, productId, jpeg, "otro");
+      return photo.id;
+    } catch (error) {
+      console.warn(`[altas] No se pudo guardar la referencia del alta ${intake.id}:`, error instanceof Error ? error.message : error);
+      return null;
+    }
+  }
+}
+
+/** Mensaje para la persona de un fallo de Claude; `null` si no es de la pasarela. */
+function gatewayMessage(error: unknown): string | null {
+  if (error instanceof LlmCapReachedError) return error.message;
+  if (error instanceof LlmNotConfiguredError) return "Falta la clave de Claude en la web; avisa al dueño.";
+  if (error instanceof LlmCallError || error instanceof LlmRefusalError || error instanceof LlmTruncatedError || error instanceof LlmInvalidOutputError) {
+    return `Claude no pudo analizar el enlace (${error.message}). Pulsa «Volver a analizar».`;
+  }
+  if (error instanceof StepFailedError) return `No se pudo analizar el enlace: ${error.message}`;
+  return null;
+}
+
+// 3. Mockup sobre gris ─────────────────────────────────────────
+
+export const MOCKUP_FALLBACK_PROMPT =
+  "Photorealistic commercial product photograph of the exact product in the reference image. Single fully assembled unit, 3/4 front view, on a neutral medium-gray seamless backdrop and tabletop (roughly #929396), soft even studio light, subtle soft contact shadow, everything in sharp focus, generous margins. Keep shape, parts, colors, prints and proportions exactly as the reference. No hands, no people, no props, no text, no logos, no graphics.";
+
+async function stepMockup(row: Intake, owner: AuthUser, deps: IntakeDeps): Promise<Intake> {
+  const now = nowOf(deps);
+  const hf = deps.higgsfield ?? getHiggsfield();
+  const result = (row.result ?? null) as IntakeResult | null;
+  const finish = (changes: Partial<typeof intakes.$inferInsert>) => save(row.id, { status: "listo", message: null, ...changes }, now);
+
+  if (row.mockupStatus === "enviado" && row.mockupJobId) {
+    let job;
+    try {
+      [job] = await hf.jobs(owner.id, [row.mockupJobId], 0);
+    } catch (error) {
+      if (error instanceof HiggsfieldNotConnectedError) return finish({ mockupStatus: "fallido", mockupNote: "Tu Higgsfield se ha desconectado: conéctalo en Ajustes y mira el mockup en tu cuenta." });
+      throw error;
+    }
+    if (job?.status === "done" && job.urls[0]) {
+      const file = await fetchPublic(job.urls[0], MAX_RESULT_BYTES, deps);
+      if (!file) return row;
+      const jpeg = await makeThumbnail(file.bytes, "image", 2048);
+      const photo = await addProductPhoto(owner, row.productId, jpeg, "articulo");
+      return finish({ mockupStatus: "hecho", mockupPhotoId: photo.id, mockupNote: null });
+    }
+    if (job?.status === "failed") {
+      const why = job.failure === "nsfw" || job.failure === "ip_detected" ? "Higgsfield lo bloqueó por su filtro de contenido o de marcas" : "Higgsfield no pudo generarlo";
+      return finish({ mockupStatus: "fallido", mockupNote: `${why}. Puedes pulsar «Generar mockup» otra vez.` });
+    }
+    if (now.getTime() - row.updatedAt.getTime() > MOCKUP_TIMEOUT_MS) return finish({ mockupStatus: "fallido", mockupNote: "Higgsfield no terminó el mockup en 30 minutos; míralo en tu cuenta de Higgsfield." });
+    return row;
+  }
+
+  const photoId = result?.referenciaFotoId ?? (await firstArticlePhoto(row.productId));
+  if (!photoId) return finish({ mockupStatus: "omitido", mockupNote: "No hay una foto del producto para el mockup: sube una y pulsa «Generar mockup»." });
+
+  try {
+    const photo = await readProductPhoto(owner, photoId);
+    const mediaId = await ensureMedia(owner.id, { bytes: photo.data, filename: `referencia-${photoId}.jpg`, contentType: photo.mime, type: "image" }, { higgsfield: hf });
+    const request: HfImageRequest = {
+      model: await getImageModel(),
+      prompt: (result?.promptMockup?.trim() || MOCKUP_FALLBACK_PROMPT).slice(0, 3000),
+      aspectRatio: "1:1",
+      resolution: "2k",
+      medias: [{ role: "image_references", value: mediaId }],
+    };
+    const quote = await hf.quoteImages(owner.id, request, 1);
+    const allowed = Math.max(MOCKUP_NORMAL_CREDITS, row.mockupOkCredits ?? 0);
+    if (quote.credits > allowed) {
+      return finish({ mockupStatus: "pendiente", mockupCredits: quote.credits, mockupNote: `El mockup costaría ${quote.credits} créditos de Higgsfield, más de lo normal. Pulsa «Generar mockup» para aceptarlo.` });
+    }
+    // Se apunta antes de enviar: si el proceso cae a mitad, no se vuelve a enviar a ciegas.
+    await save(row.id, { mockupStatus: "enviado", mockupCredits: quote.credits, mockupNote: "Enviando a Higgsfield…" }, now);
+    const sent = await hf.submitImages(owner.id, request, 1);
+    if (!sent.jobIds[0]) return finish({ mockupStatus: "fallido", mockupNote: `Higgsfield no aceptó el mockup${sent.rejected[0] ? `: ${sent.rejected[0]}` : ""}.` });
+    return save(row.id, { status: "mockup", mockupJobId: sent.jobIds[0], mockupNote: `Generando en Higgsfield (${quote.credits} créditos)…`, message: "Generando el mockup sobre fondo gris…" }, now);
+  } catch (error) {
+    if (error instanceof HiggsfieldNotConnectedError) return finish({ mockupStatus: "omitido", mockupNote: "Conecta tu Higgsfield en Ajustes y pulsa «Generar mockup»." });
+    if (error instanceof HiggsfieldRejectedError || error instanceof HiggsfieldConnectError) return finish({ mockupStatus: "fallido", mockupNote: `No se envió el mockup: ${error.message}` });
+    if (error instanceof HiggsfieldUnknownOutcomeError) return finish({ mockupStatus: "fallido", mockupNote: "No sabemos si el mockup llegó a Higgsfield: míralo en tu cuenta antes de repetirlo." });
+    if (error instanceof HttpError) return finish({ mockupStatus: "fallido", mockupNote: error.message });
+    throw error;
+  }
+}
+
+async function firstArticlePhoto(productId: number): Promise<number | null> {
+  const [photo] = await getDb()
+    .select({ id: schema.productPhotos.id })
+    .from(schema.productPhotos)
+    .where(and(eq(schema.productPhotos.productId, productId), inArray(schema.productPhotos.role, ["articulo", "otro"])))
+    .orderBy(sql`case when ${schema.productPhotos.role} = 'articulo' then 0 else 1 end`, desc(schema.productPhotos.id))
+    .limit(1);
+  return photo?.id ?? null;
+}
+
+/**
+ * «Generar mockup» (otra vez o aceptando el coste): con `acceptCredits`, la persona acepta hasta
+ * ese coste. Deja el alta en `mockup` para que el siguiente avance lo envíe.
+ */
+export async function requestMockup(user: AuthUser, productId: number, acceptCredits?: unknown): Promise<Intake> {
+  const product = await getProductFor(user, productId);
+  let intake = await latestIntake(product.id);
+  if (intake?.mockupStatus === "enviado") throw new HttpError(409, "El mockup ya se está generando.");
+  if (intake && ["trayendo", "analizando"].includes(intake.status)) throw new HttpError(409, "Espera a que termine el análisis del enlace.");
+  const ok = typeof acceptCredits === "number" && Number.isSafeInteger(acceptCredits) && acceptCredits > 0 ? acceptCredits : null;
+  if (!intake) {
+    // Producto creado a mano: un alta solo para el mockup.
+    [intake] = await getDb()
+      .insert(intakes)
+      .values({ productId: product.id, url: product.sourceUrl ?? "https://principal.local/manual", kind: "web", country: product.countries[0] ?? "DE", createdBy: user.id, status: "mockup" })
+      .returning();
+  }
+  return save(intake.id, { status: "mockup", mockupStatus: "pendiente", mockupJobId: null, mockupOkCredits: ok ?? intake.mockupOkCredits, mockupNote: "Preparando el mockup…", message: "Generando el mockup sobre fondo gris…", createdBy: user.id }, new Date());
+}
+
+// ───────────────────────── Para la pantalla ─────────────────────────
+
+export interface IntakeView {
+  id: number;
+  url: string;
+  kind: string;
+  country: string;
+  status: string;
+  message: string | null;
+  result: IntakeResult | null;
+  mockupStatus: string;
+  mockupCredits: number | null;
+  mockupNote: string | null;
+  mockupPhotoId: number | null;
+  createdAt: Date;
+}
+
+export async function intakeViewFor(user: AuthUser, productId: number): Promise<IntakeView | null> {
+  const product = await getProductFor(user, productId);
+  const row = await latestIntake(product.id);
+  if (!row) return null;
+  return {
+    id: row.id,
+    url: row.url,
+    kind: row.kind,
+    country: row.country,
+    status: row.status,
+    message: row.message,
+    result: (row.result ?? null) as IntakeResult | null,
+    mockupStatus: row.mockupStatus,
+    mockupCredits: row.mockupCredits,
+    mockupNote: row.mockupNote,
+    mockupPhotoId: row.mockupPhotoId,
+    createdAt: row.createdAt,
+  };
+}

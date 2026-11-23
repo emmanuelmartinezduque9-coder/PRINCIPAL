@@ -53,7 +53,8 @@ La primera vez hay que montar el servicio a mano siguiendo `docs/despliegue-rail
 - `src/worker/` proceso en segundo plano.
 - `docs/despliegue-railway.md` guía de publicación; `docs/decisiones-base-plataforma.md`
   decisiones de diseño; `docs/decisiones-almacen-y-montaje-nube.md` almacén de archivos (Railway
-  Buckets) y montaje en la nube.
+  Buckets) y montaje en la nube; `docs/decisiones-alta-desde-enlace.md` «Nuevo producto» desde un
+  enlace (ficha, marca, mockup gris) y la búsqueda de nicho, ángulo o audiencia con datos reales.
 - `montador/` el montador de vídeos (Python), que corre en la nube; `Dockerfile` la imagen de
   Railway (Node, ffmpeg, Python con el montador, rea-video y yt-dlp).
 - `agente-mac/` el programa del Mac: solo trae enlaces (Instagram, TikTok…) que la nube no alcanza.

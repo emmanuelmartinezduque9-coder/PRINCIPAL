@@ -23,6 +23,10 @@ export interface FakeReply {
   inferenceGeo?: string;
   /** Devuelve esto tal cual, sin darle forma de mensaje: para respuestas que no se entienden. */
   raw?: unknown;
+  /** Bloques que van antes del texto (p. ej. resultados de `web_search` / `web_fetch`). */
+  blocks?: unknown[];
+  /** Búsquedas en internet que dice haber hecho (`usage.server_tool_use.web_search_requests`). */
+  webSearches?: number;
 }
 
 export type FakeCall = Anthropic.Beta.Messages.MessageCreateParamsNonStreaming;
@@ -53,13 +57,14 @@ export function fakeMessages(script: FakeReply[]): { client: MessagesClient; cal
       type: "message",
       role: "assistant",
       model: reply.model ?? params.model,
-      content: reply.text === undefined ? [] : [{ type: "text", text: reply.text, citations: null }],
+      content: [...(reply.blocks ?? []), ...(reply.text === undefined ? [] : [{ type: "text", text: reply.text, citations: null }])],
       stop_reason: reply.stopReason ?? "end_turn",
       stop_sequence: null,
       stop_details: refused ? { type: "refusal", category: reply.refusalCategory ?? null, explanation: null } : null,
       usage: {
         ...tokenCounts(reply.usage),
         inference_geo: reply.inferenceGeo ?? null,
+        server_tool_use: reply.webSearches === undefined ? null : { web_search_requests: reply.webSearches, web_fetch_requests: 0 },
         iterations:
           reply.attempts?.map((attempt) => ({
             type: attempt.type ?? "message",

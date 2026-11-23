@@ -1,7 +1,7 @@
 "use client";
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Archive, ArchiveRestore, Clapperboard, CircleAlert, Ellipsis, Images, Languages, Loader2, MapPin, PackageX, Pencil } from "lucide-react";
+import { Archive, ArchiveRestore, Clapperboard, CircleAlert, Compass, Ellipsis, Images, Languages, Loader2, MapPin, PackageX, Pencil } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
 import { toast } from "sonner";
@@ -21,6 +21,8 @@ import { VideoList } from "@/components/videos/video-list";
 import { DefaultAvatar } from "./default-avatar";
 import { VariantsPanel } from "./variants-panel";
 import { EmojiButton } from "./emoji-picker";
+import { FocusPanel } from "./focus-panel";
+import { IntakePanel } from "./intake-panel";
 import type { AuthUser } from "@/server/auth";
 
 const CHIP = "inline-flex h-7 items-center gap-1.5 rounded-md border bg-card px-2.5 text-sm";
@@ -248,6 +250,8 @@ export function ProductDetail({ id, initialTab = "fotos" }: { id: string; initia
         </div>
       </PageHeader>
 
+      <IntakePanel productId={product.id} />
+
       <Tabs
         value={tab}
         onValueChange={(value) => {
@@ -267,6 +271,10 @@ export function ProductDetail({ id, initialTab = "fotos" }: { id: string; initia
             Vídeos
             {videoCount ? <span className="text-sm text-muted-foreground tabular-nums">{videoCount}</span> : null}
           </TabsTrigger>
+          <TabsTrigger value="nicho">
+            <Compass className="size-4" aria-hidden />
+            Nicho y ángulos
+          </TabsTrigger>
         </TabsList>
         <TabsContent value="fotos" className="flex flex-col gap-6">
           <Panel>
@@ -276,6 +284,9 @@ export function ProductDetail({ id, initialTab = "fotos" }: { id: string; initia
         </TabsContent>
         <TabsContent value="videos">
           <VideoList productId={product.id} />
+        </TabsContent>
+        <TabsContent value="nicho">
+          <FocusPanel product={product} />
         </TabsContent>
       </Tabs>
     </div>

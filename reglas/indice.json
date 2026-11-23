@@ -78,5 +78,36 @@
       "docs/reglas-origen/raiz/AGENTS.md",
       "docs/research_notes/Superpoderes marketing y vídeo/seedance_fidelidad_y_superpoderes_video.md"
     ]
+  },
+  {
+    "slug": "alta-de-producto",
+    "title": "Alta de producto desde un enlace",
+    "description": "Cómo se entiende un producto a partir de un reel, una cuenta o AliExpress, qué ficha se guarda y cómo es la foto «artículo» sobre gris.",
+    "file": "alta-de-producto.md",
+    "source": "docs/reglas-origen/skills-proyecto/nuevo-producto/SKILL.md",
+    "sources": [
+      "docs/reglas-origen/skills-proyecto/nuevo-producto/SKILL.md",
+      "docs/reglas-origen/disenos/mockup-gris-eiswerk.json",
+      "docs/reglas-origen/skills-codex/nombres-marca-emmanuel/SKILL.md"
+    ]
+  },
+  {
+    "slug": "nombres-de-marca",
+    "title": "Nombres de marca",
+    "description": "Cómo se elige el nombre de marca propio: corto, memorable, que dé confianza y con sentido para el producto y su nicho.",
+    "file": "nombres-de-marca.md",
+    "source": "docs/reglas-origen/skills-codex/nombres-marca-emmanuel/SKILL.md"
+  },
+  {
+    "slug": "nichos-con-datos",
+    "title": "Nicho, ángulo o audiencia diferente",
+    "description": "Cómo se buscan otros nichos, ángulos y audiencias con pruebas reales (vistas, anuncios activos, tiendas) y sin avisos de marca.",
+    "file": "nichos-con-datos.md",
+    "source": "docs/piloto-pedido-54/indicaciones-del-dueno.md",
+    "sources": [
+      "docs/piloto-pedido-54/indicaciones-del-dueno.md",
+      "docs/reglas-origen/skills-codex/angulos-de-venta/SKILL.md",
+      "docs/superpowers/specs/2026-11-22-plataforma-y-motor-angulos-design.md"
+    ]
   }
 ]

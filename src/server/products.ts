@@ -95,20 +95,63 @@ export function validateProductInput(input: { name: string; summary: string; lan
 export async function createProduct(
   user: AuthUser,
   input: { name: string; summary: string; language?: string; countries?: string[] },
+  options: {
+    /** Enlace del que sale (alta desde un enlace). */
+    sourceUrl?: string;
+    /** Algo más que debe quedar en la misma operación (p. ej. el alta automática). */
+    alsoInTx?: (tx: ProductTx, product: Product) => Promise<void>;
+  } = {},
 ): Promise<Product> {
   const values = validateProductInput(input);
   return getDb().transaction(async (tx) => {
     const [product] = await tx
       .insert(schema.products)
-      .values({ ...values, createdBy: user.id })
+      .values({ ...values, createdBy: user.id, sourceUrl: options.sourceUrl ?? null })
       .returning();
     if (user.role !== "dueno") {
       await tx
         .insert(schema.productAssignments)
         .values({ productId: product.id, userId: user.id, assignedBy: user.id });
     }
+    await options.alsoInTx?.(tx, product);
     return product;
   });
+}
+
+export type ProductTx = Parameters<Parameters<ReturnType<typeof getDb>["transaction"]>[0]>[0];
+
+/**
+ * Lo que el sistema rellena solo (el alta desde un enlace): nombre, frase, nicho, audiencia,
+ * ángulo, emoji y enlace de origen. Quien llama ya comprobó el acceso al producto. Recorta a los
+ * máximos de siempre; lo que no se envía se queda igual.
+ */
+export async function setProductFacts(
+  productId: number,
+  facts: { name?: string; summary?: string; niche?: string | null; audience?: string | null; angle?: string | null; emoji?: string | null; sourceUrl?: string },
+): Promise<void> {
+  const clip = (value: string | null | undefined, max: number) => (value == null ? value : value.trim().slice(0, max) || null);
+  const changes: Partial<typeof schema.products.$inferInsert> = {};
+  if (facts.name?.trim()) changes.name = facts.name.trim().slice(0, MAX_NAME);
+  if (facts.summary?.trim()) changes.summary = facts.summary.trim().slice(0, MAX_SUMMARY);
+  if (facts.niche !== undefined) changes.niche = clip(facts.niche, 300);
+  if (facts.audience !== undefined) changes.audience = clip(facts.audience, 300);
+  if (facts.angle !== undefined) changes.angle = clip(facts.angle, 300);
+  if (facts.emoji !== undefined) {
+    try {
+      changes.emoji = validateEmoji(facts.emoji);
+    } catch {
+      // Un emoji que no vale no impide guardar lo demás.
+    }
+  }
+  if (facts.sourceUrl) changes.sourceUrl = facts.sourceUrl;
+  if (Object.keys(changes).length === 0) return;
+  await getDb().update(schema.products).set(changes).where(eq(schema.products.id, productId));
+}
+
+/** Nombres de todos los productos (para no repetir raíces al elegir una marca nueva). */
+export async function allProductNames(): Promise<string[]> {
+  const rows = await getDb().select({ name: schema.products.name }).from(schema.products);
+  return [...new Set(rows.map((row) => row.name))];
 }
 
 export interface ProductChanges {
@@ -123,6 +166,21 @@ export interface ProductChanges {
   emoji?: unknown;
   /** Archivar (`true`) o desarchivar (`false`). Solo el dueño. */
   archived?: unknown;
+  /** Nicho, audiencia y ángulo actuales: texto (hasta 300 caracteres) o `null` para quitarlo. */
+  niche?: unknown;
+  audience?: unknown;
+  angle?: unknown;
+}
+
+const MAX_FOCUS = 300;
+
+/** Nicho, audiencia o ángulo: texto recortado o `null`. Lanza 400 si no vale. */
+function focusText(value: unknown, what: string): string | null {
+  if (value === null) return null;
+  if (typeof value !== "string") throw new HttpError(400, `${what} no válido.`);
+  const text = value.trim();
+  if (text.length > MAX_FOCUS) throw new HttpError(400, `${what} no puede tener más de ${MAX_FOCUS} caracteres.`);
+  return text || null;
 }
 
 const AVATAR_MODES = ["elegido", "sin_sustitucion", "nadie"];
@@ -168,8 +226,11 @@ async function checkDefaultAvatar(
  */
 export async function updateProduct(user: AuthUser, productId: number, changes: ProductChanges): Promise<Product> {
   const current = await getProductFor(user, productId);
-  const extra: { emoji?: string | null; archivedAt?: Date | null } = {};
+  const extra: { emoji?: string | null; archivedAt?: Date | null; niche?: string | null; audience?: string | null; angle?: string | null } = {};
   if (changes.emoji !== undefined) extra.emoji = validateEmoji(changes.emoji);
+  if (changes.niche !== undefined) extra.niche = focusText(changes.niche, "Nicho");
+  if (changes.audience !== undefined) extra.audience = focusText(changes.audience, "Audiencia");
+  if (changes.angle !== undefined) extra.angle = focusText(changes.angle, "Ángulo");
   if (changes.archived !== undefined) {
     if (typeof changes.archived !== "boolean") throw new HttpError(400, "Valor no válido.");
     if (user.role !== "dueno") throw new HttpError(403, "Solo el dueño puede archivar productos.");

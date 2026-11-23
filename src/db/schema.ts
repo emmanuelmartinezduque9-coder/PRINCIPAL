@@ -90,6 +90,12 @@ export const products = pgTable("products", {
   emoji: text("emoji"),
   /** Archivado por el dueño: sale de las listas y selectores, pero no se borra nada. */
   archivedAt: instant("archived_at"),
+  /** Enlace del que salió (reel, cuenta o AliExpress), si se creó desde un enlace. */
+  sourceUrl: text("source_url"),
+  /** Nicho, audiencia y ángulo con los que se trabaja ahora (los elige la persona). */
+  niche: text("niche"),
+  audience: text("audience"),
+  angle: text("angle"),
 }, (t) => [
   check("products_emoji_length", sql`${t.emoji} is null or char_length(${t.emoji}) between 1 and 16`),
   check("products_default_avatar_mode_valid", sql`${t.defaultAvatarMode} in ('elegido', 'sin_sustitucion', 'nadie')`),
@@ -1222,5 +1228,83 @@ export const linkMedia = pgTable(
   (t) => [
     check("link_media_status_valid", sql`${t.status} in ('pending', 'ready', 'failed')`),
     check("link_media_ready_complete", sql`${t.status} <> 'ready' or ${t.objectKey} is not null`),
+  ],
+);
+
+/**
+ * Alta automática de un producto desde un enlace («Nuevo producto» → pegar enlace). Una fila por
+ * alta: trae el vídeo si hace falta (nube o Mac), Claude entiende el producto con búsqueda en
+ * internet y rellena la ficha y la marca, y se genera el mockup sobre gris en el Higgsfield de
+ * quien lo pidió. Lo avanza la tarea programada `producto.altas` (ver `src/server/product-intake.ts`).
+ */
+export const productIntakes = pgTable(
+  "product_intakes",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    productId: bigint("product_id", { mode: "number" })
+      .notNull()
+      .references(() => products.id, { onDelete: "cascade" }),
+    url: text("url").notNull(),
+    /** `reel`, `cuenta`, `aliexpress` o `web`. */
+    kind: text("kind").notNull(),
+    country: text("country").notNull(),
+    /** `trayendo` → `analizando` → `mockup` → `listo`; o `fallido`. */
+    status: text("status").notNull().default("trayendo"),
+    /** Lo que ve la persona ahora (en español, sin detalles técnicos); `null` si nada. */
+    message: text("message"),
+    linkMediaId: bigint("link_media_id", { mode: "number" }).references((): AnyPgColumn => linkMedia.id, { onDelete: "set null" }),
+    /** Ficha que devolvió Claude (producto, qué hace, nicho, marca, fuentes…). */
+    result: jsonb("result"),
+    /** Mockup: `pendiente`, `enviado`, `hecho`, `omitido` o `fallido`. */
+    mockupStatus: text("mockup_status").notNull().default("pendiente"),
+    mockupJobId: text("mockup_job_id"),
+    /** Créditos que costaba el mockup según el presupuesto de Higgsfield. */
+    mockupCredits: integer("mockup_credits"),
+    /** Hasta cuántos créditos aceptó la persona para el mockup (cuando costaba más de lo normal). */
+    mockupOkCredits: integer("mockup_ok_credits"),
+    mockupPhotoId: bigint("mockup_photo_id", { mode: "number" }).references((): AnyPgColumn => productPhotos.id, { onDelete: "set null" }),
+    mockupNote: text("mockup_note"),
+    createdBy: bigint("created_by", { mode: "number" }).notNull(),
+    /** Hasta cuándo la tiene reservada un proceso (dos procesos nunca avanzan la misma). */
+    leaseUntil: instant("lease_until"),
+    createdAt: instant("created_at").notNull().defaultNow(),
+    updatedAt: instant("updated_at").notNull().defaultNow(),
+  },
+  (t) => [
+    check("product_intakes_kind_valid", sql`${t.kind} in ('reel', 'cuenta', 'aliexpress', 'web')`),
+    check("product_intakes_status_valid", sql`${t.status} in ('trayendo', 'analizando', 'mockup', 'listo', 'fallido')`),
+    check("product_intakes_mockup_valid", sql`${t.mockupStatus} in ('pendiente', 'enviado', 'hecho', 'omitido', 'fallido')`),
+    index("product_intakes_product_idx").on(t.productId),
+  ],
+);
+
+/**
+ * «Buscar nicho / ángulo / audiencia diferente»: una búsqueda con datos reales de internet
+ * (Claude con búsqueda web). Guarda las propuestas con sus pruebas; la persona elige.
+ */
+export const productResearch = pgTable(
+  "product_research",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    productId: bigint("product_id", { mode: "number" })
+      .notNull()
+      .references(() => products.id, { onDelete: "cascade" }),
+    /** `nicho`, `angulo` o `audiencia`. */
+    kind: text("kind").notNull(),
+    /** `en_cola`, `buscando`, `hecho` o `fallido`. */
+    status: text("status").notNull().default("en_cola"),
+    /** Indicación opcional de la persona («que no sea para niños»…). */
+    note: text("note"),
+    result: jsonb("result"),
+    error: text("error"),
+    spendEntryId: bigint("spend_entry_id", { mode: "number" }),
+    createdBy: bigint("created_by", { mode: "number" }).notNull(),
+    createdAt: instant("created_at").notNull().defaultNow(),
+    updatedAt: instant("updated_at").notNull().defaultNow(),
+  },
+  (t) => [
+    check("product_research_kind_valid", sql`${t.kind} in ('nicho', 'angulo', 'audiencia')`),
+    check("product_research_status_valid", sql`${t.status} in ('en_cola', 'buscando', 'hecho', 'fallido')`),
+    index("product_research_product_idx").on(t.productId),
   ],
 );

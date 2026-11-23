@@ -36,6 +36,17 @@ const FALLBACK_BETA = "server-side-fallback-2026-07-01";
 /** Tokens de entrada que puede llegar a contar una foto; en caracteres, a 3 por token. */
 const IMAGE_CHARS = 5_000 * 3;
 
+/** Lo más que se deja leer de una página con `web_fetch`, en tokens. */
+export const WEB_FETCH_MAX_TOKENS = 8_000;
+/** Lo que puede añadir a la entrada cada resultado de búsqueda, en tokens (por lo alto). */
+const WEB_SEARCH_RESULT_TOKENS = 6_000;
+/** Precio de cada búsqueda: 10 US$ por cada 1 000 (precios de Anthropic, 23-11-2026). Leer páginas no se cobra aparte. */
+export const WEB_SEARCH_MICROS = 10_000;
+/** Lo más que se deja buscar y leer en una llamada. */
+const MAX_WEB_USES = 12;
+/** Veces que se continúa una respuesta que el servidor pausó (`pause_turn`) en mitad de las búsquedas. */
+const MAX_CONTINUATIONS = 2;
+
 /** Margen por lo que la API añade a la entrada (marcas de mensaje y de sistema). */
 const FRAMING_CHARS = 600;
 
@@ -46,7 +57,7 @@ const FRAMING_CHARS = 600;
  */
 const REQUEST_TIMEOUT_MS = 600_000;
 
-type MessagesClient = Pick<Anthropic["beta"]["messages"], "create">;
+type MessagesClient = Pick<Anthropic["beta"]["messages"], "create"> & Partial<Pick<Anthropic["beta"]["messages"], "stream">>;
 type CreateParams = Anthropic.Beta.Messages.MessageCreateParamsNonStreaming;
 type ApiMessage = Anthropic.Beta.Messages.BetaMessage;
 
@@ -66,6 +77,19 @@ export interface LlmCall<T> {
   maxTokens: number;
   /** Si se pasa, se pide la respuesta en JSON con esta forma y se valida. */
   schema?: z.ZodType<T>;
+  /**
+   * Búsqueda en internet (herramientas del servidor de Anthropic `web_search` y `web_fetch`):
+   * cuántas búsquedas y lecturas de páginas puede hacer como mucho, y el país desde el que se
+   * busca (código ISO, p. ej. `DE`). Con búsqueda, el JSON de `schema` se pide al final del
+   * texto (no con `output_config.format`) y se valida igual.
+   */
+  web?: WebAccess;
+}
+
+export interface WebAccess {
+  searches: number;
+  fetches: number;
+  country?: string;
 }
 
 export interface LlmResult<T> {
@@ -79,6 +103,11 @@ export interface LlmResult<T> {
   costMicros: number;
   spendEntryId: number;
   ruleVersions: Record<string, number>;
+  /**
+   * Direcciones que de verdad devolvieron las herramientas de internet (resultados de búsqueda y
+   * páginas leídas), sin repetir. Sirve para comprobar que una prueba citada existe. Vacío sin `web`.
+   */
+  webSources: string[];
 }
 
 export interface LlmGateway {
@@ -187,6 +216,12 @@ function validate(request: LlmCall<unknown>): void {
   if (!Number.isSafeInteger(request.maxTokens) || request.maxTokens < 1 || request.maxTokens > MAX_OUTPUT_TOKENS) {
     throw new Error(`El máximo de tokens de salida debe ser un entero entre 1 y ${MAX_OUTPUT_TOKENS}.`);
   }
+  if (request.web) {
+    const { searches, fetches, country } = request.web;
+    const ok = (n: number) => Number.isSafeInteger(n) && n >= 0 && n <= MAX_WEB_USES;
+    if (!ok(searches) || !ok(fetches) || searches + fetches === 0) throw new Error("Búsqueda en internet mal configurada.");
+    if (country !== undefined && !/^[A-Z]{2}$/.test(country)) throw new Error("País de búsqueda no válido.");
+  }
   const seen = new Set<string>();
   for (const rule of request.rules) {
     if (seen.has(rule.slug)) throw new Error(`Regla repetida: «${rule.slug}».`);
@@ -214,7 +249,14 @@ function buildParams(request: LlmCall<unknown>): CreateParams {
   system.push({ type: "text", text: request.instructions });
 
   const outputConfig: NonNullable<CreateParams["output_config"]> = { effort: EFFORT[request.tier] };
-  if (request.schema) {
+  if (request.schema && request.web) {
+    // Con búsqueda, el texto lleva citas y resultados intercalados: el JSON va al final del texto.
+    const { schema } = zodOutputFormat(request.schema);
+    system.push({
+      type: "text",
+      text: `Termina SIEMPRE la respuesta con un único bloque \`\`\`json … \`\`\` que cumpla este esquema JSON (sin nada después):\n${JSON.stringify(schema)}`,
+    });
+  } else if (request.schema) {
     const { type, schema } = zodOutputFormat(request.schema);
     outputConfig.format = { type, schema };
   }
@@ -228,6 +270,15 @@ function buildParams(request: LlmCall<unknown>): CreateParams {
     messages: [{ role: "user", content: request.content }],
     output_config: outputConfig,
   };
+  if (request.web) {
+    const location = request.web.country ? { user_location: { type: "approximate" as const, country: request.web.country } } : {};
+    const tools: NonNullable<CreateParams["tools"]> = [];
+    if (request.web.searches > 0) tools.push({ type: "web_search_20260209", name: "web_search", max_uses: request.web.searches, ...location });
+    if (request.web.fetches > 0) {
+      tools.push({ type: "web_fetch_20260209", name: "web_fetch", max_uses: request.web.fetches, max_content_tokens: WEB_FETCH_MAX_TOKENS });
+    }
+    params.tools = tools;
+  }
   if (FALLBACK_MODELS[request.tier]) {
     // Si los filtros de seguridad rechazan la petición, el servidor la reintenta en el modelo
     // de reserva dentro de la misma llamada.
@@ -266,11 +317,19 @@ function withRegionSurcharge(micros: number): number {
  * Lo máximo que puede costar la llamada: toda la entrada a precio de escritura en caché y toda
  * la salida permitida, también en el modelo de reserva si lo hay, y con el recargo de región.
  */
-function worstCaseMicros(tier: ModelTier, params: CreateParams): number {
-  const chars = inputChars(params);
+function worstCaseMicros(tier: ModelTier, params: CreateParams, web?: WebAccess): number {
+  let chars = inputChars(params);
+  if (params.tools) chars += JSON.stringify(params.tools).length;
+  if (web) {
+    // Cada vuelta del servidor vuelve a leer todo lo encontrado hasta entonces: como mucho una
+    // vuelta por búsqueda o lectura, más la última, con todo lo encontrado.
+    const found = (web.searches * WEB_SEARCH_RESULT_TOKENS + web.fetches * WEB_FETCH_MAX_TOKENS) * 3;
+    chars = (chars + found) * (web.searches + web.fetches + 1);
+  }
   let micros = estimateMaxCostMicros(MODELS[tier], chars, params.max_tokens);
   const fallback = FALLBACK_MODELS[tier];
   if (fallback) micros += estimateMaxCostMicros(fallback, chars, params.max_tokens);
+  if (web) micros += web.searches * WEB_SEARCH_MICROS * (fallback ? 2 : 1);
   return withRegionSurcharge(micros);
 }
 
@@ -379,6 +438,37 @@ function textOf(response: ApiMessage): string {
   return text;
 }
 
+/** Direcciones que trajeron los resultados de `web_search` y `web_fetch` de la respuesta. */
+export function webSourcesOf(content: unknown): string[] {
+  const urls = new Set<string>();
+  const add = (value: unknown) => {
+    if (typeof value === "string" && /^https?:\/\//i.test(value)) urls.add(value);
+  };
+  if (!Array.isArray(content)) return [];
+  for (const block of content as Array<Record<string, unknown>>) {
+    if (!block || typeof block !== "object") continue;
+    if (block.type === "web_search_tool_result" && Array.isArray(block.content)) {
+      for (const result of block.content as Array<Record<string, unknown>>) if (result?.type === "web_search_result") add(result.url);
+    } else if (block.type === "web_fetch_tool_result" && block.content && typeof block.content === "object") {
+      const fetched = block.content as Record<string, unknown>;
+      if (fetched.type === "web_fetch_result") add(fetched.url);
+    }
+  }
+  return [...urls];
+}
+
+/**
+ * El JSON del final de una respuesta con búsqueda: el último bloque \`\`\`json, o si no hay, del
+ * primer «{» al último «}» del texto que sigue a la última herramienta.
+ */
+export function trailingJson(text: string): string {
+  const fences = [...text.matchAll(/```(?:json)?\s*([\s\S]*?)```/g)];
+  if (fences.length > 0) return fences[fences.length - 1][1].trim();
+  const start = text.indexOf("{");
+  const end = text.lastIndexOf("}");
+  return start >= 0 && end > start ? text.slice(start, end + 1) : text;
+}
+
 interface Reading {
   model: string;
   text: string;
@@ -390,6 +480,8 @@ interface Reading {
   costMicros: number | null;
   /** Región fija en la que se ejecutó, si lleva recargo. */
   surchargedRegion: string | null;
+  /** Búsquedas en internet que hizo (se cobran aparte). */
+  webSearches: number;
 }
 
 /**
@@ -414,6 +506,9 @@ function readResponse(requestedModel: string, response: ApiMessage): Reading {
   const surchargedRegion = typeof region === "string" && region !== "global" ? region : null;
   const attemptsMicros = sum(attempts.map((attempt) => attempt.costMicros ?? 0));
   const stopReason = response.stop_reason;
+  const searched = response.usage.server_tool_use?.web_search_requests;
+  const webSearches = typeof searched === "number" && Number.isSafeInteger(searched) && searched > 0 ? searched : 0;
+  const tokensMicros = !priced ? null : surchargedRegion ? withRegionSurcharge(attemptsMicros) : attemptsMicros;
   return {
     model: response.model,
     text: textOf(response),
@@ -426,8 +521,9 @@ function readResponse(requestedModel: string, response: ApiMessage): Reading {
       cacheReadTokens: sum(attempts.map((attempt) => attempt.cacheReadTokens)),
       cacheWriteTokens: sum(attempts.map((attempt) => attempt.cacheWriteTokens)),
     },
-    costMicros: !priced ? null : surchargedRegion ? withRegionSurcharge(attemptsMicros) : attemptsMicros,
+    costMicros: tokensMicros === null ? null : tokensMicros + webSearches * WEB_SEARCH_MICROS,
     surchargedRegion,
+    webSearches,
   };
 }
 
@@ -489,80 +585,128 @@ export function createGateway(deps: { client?: MessagesClient; now?: () => Date 
 
       const model = MODELS[request.tier];
       const params = buildParams(request);
-      const reservedMicros = worstCaseMicros(request.tier, params);
       const ruleVersions = Object.fromEntries(request.rules.map((rule) => [rule.slug, rule.version]));
       const baseDetail = { tier: request.tier, ruleVersions };
 
-      let entryId: number;
-      try {
-        ({ entryId } = await reserveSpend({
-          userId: request.userId,
-          productId: request.productId,
-          provider: "claude",
-          model,
-          stepKey: request.stepKey,
-          estimateMicros: reservedMicros,
-          ...(deps.now ? { now: deps.now() } : {}),
-        }));
-      } catch (error) {
-        if (error instanceof SpendCapError) throw new LlmCapReachedError(error.scope, error.message);
-        throw error;
-      }
-
-      let response: ApiMessage;
-      try {
-        response = await client.create(params);
-      } catch (error) {
-        const unknownOutcome = couldHaveCharged(error);
-        const status = httpStatus(error);
-        if (unknownOutcome) {
-          const name = error instanceof Error ? error.constructor.name : typeof error;
-          await bookUnknown(entryId, reservedMicros, { ...baseDetail, error: { name, status } });
-        } else {
-          // Si no se puede liberar, la reserva sigue contando: es lo prudente.
-          await releaseSpend(entryId).catch(() => undefined);
+      /**
+       * Una vuelta: reserva, llama, liquida. Con búsqueda en internet el servidor puede pausar la
+       * respuesta (`pause_turn`); entonces se continúa con otra vuelta, con su propia reserva.
+       */
+      const round = async (roundParams: CreateParams) => {
+        const reservedMicros = worstCaseMicros(request.tier, roundParams, request.web);
+        let entryId: number;
+        try {
+          ({ entryId } = await reserveSpend({
+            userId: request.userId,
+            productId: request.productId,
+            provider: "claude",
+            model,
+            stepKey: request.stepKey,
+            estimateMicros: reservedMicros,
+            ...(deps.now ? { now: deps.now() } : {}),
+          }));
+        } catch (error) {
+          if (error instanceof SpendCapError) throw new LlmCapReachedError(error.scope, error.message);
+          throw error;
         }
-        throw new LlmCallError(unknownOutcome ? "desconocido" : "no", status, failureMessage(error, status), error);
+
+        let response: ApiMessage;
+        try {
+          // Con búsqueda en internet la respuesta puede tardar más de un minuto en silencio, y la
+          // conexión se cortaba a los ~60 s: se pide en flujo, que la mantiene viva.
+          response = request.web && client.stream ? await client.stream(roundParams).finalMessage() : await client.create(roundParams);
+        } catch (error) {
+          const unknownOutcome = couldHaveCharged(error);
+          const status = httpStatus(error);
+          if (unknownOutcome) {
+            const name = error instanceof Error ? error.constructor.name : typeof error;
+            await bookUnknown(entryId, reservedMicros, { ...baseDetail, error: { name, status } });
+          } else {
+            // Si no se puede liberar, la reserva sigue contando: es lo prudente.
+            await releaseSpend(entryId).catch(() => undefined);
+          }
+          throw new LlmCallError(unknownOutcome ? "desconocido" : "no", status, failureMessage(error, status), error);
+        }
+
+        // El proveedor respondió, así que pudo cobrar. Si la respuesta no se entiende, no se deja
+        // la fila a medias: se apunta lo reservado.
+        let reading: Reading;
+        try {
+          reading = readResponse(model, response);
+        } catch (error) {
+          await bookUnknown(entryId, reservedMicros, { ...baseDetail, error: { name: "MalformedResponse", status: null } });
+          throw new LlmCallError("desconocido", null, UNREADABLE_ANSWER, error);
+        }
+
+        const { attempts, usage, stopReason, refusalCategory } = reading;
+        const priced = reading.costMicros !== null;
+        // Sin precio conocido no se puede calcular: se apunta lo reservado, que es el peor caso previsto.
+        const costMicros = reading.costMicros ?? reservedMicros;
+
+        await settleSpend(entryId, {
+          costMicros,
+          inputTokens: ledgerTokens(usage.inputTokens),
+          outputTokens: ledgerTokens(usage.outputTokens),
+          cacheReadTokens: ledgerTokens(usage.cacheReadTokens),
+          cacheWriteTokens: ledgerTokens(usage.cacheWriteTokens),
+          model: reading.model,
+          detail: {
+            ...baseDetail,
+            stopReason,
+            ...(stopReason === "refusal" ? { refusalCategory } : {}),
+            ...(priced ? {} : { outcome: "unpriced" }),
+            ...(costMicros > reservedMicros ? { overrun: true } : {}),
+            ...(attempts.length > 1 || attempts[0].type !== "message" || !priced ? { attempts } : {}),
+            ...(reading.surchargedRegion ? { inferenceGeo: reading.surchargedRegion } : {}),
+            ...(reading.webSearches > 0 ? { webSearches: reading.webSearches } : {}),
+          },
+        });
+        return { response, reading, costMicros, entryId };
+      };
+
+      let roundParams = params;
+      let text = "";
+      let costMicros = 0;
+      const sources = new Set<string>();
+      const usage: Usage = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 };
+      for (let continuation = 0; ; continuation += 1) {
+        const done = await round(roundParams);
+        text += done.reading.text;
+        costMicros += done.costMicros;
+        for (const url of webSourcesOf(done.response.content)) sources.add(url);
+        usage.inputTokens += done.reading.usage.inputTokens;
+        usage.outputTokens += done.reading.usage.outputTokens;
+        usage.cacheReadTokens += done.reading.usage.cacheReadTokens;
+        usage.cacheWriteTokens += done.reading.usage.cacheWriteTokens;
+        const { stopReason, refusalCategory } = done.reading;
+        const partial = { text, model: done.reading.model, costMicros, spendEntryId: done.entryId };
+
+        if (stopReason === "refusal") throw new LlmRefusalError(refusalCategory);
+        if (stopReason === "max_tokens" || stopReason === "model_context_window_exceeded") throw new LlmTruncatedError(partial);
+        if (stopReason === "pause_turn") {
+          // Se sigue donde lo dejó: la respuesta en pausa va como turno del asistente, tal cual.
+          if (continuation >= MAX_CONTINUATIONS) throw new LlmTruncatedError(partial);
+          roundParams = {
+            ...params,
+            messages: [...roundParams.messages, { role: "assistant", content: done.response.content as Anthropic.Beta.Messages.BetaContentBlockParam[] }],
+          };
+          text = "";
+          continue;
+        }
+
+        const raw = request.web && request.schema ? trailingJson(text) : text;
+        const data = request.schema ? parseData(request.schema, raw) : null;
+        return {
+          text,
+          data,
+          model: done.reading.model,
+          usage,
+          costMicros,
+          spendEntryId: done.entryId,
+          ruleVersions,
+          webSources: [...sources],
+        };
       }
-
-      // El proveedor respondió, así que pudo cobrar. Si la respuesta no se entiende, no se deja
-      // la fila a medias: se apunta lo reservado.
-      let reading: Reading;
-      try {
-        reading = readResponse(model, response);
-      } catch (error) {
-        await bookUnknown(entryId, reservedMicros, { ...baseDetail, error: { name: "MalformedResponse", status: null } });
-        throw new LlmCallError("desconocido", null, UNREADABLE_ANSWER, error);
-      }
-
-      const { attempts, usage, stopReason, refusalCategory } = reading;
-      const priced = reading.costMicros !== null;
-      // Sin precio conocido no se puede calcular: se apunta lo reservado, que es el peor caso previsto.
-      const costMicros = reading.costMicros ?? reservedMicros;
-
-      await settleSpend(entryId, {
-        costMicros,
-        inputTokens: ledgerTokens(usage.inputTokens),
-        outputTokens: ledgerTokens(usage.outputTokens),
-        cacheReadTokens: ledgerTokens(usage.cacheReadTokens),
-        cacheWriteTokens: ledgerTokens(usage.cacheWriteTokens),
-        model: reading.model,
-        detail: {
-          ...baseDetail,
-          stopReason,
-          ...(stopReason === "refusal" ? { refusalCategory } : {}),
-          ...(priced ? {} : { outcome: "unpriced" }),
-          ...(costMicros > reservedMicros ? { overrun: true } : {}),
-          ...(attempts.length > 1 || attempts[0].type !== "message" || !priced ? { attempts } : {}),
-          ...(reading.surchargedRegion ? { inferenceGeo: reading.surchargedRegion } : {}),
-        },
-      });
-
-      if (stopReason === "refusal") throw new LlmRefusalError(refusalCategory);
-      if (stopReason === "max_tokens" || stopReason === "model_context_window_exceeded") throw new LlmTruncatedError({ text: reading.text, model: reading.model, costMicros, spendEntryId: entryId });
-
-      const data = request.schema ? parseData(request.schema, reading.text) : null;
-      return { text: reading.text, data, model: reading.model, usage, costMicros, spendEntryId: entryId, ruleVersions };
     },
   };
 }

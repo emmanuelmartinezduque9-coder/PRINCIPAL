@@ -29,7 +29,7 @@ export const PHOTO_ROLE_HINTS: Record<PhotoRole, string> = {
 export type ProductView = Serialized<Product> & { coverPhotoId?: number | null };
 
 /** Pestañas del detalle de un producto; la elegida va en la dirección (`?pestana=videos`). */
-export const PRODUCT_TABS = ["fotos", "videos"] as const;
+export const PRODUCT_TABS = ["fotos", "videos", "nicho"] as const;
 export type ProductTab = (typeof PRODUCT_TABS)[number];
 export const isProductTab = (value: unknown): value is ProductTab => PRODUCT_TABS.includes(value as ProductTab);
 
