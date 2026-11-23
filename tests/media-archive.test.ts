@@ -170,7 +170,8 @@ describe("copiar", () => {
     await libraryClip("lib-1");
     await discoverMedia();
     failNext = 1;
-    const t0 = new Date("2026-11-23T10:00:00Z");
+    // Una hora por delante del reloj de la base de datos (con la que se crean las filas), sea qué hora sea.
+    const t0 = new Date(Date.now() + 60 * 60 * 1000);
     expect(await archivePending({ fetch: fakeFetch, now: () => t0 })).toEqual({ done: 0, failed: 0 });
     const row = await rowOf("lib-1");
     expect(row.status).toBe("pending");
