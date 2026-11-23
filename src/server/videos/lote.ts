@@ -153,12 +153,17 @@ const SPENT = ["submitted", "done", "failed"];
  */
 export type Stage = "need" | "busy" | "failed" | "maxed" | "done" | "approved";
 
-export function stageOf(gens: readonly Pick<Generation, "status" | "rejectReason" | "finishedAt" | "intentAt">[], approved: boolean, retryAfter: Date): Stage {
+export function stageOf(
+  gens: readonly (Pick<Generation, "status" | "rejectReason" | "finishedAt" | "intentAt"> & { error?: string | null })[],
+  approved: boolean,
+  retryAfter: Date,
+): Stage {
   const last = gens.at(-1);
   if (approved) return "approved";
   if (!last) return "need";
   if (BUSY_GENERATION.includes(last.status)) return "busy";
-  const spent = gens.filter((g) => SPENT.includes(g.status)).length;
+  // Un bloqueo del filtro de Higgsfield no es una ronda gastada: lo devuelve y tiene sus propios reintentos.
+  const spent = gens.filter((g) => SPENT.includes(g.status) && !(g.status === "failed" && g.error === BLOCKED)).length;
   const roundsLeft = spent < 1 + MAX_REGENERATIONS;
   if (last.status === "done" && !last.rejectReason) return "done";
   if (last.rejectReason) return roundsLeft ? "need" : "maxed";
@@ -823,6 +828,23 @@ async function redoPrompt(user: AuthUser, row: Row): Promise<boolean> {
   return true;
 }
 
+/** ¿La pausa «máximo de regeneraciones» de un clip deja de serlo sin contar los bloqueos del filtro? */
+async function maxedOnlyByBlocks(pause: NonNullable<Batch["pause"]>): Promise<boolean> {
+  if (pause.kindOf !== "clip" || pause.videoId === null || !pause.reason.includes("ha llegado al máximo de")) return false;
+  const [row] = await getDb()
+    .select({ n: sql<number>`count(*)::int` })
+    .from(schema.generations)
+    .where(
+      and(
+        eq(schema.generations.videoId, pause.videoId),
+        eq(schema.generations.kind, "clip"),
+        inArray(schema.generations.status, SPENT),
+        sql`not (${schema.generations.status} = 'failed' and ${schema.generations.error} is not distinct from ${BLOCKED})`,
+      ),
+    );
+  return (row?.n ?? 0) < 1 + MAX_REGENERATIONS;
+}
+
 /**
  * Pausas antiguas por un error de prompt (antes de que se corrigiera solo): el lote vuelve a donde
  * estaba y sigue, sin que el dueño tenga que pulsar nada.
@@ -831,8 +853,11 @@ async function resumePromptPauses(): Promise<void> {
   const paused = await getDb().select().from(schema.batches).where(eq(schema.batches.status, "pausado"));
   for (const batch of paused) {
     const pause = batch.pause;
-    // También un clip bloqueado por el filtro de Higgsfield: ahora se reescribe y se repite solo.
-    if (!pause || pause.kind !== "fallo" || !(isPromptProblem(pause.reason) || pause.reason.includes(BLOCKED))) continue;
+    if (!pause || pause.kind !== "fallo") continue;
+    // También un clip bloqueado por el filtro de Higgsfield: ahora se reescribe y se repite solo. Y un
+    // «máximo de regeneraciones» al que solo se llegó contando bloqueos (que no son rondas gastadas).
+    const internal = isPromptProblem(pause.reason) || pause.reason.includes(BLOCKED) || (await maxedOnlyByBlocks(pause));
+    if (!internal) continue;
     const [resumed] = await getDb()
       .update(schema.batches)
       .set({ status: pause.from, pause: null, resumedAt: new Date() })
@@ -1002,9 +1027,12 @@ async function advanceGenerations(user: AuthUser, start: Batch, deps: GenDeps): 
   const pauseFor = async (row: Row, kind: GenerationKind, s: Stage) => {
     const list = kind === "frame" ? row.frames : row.clips;
     if (s === "failed") {
+      const blockedAgain = kind === "clip" && list.at(-1)?.error === BLOCKED;
       await pauseBatch(batch, {
         kind: "fallo",
-        reason: `${row.video.title}: ${list.at(-1)?.error ?? "Higgsfield no ha podido generarlo."}`,
+        reason: blockedAgain
+          ? `${row.video.title}: Higgsfield bloquea el clip por su filtro de contenido o de marcas también con el prompt reescrito sin marcas (${MAX_BLOCKED_RETRIES} reintentos, sin coste). Lo bloquea el vídeo de referencia o la imagen: cambia la referencia o salta este vídeo.`
+          : `${row.video.title}: ${list.at(-1)?.error ?? "Higgsfield no ha podido generarlo."}`,
         videoId: row.video.id,
         kindOf: kind,
       });
