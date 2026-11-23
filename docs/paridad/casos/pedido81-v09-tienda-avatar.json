@@ -1,0 +1,474 @@
+{
+ "caso": "Réplica HaarZauber en Sephora con avatar por coincidencia y nota de cuenta",
+ "pedido": "app-8082c194d416445a9cd108923e243156-81",
+ "numero_de_video": 9,
+ "cuenta": "HAARZAUBER",
+ "por_que_este_caso": "Réplica con cambio de tienda (Sephora), persona visible con avatar de biblioteca elegido por coincidencia con la referencia, nota de cuenta (35–50 años, sin canas) y variante blanca.",
+ "resultado": "Entregado el 20/11/2026 (09 - HaarZauber - DE.mp4).",
+ "origen": {
+  "tarjeta": "~/Library/Application Support/SEGATOM/local-access-state-20261005-1/original-intake/NanoBanana/_LOTES_APP/owners/emmanuel/orders/app-8082c194d416445a9cd108923e243156-81.json (batch.prepared[8])",
+  "imagen": "/Volumes/T7/AUTOMATIZACION SEGA/Motor/order-preparation/app-8082c194d416445a9cd108923e243156-81/frame-transport/<recibo>.json",
+  "video": "/Volumes/T7/AUTOMATIZACION SEGA/Motor/order-preparation/app-8082c194d416445a9cd108923e243156-81/EDITOR/video_recibos/<job>.json",
+  "montaje": "…/post-edit/editorial-plan.json, …/post-edit/descriptions/, …/post-edit/delivery-manifest.json",
+  "nota": "Extraído del volcado ~/.principal-sync/aprendizaje/dump_app-8082c194d416445a9cd108923e243156-81.txt (22/11/2026) y de los JSON del pedido. Los ID de adjuntos son los del proveedor en aquel espacio de trabajo: sirven para comprobar orden y papel, no para reenviar."
+ },
+ "tarjeta": {
+  "campos": {
+   "account": "HAARZAUBER",
+   "audio_language_mode": "auto",
+   "avatar": "mujer 16",
+   "avatar_selection_mode": "manual",
+   "clips": null,
+   "concept": null,
+   "editing_owner": "capcut",
+   "edition": "",
+   "expected_texts": null,
+   "final_dubbing_mode": "none",
+   "frame_mode": "keep",
+   "frame_reference": "",
+   "frames": {},
+   "generation_resolution": "480p",
+   "genjutsu_model": "hf_mult_motion_control",
+   "genjutsu_model_provenance": {
+    "model": "hf_mult_motion_control",
+    "source": "default",
+    "version": 1
+   },
+   "genjutsu_references": [],
+   "id": "2dc213e0d153433cab42fdef4f9e76c0",
+   "identity_reference_policy": "visible-after-opening-v1",
+   "kind": "replicate",
+   "method": "genjutsu",
+   "music_mode": "reference_auto",
+   "music_number": null,
+   "music_rights_confirmed": false,
+   "music_start": 0,
+   "notes": "[Indicaciones de cuenta: HAARZAUBER]\nquiero que para los videos de haarzauber no pongas avatares ancianos ni mujeres con canas ya que intento conectar con mujeres de 35-50 años \n[/Indicaciones de cuenta]\n\nquiero que la tienda sea sephora",
+   "post_edit_text_mode": "reference",
+   "product_variant_key": "articulo_blanco",
+   "region_box": null,
+   "source_account": "HAARZAUBER",
+   "text_mode": "source",
+   "text_url": "",
+   "translate": true,
+   "url": "https://www.instagram.com/reel/Dfth6c8OEQG/",
+   "video_edit_mode": "post",
+   "video_edit_policy_version": "mandatory-post-v1",
+   "video_edit_reference_url": ""
+  },
+  "congelado_al_preparar": {
+   "product_variant_snapshot": {
+    "archivo": "/Volumes/T7/AUTOMATIZACION SEGA/Assets/HAARZAUBER/variante-blanco/referencia.png",
+    "asset": "articulo_blanco",
+    "instruction": "Adjuntar esta variante exacta a los frames y vídeos de esta tarjeta.",
+    "media_id": "718dcf3e-6db0-476f-bbbb-0832cb184060",
+    "sha256": "c9da08f1e177346ae5d7b8b594d8bda2fe2eccdb543de86f91fcb01a43392887"
+   },
+   "pinterest_search_enabled": null,
+   "genjutsu_model": "hf_mult_motion_control",
+   "generation_resolution_plan": {
+    "resolution": "480p",
+    "scope": "all_selected_clips",
+    "upscale": "unchanged",
+    "version": 1
+   },
+   "audio_language_plan": {
+    "audio_language_mode": "auto",
+    "engine": "wan3_0_prime",
+    "scope": "spoken_dialogue_only",
+    "target_language": "de-DE",
+    "version": 1
+   },
+   "music_auto_plan": {
+    "drop_required": false,
+    "external_music": false,
+    "generated_audio_review_required": true,
+    "library_only": false,
+    "mode": "generated_original",
+    "receipt_required": false,
+    "version": "reference-library-music-v1"
+   },
+   "avatar_snapshot": {
+    "avatar_elegido": {
+     "capture_id": "b49d19d4f1c34e5fa5f377f16d1deaa7",
+     "id": "b49d19d4f1c34e5fa5f377f16d1deaa7",
+     "origen": "user_upload",
+     "owner_id": "emmanuel",
+     "provider_uploaded": false,
+     "selector": "mujer 16",
+     "sha256": "784ba09296e53b4ac5671f87a74ece2422432e5cc5beaa91730321b72a6c278a"
+    },
+    "avatar_selector": "mujer 16",
+    "genjutsu": {
+     "adaptaciones": {
+      "avatar": "Usar la foto del selector elegido solo como identidad; no cambiar el avatar habitual de la cuenta.",
+      "conservar": "Conservar acciones, gestos, cámara, cortes y duración del vídeo fuente; no inventar movimientos ni recortar para encajar en Seedance.",
+      "fondo": "Concretar al menos cuatro cambios de objetos y colores tras analizar el original, manteniendo tipo de lugar, encuadre y decoración navideña si existe.",
+      "idioma": "Usar el idioma y mercado de la cuenta en el habla y textos que corresponda adaptar.",
+      "producto": "Sustituir todas las apariciones por el producto de la cuenta. Deducir EMBALAJE y ARTICULO de lo visible; no adjuntar frames ni referencias de productos ocultos. Conservar la escala validada.",
+      "realismo": "Aspecto de vídeo de iPhone, piel y materiales naturales, sombras de contacto y luz coherente con balance neutro; sin filtro amarillo.",
+      "ropa_textiles": "Cambiar color o textura de la ropa visible y textiles, sin alterar la acción.",
+      "textos": "Quitar solo overlays, captions, emojis e interfaz de la competencia; conservar carteles y logos físicos reales."
+     },
+     "modelo": "hf_mult_replace_object",
+     "motor": "genjutsu",
+     "permitir_pago": false,
+     "prompt": {
+      "genjutsu_estandar": true
+     },
+     "reglas": "CEREBRO/reglas/controles-video-por-motor.md",
+     "requiere_autorizacion_creditos": true,
+     "requiere_frames": false,
+     "requiere_memories": false,
+     "resolution": "480p",
+     "revision_antes_upscale": true,
+     "use_free_gens": false,
+     "uso_imagen": "video_fuente"
+    }
+   },
+   "genjutsu_references_snapshot": [],
+   "video_edit_plan": {
+    "audio": "preserve_generated_complete",
+    "audio_integrity_policy": "20261022-progressive-music-v1",
+    "clips": [
+     {
+      "clip": 1,
+      "model": "hf_mult_motion_control",
+      "route": "codex_post"
+     }
+    ],
+    "components": [
+     "texts",
+     "style",
+     "position",
+     "timing",
+     "cuts",
+     "visual_effects"
+    ],
+    "copy_music": false,
+    "delivery": "separate_verified_edit_keep_original",
+    "editorial_requirements": {
+     "emoji_source": "destination_product_and_niche",
+     "extend_hook_to_fit_music": false,
+     "hook_limits_by_concept": {
+      "coffee_drop": 3,
+      "countdown_1_2_3": 6,
+      "gift_pop": 3
+     },
+     "hook_limits_scope": "identified_hook_only_never_body",
+     "hook_max_seconds": null,
+     "music_offset_rule": "saved_drop_minus_observed_body_start",
+     "product_function_review_required": true,
+     "replica_timing": "preserve_reference_sequence_visuals_cuts_rhythm_and_duration",
+     "version": "emmanuel-20261115-concept-scoped"
+    },
+    "effective_music_mode": "generated_original",
+    "generated_audio_contract": {
+     "audio_source": "generated_clip",
+     "drop_required": false,
+     "external_music": false,
+     "generated_audio_review_required": true,
+     "ignored_music_selection": {
+      "music_mode": "reference_auto",
+      "music_number": null,
+      "music_start": 0
+     },
+     "model": "hf_mult_motion_control",
+     "preserve_snapshot": true,
+     "scope": "full_reference",
+     "track_mode": "preserved_original",
+     "transformation": "none",
+     "version": "genjutsu-full-generated-audio-v1"
+    },
+    "post_edit_text_mode": "reference",
+    "reference": {
+     "kind": "generation_source",
+     "url": "https://www.instagram.com/reel/Dfth6c8OEQG/",
+     "verification": "resolve_and_verify_real_source_before_editing"
+    },
+    "status": "pending_source_analysis",
+    "target_language": "de-DE",
+    "text_intent": {
+     "mode": "reference",
+     "origin": "mandatory_editorial_texts_20261031",
+     "reference_url": "",
+     "version": "post-edit-text-intent-v1"
+    },
+    "text_style": {
+     "alignment": "center",
+     "box": {
+      "canvas_height": 1920,
+      "canvas_width": 1080,
+      "height": 318,
+      "width": 886,
+      "x": 112,
+      "y": 287
+     },
+     "exact_render": "codex_post",
+     "fill": "#ffffff",
+     "font": "TikTokDisplay-Medium",
+     "font_file": "TikTok-Display-Medium.ttf",
+     "line_height_ratio": 1.1290322580645162,
+     "outline": "#000000",
+     "outline_width_ratio": 0.05,
+     "preset": "06B"
+    },
+    "version": 1,
+    "video_edit_mode": "post",
+    "video_edit_policy_version": "mandatory-post-v1",
+    "video_edit_reference_url": ""
+   },
+   "avatar_matching_policy": {
+    "library": []
+   }
+  }
+ },
+ "imagen": {
+  "nota": "Todos los envíos de imagen de este vídeo, en el orden del volcado; el aprobado es el último salvo que la decisión humana diga otra cosa. El prompt es el texto exacto enviado (los párrafos fijos ya están dentro).",
+  "envios": [
+   {
+    "recibo": "20947252ade9855b14c788bc5385f65f07501871b5909073d6bc6f759b7ac235.json",
+    "estado": "accepted",
+    "provider_job": "6eb330bb-9822-4591-9487-2a5130fb00e4",
+    "modelo_y_parametros": "app-8082c194d416445a9cd108923e243156-81:v9-c1 aspecto 9:16 model nano_banana_2_1 2k high etiqueta HAARZAUBER · Vídeo 9 · frame 1",
+    "adjuntos_en_orden": [
+     "dda52ca1-a34e-4c34-9ea0-0d389d4bf1a8",
+     "edf3cf47-3c76-460b-91e8-79ff61df2fea",
+     "b8ff051e-6014-49a6-ad3a-204ecb2b80d1",
+     "de3fb723-ef5e-426b-b6e4-6d0885ec54cb",
+     "c85b985c-8887-4fe3-b962-a885764cc5c6",
+     "f89af672-61f7-4563-a326-473a6a5d1937"
+    ],
+    "imagenes": [
+     "dda52ca1…[composición]",
+     "edf3cf47…[adjunta en el mensaje]",
+     "b8ff051e…[adjunta en el mensaje]",
+     "de3fb723…[adjunta en el mensaje]",
+     "c85b985c…[mujer 16]",
+     "f89af672…[realismo · solo estilo]"
+    ],
+    "papeles": {
+     "version": "20261005-explicit-reference-roles",
+     "roles": {
+      "reactor": {
+       "media_id": "c85b985c-8887-4fe3-b962-a885764cc5c6",
+       "index": 5
+      }
+     },
+     "style": {
+      "media_id": "f89af672-61f7-4563-a326-473a6a5d1937",
+      "index": 6
+     }
+    },
+    "avatar": {
+     "id": "b49d19d4f1c34e5fa5f377f16d1deaa7",
+     "selector": "mujer 16",
+     "media_id": "c85b985c-8887-4fe3-b962-a885764cc5c6",
+     "sha256": "784ba09296e53b4ac5671f87a74ece2422432e5cc5beaa91730321b72a6c278a"
+    },
+    "comando": [
+     "higgsfield",
+     "generate",
+     "create",
+     "nano_banana_2_1",
+     "--prompt",
+     "Across a shop checkout a female employee holds the exact HaarZauber box [2] just above a black-and-white Sephora shopping bag. Buyer hand holds a payment card near terminal in foreground. Same pose and framing as [1]. Use the selected woman identity; no dm logo anywhere.\n\nThe main subject is the per…[3421]",
+     "--resolution",
+     "2k",
+     "--aspect-ratio",
+     "9:16",
+     "--json",
+     "--thinking-level",
+     "high",
+     "--image-references",
+     "dda52ca1-a34e-4c34-9ea0-0d389d4bf1a8",
+     "--image-references",
+     "edf3cf47-3c76-460b-91e8-79ff61df2fea",
+     "--image-references",
+     "b8ff051e-6014-49a6-ad3a-204ecb2b80d1",
+     "--image-references",
+     "de3fb723-ef5e-426b-b6e4-6d0885ec54cb",
+     "--image-references",
+     "c85b985c-8887-4fe3-b962-a885764cc5c6",
+     "--image-references",
+     "f89af672-61f7-4563-a326-473a6a5d1937"
+    ],
+    "prompt": "Across a shop checkout a female employee holds the exact HaarZauber box [2] just above a black-and-white Sephora shopping bag. Buyer hand holds a payment card near terminal in foreground. Same pose and framing as [1]. Use the selected woman identity; no dm logo anywhere.\n\nThe main subject is the person in image [5]. Use only this selected portrait for her facial identity; the supporting portrait immediately preceding the primary supplies the companion identity when present; the source controls the action. No identity from composition or style.\n\nUse the exact product or package reference for geometry, materials, markings and scale. Action props and concealed products remain in their stated opening state.\n\nDifferent Sephora interior from [3], cosmetics behind the checkout and authentic physical Sephora signage. Employee wears simple black store clothing. Make the intended audience recognizable on first sight, without sound or captions. Use one prominent, physically plausible visual cue belonging to this product's audience in the described setting. Keep the action, hand positions and reveal timing intact.\n\nRetail ceiling illumination from [3] across hands, package, face and counter with shared contact shadows. When a room, space or environment reference is supplied, its observed lighting is the primary authority for the entire scene, overriding conflicting lighting in composition, avatar, product or style references and generic lighting recipes. Match its light direction, sources, colour temperature, intensity, contrast, exposure and falloff across the person, skin, clothing, hands, product and packaging. Re-light inserted elements to that environment, including cast and contact shadows, occlusion, reflections and colour bounce; match perspective, scale, depth, sharpness and image texture. Preserve real differences between illuminated and shaded areas: coherent integration does not mean flat or evenly filled lighting. No pasted cutouts, halos, floating objects, isolated portrait lighting or independent exposure. If no environment reference is supplied, retain the scene-specific lighting described above.\n\nImage 6 is realism reference only for texture. The scene-specific light in the previous paragraph controls all lighting; do not import the style photograph lighting or setting.  If an environment reference is supplied, this style reference supplies texture only and must not override that environment lighting.  Everyday phone-video softness varies with subject distance, light and movement; do not give skin, fabric and background identical fine detail. Do not copy its person, pose, face, clothing, product, logos or overlays. IDENTITY SOURCE PRIORITY: only the explicitly selected avatar references define each person. Ignore every face in realism/style references: never borrow or blend their facial geometry, eyes, nose, mouth, jaw, age, hair or likeness. Apply photographic texture to the selected avatar without replacing or averaging that identity. Composition and background references also provide no identity unless explicitly assigned as an avatar. Preserve the identity and action already specified. No artificial HDR or cosmetic skin smoothing.\n\nOne coherent vertical 9:16 casual phone photograph with natural perspective and contact shadows.\n\nNo text overlays, captions, subtitles, emojis or interface. No watermark. Preserve physical product markings and shop signs."
+   }
+  ]
+ },
+ "video_enviado": {
+  "envio_entregado": {
+   "recibo": "80623463-4b92-496e-ab2f-4608e6e227e7.json",
+   "cabecera": "80623463-4b92-496e-ab2f-4608e6e227e7.json state archived provider_status completed created 1795151831.110661 attempts 2 error None",
+   "etiqueta": "HAARZAUBER C4 clip1",
+   "item_lote": "v9-c1",
+   "item_app": "2dc213e0d153433cab42fdef4f9e76c0",
+   "motor": "genjutsu",
+   "genjutsu_model": "hf_mult_motion_control",
+   "resolution": "480p",
+   "generation_resolution": "480p",
+   "segundos": 16.041667,
+   "tipo_lote": "frame",
+   "uso_imagen": "video_fuente",
+   "tipo_video": "None",
+   "frame": "",
+   "calidad_seedance": "None",
+   "encuadre": "None",
+   "preserve_product_source": "None",
+   "estado_revision": "pendiente_revision_480p",
+   "use_free_gens": "False",
+   "sin_avatar": "False",
+   "avatar_selector": "mujer 16",
+   "origen_prompt": "NUEVO -> se guardará como «app-8082c194d416445a9cd108923e243156-81_v9-c1»",
+   "countdown_apertura": "None",
+   "producto_se_revela": "None",
+   "refs": [
+    "02522332-40c0-404e-b927-65f51ef2fe1f",
+    "3d405066-e545-40bd-8185-a232de000602",
+    "03757ed3-f0b1-452c-ab90-3d8e8186333d"
+   ],
+   "refs_txt": [
+    "identidad y apertura aprobadas por usuario",
+    "articulo_blanco[articulo] (variante de la tarjeta)",
+    "embalaje[embalaje]"
+   ],
+   "reference_bindings": [
+    {
+     "archivo": "/Volumes/T7/AUTOMATIZACION SEGA/Motor/order-preparation/app-8082c194d416445a9cd108923e243156-81/sources/275f4ffbf969f09d7820/ref.mp4",
+     "media_id": "7da71a5f-ef37-4f05-89f1-3cbd7854be14",
+     "receipt": "/Volumes/T7/AUTOMATIZACION SEGA/Motor/order-preparation/app-8082c194d416445a9cd108923e243156-81/reference-transport/3fc40a5ce416f88f4914efd11df7abdc464fd2ad76ff186c709cdc541b2d4d18.json",
+     "role": "video",
+     "sha256": "9db027888d3d4f2a083c6280f5d52755b2259df6abc43a2e510283dee538acf2"
+    },
+    {
+     "archivo": "/Volumes/T7/AUTOMATIZACION SEGA/Motor/order-preparation/app-8082c194d416445a9cd108923e243156-81/frames_salida/6eb330bb_crudo.png",
+     "avatar_match_task_provenance": {
+      "path": "/Volumes/T7/AUTOMATIZACION SEGA/Motor/order-preparation/app-8082c194d416445a9cd108923e243156-81/frame-preparation/v9-c1-prepared-r1/frames.json",
+      "sha256": "a0304ecfb514eca158a34a9da56864173e14244a11c530573a919257bf5ab4b7"
+     },
+     "logical_media_id": "02522332-40c0-404e-b927-65f51ef2fe1f",
+     "media_id": "756d3c22-0b75-434c-b5da-c639e5c3b839",
+     "receipt": "/Volumes/T7/AUTOMATIZACION SEGA/Motor/order-preparation/app-8082c194d416445a9cd108923e243156-81/reference-transport/9a90f021e5588ae64414c48ddb94a74954499e2615162c394a2b82d2ca128691.json",
+     "role": "image",
+     "sha256": "5c0918f06ad57ae2fb481d725c2cfac4eddbe43ca23abbaf17f06c3f09b73dcf"
+    },
+    {
+     "archivo": "/Volumes/T7/AUTOMATIZACION SEGA/Motor/order-preparation/app-8082c194d416445a9cd108923e243156-81/video-preparation/c9da08f1e177346ae5d7b8b594d8bda2fe2eccdb543de86f91fcb01a43392887.png",
+     "asset": "articulo_blanco",
+     "media_id": "3d405066-e545-40bd-8185-a232de000602",
+     "receipt": "/Volumes/T7/AUTOMATIZACION SEGA/Motor/order-preparation/app-8082c194d416445a9cd108923e243156-81/reference-transport/31f1ef2dd36748c5892e2ed1380d40cebe0512b2726a30b6efc1c959a9a065b0.json",
+     "role": "image",
+     "sha256": "c9da08f1e177346ae5d7b8b594d8bda2fe2eccdb543de86f91fcb01a43392887"
+    },
+    {
+     "archivo": "/Volumes/T7/AUTOMATIZACION SEGA/Motor/order-preparation/app-8082c194d416445a9cd108923e243156-81/video-preparation/232f9ec40a5670414c90d95c618c07d80e9e428f2aa0eb7b114a907fd20e8fd4.png",
+     "asset": "embalaje",
+     "media_id": "03757ed3-f0b1-452c-ab90-3d8e8186333d",
+     "receipt": "/Volumes/T7/AUTOMATIZACION SEGA/Motor/order-preparation/app-8082c194d416445a9cd108923e243156-81/reference-transport/5d29c08630b0645b3e5efe4d8e1174df2fd0d1944ed2e63545e54498f9668b8c.json",
+     "role": "image",
+     "sha256": "232f9ec40a5670414c90d95c618c07d80e9e428f2aa0eb7b114a907fd20e8fd4"
+    }
+   ],
+   "sustituciones": [],
+   "en_pantalla": [
+    "articulo:articulo_blanco",
+    "embalaje:embalaje"
+   ],
+   "cambios_fondo": [
+    "Use the approved opening environment and lighting for every shot occurring at that location.",
+    "All store shots are in the same replacement Sephora from the approved opening. No dm or Target branding.",
+    "Every visible woman must have natural hair without grey, approximately 35 to 50 years old. Preserve approved cast identity throughout.",
+    "Keep ordinary phone video exposure and legible backgrounds, no artificial portrait blur or studio camera look."
+   ],
+   "acciones_conservar": [
+    "At Sephora checkout the employee hands over the box and buyer presents the payment card; then reproduce the short brunette and longer-haired demonstrations, with the WHITE brush in every appearance."
+   ],
+   "motion_product_guard": {
+    "claridad_producto": "Keep the product legible at the original hand scale without adding zooms or close-up shots.",
+    "identidad_producto": "Preserve exact product geometry, physical colours, components and plausible real scale in every appearance.",
+    "referencias_producto": [
+     "3d405066-e545-40bd-8185-a232de000602",
+     "03757ed3-f0b1-452c-ab90-3d8e8186333d"
+    ],
+    "version": "2026-09-21-motion-product"
+   },
+   "video_fuente": {
+    "archivo": "/Volumes/T7/AUTOMATIZACION SEGA/Motor/order-preparation/app-8082c194d416445a9cd108923e243156-81/sources/275f4ffbf969f09d7820/ref.mp4",
+    "media_id": "7da71a5f-ef37-4f05-89f1-3cbd7854be14",
+    "segundos": 16.041667,
+    "sha256": "9db027888d3d4f2a083c6280f5d52755b2259df6abc43a2e510283dee538acf2",
+    "url": "https://www.instagram.com/reel/Dfth6c8OEQG/?avpt=MzRlODBiNWFlZA==",
+    "width": 720,
+    "height": 1280
+   },
+   "approved_frame": "approved_frame 02522332-40c0-404e-b927-65f51ef2fe1f image_references 1 Use image [1] as the human-approved clean opening frame, keeping its exact composition, people or POV hands, outfit, background and lighting. The source video controls the complete action, camera movement, cuts and timing.",
+   "prompt": "Use the entire supplied source video as the authority for actions, cuts and camera timing. Preserve the identity from image [1]. Use image [1] as the human-approved clean opening frame, keeping its exact composition, people or POV hands, outfit, background and lighting. The source video controls the complete action, camera movement, cuts and timing. At Sephora checkout the employee hands over the box and buyer presents the payment card; then reproduce the short brunette and longer-haired demonstrations, with the WHITE brush in every appearance. Use the approved opening environment and lighting for every shot occurring at that location. All store shots are in the same replacement Sephora from the approved opening. No dm or Target branding. Every visible woman must have natural hair without grey, approximately 35 to 50 years old. Preserve approved cast identity throughout. Keep ordinary phone video exposure and legible backgrounds, no artificial portrait blur or studio camera look. Preserve the exact HaarZauber heated styling brush shape, selected color and realistic scale, visible in every styling shot. Never enlarge it or replace it with another tool. Preserve exact product geometry, physical colours, components and plausible real scale in every appearance. Keep the product legible at the original hand scale without adding zooms or close-up shots. Preserve source audio for subsequent controlled German editing and requested dubbing; no extra narration. Remove source captions, subtitles, emojis and interface throughout; preserve authentic physical product print. No text overlays, no captions."
+  },
+  "otros_envios_del_mismo_video": [],
+  "respuesta_proveedor": [
+   "=== TRANSPORT /EDITOR/genjutsu_envios/30c0d6bd497e790120ab94df0475cb5ab099316390407de72cb082e6dc2c1a27.submitted-receipt.json\n{\n \"manifest_sha256\": \"d37abcdfbcc9796ea2c5859a47a09c7e397fe632527ad8f682e93b4cb2ac0742\",\n \"node\": \"app-8082c194d416445a9cd108923e243156-81:v9-c1-video\",\n \"quote_sha256\": \"66f8a2a2c39834d8bf760a461fc359648360bab0b20cde14c2437968b0d6e517\",\n \"raw\": {\n  \"created_at\": \"2026-11-20T05:17:08.713619Z\",\n  \"display_name\": \"Higgsfield Multiplier Motion Control\",\n  \"id\": \"80623463-4b92-496e-ab2f-4608e6e227e7\",\n  \"job_type\": \"hf_mult_motion_control\",\n  \"min_result_url\": null,\n  \"params\": {\n   \"aspect_ratio\": \"9:16\",\n   \"batch_size\": 1,\n   \"bitrate_mode\": \"high\",\n   \"duration\": 16,\n   \"folder_id\": null,\n   \"generate_audio\": false,\n   \"height\": 1280,\n   \"location_character_media_id\": null,\n   \"medias\": [\n    {\n     \"data\": {\n      \"id\": \"756d3c22-0b75-434c-b5da-c639e5c3b839\",\n      \"type\": \"media_input\",\n      \"url\": \"https://d2ol7oe51mr4n9.cloudfront.net/user_3K2PXlowqZBlWpF8Twpyltbd8YU/756d3c22-0b75-434c-b5da-c639e5c3b839_resize.jpg\"\n     },\n     \"role\": \"image\"\n    },\n    {\n     \"data\": {\n      \"id\": \"3d405066-e545-40bd-8185-a232de000602\",\n      \"type\": \"media_input\",\n      \"url\": \"https://d2ol7oe51mr4n9.cloudfront.net/user_3K2PXlowqZBlWpF8Twpyltbd8YU/3d405066-e545-40bd-8185-a232de000602.png\"\n     },\n     \"role\": \"image\"\n    },\n    {\n     \"data\": {\n      \"id\": \"03757ed3-f0b1-452c-ab90-3d8e8186333d\",\n      \"type\": \"media_input\",\n      \"url\": \"https://d2ol7oe51mr4n9.cloudfront.net/user_3K2PXlowqZBlWpF8Twpyltbd8YU/03757ed3-f0b1-452c-ab90-3d8e8186333d.png\"\n     },\n     \"role\": \"image\"\n    },\n    {\n     \"data\": {\n      \"id\": \"7da71a5f-ef37-4f05-89f1-3cbd7854be14\",\n      \"type\": \"video_input\",\n      \"url\": \"https://d2ol7oe51mr4n9.cloudfront.net/user_3K2PXlowqZBlWpF8Twpyltbd8YU/7da71a5f-ef37-4f05-89f1-3cbd7854be14.mp4\"\n     },\n     \"role\": \"video\"\n    }\n   ],\n   \"prompt\": \"Use the entire supplied source video as the authority for actions, cuts and camera timing. Preserve the identity from image [1]. Use image [1] as the human-approved clean opening frame, keeping its exact composition, people or POV hands, outfit, background and lighting. The source video controls the complete action, camera movement, cuts and timing. At Sephora checkout the employee hands over the box and buyer presents the payment card; then reproduce the short brunette and longer-haired demonstrations, with the WHITE brush in every appearance. Use the approved opening environment and lighting for every shot occurring at that location. All store shots are in the same replacement Sephora from the approved opening. No dm or Target branding. Every visible woman must have natural hair without grey, approximately 35 to 50 years old. Preserve approved cast identity throughout. Keep ordinary phone video exposure and legible backgrounds, no artificial portrait blur or studio camera look. Preserve the exact HaarZauber heated styling brush shape, selected color and realistic scale, visible in every styling shot. Never enlarge it or replace it with another tool. Preserve exact product geometry, physical colours, components and plausible real scale in every appearance. Keep the product legible at the original hand scale without adding zooms or close-up shots. Preserve source audio for subsequent controlled German editing and requested dubbing; no extra narration. Remove source captions, subtitles, emojis and interface throughout; preserve authentic physical product print. No text overlays, no captions.\",\n   \"resolution\": \"480p\",\n   \"scene_mode\": \"off\",\n   \"width\": 720\n  },\n  \"result_url\": null,\n  \"status\": \"queued\"\n },\n \"transport\": \"submitted-video-v1\"\n}\n",
+   "=== TRANSPORT /video-transport/bfbb9010532264c4b851a0af1d06139c1f2df8206b0e5d3bc97a1788451d23cb.json\n{\n \"version\": 1,\n \"kind\": \"create\",\n \"identity\": {\n  \"scope\": \"app-8082c194d416445a9cd108923e243156-81:v9-c1-video\",\n  \"manifest_sha256\": \"d37abcdfbcc9796ea2c5859a47a09c7e397fe632527ad8f682e93b4cb2ac0742\",\n  \"quote_sha256\": \"66f8a2a2c39834d8bf760a461fc359648360bab0b20cde14c2437968b0d6e517\"\n },\n \"workspace_id\": \"040dc7f7-14c3-4b42-af93-59c8c995c926\",\n \"state\": \"accepted\",\n \"command\": [\n  \"higgsfield\",\n  \"generate\",\n  \"create\",\n  \"hf_mult_motion_control\",\n  \"--prompt\",\n  \"Use the entire supplied source video as the authority for actions, cuts and camera timing. Preserve the identity from image [1]. Use image [1] as the human-approved clean opening frame, keeping its exact composition, people or POV hands, outfit, background and lighting. The source video controls the complete action, camera movement, cuts and timing. At Sephora checkout the employee hands over the box and buyer presents the payment card; then reproduce the short brunette and longer-haired demonstrations, with the WHITE brush in every appearance. Use the approved opening environment and lighting for every shot occurring at that location. All store shots are in the same replacement Sephora from the approved opening. No dm or Target branding. Every visible woman must have natural hair without grey, approximately 35 to 50 years old. Preserve approved cast identity throughout. Keep ordinary phone video exposure and legible backgrounds, no artificial portrait blur or studio camera look. Preserve the exact HaarZauber heated styling brush shape, selected color and realistic scale, visible in every styling shot. Never enlarge it or replace it with another tool. Preserve exact product geometry, physical colours, components and plausible real scale in every appearance. Keep the product legible at the original hand scale without adding zooms or close-up shots. Preserve source audio for subsequent controlled German editing and requested dubbing; no extra narration. Remove source captions, subtitles, emojis and interface throughout; preserve authentic physical product print. No text overlays, no captions.\",\n  \"--resolution\",\n  \"480p\",\n  \"--image-references\",\n  \"756d3c22-0b75-434c-b5da-c639e5c3b839\",\n  \"--image-references\",\n  \"3d405066-e545-40bd-8185-a232de000602\",\n  \"--image-references\",\n  \"03757ed3-f0b1-452c-ab90-3d8e8186333d\",\n  \"--video-references\",\n  \"7da71a5f-ef37-4f05-89f1-3cbd7854be14\",\n  \"--json\"\n ],\n \"started_at\": 1795151826.599699,\n \"provider_id\": \"80623463-4b92-496e-ab2f-4608e6e227e7\",\n \"timeout_seconds\": 90,\n \"workspace_binding\": \"observed_before_and_after_not_pinned\",\n \"returncode\": 0,\n \"finished_at\": 1795151828.936071,\n \"workspace_after\": \"040dc7f7-14c3-4b42-af93-59c8c995c926\"\n}\n"
+  ]
+ },
+ "montaje": {
+  "plan_editorial": {
+   "adaptation": "German, destination brand and explicit store; preserve reference text-block changes and niche emojis. All text added only in postproduction.",
+   "audio": {
+    "mode": "preserved_original"
+   },
+   "cues": [
+    {
+     "end": 6.583333,
+     "lines": [
+      "Locken-Girlies,",
+      "RENNT zu Sephora! 🤯✨"
+     ],
+     "source_text": "Locken-Girlies,\nRENNT zu dm! 🤯✨",
+     "start": 0.0
+    },
+    {
+     "end": 10.291667,
+     "lines": [
+      "Nur Spaß, wir verkaufen",
+      "sie selbst! 😂💕"
+     ],
+     "source_text": "Nur Spaß, wir verkaufen\nsie selbst! 😂💕",
+     "start": 6.583333
+    },
+    {
+     "end": 16.041667,
+     "lines": [
+      "Kommentiere „HaarZauber“",
+      "für mehr Infos! 😍✨"
+     ],
+     "source_text": "Kommentiere „HaarZauber“\nfür mehr Infos! 😍✨",
+     "start": 10.291667
+    }
+   ],
+   "item": "2dc213e0d153433cab42fdef4f9e76c0",
+   "reference": {
+    "path": "/Volumes/T7/AUTOMATIZACION SEGA/Motor/order-preparation/app-8082c194d416445a9cd108923e243156-81/sources/275f4ffbf969f09d7820/ref.mp4",
+    "sha256": "9db027888d3d4f2a083c6280f5d52755b2259df6abc43a2e510283dee538acf2"
+   },
+   "status": "ready_for_simple_render"
+  },
+  "descripcion": "Locken-Girlies, RENNT zu Sephora! 🤯✨\n\nNur Spaß, wir verkaufen sie selbst! 😂💕\n\nKommentiere „HaarZauber“ für mehr Infos! 😍✨\n\n"
+ },
+ "entrega": {
+  "account": "HAARZAUBER",
+  "delivery": "/Volumes/T7/AUTOMATIZACION SEGA/videos editados/2026-11-20/app-8082c194d416445a9cd108923e243156-81/HaarZauber - DE/09 - HaarZauber - DE.mp4",
+  "description_delivery": "/Volumes/T7/AUTOMATIZACION SEGA/videos editados/2026-11-20/app-8082c194d416445a9cd108923e243156-81/HaarZauber - DE/09 - Beschreibung - DE.txt",
+  "description_sha256": "49447e86f11345d1ad8faf9b61272a5507ad1f741acd3da7c195a9483142fb04",
+  "description_source": "/Volumes/T7/AUTOMATIZACION SEGA/Motor/order-preparation/app-8082c194d416445a9cd108923e243156-81/post-edit/descriptions/09-Beschreibung-DE.txt",
+  "item": "2dc213e0d153433cab42fdef4f9e76c0",
+  "position": 9,
+  "receipt": {
+   "archivo": "/Volumes/T7/AUTOMATIZACION SEGA/Motor/order-preparation/app-8082c194d416445a9cd108923e243156-81/post-edit/final-v9-r1/receipt.json",
+   "sha256": "c75ea6e9f3752b4e4011558837f7c706c9b4569183f4e9f5bdfed099aa35dd3c"
+  },
+  "revision": 1,
+  "sha256": "65ba9772d6605cc3354fbf085c24d6511d8bbb30138c24eb2ee1f1c21ab1e492",
+  "source": "/Volumes/T7/AUTOMATIZACION SEGA/Motor/order-preparation/app-8082c194d416445a9cd108923e243156-81/post-edit/final-v9-r1/edited.mp4"
+ }
+}
