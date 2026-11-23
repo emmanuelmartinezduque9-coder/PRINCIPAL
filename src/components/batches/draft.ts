@@ -1,4 +1,4 @@
-import { isClipModelChoice, type ClipModelChoice } from "@/lib/clip-models";
+import { DEFAULT_CLIP_MODEL_CHOICE, isClipModelChoice, type ClipModelChoice } from "@/lib/clip-models";
 import type { SongJson } from "@/components/songs/labels";
 import { DEFAULT_HOOK_SECONDS as DEFAULT_HOOK, MAX_HOOK_SECONDS, MIN_HOOK_SECONDS } from "@/components/videos/brief-labels";
 import type { VideoKind } from "@/server/videos/brief";
@@ -90,7 +90,8 @@ export const newGroup = (productId: number | null = null): Group => ({
   hookSeconds: DEFAULT_HOOK,
   variant: null,
   editReference: "",
-  clipModel: "auto",
+  // Regla fija (24/11/2026): por defecto, Genjutsu Motion Transfer.
+  clipModel: DEFAULT_CLIP_MODEL_CHOICE,
   rows: [],
 });
 
@@ -101,7 +102,7 @@ export function hasContent(draft: Draft): boolean {
   return (
     draft.name.trim() !== "" ||
     draft.batchId !== null ||
-    draft.groups.some((group) => group.productId !== null || group.notes.trim() !== "" || group.editReference !== "" || group.clipModel !== "auto" || group.rows.length > 0)
+    draft.groups.some((group) => group.productId !== null || group.notes.trim() !== "" || group.editReference !== "" || group.clipModel !== DEFAULT_CLIP_MODEL_CHOICE || group.rows.length > 0)
   );
 }
 
@@ -183,7 +184,7 @@ function parseGroup(value: unknown): Group | null {
     hookSeconds: hookOf(value.hookSeconds),
     variant: isId(value.variant) ? value.variant : null,
     editReference: text(value.editReference).slice(0, 2000),
-    clipModel: isClipModelChoice(value.clipModel) ? value.clipModel : "auto",
+    clipModel: isClipModelChoice(value.clipModel) && value.clipModel !== "auto" ? value.clipModel : DEFAULT_CLIP_MODEL_CHOICE,
     rows: Array.isArray(value.rows) ? value.rows.map(parseRow).filter((row): row is Row => row !== null) : [],
   };
 }

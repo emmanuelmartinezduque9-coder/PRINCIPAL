@@ -874,3 +874,13 @@ Regla 6 del motor. Se copió lo que hacía Codex (paquete activo `test-hook-sele
   extra). «Revisar imágenes» tiene «Aprobar todas» (un clic) y lleva al lote; rechazar una regenera
   solo esa. El presupuesto automático incluye el margen de las 2 regeneraciones permitidas (migración
   0041 para los lotes en marcha), así un rechazo no para el lote.
+
+## Motion Transfer por defecto (regla fija de Emmanuel, 24/11/2026)
+
+Por defecto la réplica se hace con **Genjutsu Motion Transfer**; si Emmanuel elige otro modelo en la
+tarjeta o en el grupo del lote, se usa ese. Ya no hay «Automático» ni «Modelo: sin elegir» en los
+selectores: los vídeos nuevos y los grupos de «Nuevo lote» nacen en Motion Transfer (migración 0047,
+que pasa también los `auto` de antes a Motion Transfer: salía el mismo modelo). Lo que hace la
+aplicación cuando Genjutsu no puede sigue igual: tramo de menos de 3 s → Seedance; clip bloqueado por
+el filtro de Higgsfield → se rehace la imagen inicial sin cuadros ni pósteres con personas, después
+hasta 2 reintentos con el prompt sin marcas y, si sigue, una pausa clara.

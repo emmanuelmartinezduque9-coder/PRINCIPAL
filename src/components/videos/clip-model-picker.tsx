@@ -2,7 +2,7 @@
 
 import { Film } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { CLIP_MODEL_CHOICES, CLIP_MODEL_HINT, CLIP_MODEL_LABEL, isClipModelChoice, type ClipModelChoice } from "@/lib/clip-models";
+import { CLIP_MODEL_HINT, CLIP_MODEL_LABEL, CLIP_MODEL_OPTIONS, DEFAULT_CLIP_MODEL_CHOICE, isClipModelChoice, type ClipModelChoice } from "@/lib/clip-models";
 import { cn } from "@/lib/utils";
 
 /** Valor del selector del grupo cuando el grupo no elige nada (sus vídeos siguen en «Automático»). */
@@ -33,13 +33,15 @@ export function ClipModelSelect({
   /** Con «Automático», el modelo que hereda del grupo (se enseña «Del grupo · …»). */
   inherited?: ClipModelChoice;
 }) {
+  // `auto` (de antes) se enseña como el de por defecto, Motion Transfer.
   const fromGroup = value === "auto" && inherited !== undefined && inherited !== "auto";
+  const shown = value === "auto" && !fromGroup ? DEFAULT_CLIP_MODEL_CHOICE : value;
   return (
     <Select
-      value={value}
+      value={shown}
       disabled={disabled}
       onValueChange={(next) => {
-        if (next === value) return;
+        if (next === shown) return;
         if (allowNone && next === NO_GROUP_CHOICE) onChange(null);
         else if (isClipModelChoice(next)) onChange(next);
       }}
@@ -50,7 +52,7 @@ export function ClipModelSelect({
       </SelectTrigger>
       <SelectContent>
         {allowNone ? <SelectItem value={NO_GROUP_CHOICE}>Modelo: sin elegir</SelectItem> : null}
-        {CLIP_MODEL_CHOICES.map((choice) => (
+        {CLIP_MODEL_OPTIONS.map((choice) => (
           <SelectItem key={choice} value={choice}>
             {compact && !allowNone ? CLIP_MODEL_LABEL[choice] : allowNone ? `Modelo: ${CLIP_MODEL_LABEL[choice]}` : CLIP_MODEL_LABEL[choice]}
           </SelectItem>

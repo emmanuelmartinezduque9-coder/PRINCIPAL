@@ -103,7 +103,11 @@
       "docs/reglas-origen/memory-context/wan-prime-cambios-minimos.md",
       "docs/reglas-origen/memory-context/wan-prime-solo-video.md",
       "docs/reglas-motor-del-dueno.md"
-    ]
+    ],
+    "replacesSha256": [
+      "8cfbbac51d09eeeef0c1e85d5784505934482f40397841f12fba5390c4e5f5a0"
+    ],
+    "updateNote": "Motion Transfer por defecto, sin «Automático» (24/11/2026)."
   },
   {
     "slug": "alta-de-producto",

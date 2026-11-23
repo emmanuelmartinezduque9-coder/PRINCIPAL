@@ -104,20 +104,20 @@ seedanceByDefault();
 describe("modelo del vídeo del grupo del lote", () => {
   it("pasa a los vídeos del grupo sin uno propio y sin clip; la tarjeta puede llevar el suyo", async () => {
     const lote = await createBatch(ana, "Modelos");
-    const sinElegir = await batchVideo(lote.id, { clipModel: "auto" });
+    const sinElegir = await batchVideo(lote.id, { clipModel: "hf_mult_motion_control" });
     const propio = await batchVideo(lote.id, { clipModel: "wan3_0_prime" });
-    const conClip = await batchVideo(lote.id, { clipModel: "auto" });
+    const conClip = await batchVideo(lote.id, { clipModel: "hf_mult_motion_control" });
     await getPool().query(
       "insert into generations (video_id, kind, round, status, user_id, request, count, quoted_credits) values ($1, 'clip', 1, 'done', $2, '{}', 1, 10)",
       [conClip.id, ana.id],
     );
     expect(await setBatchProductClipModel(ana, lote.id, lampara.id, "hf_mult_replace_object")).toBe("hf_mult_replace_object");
     const model = async (id: number) => (await getVideoFor(ana, id)).clipModel;
-    expect([await model(sinElegir.id), await model(propio.id), await model(conClip.id)]).toEqual(["hf_mult_replace_object", "wan3_0_prime", "auto"]);
+    expect([await model(sinElegir.id), await model(propio.id), await model(conClip.id)]).toEqual(["hf_mult_replace_object", "wan3_0_prime", "hf_mult_motion_control"]);
     expect((await batchView(ana, lote.id)).groups[0]).toMatchObject({ clipModel: "hf_mult_replace_object" });
-    // Volver a «sin elegir» devuelve a «Automático» los que heredaban.
+    // Quitar la elección del grupo devuelve al de por defecto (Motion Transfer) los que heredaban.
     expect(await setBatchProductClipModel(ana, lote.id, lampara.id, null)).toBeNull();
-    expect([await model(sinElegir.id), await model(propio.id)]).toEqual(["auto", "wan3_0_prime"]);
+    expect([await model(sinElegir.id), await model(propio.id)]).toEqual(["hf_mult_motion_control", "wan3_0_prime"]);
     await expect(setBatchProductClipModel(ana, lote.id, lampara.id, "kling3_0")).rejects.toMatchObject({ status: 400 });
     await expect(batchVideo(lote.id, { clipModel: "hf_mult_motion_control_flash" })).rejects.toMatchObject({ status: 400 });
   });

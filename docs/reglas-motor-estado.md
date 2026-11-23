@@ -13,7 +13,7 @@ Contra `docs/reglas-motor-del-dueno.md`.
 | 5 | Fotograma original como ancla, qué cambia / qué se conserva, estética de iPhone 17 Pro Max | Hecho el 22/11 (`reglas/imagen-nano-banana.md`, `analysis.ts`) |
 | 5 | Revisar cada resultado antes de presentarlo (variante, caja, avatar, fondo, acción) | Falta (revisión automática con visión) |
 | 5 | Un frame por clip (aperturas de cada toma) | Falta (hoy: una imagen por vídeo) |
-| 6 | Elegir modelo en la tarjeta: Genjutsu Motion Transfer, Object Swap, Wan 3.0 Prime, Seedance, automático | **Hecho el 23/11, copiado de Codex** (`src/lib/clip-models.ts`, `clip.ts`, regla `video-genjutsu`): en la tarjeta, en cada tarjeta y grupo del lote. «Automático» = Motion Transfer (Seedance si el tramo < 3 s). Parámetros de `genjutsu.parametros`; vídeos de antes siguen en Seedance. Ver `decisiones-produccion-de-video.md` |
+| 6 | Elegir modelo en la tarjeta: Genjutsu Motion Transfer, Object Swap, Wan 3.0 Prime, Seedance, automático | **Hecho el 23/11, copiado de Codex** (`src/lib/clip-models.ts`, `clip.ts`, regla `video-genjutsu`): en la tarjeta, en cada tarjeta y grupo del lote. Por defecto Motion Transfer (regla fija del 24/11; Seedance si el tramo < 3 s). Parámetros de `genjutsu.parametros`; vídeos de antes siguen en Seedance. Ver `decisiones-produccion-de-video.md` |
 | 7 | Canción de biblioteca con drop; «Audio original» = audio de la referencia | Hecho |
 | 7 | Elegir canción sola comparando el audio de la referencia con la biblioteca | Falta |
 | 7 | Textos solo en montaje, alemán, CTA | Hecho (montador v1) |

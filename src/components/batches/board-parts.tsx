@@ -18,8 +18,8 @@ import { EditReferenceButton, EditReferenceField } from "./edit-reference";
 import { Indications } from "./indications";
 import type { BatchRowJson, BatchViewJson } from "./labels";
 import { Switch } from "@/components/ui/switch";
-import { ClipModelSelect, NO_GROUP_CHOICE } from "@/components/videos/clip-model-picker";
-import { CLIP_MODEL_LABEL, type ClipModelChoice } from "@/lib/clip-models";
+import { ClipModelSelect } from "@/components/videos/clip-model-picker";
+import { CLIP_MODEL_LABEL, DEFAULT_CLIP_MODEL_CHOICE, type ClipModelChoice } from "@/lib/clip-models";
 
 type GroupJson = BatchViewJson["groups"][number];
 
@@ -136,12 +136,12 @@ export function GroupHeader({ batchId, group, editable, variants }: { batchId: n
             )}
           </Indications>
           {editable ? (
-            <ClipModelSelect compact allowNone label={`Modelo del vídeo para ${group.name}`} value={group.clipModel ?? NO_GROUP_CHOICE} onChange={(next) => void saveClipModel(next)} />
-          ) : group.clipModel ? (
+            <ClipModelSelect compact label={`Modelo del vídeo para ${group.name}`} value={group.clipModel ?? DEFAULT_CLIP_MODEL_CHOICE} onChange={(next) => void saveClipModel(next)} />
+          ) : (
             <span className="inline-flex h-8 shrink-0 items-center rounded-lg border px-2.5 text-sm text-muted-foreground">
-              {CLIP_MODEL_LABEL[group.clipModel as ClipModelChoice] ?? group.clipModel}
+              {CLIP_MODEL_LABEL[(group.clipModel ?? DEFAULT_CLIP_MODEL_CHOICE) as ClipModelChoice] ?? group.clipModel}
             </span>
-          ) : null}
+          )}
           {editable ? (
             <EditReferenceButton value={group.editReferenceUrl ?? ""} open={refOpen} onOpenChange={setRefOpen} />
           ) : group.editReferenceUrl ? (

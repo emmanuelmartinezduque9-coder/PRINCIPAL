@@ -330,6 +330,13 @@
       "when": 1795453607189,
       "tag": "0046_rechazos_del_sistema",
       "breakpoints": true
+    },
+    {
+      "idx": 47,
+      "version": "7",
+      "when": 1795475129339,
+      "tag": "0047_motion_transfer_por_defecto",
+      "breakpoints": true
     }
   ]
 }

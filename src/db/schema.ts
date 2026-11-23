@@ -619,11 +619,11 @@ export const videos = pgTable(
     /** Resolución del clip: `480p` (por defecto), `720p` o `1080p`. */
     clipResolution: text("clip_resolution").notNull().default("480p"),
     /**
-     * Cómo se genera la réplica en Higgsfield (`src/lib/clip-models.ts`): `auto` (lo que hacía
-     * Codex: Genjutsu Motion Transfer) o el ID real del modelo. Los vídeos de antes del 23/11/2026
+     * Cómo se genera la réplica en Higgsfield (`src/lib/clip-models.ts`): el ID real del modelo; por
+     * defecto Genjutsu Motion Transfer (regla fija, 24/11/2026). `auto` solo en vídeos de antes. Los vídeos de antes del 23/11/2026
      * quedaron en `seedance_2_5`, el modelo con el que se hicieron.
      */
-    clipModel: text("clip_model").notNull().default("auto"),
+    clipModel: text("clip_model").notNull().default("hf_mult_motion_control"),
     /** La imagen inicial aprobada (un resultado de una generación `frame` de este vídeo). */
     approvedFrameResultId: bigint("approved_frame_result_id", { mode: "number" }).references(
       (): AnyPgColumn => generationResults.id,

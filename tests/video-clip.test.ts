@@ -39,7 +39,7 @@ import {
   type GenDeps,
 } from "@/server/videos/generations";
 import { createVideo, getVideoFor, latestDoneAnalysis, updateVideoChoices, videoView, type Video } from "@/server/videos/videos";
-import { CLIP_MODEL_CHOICES, resolveClipModel, sourceProblem, wanDurationSeconds } from "@/lib/clip-models";
+import { CLIP_MODEL_CHOICES, CLIP_MODEL_OPTIONS, DEFAULT_CLIP_MODEL_CHOICE, resolveClipModel, sourceProblem, wanDurationSeconds } from "@/lib/clip-models";
 import { videoParams } from "@/connectors/higgsfield/adapter";
 import type { HfVideoRequest } from "@/connectors/higgsfield";
 import { POST as presupuestoRoute } from "@/app/api/videos/[videoId]/clip/presupuesto/route";
@@ -223,7 +223,10 @@ const GENJUTSU_PROMPT =
   "Replace the woman with the person in image [2]. The bottle is the exact product in image [3]. No text overlays, no captions.";
 
 describe("modelo del clip: las opciones de Codex", () => {
-  it("«Automático» es Genjutsu Motion Transfer (lo de Codex); con un tramo de menos de 3 s, Seedance; sin elección (antes), Seedance", () => {
+  it("por defecto Genjutsu Motion Transfer (regla fija); con un tramo de menos de 3 s, Seedance; sin elección (antes), Seedance", () => {
+    expect(DEFAULT_CLIP_MODEL_CHOICE).toBe("hf_mult_motion_control");
+    expect(resolveClipModel("hf_mult_motion_control", 2_500)).toBe("seedance_2_5");
+    expect([...CLIP_MODEL_OPTIONS]).toEqual(["hf_mult_motion_control", "hf_mult_replace_object", "wan3_0_prime", "seedance_2_5"]);
     expect(resolveClipModel("auto", 6_000)).toBe("hf_mult_motion_control");
     expect(resolveClipModel("auto", 2_500)).toBe("seedance_2_5");
     expect(resolveClipModel("auto", null)).toBe("hf_mult_motion_control");

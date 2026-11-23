@@ -68,7 +68,7 @@ describe("reglas sembradas: la copia limpia está limpia y conserva el criterio"
 
   it("la regla de Genjutsu y Wan conserva las órdenes de Codex", () => {
     const genjutsu = text("reglas/video-genjutsu.md");
-    expect(genjutsu).toContain("Genjutsu normal Motion Transfer");
+    expect(genjutsu).toContain("Por defecto, la réplica se hace con Genjutsu Motion Transfer");
     expect(genjutsu).toContain("«Los vídeos con Genjutsu no se hacen sin el frame inicial»");
     expect(genjutsu).toContain("No text overlays, no captions.");
     expect(genjutsu).toContain("agrupar por lugar real, no por nombre de clip");

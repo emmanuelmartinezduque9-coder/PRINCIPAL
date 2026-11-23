@@ -2,8 +2,8 @@
 
 Reglas para escribir el prompt del clip cuando la réplica se genera editando el vídeo original: Genjutsu Motion Transfer, Genjutsu Object Swap o Wan 3.0 Prime. Copiadas de la skill de Genjutsu y de las órdenes del dueño que la acompañaban; cada orden lleva su fecha. Los prompts van en inglés; el habla que se pida, en el idioma de la cuenta.
 
-## Qué elige la tarjeta (orden de Emmanuel, 29/10/2026)
-El modelo se elige en la tarjeta del vídeo o en el grupo del lote. Sin elección, «Automático» es Genjutsu normal Motion Transfer, por petición explícita de Emmanuel del 29/10; se conserva el modelo elegido y nunca se cambia para ahorrar créditos. La aplicación fija los parámetros (resolución 480p por defecto, el vídeo fuente entero, la duración entera del tramo en Wan, créditos normales): no escribirlos en el prompt.
+## Qué elige la tarjeta (regla fija de Emmanuel, 24/11/2026)
+Por defecto, la réplica se hace con Genjutsu Motion Transfer (ya era su orden del 29/10). Si Emmanuel elige otro modelo en la tarjeta del vídeo o en el grupo del lote, se usa ese; se conserva el modelo elegido y nunca se cambia para ahorrar créditos. Si Genjutsu no puede, lo resuelve la aplicación sola: un tramo de menos de 3 s va con Seedance, y un clip bloqueado por el filtro de Higgsfield rehace primero la imagen inicial sin cuadros ni pósteres con personas. La aplicación fija los parámetros (resolución 480p por defecto, el vídeo fuente entero, la duración entera del tramo en Wan, créditos normales): no escribirlos en el prompt.
 
 ## Objetivo
 Adaptar un vídeo real al producto y avatar de la cuenta, preservando acciones, ritmo y lógica del original. Redactar instrucciones de edición, no inventar un guion nuevo.

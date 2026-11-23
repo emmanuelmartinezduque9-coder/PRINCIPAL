@@ -9,9 +9,9 @@
  *   7 al 21/11/2026): Motion Transfer (casi todos), Object Swap y Wan 3.0 Prime, más Seedance (los
  *   clips de imagen inicial). Genjutsu Lite (último uso 25/10) y Wan 3.0 sin Prime (último uso
  *   11/10) no se ponen.
- * - «Automático» = lo que hacía Codex sin selección expresa: Motion Transfer normal
- *   (`DEFAULT_NEW_MODEL`, orden del 29/10/2026), salvo que el tramo no llegue a lo que admite
- *   Genjutsu (3 s): entonces Seedance.
+ * - Por defecto, Genjutsu Motion Transfer (regla fija de Emmanuel, 24/11/2026; era el
+ *   `DEFAULT_NEW_MODEL` de Codex, orden del 29/10/2026), salvo que el tramo no llegue a lo que
+ *   admite Genjutsu (3 s): entonces Seedance. Ya no hay «Automático» en los selectores.
  *
  * Sin dependencias de servidor: lo usan también las pantallas.
  */
@@ -25,10 +25,21 @@ export const WAN_PRIME = "wan3_0_prime";
 export const CLIP_MODELS = [SEEDANCE, MOTION_TRANSFER, OBJECT_SWAP, WAN_PRIME] as const;
 export type ClipModel = (typeof CLIP_MODELS)[number];
 
-/** Lo que se elige en la tarjeta: un modelo o «Automático». */
+/**
+ * Valores guardados: un modelo o `auto` (vídeos de antes del 24/11/2026; resuelve igual que Motion
+ * Transfer). En los selectores solo salen los modelos (`CLIP_MODEL_OPTIONS`).
+ */
 export const CLIP_MODEL_CHOICES = ["auto", MOTION_TRANSFER, OBJECT_SWAP, WAN_PRIME, SEEDANCE] as const;
 export type ClipModelChoice = (typeof CLIP_MODEL_CHOICES)[number];
-export const DEFAULT_CLIP_MODEL_CHOICE: ClipModelChoice = "auto";
+
+/** Lo que se elige en la tarjeta y en el grupo (orden de Emmanuel, 24/11/2026: sin «Automático»). */
+export const CLIP_MODEL_OPTIONS = [MOTION_TRANSFER, OBJECT_SWAP, WAN_PRIME, SEEDANCE] as const;
+
+/**
+ * Regla fija de Emmanuel (24/11/2026): por defecto la réplica se hace con Genjutsu Motion Transfer;
+ * si él elige otro modelo en la tarjeta o en el grupo, se usa ese.
+ */
+export const DEFAULT_CLIP_MODEL_CHOICE: ClipModelChoice = MOTION_TRANSFER;
 
 /** Lo que resolvía Codex sin selección expresa (`DEFAULT_NEW_MODEL`). */
 export const AUTO_DEFAULT_MODEL: ClipModel = MOTION_TRANSFER;
@@ -38,7 +49,7 @@ export const isClipModelChoice = (value: unknown): value is ClipModelChoice => C
 
 /** Etiquetas del selector, como en el panel de Codex. */
 export const CLIP_MODEL_LABEL: Record<ClipModelChoice, string> = {
-  auto: "Automático",
+  auto: "Genjutsu · Motion Transfer",
   [MOTION_TRANSFER]: "Genjutsu · Motion Transfer",
   [OBJECT_SWAP]: "Genjutsu · Object Swap",
   [WAN_PRIME]: "Wan 3.0 Prime",
@@ -47,8 +58,8 @@ export const CLIP_MODEL_LABEL: Record<ClipModelChoice, string> = {
 
 /** Una línea bajo el selector (textos del panel de Codex). */
 export const CLIP_MODEL_HINT: Record<ClipModelChoice, string> = {
-  auto: "Genjutsu Motion Transfer; Seedance si el tramo dura menos de 3 s.",
-  [MOTION_TRANSFER]: "Recrea la escena usando el movimiento del original.",
+  auto: "Recrea la escena usando el movimiento del original (Seedance si el tramo dura menos de 3 s).",
+  [MOTION_TRANSFER]: "Por defecto. Recrea la escena usando el movimiento del original (Seedance si el tramo dura menos de 3 s).",
   [OBJECT_SWAP]: "Adapta producto, avatar y entorno sobre el vídeo original.",
   [WAN_PRIME]: "Wan 3.0 Prime usa el vídeo original y la imagen aprobada como referencias, con audio propio.",
   [SEEDANCE]: "Genera el clip desde la imagen aprobada, sin audio.",
@@ -70,14 +81,19 @@ export const SOURCE_LIMITS: Record<ClipModel, { min: number; max: number }> = {
 };
 
 /**
- * El modelo con el que se genera de verdad: el elegido o, con «Automático», el de Codex. `null` o
+ * El modelo con el que se genera de verdad: el elegido (Motion Transfer por defecto). `null` o
  * `undefined` es un vídeo o un desglose de antes de poder elegir (siempre Seedance): no se
  * reinterpreta lo ya hecho.
  */
 export function resolveClipModel(choice: string | null | undefined, segmentDurationMs: number | null | undefined): ClipModel {
   if (choice === null || choice === undefined) return SEEDANCE;
+  // Motion Transfer (el de por defecto, o `auto` de antes): si el tramo no llega a lo que admite
+  // Genjutsu (3 s), Seedance, como siempre.
+  if (choice === "auto" || choice === MOTION_TRANSFER) {
+    if (segmentDurationMs !== null && segmentDurationMs !== undefined && segmentDurationMs < SOURCE_LIMITS[MOTION_TRANSFER].min * 1000) return SEEDANCE;
+    return MOTION_TRANSFER;
+  }
   if (isClipModel(choice)) return choice;
-  if (segmentDurationMs !== null && segmentDurationMs !== undefined && segmentDurationMs < SOURCE_LIMITS[AUTO_DEFAULT_MODEL].min * 1000) return SEEDANCE;
   return AUTO_DEFAULT_MODEL;
 }
 

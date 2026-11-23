@@ -41,7 +41,7 @@ import {
 import { autoBatchName } from "./labels";
 import { effectiveClipModel, effectiveEditReference, newGroup, nextKey, type Group, type Row, type Source } from "./draft";
 import { ClipModelSelect } from "@/components/videos/clip-model-picker";
-import { CLIP_MODEL_HINT, CLIP_MODEL_LABEL, type ClipModelChoice } from "@/lib/clip-models";
+import { CLIP_MODEL_HINT, CLIP_MODEL_LABEL, DEFAULT_CLIP_MODEL_CHOICE, type ClipModelChoice } from "@/lib/clip-models";
 import { useNewBatchDraft } from "./draft-provider";
 import { checkLink, EditReferenceButton, EditReferenceField } from "./edit-reference";
 import { Indications } from "./indications";
@@ -823,7 +823,7 @@ export function NewBatch() {
               notes: group.notes.trim() || null,
               ...(editReference ? { editReferenceUrl: group.editReference.trim() || null } : {}),
               // El modelo del grupo (pasa a los vídeos del grupo sin uno propio).
-              clipModel: group.clipModel === "auto" ? null : group.clipModel,
+              clipModel: group.clipModel === "auto" ? DEFAULT_CLIP_MODEL_CHOICE : group.clipModel,
             }),
           });
         } catch (error) {

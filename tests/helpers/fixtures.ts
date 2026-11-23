@@ -42,6 +42,6 @@ export function seedanceByDefault(): void {
   });
   afterAll(async () => {
     const { getPool } = await import("@/db/client");
-    await getPool().query("alter table videos alter column clip_model set default 'auto'");
+    await getPool().query("alter table videos alter column clip_model set default 'hf_mult_motion_control'");
   });
 }
