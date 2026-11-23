@@ -4,11 +4,12 @@
 #   bash agente-mac/exportar-sesion.sh
 #
 # El agente arranca solo (launchd) y macOS no le deja leer las cookies de Brave. Este script, lanzado
-# desde el Terminal, las copia (con yt-dlp, que las lee de Brave) a ~/.principal-agente-cookies.txt,
+# desde el Terminal, las copia (con yt-dlp, que las lee de Brave) a ~/.principal-agente-instagram.txt
+# (solo para leer perfiles; los reels se siguen bajando con ~/.principal-agente-cookies.txt),
 # solo legible por ti. Hace falta haber entrado en Instagram con Brave. Repetirlo si Instagram cierra
 # la sesión. No enseña ninguna cookie.
 set -euo pipefail
-DESTINO="$HOME/.principal-agente-cookies.txt"
+DESTINO="$HOME/.principal-agente-instagram.txt"
 RUTA="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
 YTDLP="$(PATH="$RUTA" command -v yt-dlp || true)"
 [ -n "$YTDLP" ] || { echo "No se encuentra yt-dlp." >&2; exit 1; }

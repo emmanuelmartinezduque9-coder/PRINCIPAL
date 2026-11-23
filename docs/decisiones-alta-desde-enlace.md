@@ -130,14 +130,15 @@ como Codex (que usaba un navegador con su sesión).
   biografía), sus enlaces (la tienda) y hasta 15 reels con sus vistas, texto y miniatura.
 - **Cómo lee Instagram el Mac** (`agente-mac/perfil.mjs`): un **Brave sin ventana** con una carpeta
   de perfil temporal (nunca la de Emmanuel) y las cookies de Instagram de
-  `~/.principal-agente-cookies.txt`; abre `instagram.com/<cuenta>/reels/` y lee la cuadrícula.
+  `~/.principal-agente-instagram.txt` (aparte de las de yt-dlp, para no romper la descarga de reels); abre `instagram.com/<cuenta>/reels/` y lee la cuadrícula.
   Comprobado el 23/11: la extracción de perfiles de yt-dlp está marcada como rota, la API pública de
   perfiles da 404 y la API web con sesión da 429 a programas; el HTML ya no trae los reels. Solo un
   navegador de verdad los ve.
 - **TikTok**: yt-dlp `tiktok:user` con `--flat-playlist --playlist-items 1-15 -J` (trae vistas).
 - **Sesión**: el agente arranca con launchd y macOS no le deja leer las cookies de Brave; el archivo
   `~/.principal-agente-cookies.txt` que tenía **no llevaba la sesión iniciada** (`sessionid`).
-  `agente-mac/exportar-sesion.sh` (desde el Terminal) la copia de Brave con yt-dlp; repetirlo si
+  `agente-mac/exportar-sesion.sh` (desde el Terminal) la copia de Brave con yt-dlp a
+  `~/.principal-agente-instagram.txt`; repetirlo si
   Instagram cierra la sesión. El agente avisa con un código: `[aviso]`, `[sin_sesion]`, `[sin_brave]`.
 - **Después del perfil**: se eligen los **2 reels más vistos** y se traen por el camino de siempre
   (`media_fetch`; los de Instagram, directos al Mac, sin perder minutos con yt-dlp en la nube). Claude

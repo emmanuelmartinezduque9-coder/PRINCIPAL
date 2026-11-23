@@ -2,7 +2,7 @@
 // productos. La nube no puede: Instagram no deja leer perfiles sin sesión y bloquea a los servidores.
 //
 // - Instagram: abre el perfil en un Brave SIN VENTANA, con una carpeta de perfil temporal (nunca la
-//   de la persona) y las cookies de Instagram del archivo de sesión (`~/.principal-agente-cookies.txt`).
+//   de la persona) y las cookies de Instagram del archivo de sesión (`~/.principal-agente-instagram.txt`).
 //   Lee la cabecera (nombre, biografía, enlace de la tienda) y la cuadrícula de reels (enlace, vistas,
 //   texto de la miniatura). Si Instagram enseña un aviso o pide iniciar sesión, lo dice con un código.
 // - TikTok: yt-dlp con la lista del perfil (`--flat-playlist`, como mucho 15), que trae vistas y textos.

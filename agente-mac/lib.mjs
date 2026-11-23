@@ -14,6 +14,13 @@ import { profileOf, readInstagramProfile, tiktokProfileArgs, tiktokProfileFrom }
  */
 export const COOKIES_FILE = path.join(os.homedir(), ".principal-agente-cookies.txt");
 
+/**
+ * Sesión de Instagram (copiada de Brave con `exportar-sesion.sh`) solo para leer perfiles. Va aparte
+ * del archivo de yt-dlp: los reels sueltos se bajan bien sin sesión, y con una sesión que Instagram
+ * tiene bajo aviso fallaban.
+ */
+export const INSTAGRAM_SESSION_FILE = path.join(os.homedir(), ".principal-agente-instagram.txt");
+
 /** Cómo le pasa la sesión de Instagram a yt-dlp: el archivo si existe; si no, Brave directamente. */
 export function cookieArgs(file = COOKIES_FILE, exists = existsSync) {
   return exists(file) ? ["--cookies", file] : ["--cookies-from-browser", "brave"];
@@ -407,7 +414,7 @@ async function readProfile(config, deps, task, file) {
   let result;
   if (who.red === "instagram") {
     const read = deps.readInstagramProfile ?? readInstagramProfile;
-    result = await read(who.usuario, { cookiesFile: config.cookiesFile ?? COOKIES_FILE, sleep: deps.sleep });
+    result = await read(who.usuario, { cookiesFile: config.instagramSession ?? INSTAGRAM_SESSION_FILE, sleep: deps.sleep });
   } else {
     const ran = await runTool(config, deps, task, config.ytDlp ?? "yt-dlp", tiktokProfileArgs(task.url, cookieArgs()), {
       timeoutMs: YT_DLP_TIMEOUT_MS,
