@@ -44,6 +44,8 @@ const MAX_CANDIDATES = 24;
 /** Lado largo de las miniaturas que mira Claude y de las fotos que se guardan. */
 const THUMB_SIDE = 474;
 const STORED_SIDE = 2048;
+/** Miniaturas que se preparan a la vez (cada una es un ffmpeg). */
+const THUMB_PARALLEL = 4;
 /** Intentos automáticos de una búsqueda que falló antes de pararse y decirlo. */
 export const MAX_PINTEREST_ATTEMPTS = 3;
 /** Una búsqueda en marcha sin novedades desde hace esto se vuelve a lanzar. */
@@ -502,15 +504,18 @@ export async function runPinterest(runId: number, deps: PinterestDeps = {}): Pro
   // 3. Elegir con visión.
   const fetchImage = deps.fetchImage ?? fetchBytes;
   const thumbs: Array<{ candidate: (typeof shortlist)[number]; jpeg: Buffer }> = [];
-  await Promise.all(
-    shortlist.map(async (candidate, i) => {
-      try {
-        thumbs[i] = { candidate, jpeg: await makeThumbnail(await fetchImage(candidate.thumbUrl), "image", THUMB_SIDE) };
-      } catch {
-        // Una miniatura que no baja no se enseña.
-      }
-    }),
-  );
+  // De 4 en 4: muchas ffmpeg a la vez agotan los hilos del servidor y fallan otras tareas.
+  for (let start = 0; start < shortlist.length; start += THUMB_PARALLEL) {
+    await Promise.all(
+      shortlist.slice(start, start + THUMB_PARALLEL).map(async (candidate, offset) => {
+        try {
+          thumbs[start + offset] = { candidate, jpeg: await makeThumbnail(await fetchImage(candidate.thumbUrl), "image", THUMB_SIDE) };
+        } catch {
+          // Una miniatura que no baja no se enseña.
+        }
+      }),
+    );
+  }
   const shown = thumbs.filter(Boolean);
   if (shown.length === 0) {
     await failRun(run, "No se pudo bajar ninguna foto de Pinterest");
