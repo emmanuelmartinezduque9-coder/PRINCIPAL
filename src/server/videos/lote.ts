@@ -18,7 +18,7 @@ import { PINTEREST_PENDING } from "@/server/videos/pinterest";
 import { approveFrame } from "@/server/videos/frame";
 import { BLOCKED, MAX_REGENERATIONS, quoteGeneration, requestGeneration, type GenDeps, type GenerationKind } from "@/server/videos/generations";
 import { clipModelProblem, getVideoFor, setVideoSong, referenceOutdated, REFERENCE_OUTDATED, staleness, updateVideoChoices, withProductNotes, type Video } from "@/server/videos/videos";
-import { CLIP_MODEL_LABEL, CLIP_MODELS, SEEDANCE, sourceProblem } from "@/lib/clip-models";
+import { CLIP_MODEL_LABEL, CLIP_MODELS, resolveClipModel, SEEDANCE, sourceProblem, type ClipModel } from "@/lib/clip-models";
 import { isPromptProblem, PROMPT_ERROR } from "@/server/videos/prompt-check";
 
 /**
@@ -180,7 +180,17 @@ function retryAfterOf(batch: Batch): Date {
 const frameStage = (row: Row, batch: Batch) => stageOf(row.frames, row.video.approvedFrameResultId !== null, retryAfterOf(batch));
 
 /** Clips que Higgsfield bloqueó por su filtro de contenido o de marcas (los devuelve: no cobra). */
-const blockedClips = (row: Row) => row.clips.filter((g) => g.status === "failed" && g.error === BLOCKED).length;
+/** El modelo con el que se pidió una generación (su petición guardada). */
+const modelOf = (g: Generation) => (g.request as { model?: string } | null)?.model ?? SEEDANCE;
+
+/**
+ * Clips bloqueados por el filtro de Higgsfield (los devuelve: no cobra) con el modelo que el vídeo
+ * usa ahora: los de un modelo anterior no cuentan para sus reintentos.
+ */
+const blockedClips = (row: Row) => {
+  const current = resolveClipModel(row.video.clipModel, row.video.segmentDurationMs);
+  return row.clips.filter((g) => g.status === "failed" && g.error === BLOCKED && modelOf(g) === current).length;
+};
 
 /**
  * Reintentos solos de un clip bloqueado por el filtro de Higgsfield (`nsfw` / `ip_detected`). Como
@@ -191,7 +201,11 @@ export const MAX_BLOCKED_RETRIES = 2;
 /** Un clip bloqueado con reintentos libres vuelve a pedirse (con el prompt saneado) en vez de parar el lote. */
 const clipStage = (row: Row, batch: Batch): Stage => {
   const stage = stageOf(row.clips, false, retryAfterOf(batch));
-  return stage === "failed" && row.clips.at(-1)?.error === BLOCKED && blockedClips(row) <= MAX_BLOCKED_RETRIES ? "need" : stage;
+  const last = row.clips.at(-1);
+  if (stage !== "failed" || !last || last.error !== BLOCKED) return stage;
+  // Bloqueado con Genjutsu o Wan: aún queda pasar a Seedance (`sanitizeAfterBlock`).
+  const canSwitch = modelOf(last) !== SEEDANCE && resolveClipModel(row.video.clipModel, row.video.segmentDurationMs) !== SEEDANCE;
+  return canSwitch || blockedClips(row) <= MAX_BLOCKED_RETRIES ? "need" : stage;
 };
 
 /**
@@ -209,11 +223,33 @@ const BLOCKED_NOTES = [
  * desglose) y rehace el desglose. `true` mientras el prompt saneado no esté listo (se espera).
  */
 async function sanitizeAfterBlock(user: AuthUser, row: Row): Promise<boolean> {
-  const blocked = blockedClips(row);
-  if (blocked === 0 || row.clips.at(-1)?.error !== BLOCKED) return false;
-  const key = `sys:bloqueo-${blocked}`;
+  const last = row.clips.at(-1);
+  if (!last || last.status !== "failed" || last.error !== BLOCKED) return false;
   const [latest] = row.analyses;
   if (latest && ACTIVE_ANALYSIS.includes(latest.status)) return true;
+  // La causa real (23/11/2026, lote 3): Genjutsu y Wan editan a la persona real del vídeo de
+  // referencia, y Higgsfield lo rechaza (`ip_detected`) cuando se le ve la cara, con cualquier
+  // prompt. Seedance genera desde la imagen aprobada (la referencia solo da cámara y ritmo): el
+  // vídeo pasa a Seedance, se rehace el desglose para ese modelo y se repite, sin contar en el tope.
+  if (modelOf(last) !== SEEDANCE && resolveClipModel(row.video.clipModel, row.video.segmentDurationMs) !== SEEDANCE) {
+    await getDb().update(schema.videos).set({ clipModel: SEEDANCE, updatedAt: new Date() }).where(eq(schema.videos.id, row.video.id));
+    await saveAnswer(row.video.id, {
+      key: "sys:modelo-bloqueado",
+      question: "Higgsfield bloqueó el clip",
+      answer: `Higgsfield rechazó ${CLIP_MODEL_LABEL[modelOf(last) as ClipModel] ?? modelOf(last)} (ip_detected: edita a la persona real del vídeo de referencia). Se hace con Seedance desde la imagen aprobada.`,
+      inBrief: false,
+    });
+    try {
+      await requestAnalysis(user, row.video.id);
+    } catch (error) {
+      if (!(error instanceof HttpError)) throw error;
+    }
+    console.warn(`[lotes] Vídeo ${row.video.id}: ${modelOf(last)} bloqueado por Higgsfield (persona real en la referencia); pasa a Seedance y se rehace el desglose.`);
+    return true;
+  }
+  const blocked = blockedClips(row);
+  if (blocked === 0) return false;
+  const key = `sys:bloqueo-${blocked}`;
   if (!row.video.ownerAnswers.some((answer) => answer.key === key)) {
     await saveAnswer(row.video.id, { key, question: "Higgsfield bloqueó el clip", answer: BLOCKED_NOTES[Math.min(blocked, BLOCKED_NOTES.length) - 1], inBrief: true });
     try {
@@ -828,6 +864,13 @@ async function redoPrompt(user: AuthUser, row: Row): Promise<boolean> {
   return true;
 }
 
+/** Pausa por un clip bloqueado de un vídeo que aún no ha probado Seedance: se quita y pasa a Seedance. */
+async function canStillSwitch(pause: NonNullable<Batch["pause"]>): Promise<boolean> {
+  if (pause.kindOf !== "clip" || pause.videoId === null || !pause.reason.includes("también con el prompt reescrito")) return false;
+  const [video] = await getDb().select({ clipModel: schema.videos.clipModel }).from(schema.videos).where(eq(schema.videos.id, pause.videoId));
+  return video !== undefined && video.clipModel !== SEEDANCE;
+}
+
 /** ¿La pausa «máximo de regeneraciones» de un clip deja de serlo sin contar los bloqueos del filtro? */
 async function maxedOnlyByBlocks(pause: NonNullable<Batch["pause"]>): Promise<boolean> {
   if (pause.kindOf !== "clip" || pause.videoId === null || !pause.reason.includes("ha llegado al máximo de")) return false;
@@ -856,7 +899,8 @@ async function resumePromptPauses(): Promise<void> {
     if (!pause || pause.kind !== "fallo") continue;
     // También un clip bloqueado por el filtro de Higgsfield: ahora se reescribe y se repite solo. Y un
     // «máximo de regeneraciones» al que solo se llegó contando bloqueos (que no son rondas gastadas).
-    const internal = isPromptProblem(pause.reason) || pause.reason.includes(BLOCKED) || (await maxedOnlyByBlocks(pause));
+    const internal =
+      isPromptProblem(pause.reason) || pause.reason.includes(BLOCKED) || (await maxedOnlyByBlocks(pause)) || (await canStillSwitch(pause));
     if (!internal) continue;
     const [resumed] = await getDb()
       .update(schema.batches)
