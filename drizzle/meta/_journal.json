@@ -281,6 +281,13 @@
       "when": 1795443396957,
       "tag": "0039_referencia_entera",
       "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "7",
+      "when": 1795443936349,
+      "tag": "0040_lotes_se_autorizan_solos",
+      "breakpoints": true
     }
   ]
 }

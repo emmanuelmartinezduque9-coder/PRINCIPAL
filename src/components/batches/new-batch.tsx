@@ -1,7 +1,7 @@
 "use client";
 
 import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CircleAlert, Copy, FileVideo, Link2, Loader2, MonitorOff, Pencil, Plus, RotateCcw, Tag, Trash2, Upload, X } from "lucide-react";
+import { CircleAlert, Copy, FileVideo, Link2, Loader2, MonitorOff, Pencil, Plus, RotateCcw, Send, Tag, Trash2, Upload, X } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useId, useMemo, useRef, useState } from "react";
@@ -14,7 +14,6 @@ import { MusicPicker } from "@/components/songs/music-picker";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { MAX_ADAPTATION, MAX_NOTE, MAX_PRODUCT_NOTES } from "@/components/videos/brief-labels";
@@ -22,7 +21,7 @@ import { appendDictation, DictateButton } from "@/components/videos/dictate-butt
 import type { ProductPhoto } from "@/components/videos/labels";
 import { useReferenceUploads } from "@/components/videos/upload-provider";
 import { useMac } from "@/components/videos/use-mac";
-import { api } from "@/lib/api";
+import { api, ApiError } from "@/lib/api";
 import { linkLabel, parsePastedLinks } from "@/lib/links";
 import { cn } from "@/lib/utils";
 import { useAvatars } from "@/components/avatars/avatars-screen";
@@ -665,9 +664,10 @@ function GroupHeader({
  * como muestras), sus «Indicaciones» y sus tarjetas (una por referencia que se suelta o enlace que
  * se pega). La variante y el tipo del grupo son los que reciben las tarjetas nuevas. Cada tarjeta
  * elige tipo, cambios, variante, quién sale y música; con «Solo gancho», además la duración del
- * gancho y los cuerpos. «Crear y subir» crea el lote (con un nombre automático si se deja vacío),
- * guarda las indicaciones, crea los vídeos y pone las subidas en la cola (como mucho 2 a la vez);
- * los vídeos de enlace se crean ya con su enlace y los trae el Mac de quien los crea.
+ * gancho y los cuerpos. «Enviar lote» (un solo botón, como el «Preparar lote» de Codex) crea el lote
+ * (con un nombre automático si se deja vacío), guarda las indicaciones, crea los vídeos, pone las
+ * subidas en la cola (como mucho 2 a la vez) y lo envía: desde ahí va solo hasta «Revisar
+ * imágenes». Los vídeos de enlace se crean ya con su enlace y los trae el Mac de quien los crea.
  *
  * Pegar enlaces solo lo ve quien puede tener un Mac (el dueño); sin su Mac conectado, desactivado.
  */
@@ -678,7 +678,7 @@ export function NewBatch() {
   const mac = useMac();
   const editReference = true; // el servidor ya guarda `editReferenceUrl`
   // Todo el formulario vive en el borrador del diseño: salir y volver no pierde nada.
-  const { draft, hasDraft, setName, setAutoAnalyze, setGroups, setBatchId, preview, release, clear } = useNewBatchDraft();
+  const { draft, hasDraft, setName, setGroups, setBatchId, preview, release, clear } = useNewBatchDraft();
   const { name, autoAnalyze, groups, batchId } = draft;
   const [busy, setBusy] = useState(false);
 
@@ -860,6 +860,16 @@ export function NewBatch() {
           }
         }
       }
+      // Un solo botón, como el «Preparar lote» de Codex: crear, subir y enviar. El envío autoriza las
+      // imágenes; lo que aún se sube o trae el Mac se desglosa en cuanto llega.
+      if (done.size > 0) {
+        try {
+          await api(`/api/lotes/${id}/enviar`, { method: "POST" });
+        } catch (error) {
+          // Un lote ya enviado (al añadir vídeos) sigue solo: no es un error.
+          if (!(error instanceof ApiError && error.status === 409)) throw error;
+        }
+      }
       void client.invalidateQueries({ queryKey: ["batches"] });
       if (done.size === rowCount) {
         // Todo enviado: el borrador se vacía (los archivos siguen en la cola de subida).
@@ -972,10 +982,6 @@ export function NewBatch() {
                 className="h-9 pl-8"
               />
             </div>
-            <label className="flex h-9 cursor-pointer items-center gap-2 px-1 text-sm text-muted-foreground">
-              <Switch checked={autoAnalyze} disabled={batchId !== null} onCheckedChange={setAutoAnalyze} aria-label="Desglosar al subir" />
-              Desglosar al subir
-            </label>
           </>
         }
       >
@@ -985,8 +991,8 @@ export function NewBatch() {
           </Link>
         ) : null}
         <Button className="h-10 gap-2 px-5" disabled={!canCreate} onClick={() => void create()}>
-          {busy ? <Loader2 className="animate-spin" data-icon="inline-start" /> : batchId === null ? <Upload data-icon="inline-start" /> : <FileVideo data-icon="inline-start" />}
-          {batchId === null ? "Crear y subir" : "Añadir y subir"}
+          {busy ? <Loader2 className="animate-spin" data-icon="inline-start" /> : batchId === null ? <Send data-icon="inline-start" /> : <FileVideo data-icon="inline-start" />}
+          {batchId === null ? "Enviar lote" : "Añadir y enviar"}
           <span className="rounded-md bg-primary-foreground/15 px-1.5 text-xs tabular-nums">{rowCount}</span>
         </Button>
       </ActionBar>

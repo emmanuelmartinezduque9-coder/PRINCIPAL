@@ -436,8 +436,8 @@ export const batches = pgTable(
     /** Imágenes iniciales por vídeo (1–4) para los vídeos del lote que no piden otra cifra. Por defecto 1. */
     frameCount: integer("frame_count").notNull().default(1),
     /**
-     * Con todo respondido, el presupuesto se autoriza solo (sin «Confirmar»). Los lotes de antes del
-     * 23/11/2026 quedan en `false` y siguen esperando su confirmación.
+     * Con todo respondido, el presupuesto se autoriza solo (sin «Confirmar»): «Enviar lote» ya lo
+     * autoriza. Desde la migración 0040 todos los lotes están en `true`.
      */
     autoConfirm: boolean("auto_confirm").notNull().default(true),
     /** «Traducir el diálogo al alemán» para los vídeos del lote que no digan otra cosa en su tarjeta. */

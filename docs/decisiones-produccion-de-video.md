@@ -864,3 +864,7 @@ Regla 6 del motor. Se copió lo que hacía Codex (paquete activo `test-hook-sele
 - Presupuesto y gasto, como siempre: presupuesto con `estimate_video_cost` del modelo (antes de tener
   la imagen, Genjutsu y Wan llevan el primer fotograma de la referencia como imagen, porque la exigen),
   envío único y reconciliación por historial.
+- **Un solo botón «Enviar lote»** (23/11/2026, como el «Preparar lote» de Codex): «Nuevo lote» crea,
+  sube y envía de una vez (ya no hay «Crear y subir» y luego otro «Enviar lote» en el tablero). Todos
+  los lotes se autorizan solos al quedar todo respondido (migración 0040: el lote 3 se paraba en
+  «Preguntas 3/3» porque, al ser de antes, esperaba un «Confirmar y generar»).
