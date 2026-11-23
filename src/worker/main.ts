@@ -51,7 +51,7 @@ startWorker().then(
           "FalterPfote",
           "activos/falterpfote/funcionamiento-c67c4de4926b8503.png",
           6,
-          "Las alas siguen con forma de plumas: tienen que ser alas de mariposa (dos por lado, redondeadas, con nervaduras) como en la foto de funcionamiento",
+          "Alas de mariposa de la foto de funcionamiento y producto nombrado sin marca (método aprobado), para que Higgsfield no lo bloquee",
         ),
       )
       .catch((error) => console.error("[imagen] No se pudo preparar la foto de funcionamiento de FalterPfote:", error));
