@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import { and, eq } from "drizzle-orm";
 import { getHiggsfield, HiggsfieldUnavailableError, isHiggsfieldError, type HfMediaFile, type HiggsfieldPort } from "@/connectors/higgsfield";
 import { getDb, schema } from "@/db/client";
+import { getObjectStore, type ObjectStore } from "@/lib/object-store";
 import { runStep, stepKey, StepFailedError, type JobContext } from "@/jobs/steps";
 import { linkUrlOfTask } from "@/server/agent-tasks";
 import { getActiveUser } from "@/server/auth";
@@ -25,8 +26,9 @@ import { getVideoFor, segmentMsFor } from "@/server/videos/videos";
  * Preparación de la referencia (trabajo `video.referencia`): del archivo subido salen la
  * duración y el tamaño, los fotogramas (a la base de datos), los cortes de plano y un recorte
  * normalizado de 30 s como mucho (con «Solo gancho», solo los segundos del gancho), que se sube al Higgsfield de quien creó el vídeo,
- * y su pista de audio (`video_reference_audio`: «Audio original» en el montaje). El vídeo no
- * se guarda: los archivos temporales se borran siempre al acabar, bien o mal. Un fallo deja la
+ * y su pista de audio (`video_reference_audio`: «Audio original» en el montaje). El vídeo entero
+ * va al almacén (`videos.reference_storage_key`): sin «referencia de edición», el montaje copia su
+ * edición (regla de Codex). Los archivos temporales se borran siempre al acabar, bien o mal. Un fallo deja la
  * referencia en error con el motivo en español y no se reintenta (el archivo ya no está).
  */
 
@@ -41,6 +43,24 @@ export interface IntakeDeps {
   higgsfield?: HiggsfieldPort;
   /** Espera entre intentos de subida; las pruebas la sustituyen para no esperar. */
   sleep?: (ms: number) => Promise<void>;
+  /** Almacén donde se guarda el vídeo entero (por defecto el de la aplicación; `null`: no se guarda). */
+  store?: ObjectStore | null;
+}
+
+const VIDEO_TYPES: Record<string, string> = { mp4: "video/mp4", mov: "video/quicktime", webm: "video/webm", m4v: "video/mp4", mkv: "video/x-matroska" };
+
+/** Guarda el vídeo de referencia entero en el almacén; su clave, o `null` si no hay almacén o falla (no estropea la referencia). */
+async function storeReference(store: ObjectStore | null, videoId: number, uploadId: string, file: string, formatName: string | null): Promise<string | null> {
+  if (!store) return null;
+  const ext = (formatName ?? "").split(",").map((f) => f.trim()).find((f) => f in VIDEO_TYPES) ?? "mp4";
+  const key = `referencias/${videoId}/${uploadId}.${ext === "mov" ? "mov" : ext === "webm" ? "webm" : "mp4"}`;
+  try {
+    await store.putFile(key, file, { contentType: VIDEO_TYPES[ext] ?? "video/mp4" });
+    return key;
+  } catch (error) {
+    console.warn(`[videos] No se pudo guardar la referencia entera del vídeo ${videoId}:`, error instanceof Error ? error.message : error);
+    return null;
+  }
 }
 
 const wait = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
@@ -117,6 +137,8 @@ async function prepare(ctx: JobContext, videoId: number, uploadId: string, deps:
     session.agentTaskId === null
       ? { referenceSource: "file", referenceUrl: null }
       : { referenceSource: "link", referenceUrl: await linkUrlOfTask(session.agentTaskId) };
+  const store = deps.store === undefined ? getObjectStore() : deps.store;
+  const storageKey = await storeReference(store, video.id, uploadId, file, null);
   const { mediaId } = await uploadWithRetries(
     deps.higgsfield ?? getHiggsfield(),
     video.createdBy,
@@ -137,6 +159,7 @@ async function prepare(ctx: JobContext, videoId: number, uploadId: string, deps:
         referenceWidth: probe.width,
         referenceHeight: probe.height,
         referenceMediaId: mediaId,
+        referenceStorageKey: storageKey,
         segmentDurationMs,
         cutsMs,
         // Una referencia nueva es un cambio: el desglose automático vuelve a contar con este vídeo.
@@ -147,6 +170,7 @@ async function prepare(ctx: JobContext, videoId: number, uploadId: string, deps:
       .returning({ id: schema.videos.id });
     if (updated.length === 0) {
       console.warn(`[videos] La referencia del vídeo ${video.id} ya no se esperaba: su resultado no se guarda.`);
+      if (store && storageKey) await store.delete(storageKey).catch(() => {});
       return;
     }
     // El audio es el de esta referencia: el de una anterior deja de valer.

@@ -567,6 +567,12 @@ export const videos = pgTable(
     referenceHeight: integer("reference_height"),
     /** El recorte normalizado, ya subido al Higgsfield de quien creó el vídeo. */
     referenceMediaId: text("reference_media_id"),
+    /**
+     * El vídeo de referencia ENTERO en el almacén (`referencias/<vídeo>/<subida>.<ext>`), guardado al
+     * prepararlo: sin «referencia de edición», la edición se copia de él (`edits.ts`). `null` en los de
+     * antes del 23/11/2026 (entonces se usa su enlace, si lo hay) o sin almacén.
+     */
+    referenceStorageKey: text("reference_storage_key"),
     /** Tramo de la referencia que se usa: su duración, con tope de 30 s. */
     segmentDurationMs: integer("segment_duration_ms"),
     /** Cortes de plano dentro del tramo, en milisegundos. */

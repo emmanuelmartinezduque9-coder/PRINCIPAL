@@ -1,0 +1,209 @@
+import crypto from "node:crypto";
+import { createReadStream } from "node:fs";
+import fs from "node:fs/promises";
+import path from "node:path";
+import { pipeline } from "node:stream/promises";
+import { z } from "zod";
+import { imagePart, textPart } from "@/llm/content";
+import { getGateway, type LlmGateway } from "@/llm/gateway";
+import type { ObjectStore } from "@/lib/object-store";
+import { probeVideo } from "@/server/media/ffmpeg";
+import { ffmpegLog, ffmpegOutput } from "@/server/media/ffmpeg-crudo";
+
+/**
+ * La edición que se copia del vídeo de referencia (copia de lo que hacía Codex, `REGLAS_EDICION/
+ * CRITERIOS_OBLIGATORIOS.md` punto 3: «enlace de edición vacío → el vídeo de referencia original; vacío
+ * NO significa sin edición»; `Motor/order-preparation/app-116085…-36/post-edit/editorial.py` y
+ * `render-local.py`):
+ *
+ * - **Qué rótulos tiene y cuándo cambian.** Codex: OCR de Apple Vision a 2 fps, búsqueda del fotograma exacto
+ *   del cambio y comprobación visual de los dos fotogramas (`ref-switches.json`). Aquí: Claude mira la
+ *   referencia a 2 fps (fotogramas con su tiempo) y dice cada rótulo, desde cuándo y en qué franja de alto
+ *   está; el cambio se afina después al fotograma exacto, buscando dentro del medio segundo entre las dos
+ *   muestras el fotograma donde más cambia esa franja.
+ * - **Cómo se adapta cada rótulo** (`editorial.py`): mismo sentido, intención y tono, alemán natural, la marca
+ *   ajena cambiada por la del producto, los emojis emocionales conservados y los del producto cambiados por
+ *   los de su nicho, `|` para el salto de línea y la traducción española aparte (no se imprime). El CTA es el
+ *   de la referencia con la palabra clave del producto («Kommentiere „EisWerk“, wenn du auch eine willst!»).
+ *
+ * El montaje (`montar_auto.py`) los pone siempre en la caja fija 06B (x112/y287), nunca en la posición de la
+ * referencia (`TEXTOS_FIJOS_PRODUCTOS_FISICOS_20261031.md`), y en una réplica los cambia en el mismo punto
+ * proporcional del clip (`render-local.py`: `round(t * frames / duración_referencia)`).
+ *
+ * El resultado se guarda en el almacén por referencia y producto: volver a montar no vuelve a gastar.
+ */
+
+/** Muestras por segundo que mira Claude (las de Codex). */
+export const SAMPLES_PER_SECOND = 2;
+/** Lo más que se mira de la referencia (como el tramo de la réplica). */
+export const MAX_REFERENCE_S = 30;
+const SAMPLE_WIDTH = 288;
+const REFINE_FPS = 24;
+const REFINE_WIDTH = 108;
+
+export interface ReferenceCue {
+  /** Desde cuándo se ve (segundos de la referencia), afinado al fotograma. */
+  startS: number;
+  /** El texto tal cual en la referencia. */
+  source: string;
+  /** El rótulo adaptado, con `|` para cada salto de línea. */
+  text: string;
+  /** Traducción española de revisión (no se imprime). */
+  es: string;
+  cta: boolean;
+}
+
+export interface ReferenceEdit {
+  version: 1;
+  durationS: number;
+  /** Rótulos en orden; vacío si la referencia no tiene rótulos editoriales. */
+  cues: ReferenceCue[];
+  /** Cambios de plano de la referencia (segundos). */
+  cutsS: number[];
+}
+
+const answerSchema = z.object({
+  rotulos: z
+    .array(
+      z.object({
+        desde_s: z.number().min(0),
+        texto_original: z.string().min(1).max(300),
+        texto_adaptado: z.string().min(1).max(300),
+        traduccion_es: z.string().max(400),
+        es_cta: z.boolean(),
+        franja_superior: z.number().min(0).max(1),
+        franja_inferior: z.number().min(0).max(1),
+      }),
+    )
+    .max(12),
+});
+type Answer = z.infer<typeof answerSchema>;
+
+export const REFERENCE_EDIT_INSTRUCTIONS = `Eres el editor de anuncios en vídeo del dueño (TikTok/Reels para Alemania). Te paso el vídeo de REFERENCIA en fotogramas a ${SAMPLES_PER_SECOND} por segundo, cada uno con su tiempo. El anuncio nuevo copia su edición: los mismos rótulos editoriales, en el mismo momento, adaptados a NUESTRO producto.
+
+1. Lee TODOS los rótulos editoriales superpuestos (textos puestos en edición encima del vídeo, normalmente blancos con contorno). NO cuentes subtítulos automáticos del habla, textos que forman parte de la escena (envases, carteles, pantallas), marcas de agua ni la interfaz de TikTok/Instagram. Si no hay ninguno, devuelve la lista vacía.
+2. Un rótulo nuevo empieza cuando cambia el texto. desde_s es el tiempo de la PRIMERA muestra en la que se lee el texto nuevo (el primero suele empezar en 0). Si un texto aparece palabra a palabra, cuenta como un solo rótulo desde que empieza.
+3. franja_superior / franja_inferior: entre qué alturas del fotograma (0 arriba, 1 abajo) está ese rótulo.
+4. texto_adaptado: la versión para nuestro anuncio en alemán natural de Alemania, fiel al original: mismo sentido, intención, tono, estructura y mayúsculas. Cambia SOLO la marca, el producto o la palabra clave ajenos por los nuestros (nombre del producto que te doy). Conserva la tienda que nombre la referencia si existe en Alemania; no inventes tiendas, ofertas, precios ni beneficios que no estén. Emojis: conserva los emocionales compatibles y cambia los que no encajan con nuestro producto por uno de su nicho (un emoji de uñas no vale para un producto de pelo). Marca con | los saltos de línea (como mucho 3 líneas de unos 30 caracteres).
+5. es_cta: true en el rótulo de llamada a la acción («Comment X…», «Kommentiere…», «Link in bio»…). Su texto_adaptado es la misma llamada con la palabra clave de nuestro producto, por defecto «Kommentiere „{PRODUCTO}“, wenn du auch eine willst!» con los emojis del original adaptados, salvo que el original diga otra cosa concreta que se pueda traducir fiel.
+6. traduccion_es: el texto_adaptado en español, para que el dueño lo revise (no se imprime).
+Responde solo con el JSON pedido.`;
+
+async function sha256File(file: string): Promise<string> {
+  const hash = crypto.createHash("sha256");
+  await pipeline(createReadStream(file), hash);
+  return hash.digest("hex");
+}
+
+/** Los fotogramas de muestra (JPEG) a `SAMPLES_PER_SECOND`, con su tiempo. */
+async function samples(file: string, durationS: number, dir: string): Promise<Array<{ t: number; jpeg: Buffer }>> {
+  const out = path.join(dir, "muestras");
+  await fs.mkdir(out, { recursive: true });
+  const limit = Math.min(durationS, MAX_REFERENCE_S);
+  await ffmpegOutput([
+    "-nostdin", "-v", "error", "-y", "-t", limit.toFixed(3), "-i", file,
+    "-vf", `fps=${SAMPLES_PER_SECOND}:start_time=0,scale=${SAMPLE_WIDTH}:-2`, "-q:v", "4", path.join(out, "m-%04d.jpg"),
+  ]);
+  const files = (await fs.readdir(out)).filter((f) => f.endsWith(".jpg")).sort();
+  return Promise.all(files.map(async (f, i) => ({ t: i / SAMPLES_PER_SECOND, jpeg: await fs.readFile(path.join(out, f)) })));
+}
+
+/**
+ * El fotograma exacto (segundos) en que cambia la franja `[top, bottom]` entre `from` y `to`: el de mayor
+ * diferencia con el anterior dentro de esa franja (la búsqueda del fotograma de Codex). Sin datos, `to`.
+ */
+export async function refineSwitch(file: string, from: number, to: number, top: number, bottom: number): Promise<number> {
+  const start = Math.max(0, from - 1 / REFINE_FPS);
+  const length = Math.max(0.1, to - start + 1 / REFINE_FPS);
+  const width = REFINE_WIDTH;
+  const raw = await ffmpegOutput([
+    "-nostdin", "-v", "error", "-ss", start.toFixed(3), "-t", length.toFixed(3), "-i", file,
+    "-vf", `fps=${REFINE_FPS},scale=${width}:192,format=gray`, "-f", "rawvideo", "-",
+  ]).catch(() => Buffer.alloc(0));
+  const frame = width * 192;
+  const count = Math.floor(raw.length / frame);
+  if (count < 2) return to;
+  const y0 = Math.max(0, Math.floor(Math.min(top, bottom) * 192) - 4);
+  const y1 = Math.min(192, Math.ceil(Math.max(top, bottom) * 192) + 4);
+  let best = -1;
+  let bestAt = to;
+  for (let i = 1; i < count; i++) {
+    let diff = 0;
+    for (let y = y0; y < y1; y++) {
+      for (let x = 0; x < width; x++) diff += Math.abs(raw[i * frame + y * width + x] - raw[(i - 1) * frame + y * width + x]);
+    }
+    if (diff > best) {
+      best = diff;
+      bestAt = start + i / REFINE_FPS;
+    }
+  }
+  return Math.round(Math.min(Math.max(bestAt, from), to) * 1000) / 1000;
+}
+
+/** Cambios de plano de la referencia (filtro de escena de ffmpeg, como el motor de Codex: umbral 0,3, ≥ 0,28 s). */
+async function sceneCuts(file: string, durationS: number): Promise<number[]> {
+  const log = await ffmpegLog(["-nostdin", "-t", Math.min(durationS, MAX_REFERENCE_S).toFixed(3), "-i", file, "-vf", "select='gt(scene,0.3)',showinfo", "-an", "-f", "null", "-"]);
+  const cuts: number[] = [];
+  for (const m of log.matchAll(/pts_time:([\d.]+)/g)) {
+    const t = Number(m[1]);
+    if (t > 0.1 && (cuts.length === 0 || t - cuts[cuts.length - 1] >= 0.28)) cuts.push(Math.round(t * 1000) / 1000);
+  }
+  return cuts;
+}
+
+export interface ReferenceEditContext {
+  file: string;
+  product: { id: number; name: string; language: string };
+  userId: number;
+  dir: string;
+  store: ObjectStore | null;
+  /** Para la caché del almacén: de qué vídeo es. */
+  videoId: number;
+  gateway?: LlmGateway;
+}
+
+const cacheKey = (videoId: number, sha: string, productName: string) =>
+  `ediciones/${videoId}/${crypto.createHash("sha256").update(`${sha}\n${productName}\nv1`).digest("hex").slice(0, 32)}.json`;
+
+/** La edición de la referencia (rótulos adaptados con sus tiempos y cortes). Lanza si Claude no puede. */
+export async function referenceEdit(ctx: ReferenceEditContext): Promise<ReferenceEdit> {
+  const sha = await sha256File(ctx.file);
+  const key = cacheKey(ctx.videoId, sha, ctx.product.name);
+  if (ctx.store && (await ctx.store.head(key).catch(() => null)) !== null) {
+    const cached = path.join(ctx.dir, "edicion-referencia.json");
+    await ctx.store.download(key, cached);
+    return JSON.parse(await fs.readFile(cached, "utf8")) as ReferenceEdit;
+  }
+  const { durationMs } = await probeVideo(ctx.file);
+  const durationS = durationMs / 1000;
+  const shots = await samples(ctx.file, durationS, ctx.dir);
+  const answer = await (ctx.gateway ?? getGateway()).call<Answer>({
+    tier: "medium",
+    stepKey: `montaje:${ctx.videoId}:edicion-referencia:${sha.slice(0, 16)}`,
+    userId: ctx.userId,
+    productId: ctx.product.id,
+    rules: [],
+    instructions: REFERENCE_EDIT_INSTRUCTIONS.replaceAll("{PRODUCTO}", ctx.product.name),
+    content: [
+      textPart(`Nuestro producto: ${ctx.product.name}. Idioma del anuncio: ${ctx.product.language === "it" ? "italiano" : "alemán"}. La referencia dura ${durationS.toFixed(2)} s.`),
+      ...shots.flatMap((s) => [textPart(`t = ${s.t.toFixed(2)} s`), imagePart(s.jpeg, "image/jpeg")]),
+    ],
+    maxTokens: 4_000,
+    schema: answerSchema,
+  });
+  const rows = [...(answer.data?.rotulos ?? [])].sort((a, b) => a.desde_s - b.desde_s);
+  const cues: ReferenceCue[] = [];
+  for (const [i, row] of rows.entries()) {
+    let startS = i === 0 && row.desde_s <= 1 / SAMPLES_PER_SECOND ? 0 : Math.min(row.desde_s, durationS);
+    if (i > 0 && startS > 0) startS = await refineSwitch(ctx.file, startS - 1 / SAMPLES_PER_SECOND, startS, row.franja_superior, row.franja_inferior);
+    if (cues.length > 0 && startS <= cues[cues.length - 1].startS) continue;
+    cues.push({ startS, source: row.texto_original.trim(), text: row.texto_adaptado.trim(), es: row.traduccion_es.trim(), cta: row.es_cta });
+  }
+  const result: ReferenceEdit = { version: 1, durationS, cues, cutsS: await sceneCuts(ctx.file, durationS) };
+  if (ctx.store) {
+    const out = path.join(ctx.dir, "edicion-referencia.json");
+    await fs.writeFile(out, JSON.stringify(result));
+    await ctx.store.putFile(key, out, { contentType: "application/json" }).catch(() => {});
+  }
+  return result;
+}

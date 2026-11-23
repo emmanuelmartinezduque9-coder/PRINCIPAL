@@ -1,0 +1,1 @@
+ALTER TABLE "videos" ADD COLUMN "reference_storage_key" text;

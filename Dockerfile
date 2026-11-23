@@ -3,7 +3,7 @@
 # - ffmpeg para vídeos y miniaturas.
 # - Python con el montador (librosa, rótulos 06B con freetype-py + uharfbuzz), rea-video (desglose de la
 #   referencia de edición) y yt-dlp (enlaces que la nube alcanza), en /opt/montador.
-# - Noto Color Emoji para los emojis de los rótulos.
+# - Noto Color Emoji solo de reserva: los emojis del iPhone (Apple Color Emoji) se bajan del almacén al montar.
 # La fuente de los rótulos (TikTok Display) NO va en la imagen: se baja del almacén de objetos al montar.
 FROM node:22-bookworm-slim
 

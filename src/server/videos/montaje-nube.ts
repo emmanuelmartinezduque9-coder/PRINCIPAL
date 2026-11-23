@@ -16,6 +16,7 @@ import { readSongFile } from "@/server/songs";
 import { storedOriginalKey } from "@/server/videos/archive";
 import { openClipStream } from "@/server/videos/clip";
 import { dubbedAudio } from "@/server/videos/doblaje";
+import { referenceEdit, type ReferenceEdit } from "@/server/videos/edicion-referencia";
 import { batchOfVideo, cleanSelfCheck, failEdit, MAX_EDIT_BYTES, readReferenceAudio, saveEdit, settleBatch, type EditSpec } from "@/server/videos/edits";
 
 /**
@@ -51,6 +52,12 @@ export const LINK_WAIT_MAX_MS = 20 * 60_000;
 export const LINK_RECHECK_MS = 60_000;
 /** Dónde está la fuente de los rótulos en el almacén (se sube una vez: `scripts/subir-fuente.ts`). */
 export const FONT_KEY = "recursos/fuentes/TikTok-Display-Medium.ttf";
+/**
+ * Los emojis de los rótulos, como en el iPhone: la fuente Apple Color Emoji del Mac en el almacén (se
+ * sube una vez: `scripts/subir-fuente.ts --emojis`). Sin ella, Noto Color Emoji (los de Android) y un aviso.
+ */
+export const EMOJI_FONT_KEY = "recursos/fuentes/AppleColorEmoji.ttc";
+export const NO_APPLE_EMOJI = "Los emojis salen como en Android: falta la fuente de emojis del iPhone en el almacén";
 
 export const INTERRUPTED = "El montaje se interrumpió varias veces. Vuelve a montarlo.";
 export const INTERNAL = "No se pudo montar: error interno del montaje.";
@@ -70,10 +77,14 @@ export interface MontajeDeps {
   reaPython?: string | null;
   /** Fuente de los rótulos ya en el disco (si no, `MONTADOR_FUENTE` o la del almacén). */
   font?: string;
+  /** Fuente de los emojis del iPhone ya en el disco (si no, la del almacén). */
+  emojiFont?: string;
   /** Carpeta del montador (por defecto `montador/` del proyecto). */
   montadorDir?: string;
   /** yt-dlp simulado (pruebas). */
   runYtDlp?: FetchDeps["runYtDlp"];
+  /** Claude (pruebas: uno simulado) para leer la edición de la referencia. */
+  gateway?: import("@/llm/gateway").LlmGateway;
   /** Higgsfield (pruebas: el simulado) y la espera de cada pregunta, para el doblaje del diálogo. */
   higgsfield?: HiggsfieldPort;
   dubPollSeconds?: number;
@@ -145,20 +156,32 @@ export function killMontajePrograms(): void {
 
 const fontCache = path.join(os.tmpdir(), "principal-recursos");
 
+/** Un recurso del almacén en el disco (se baja una vez por proceso y se reutiliza). `null` si no está. */
+async function cachedResource(store: ObjectStore, key: string): Promise<string | null> {
+  const target = path.join(fontCache, path.basename(key));
+  if (await fs.stat(target).then((s) => s.size > 0, () => false)) return target;
+  if ((await store.head(key)) === null) return null;
+  await fs.mkdir(fontCache, { recursive: true });
+  const temp = `${target}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`;
+  await store.download(key, temp);
+  await fs.rename(temp, target);
+  return target;
+}
+
 /** La fuente de los rótulos en el disco: la indicada, `MONTADOR_FUENTE` o la del almacén (se baja una vez). */
 async function fontFile(store: ObjectStore | null, deps: MontajeDeps): Promise<string | null> {
   for (const candidate of [deps.font, process.env.MONTADOR_FUENTE]) {
     if (candidate && (await fs.stat(candidate).then((s) => s.isFile(), () => false))) return candidate;
   }
-  if (!store) return null;
-  const target = path.join(fontCache, path.basename(FONT_KEY));
-  if (await fs.stat(target).then((s) => s.size > 0, () => false)) return target;
-  if ((await store.head(FONT_KEY)) === null) return null;
-  await fs.mkdir(fontCache, { recursive: true });
-  const temp = `${target}.${process.pid}.tmp`;
-  await store.download(FONT_KEY, temp);
-  await fs.rename(temp, target);
-  return target;
+  return store ? cachedResource(store, FONT_KEY) : null;
+}
+
+/** La fuente de los emojis del iPhone: la indicada, la del almacén o, en el Mac, la del sistema. `null`: no hay. */
+async function appleEmojiFile(store: ObjectStore | null, deps: MontajeDeps): Promise<string | null> {
+  for (const candidate of [deps.emojiFont, "/System/Library/Fonts/Apple Color Emoji.ttc"]) {
+    if (candidate && (await fs.stat(candidate).then((s) => s.isFile(), () => false))) return candidate;
+  }
+  return store ? cachedResource(store, EMOJI_FONT_KEY).catch(() => null) : null;
 }
 
 // ───────────────────────── Entradas ─────────────────────────
@@ -282,7 +305,9 @@ export async function runEdit(run: Run, deps: MontajeDeps = {}): Promise<"done" 
   }, RUN_HEARTBEAT_MS);
   try {
     // 1. Enlaces (antes de bajar nada: si hay que esperar al Mac, no se ha gastado nada).
-    const editRef = spec.editReferenceUrl ? await resolveLink(spec.editReferenceUrl, "edicion", run, dir, store, notes, deps) : null;
+    // Sin referencia de edición, la de la réplica (regla de Codex): su enlace, si no está guardada entera.
+    const replicaLink = !spec.editReferenceUrl && spec.replicaReference?.source === "enlace" ? spec.replicaReference.url : null;
+    const editRef = spec.editReferenceUrl || replicaLink ? await resolveLink((spec.editReferenceUrl ?? replicaLink)!, "edicion", run, dir, store, notes, deps) : null;
     const audioLink = spec.referenceAudio?.source === "enlace" ? await resolveLink(spec.referenceAudio.url, "audio", run, dir, store, notes, deps) : null;
     if (editRef?.defer || audioLink?.defer) {
       await defer(run, LINK_RECHECK_MS, nowOf(deps));
@@ -376,11 +401,49 @@ export async function runEdit(run: Run, deps: MontajeDeps = {}): Promise<"done" 
       }
     }
 
+    // La edición de la referencia efectiva: rótulos adaptados con sus tiempos y cortes (`edicion-referencia.ts`).
+    let referenceFile = editRef?.file ?? null;
+    if (!referenceFile && !spec.editReferenceUrl && spec.replicaReference?.source === "almacen" && store) {
+      const target = path.join(dir, "referencia-replica.mp4");
+      try {
+        await store.download(spec.replicaReference.key, target);
+        referenceFile = target;
+      } catch (error) {
+        notes.push("No se pudo bajar el vídeo de referencia de la réplica: se monta con el patrón de siempre");
+        console.warn(`[montaje] Referencia de la réplica ${spec.replicaReference.key}: ${messageOf(error)}`);
+      }
+    }
+    let edicion: ReferenceEdit | null = null;
+    if (referenceFile) {
+      try {
+        const [owner] = await getDb()
+          .select({ productId: schema.videos.productId, userId: schema.videos.createdBy })
+          .from(schema.videos)
+          .where(eq(schema.videos.id, spec.videoId));
+        edicion = await referenceEdit({
+          file: referenceFile,
+          product: { id: owner?.productId ?? 0, name: spec.product.name, language: spec.product.language },
+          userId: owner?.userId ?? run.requestedBy,
+          dir,
+          store,
+          videoId: spec.videoId,
+          gateway: deps.gateway,
+        });
+      } catch (error) {
+        notes.push("No se pudo leer la edición de la referencia: se monta con el patrón de siempre");
+        console.warn(`[montaje] Edición de la referencia del vídeo ${spec.videoId}: ${messageOf(error)}`);
+      }
+    } else if (!spec.editReferenceUrl) {
+      notes.push("No está el vídeo de referencia de la réplica: se monta con el patrón de siempre");
+    }
+
     const font = await fontFile(store, deps);
     if (!font) {
       await finishFailed(run, montajeFailure("falta la fuente de los rótulos en el servidor"), "sin fuente", nowOf(deps), notes);
       return "failed";
     }
+    const emojiFont = await appleEmojiFile(store, deps);
+    if (!emojiFont) notes.push(NO_APPLE_EMOJI);
 
     // 3. El montador.
     const work = path.join(dir, "trabajo");
@@ -388,14 +451,24 @@ export async function runEdit(run: Run, deps: MontajeDeps = {}): Promise<"done" 
     const specPath = path.join(dir, "ficha.json");
     await fs.writeFile(
       specPath,
-      JSON.stringify({ ...spec, clips, song, referenceAudio, referencia: editRef?.breakdown ? { breakdown: editRef.breakdown } : null, avisos: notes }),
+      JSON.stringify({
+        ...spec,
+        clips,
+        song,
+        referenceAudio,
+        referencia: editRef?.breakdown ? { breakdown: editRef.breakdown } : null,
+        edicionReferencia: edicion
+          ? { duracion_s: edicion.durationS, cortes_s: edicion.cutsS, rotulos: edicion.cues.map((c) => ({ desde_s: c.startS, texto: c.text, cta: c.cta })) }
+          : null,
+        avisos: notes,
+      }),
     );
     const montadorDir = deps.montadorDir ?? path.join(process.cwd(), "montador");
     const python = deps.python ?? process.env.MONTADOR_PYTHON ?? "python3";
     const ran = await runProgram(python, ["-B", path.join(montadorDir, "montar_auto.py"), specPath, work], {
       cwd: montadorDir,
       timeoutMs: MONTADOR_TIMEOUT_MS,
-      env: safeEnv({ MONTADOR_FUENTE: font, MONTADOR_CACHE: path.join(os.tmpdir(), "montador-cache") }),
+      env: safeEnv({ MONTADOR_FUENTE: font, MONTADOR_CACHE: path.join(os.tmpdir(), "montador-cache"), ...(emojiFont ? { EMOJI_FONT: emojiFont } : {}) }),
     });
     let result: { ok?: boolean; error?: string; autocomprobacion?: unknown; avisos?: unknown } | null = null;
     try {

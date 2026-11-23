@@ -74,6 +74,12 @@ export interface EditSpec {
   texts: { main: string; cta: string };
   editReferenceUrl: string | null;
   /**
+   * Sin «referencia de edición», la edición se copia del MISMO vídeo que se replicó (regla de Codex:
+   * «vacío NO significa sin edición»): el archivo entero del almacén o, en los de antes del 23/11/2026,
+   * su enlace. `null` con referencia de edición o si no hay ninguno de los dos.
+   */
+  replicaReference?: { source: "almacen"; key: string } | { source: "enlace"; url: string } | null;
+  /**
    * «Traducir el diálogo al alemán» (`doblaje.ts`): el «Audio original» se dobla (solo la voz; la
    * música y los efectos quedan los originales). Sin canción y con audio de la referencia; si no, aviso.
    */
@@ -169,6 +175,7 @@ async function buildSpec(video: Video, product: Product): Promise<EditSpec> {
   }
   const song = video.songId === null ? null : ((await songSummaries([video.songId])).get(video.songId) ?? null);
   const original = await referenceAudioSource(video);
+  const editReference = await effectiveEditReferenceUrl(video);
   return {
     version: 2,
     videoId: video.id,
@@ -181,7 +188,14 @@ async function buildSpec(video: Video, product: Product): Promise<EditSpec> {
     referenceAudio: original === "web" ? { source: "web" } : original ? { source: "enlace", url: original.link } : null,
     texts: editTextsFor(video, product, await latestAnalysisResult(video.id)),
     // La del vídeo o, si no tiene, la de su producto en el lote.
-    editReferenceUrl: await effectiveEditReferenceUrl(video),
+    editReferenceUrl: editReference,
+    replicaReference: editReference
+      ? null
+      : video.referenceStorageKey
+        ? { source: "almacen", key: video.referenceStorageKey }
+        : video.referenceSource === "link" && video.referenceUrl
+          ? { source: "enlace", url: video.referenceUrl }
+          : null,
     dubDialogue: await dubDialogueOf(video),
   };
 }

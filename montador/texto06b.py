@@ -143,6 +143,39 @@ class Fuente:
         """El emoji a color, escalado a `size`×`size` px (o None si no hay fuente de emojis)."""
         if not self.emoji_path:
             return None
+        img = self.emoji_shaped(emoji)
+        if img is not None:
+            scale = size / max(img.width, img.height)
+            return img.resize((max(1, round(img.width * scale)), max(1, round(img.height * scale))), Image.LANCZOS)
+        return self.emoji_pillow(emoji, size)
+
+    def emoji_shaped(self, emoji):
+        """El emoji entero como lo junta CoreText: HarfBuzz le da forma con la fuente de emojis (uniones ZWJ, tonos de
+        piel, banderas → un glifo) y se toma el PNG de ese glifo de la tabla `sbix` (el mapa de bits más grande: 160 px
+        en Apple Color Emoji). `None` si la fuente no tiene `sbix` o no sale un solo glifo (entonces, Pillow)."""
+        try:
+            if not hasattr(self, '_emoji_hb'):
+                self._emoji_hb = hb.Font(hb.Face(hb.Blob.from_file_path(self.emoji_path), 0))
+                self._emoji_sbix = Sbix(self.emoji_path)
+            buf = hb.Buffer()
+            buf.add_str(emoji)
+            buf.guess_segment_properties()
+            hb.shape(self._emoji_hb, buf, {})
+            gids = [info.codepoint for info in buf.glyph_infos if info.codepoint]
+            if len(gids) != 1:
+                return None
+            png = self._emoji_sbix.png(gids[0])
+            if png is None:
+                return None
+            import io
+            img = Image.open(io.BytesIO(png)).convert('RGBA')
+            bbox = img.getbbox()
+            return img.crop(bbox) if bbox else None
+        except Exception:  # noqa: BLE001 — cualquier fallo de la fuente: el camino de Pillow
+            return None
+
+    def emoji_pillow(self, emoji, size):
+        """El emoji dibujado con Pillow (sin uniones ZWJ ni banderas si Pillow no tiene libraqm)."""
         for native in (160, 137, 109, 96, 64, 48, 40, 32, 20):  # tamaños de mapa de bits habituales
             try:
                 font = ImageFont.truetype(self.emoji_path, native)
@@ -161,6 +194,43 @@ class Fuente:
         img = img.crop(bbox)
         scale = size / max(img.width, img.height)
         return img.resize((max(1, round(img.width * scale)), max(1, round(img.height * scale))), Image.LANCZOS)
+
+
+class Sbix:
+    """Lector mínimo de la tabla `sbix` (mapas de bits PNG por glifo, la de Apple Color Emoji) de una fuente TTF/TTC
+    (la primera de la colección), sin cargarla entera: solo la cabecera del tamaño más grande y el PNG que se pide."""
+
+    def __init__(self, path):
+        import mmap
+        import struct
+        self.struct = struct
+        with open(path, 'rb') as fh:
+            self.mm = mmap.mmap(fh.fileno(), 0, access=mmap.ACCESS_READ)
+        u32 = lambda off: struct.unpack_from('>I', self.mm, off)[0]  # noqa: E731
+        base = u32(12) if self.mm[:4] == b'ttcf' else 0  # TTC: la primera fuente
+        num_tables = struct.unpack_from('>H', self.mm, base + 4)[0]
+        tables = {}
+        for i in range(num_tables):
+            rec = base + 12 + 16 * i
+            tables[self.mm[rec:rec + 4]] = u32(rec + 8)
+        if b'sbix' not in tables or b'maxp' not in tables:
+            raise ValueError('sin sbix')
+        self.num_glyphs = struct.unpack_from('>H', self.mm, tables[b'maxp'] + 4)[0]
+        sbix = tables[b'sbix']
+        num_strikes = u32(sbix + 4)
+        strikes = [sbix + u32(sbix + 8 + 4 * i) for i in range(num_strikes)]
+        self.strike = max(strikes, key=lambda off: struct.unpack_from('>H', self.mm, off)[0])  # el de más px por em
+
+    def png(self, gid):
+        if not 0 <= gid < self.num_glyphs:
+            return None
+        start, end = self.struct.unpack_from('>II', self.mm, self.strike + 4 + 4 * gid)
+        if end - start <= 8:
+            return None
+        data = self.strike + start
+        if self.mm[data + 4:data + 8] != b'png ':
+            return None
+        return bytes(self.mm[data + 8:self.strike + end])
 
 
 def fit_size(font, lines):

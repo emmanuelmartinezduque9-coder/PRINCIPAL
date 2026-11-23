@@ -150,6 +150,50 @@ def ffmpeg(*args):
     subprocess.run(['ffmpeg', '-v', 'error', '-y', *args], check=True)
 
 
+EDICION = dict(duracion_s=8.0, cortes_s=[0.5, 4.0],
+               rotulos=[dict(desde_s=0.0, texto='Setz das auf meine|Wunschliste 🍦🎄', cta=False),
+                        dict(desde_s=6.0, texto='Kommentiere „EisWerk“, wenn du|auch eins willst! 💕', cta=True)])
+
+
+class EdicionDeLaReferencia(unittest.TestCase):
+    """Sin referencia de edición, la réplica se edita como su referencia (Codex, `render-local.py`)."""
+
+    def setUp(self):
+        self._frames = ma.m.video_frames
+        ma.m.video_frames = lambda path: 240  # el clip dura 10 s a 24 fps
+
+    def tearDown(self):
+        ma.m.video_frames = self._frames
+
+    def test_rotulos_en_el_punto_proporcional_del_clip(self):
+        rot = ma.rotulos_replica(EDICION, 240)
+        # 6 s de 8 en la referencia → 180 de 240 fotogramas = 7,5 s en el clip.
+        self.assertEqual([(r['role'], r['start'], r['end']) for r in rot], [('main', 0.0, 7.5), ('cta', 7.5, 10.0)])
+        self.assertEqual(rot[0]['lines'], ['Setz das auf meine', 'Wunschliste 🍦🎄'])
+        self.assertEqual(rot[1]['text'], 'Kommentiere „EisWerk“, wenn du auch eins willst! 💕')
+        self.assertEqual(ma.rotulos_replica(dict(EDICION, rotulos=[]), 240), [])
+
+    def test_replica_clip_entero_con_los_rotulos_y_el_drop_de_la_referencia(self):
+        spec = dict(SPEC, kind='replicar', hookMs=None, edicionReferencia=EDICION)
+        plan, _ = ma.construir_plan(spec, [('clip', '/w/0.mp4')], '/w', '/f.ttf')
+        self.assertEqual(plan['clips'], [dict(role='replica', path='/w/0.mp4')])  # sin `auto`: no se recorta
+        self.assertEqual([t['start'] for t in plan['texts']], [0.0, 7.5])
+        # El drop en el primer cambio de plano de la referencia (0,5 de 8 s → 15 de 240 fotogramas).
+        self.assertEqual(plan['audio']['product_shown'], {'t': 0.625})
+
+    def test_sin_rotulos_en_la_referencia_el_patron_de_siempre(self):
+        plan, _ = ma.construir_plan(dict(SPEC, kind='replicar', hookMs=None, edicionReferencia=dict(EDICION, rotulos=[])),
+                                    [('clip', '/w/0.mp4')], '/w', '/f.ttf')
+        self.assertTrue(plan['clips'][0]['auto'])
+        self.assertEqual(plan['texts'][0]['text'], 'EISWERK 😍')
+
+    def test_gancho_y_cuerpos_con_los_textos_de_la_referencia_y_el_cta_al_final(self):
+        plan, _ = ma.construir_plan(dict(SPEC, edicionReferencia=EDICION), [('hook', '/0'), ('body', '/1')], '/w', '/f.ttf', gancho=(0, 96))
+        self.assertTrue(all(c.get('auto') for c in plan['clips'][1:]))
+        self.assertEqual([(t['role'], t['text']) for t in plan['texts']],
+                         [('main', 'Setz das auf meine Wunschliste 🍦🎄'), ('cta', 'Kommentiere „EisWerk“, wenn du auch eins willst! 💕')])
+
+
 @unittest.skipUnless(FFMPEG and HAS_NUMPY and HAS_PIL and FONTS, 'faltan ffmpeg, numpy, Pillow o una fuente TTF')
 class MontajeDeVerdad(unittest.TestCase):
     """Clips y canción diminutos: el montador entero (análisis, plan, render, autocomprobación) y su resultado."""
@@ -246,6 +290,16 @@ class MontajeDeVerdad(unittest.TestCase):
         if len(applied['planos']) > 1:
             self.assertAlmostEqual(applied['audio']['product_shown_s'], applied['planos'][1]['start_s'], delta=0.001)
             self.assertAlmostEqual(applied['comprobaciones']['drop_time_in_output_s'], applied['planos'][1]['start_s'], delta=0.02)
+
+    def test_replica_editada_como_su_referencia_va_entera(self):
+        spec = dict(SPEC, kind='replicar', hookMs=None, song=None, clips=[dict(role='clip', path=str(self.body))],
+                    edicionReferencia=EDICION)
+        code, result, work = self.montar('replica-copia', spec)
+        self.assertEqual(code, 0, result)
+        self.assertAlmostEqual(result['duracion_s'], 4.0, delta=0.05)  # el clip entero (4 s)
+        self.assertTrue(result['autocomprobacion']['ok'])
+        applied = json.loads((work / 'revision' / 'salida - plan-aplicado.json').read_text())
+        self.assertEqual([round(c['start'], 2) for c in applied['textos']['cues']], [0.0, 3.0])
 
     def test_un_fallo_deja_el_motivo(self):
         spec = dict(SPEC, clips=[dict(role='hook', path=str(self.tmp / 'no-existe.mp4'))])

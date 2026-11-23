@@ -79,5 +79,25 @@ class Texto06B(unittest.TestCase):
             self.t.fit_size(self.font, ['W' * 400])
 
 
+APPLE = os.environ.get('EMOJI_FONT_APPLE') or '/System/Library/Fonts/Apple Color Emoji.ttc'
+
+
+@unittest.skipUnless(DEPS and Path(APPLE).is_file(), 'sin la fuente de emojis del iPhone (Apple Color Emoji)')
+class EmojisDelIphone(unittest.TestCase):
+    """Los emojis como en el iPhone: el PNG de Apple Color Emoji, con las secuencias unidas y las banderas enteras."""
+
+    def test_secuencias_unidas_banderas_y_tonos_en_un_solo_dibujo(self):
+        import texto06b
+        sbix = texto06b.Sbix(APPLE)
+        self.assertIsNotNone(sbix.png(10) or sbix.png(743))
+        f = texto06b.Fuente.__new__(texto06b.Fuente)
+        f.emoji_path = APPLE
+        for emoji in ('🍦', '👩\u200d🍳', '🇩🇪', '👍🏽'):
+            img = f.emoji_shaped(emoji)
+            self.assertIsNotNone(img, emoji)
+            w, h = img.size
+            self.assertLess(w / max(1, h), 1.6, emoji)  # un solo dibujo, no dos pegados uno al lado del otro
+
+
 if __name__ == '__main__':
     unittest.main()

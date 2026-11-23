@@ -225,6 +225,44 @@ def cta_standard(spec):
     return f'Kommentiere „{name}“, wenn du auch eine willst! 🤩'
 
 
+def lineas(texto):
+    """`|` marca el salto de línea (como `editorial.py` de Codex); sin `|`, el montador parte las líneas."""
+    partes = [x.strip() for x in str(texto).split('|') if x.strip()]
+    return partes if len(partes) > 1 else None
+
+
+def rotulos_replica(edicion, frames):
+    """Rótulos de una réplica copiados de la referencia (Codex, `render-local.py` con réplica completa): cada cambio
+    en el mismo punto proporcional del clip, `round(t × fotogramas / duración de la referencia)`, en la caja 06B."""
+    ref = float(edicion.get('duracion_s') or 0)
+    filas = [r for r in edicion.get('rotulos') or [] if str(r.get('texto') or '').strip()]
+    if ref <= 0 or not filas:
+        return []
+    inicios = []
+    for i, r in enumerate(filas):
+        f = 0 if i == 0 else min(frames - 1, max(1, round(float(r['desde_s']) * frames / ref)))
+        if inicios and f <= inicios[-1]:
+            continue
+        inicios.append(f)
+    out = []
+    for i, f in enumerate(inicios):
+        fin = inicios[i + 1] if i + 1 < len(inicios) else frames
+        r = filas[i]
+        texto = ' '.join(x.strip() for x in str(r['texto']).split('|') if x.strip())
+        out.append(dict(role='cta' if r.get('cta') else ('main' if i == 0 else 'extra'), text=texto, lines=lineas(r['texto']),
+                        start=round(f / FPS, 4), end=round(fin / FPS, 4)))
+    return out
+
+
+def textos_gancho(edicion, spec):
+    """Con gancho nuevo + cuerpos (Codex: el CTA no se hereda a ciegas de la referencia, se pone al final): el rótulo
+    principal es el primero de la referencia adaptado y el CTA, el de la referencia adaptado (o el de siempre)."""
+    filas = [r for r in (edicion or {}).get('rotulos') or [] if str(r.get('texto') or '').strip()]
+    main = next((r for r in filas if not r.get('cta')), None)
+    cta = next((r for r in filas if r.get('cta')), None)
+    return main, cta
+
+
 def construir_plan(spec, clips, work, font, gancho=None, pistas=None, con_audio=False):
     """El plan del montador v1 para la ficha. `clips`: [(papel, ruta normalizada)]; `gancho`: (in, out) del
     gancho; `con_audio`: si el único clip trae audio (réplica sin canción)."""
@@ -241,6 +279,16 @@ def construir_plan(spec, clips, work, font, gancho=None, pistas=None, con_audio=
         plan_clips = [dict(role='replica', auto=True, path=p) for _, p in clips[:1]]
         if len(clips) > 1:
             plan_clips += [dict(role='body', auto=True, path=p) for _, p in clips[1:]]
+    edicion = spec.get('edicionReferencia') or None
+    copia = None  # réplica editada como su referencia (Codex): clip entero, rótulos y drop de la referencia
+    if tipo == 'replica' and len(clips) == 1 and edicion and (edicion.get('rotulos') or []):
+        frames = m.video_frames(clips[0][1])
+        rot = rotulos_replica(edicion, frames)
+        if rot:
+            plan_clips = [dict(role='replica', path=clips[0][1])]  # sin `auto`: el clip entero, sin recortar
+            ref = float(edicion['duracion_s'])
+            corte = next((c for c in edicion.get('cortes_s') or [] if 0 < float(c) < ref), None)
+            copia = dict(rotulos=rot, drop_t=round(round(float(corte) * frames / ref) / FPS, 4) if corte else 0.0)
     song = spec.get('song')
     if song:
         drop_ms = song.get('dropMs')
@@ -251,6 +299,9 @@ def construir_plan(spec, clips, work, font, gancho=None, pistas=None, con_audio=
         else:
             # Gancho: el drop al empezar el cuerpo (product_shown vacío). Réplica: al empezar el 2º plano.
             shown = {} if tipo == 'gancho+cuerpo' else {'plano': 1}
+            if copia:
+                # Como la referencia: el drop en su primer cambio de plano (punto proporcional del clip).
+                shown = {'t': copia['drop_t']}
             audio = dict(mode='cancion', song=song['path'], drop=float(drop_ms) / 1000, product_shown=shown)
         audio.update(music_gain_db=0, peak_limit=0.94)
     elif (spec.get('referenceAudio') or {}).get('path'):
@@ -262,18 +313,27 @@ def construir_plan(spec, clips, work, font, gancho=None, pistas=None, con_audio=
         audio = dict(mode='silencio')
         avisos.append(SIN_AUDIO)
     texts = spec.get('texts') or {}
+    main_ref, cta_ref = textos_gancho(edicion, spec) if not copia else (None, None)
     ritmo = dict((pistas or {}).get('ritmo') or {})
     if (pistas or {}).get('cta') == 'penultimo':
         # El CTA entra un corte antes: el último plano «no cabe» si dura menos que esto.
         ritmo['cta_min_s'] = round(float((ritmo.get('final') or m.PATRON['final'])[2]) + 0.1, 3)
     notas = [f"Montaje automático del vídeo {spec.get('videoId')} ({spec.get('kind')})."]
+    if copia:
+        notas.append(f"Edición copiada de la referencia (Codex): clip entero, {len(copia['rotulos'])} rótulo(s) en sus tiempos "
+                     f"proporcionales, drop en {copia['drop_t']} s.")
+    elif edicion and (main_ref or cta_ref):
+        notas.append('Rótulos de la referencia adaptados; el CTA en el corte del último plano (gancho nuevo + cuerpos).')
     if pistas:
         notas.append(f"Referencia de edición: {pistas['planos']} planos, cuerpo {ritmo.get('body')}, final {ritmo.get('final')}, "
                      f"CTA en el {pistas.get('cta') or 'último'} corte, BPM {pistas.get('bpm')}.")
     plan = dict(
         id=f"auto-{spec.get('videoId')}", version=1, tipo=tipo, clips=plan_clips, audio=audio,
-        texts=[dict(role='main', text=texts.get('main') or (spec.get('product') or {}).get('name') or ' '),
-               dict(role='cta', text=texts.get('cta') or cta_standard(spec))],
+        texts=copia['rotulos'] if copia else [
+            dict(role='main', text=' '.join(str(main_ref['texto']).split('|')) if main_ref else (texts.get('main') or (spec.get('product') or {}).get('name') or ' '),
+                 lines=lineas(main_ref['texto']) if main_ref else None),
+            dict(role='cta', text=' '.join(str(cta_ref['texto']).split('|')) if cta_ref else (texts.get('cta') or cta_standard(spec)),
+                 lines=lineas(cta_ref['texto']) if cta_ref else None)],
         zoom=dict(enabled=False), ritmo=ritmo, font=font, notas=notas,
         work_dir=str(Path(work) / 'montador'), revision_dir=str(Path(work) / 'revision'),
         output=str(Path(work) / SALIDA))
@@ -281,8 +341,11 @@ def construir_plan(spec, clips, work, font, gancho=None, pistas=None, con_audio=
 
 
 # ---------------------------------------------------------------- resumen
-def resumen(work):
+def resumen(work, copia=None):
     chk_file = Path(work) / 'revision' / f'{Path(SALIDA).stem} - autocomprobacion.json'
+    if copia and not chk_file.exists():
+        # Réplica editada como su referencia: no hay patrón que comprobar (el clip va entero, como en Codex).
+        return dict(ok=True, avisos=[], planos=1, cortesEnBeat=None, intentos=1)
     if not chk_file.exists():
         return dict(ok=False, avisos=['El montador no hizo la autocomprobación'], planos=None, cortesEnBeat=None, intentos=None)
     chk = json.loads(chk_file.read_text())
@@ -357,7 +420,8 @@ def montar(spec, work, fuente=None):
     if not salida.is_file():
         raise Fallo('El montador no dejó el vídeo')
     dur = float(json.loads(run([m.FFPROBE, '-v', 'error', '-show_entries', 'format=duration', '-of', 'json', salida]))['format']['duration'])
-    return dict(ok=True, salida=SALIDA, duracion_s=round(dur, 3), autocomprobacion=resumen(work), avisos=avisos,
+    copia = plan.get('tipo') == 'replica' and not any(c.get('auto') for c in plan['clips'])
+    return dict(ok=True, salida=SALIDA, duracion_s=round(dur, 3), autocomprobacion=resumen(work, copia), avisos=avisos,
                 pistas_referencia=pistas)
 
 
