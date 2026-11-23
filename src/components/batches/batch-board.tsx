@@ -53,6 +53,7 @@ import {
   type StepState,
   type Tone,
 } from "./labels";
+import { batchZipUrl, downloadInBackground, FinishedDownloads } from "./finished-downloads";
 import { RowThumb } from "./row-thumb";
 import { runPool } from "./run-pool";
 
@@ -355,39 +356,23 @@ function EditReferenceCell({ row, onDone }: { row: BatchRowJson & { editReferenc
   );
 }
 
-/** Nombre del archivo que manda el servidor (`<producto>-video-<id>.mp4`). */
-function filenameOf(response: Response, fallback: string): string {
-  const header = response.headers.get("Content-Disposition") ?? "";
-  const star = /filename\*=UTF-8''([^;]+)/i.exec(header);
-  if (star) return decodeURIComponent(star[1]);
-  return /filename="([^"]+)"/i.exec(header)?.[1] ?? fallback;
-}
 
+/**
+ * Descargas sueltas: se abren en segundo plano (el servidor responde con el archivo adjunto o
+ * redirige al almacén con el nombre puesto). Un respiro entre una y otra para que el navegador no
+ * las bloquee.
+ */
 async function downloadClip(videoId: number): Promise<void> {
-  return downloadFrom(`/api/videos/${videoId}/clip/descargar`, `video-${videoId}.mp4`, "No se pudo descargar el clip.");
+  downloadInBackground(`/api/videos/${videoId}/clip/descargar`);
+  await new Promise((resolve) => setTimeout(resolve, 1200));
 }
 
-/** Descarga la última versión montada de un vídeo (`<producto>-video-<id>-editado.mp4`). */
+/** Descarga la última versión montada de un vídeo («EisWerk - 03 - 2026-11-23.mp4»). */
 async function downloadEdit(row: BatchRowJson): Promise<void> {
   const version = row.edit.latest?.version;
   if (version === undefined) return;
-  return downloadFrom(editDownloadUrl(row.id, version), `video-${row.id}-editado.mp4`, "No se pudo descargar el vídeo editado.");
-}
-
-async function downloadFrom(source: string, fallbackName: string, failure: string): Promise<void> {
-  const response = await fetch(source);
-  if (!response.ok) {
-    const body = await response.json().catch(() => null);
-    throw new ApiError(body?.error ?? failure, response.status);
-  }
-  const url = URL.createObjectURL(await response.blob());
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = filenameOf(response, fallbackName);
-  document.body.append(link);
-  link.click();
-  link.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 60_000);
+  downloadInBackground(editDownloadUrl(row.id, version));
+  await new Promise((resolve) => setTimeout(resolve, 1200));
 }
 
 const message = (error: unknown, fallback: string) => (error instanceof Error ? error.message : fallback);
@@ -545,6 +530,8 @@ export function BatchBoard({ batchId }: { batchId: number }) {
   const forClip = rows.filter(ready.clip);
   const forDownload = rows.filter(ready.download);
   const forEdited = rows.filter(ready.edited);
+  // Todos los vídeos con un montaje terminado (también los de otras personas que quien mira ve).
+  const editedTotal = rows.filter((row) => row.edit.latest !== null).length;
   const credits = rows.reduce((sum, row) => sum + row.costs.higgsfieldCredits, 0);
   const note = (results: Record<number, string | null>) =>
     setNotices((all) => {
@@ -718,6 +705,8 @@ export function BatchBoard({ batchId }: { batchId: number }) {
 
       {rows.length > 0 ? <AutoStepper auto={auto} /> : null}
       {data.batch.mine ? <PauseBanner batchId={batchId} auto={auto} rows={rows} /> : null}
+      {/* Dónde están los vídeos terminados y cómo bajarlos al iPhone: arriba, destacado al terminar. */}
+      <FinishedDownloads batchId={batchId} editedCount={editedTotal} total={rows.length} finished={auto.status === "montado"} />
 
       {/* Siempre montadas: un envío en bloque sigue enseñando sus resultados aunque ya no quede ninguna fila lista. */}
       <BulkGenerate kind="frame" rows={forFrame} disabled={running !== null} onRunning={generating} onResults={note} open={bulk === "frame"} onOpenChange={(o) => setBulk(o ? "frame" : null)} />
@@ -909,10 +898,10 @@ export function BatchBoard({ batchId }: { batchId: number }) {
             </Button>
           ) : null}
           {canDownloadEdited ? (
-            <Button className="h-10 gap-2 px-5" disabled={running !== null} onClick={() => void downloadAll(true)}>
-              {running === "edited" ? <Loader2 className="animate-spin" data-icon="inline-start" /> : <Scissors data-icon="inline-start" />}
-              {running === "edited" ? `Descargando ${Math.min(downloaded + 1, forEdited.length)}/${forEdited.length}` : `Descargar editados (${forEdited.length})`}
-            </Button>
+            <a href={batchZipUrl(batchId)} download className={cn(buttonVariants(), "h-10 gap-2 px-5")}>
+              <Scissors data-icon="inline-start" />
+              Descargar terminados ({forEdited.length})
+            </a>
           ) : null}
         </ActionBar>
       ) : null}

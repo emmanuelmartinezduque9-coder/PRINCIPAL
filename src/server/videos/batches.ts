@@ -6,7 +6,7 @@ import type { AuthUser } from "@/server/auth";
 import { HttpError } from "@/server/http";
 import { coverPhotoIds, listProductPhotos } from "@/server/photos";
 import { listProductsFor, productDisplayName } from "@/server/products";
-import { editViews, type EditView } from "@/server/videos/edits";
+import { accountFileName, editFileName, editViews, openEditStream, type EditView } from "@/server/videos/edits";
 import { downloadableClipUrl, servableClipUrl } from "@/server/videos/clip";
 import { bodiesOfVideos, checkVideoBodies } from "@/server/videos/bodies";
 import { costsOfVideo, type VideoCosts } from "@/server/videos/costs";
@@ -173,6 +173,8 @@ export interface BatchSummary {
   videos: number;
   /** De esos, cuántos tienen ya un clip terminado. */
   done: number;
+  /** De esos, cuántos están montados (vídeos terminados, listos para descargar). */
+  edited: number;
   /** Portadas de sus productos (como mucho 4, en el orden de su primer vídeo): para la lista. */
   covers: number[];
 }
@@ -219,6 +221,17 @@ export async function listBatchesFor(user: AuthUser): Promise<BatchSummary[]> {
     doneVideos.set(clip.batchId, set);
   }
   const byBatch = new Map(counts.map((row) => [row.batchId, { total: row.total, done: doneVideos.get(row.batchId ?? 0)?.size ?? 0 }]));
+  // Vídeos montados (al menos una versión en `edits`).
+  const editedRows =
+    products.length === 0
+      ? []
+      : await db
+          .select({ batchId: videos.batchId, n: sql<number>`count(distinct ${videos.id})::int` })
+          .from(videos)
+          .innerJoin(schema.edits, eq(schema.edits.videoId, videos.id))
+          .where(inScope)
+          .groupBy(videos.batchId);
+  const editedOf = new Map(editedRows.map((row) => [row.batchId, row.n]));
   // Los productos de cada lote, en el orden de su primer vídeo, y sus portadas.
   const pairs =
     products.length === 0
@@ -243,6 +256,7 @@ export async function listBatchesFor(user: AuthUser): Promise<BatchSummary[]> {
     mine: row.createdBy === user.id,
     videos: byBatch.get(row.id)?.total ?? 0,
     done: byBatch.get(row.id)?.done ?? 0,
+    edited: editedOf.get(row.id) ?? 0,
     covers: coversOf.get(row.id) ?? [],
   }));
 }
@@ -685,4 +699,87 @@ export async function pollBatchGenerations(user: AuthUser, batchId: number): Pro
       if (!(error instanceof HttpError)) console.error(`[lotes] No se pudo consultar el vídeo ${videoId}:`, error);
     }
   }
+}
+
+// ───────────────────────── Descargar los vídeos terminados ─────────────────────────
+
+/** Un vídeo montado de un lote, listo para descargar o meter en un ZIP. */
+export interface BatchEditFile {
+  videoId: number;
+  /** Número del vídeo en el lote (orden de creación, como el tablero). */
+  number: number;
+  productId: number;
+  /** La cuenta o tienda (el nombre del producto). */
+  account: string;
+  /** «EisWerk - 03 - 2026-11-23.mp4». */
+  fileName: string;
+  version: number;
+  size: number;
+  /** Para leerlo (no sale de la web). */
+  edit: { id: number; size: number; storageKey: string | null; createdAt: Date };
+}
+
+/**
+ * Los vídeos montados (la última versión de cada uno) de un lote que `user` ve, en el orden del
+ * tablero; con `productId`, solo los de esa cuenta. Solo los productos que ve quien pregunta.
+ */
+export async function batchEditFiles(user: AuthUser, batchId: number, productId: number | null = null): Promise<BatchEditFile[]> {
+  const batch = await getBatchFor(user, batchId);
+  const products = new Map((await listProductsFor(user, "todos")).map((product) => [product.id, product.name]));
+  const db = getDb();
+  const all = await db.select({ id: videos.id, productId: videos.productId }).from(videos).where(eq(videos.batchId, batch.id)).orderBy(asc(videos.id));
+  const numbered = all.map((video, i) => ({ ...video, number: i + 1 })).filter((video) => products.has(video.productId) && (productId === null || video.productId === productId));
+  if (numbered.length === 0) return [];
+  const latest = await db
+    .selectDistinctOn([schema.edits.videoId], {
+      videoId: schema.edits.videoId,
+      id: schema.edits.id,
+      version: schema.edits.version,
+      size: schema.edits.size,
+      storageKey: schema.edits.storageKey,
+      createdAt: schema.edits.createdAt,
+    })
+    .from(schema.edits)
+    .where(inArray(schema.edits.videoId, numbered.map((video) => video.id)))
+    .orderBy(schema.edits.videoId, desc(schema.edits.version));
+  const editOf = new Map(latest.map((edit) => [edit.videoId, edit]));
+  return numbered.flatMap((video) => {
+    const edit = editOf.get(video.id);
+    if (!edit) return [];
+    const account = products.get(video.productId)!;
+    return [
+      {
+        videoId: video.id,
+        number: video.number,
+        productId: video.productId,
+        account,
+        fileName: editFileName(account, video.number, edit.createdAt),
+        version: edit.version,
+        size: edit.size,
+        edit: { id: edit.id, size: edit.size, storageKey: edit.storageKey, createdAt: edit.createdAt },
+      },
+    ];
+  });
+}
+
+/**
+ * El ZIP de los vídeos montados de un lote (o de una cuenta): sin comprimir, en flujo. Con todas
+ * las cuentas, una carpeta por cuenta; con una, los vídeos sueltos. 404 si no hay ninguno.
+ */
+export async function batchEditsZip(user: AuthUser, batchId: number, productId: number | null): Promise<{ stream: ReadableStream<Uint8Array>; fileName: string; count: number }> {
+  const files = await batchEditFiles(user, batchId, productId);
+  if (files.length === 0) throw new HttpError(404, "Este lote aún no tiene vídeos montados.");
+  const [batch] = await getDb().select({ name: schema.batches.name }).from(schema.batches).where(eq(schema.batches.id, batchId));
+  const accounts = new Set(files.map((file) => file.productId));
+  const folders = accounts.size > 1;
+  const { zipStream } = await import("@/server/media/zip");
+  const stream = zipStream(
+    files.map((file) => ({
+      name: folders ? `${accountFileName(file.account)}/${file.fileName}` : file.fileName,
+      date: file.edit.createdAt,
+      open: async () => openEditStream(file.edit) as unknown as AsyncIterable<Uint8Array>,
+    })),
+  );
+  const base = accountFileName(productId !== null ? `${files[0].account} - ${batch?.name ?? "lote"}` : (batch?.name ?? "lote")).replace(/[·]/g, "-");
+  return { stream, fileName: `${base}.zip`, count: files.length };
 }

@@ -311,7 +311,7 @@ describe("la nube monta", () => {
     expect(played.status).toBe(302);
     expect(played.headers.get("location")).toMatch(/^\/api\/objetos\/montajes\//);
     const download = await editVideoRoute(new Request("http://localhost/x?descargar=1"), params(video.id));
-    expect(download.headers.get("location")).toContain("n=eiswerk-video-");
+    expect(download.headers.get("location")).toContain("n=EisWerk");
     // «Volver a montar»: versión 2, ahora con el clip de Higgsfield (sin copia propia).
     await getDb().delete(schema.storedMedia);
     await startEdit(dueno, video.id);

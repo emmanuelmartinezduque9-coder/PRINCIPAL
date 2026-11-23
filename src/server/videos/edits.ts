@@ -9,7 +9,6 @@ import type { Analysis } from "@/server/videos/analysis";
 import { bodiesOfVideo } from "@/server/videos/bodies";
 import { getObjectStore } from "@/lib/object-store";
 import { downloadableClip, servableClipUrl } from "@/server/videos/clip";
-import { fileSlug } from "@/server/videos/filename";
 import { canChooseSong, effectiveEditReferenceUrl, getVideoFor, hookTiming, type Video } from "@/server/videos/videos";
 
 /**
@@ -368,6 +367,48 @@ export async function batchOfVideo(videoId: number): Promise<number | null> {
   return row?.batchId ?? null;
 }
 
+// ───────────────────────── Nombres y descargas ─────────────────────────
+
+/** Fecha `AAAA-MM-DD` en la hora de Alemania (la del negocio). */
+function berlinDate(date: Date): string {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Berlin", year: "numeric", month: "2-digit", day: "2-digit" }).format(date);
+}
+
+/** Un nombre de cuenta apto para un archivo (sin barras ni caracteres que el iPhone o el Finder no admiten). */
+export function accountFileName(name: string): string {
+  return name.replace(/[\\/]/g, "-").replace(/[:*?"<>|\u0000-\u001f]/g, "").replace(/\s+/g, " ").trim().slice(0, 60) || "Producto";
+}
+
+/**
+ * Nombre del vídeo montado para guardarlo y pasarlo al iPhone: «EisWerk - 03 - 2026-11-23.mp4»
+ * (cuenta, número del vídeo en su lote y fecha del montaje). Fuera de un lote, el número es el del vídeo.
+ */
+export function editFileName(account: string, number: number, date: Date): string {
+  return `${accountFileName(account)} - ${String(number).padStart(2, "0")} - ${berlinDate(date)}.mp4`;
+}
+
+/** El número de un vídeo dentro de su lote (por orden de creación, como el tablero), o su id si no es de un lote. */
+export async function videoNumber(video: Pick<Video, "id" | "batchId">): Promise<number> {
+  if (video.batchId === null) return video.id;
+  const [row] = await getDb()
+    .select({ n: sql<number>`count(*)::int` })
+    .from(videos)
+    .where(and(eq(videos.batchId, video.batchId), sql`${videos.id} <= ${video.id}`));
+  return row?.n ?? video.id;
+}
+
+/** Los bytes de un montaje guardado (del almacén o de la base de datos), en flujo. */
+export async function openEditStream(edit: { id: number; size: number; storageKey: string | null }): Promise<ReadableStream<Uint8Array>> {
+  if (edit.storageKey) {
+    const store = getObjectStore();
+    if (!store) throw new HttpError(503, "El almacén de archivos no está disponible ahora mismo.");
+    const response = await fetch(await store.signedUrl(edit.storageKey, { expiresIn: 3600 }));
+    if (!response.ok || !response.body) throw new HttpError(502, "No se pudo leer un vídeo montado del almacén.");
+    return response.body;
+  }
+  return streamEdit(edit.id, 0, edit.size);
+}
+
 // ───────────────────────── Lo que ven las pantallas ─────────────────────────
 
 export type EditStatus = "none" | "en_cola" | "montando" | "hecho" | "fallido";
@@ -476,7 +517,7 @@ export async function editVideoResponse(
       : eq(edits.videoId, video.id);
   const db = getDb();
   const [edit] = await db
-    .select({ id: edits.id, version: edits.version, size: edits.size, storageKey: edits.storageKey })
+    .select({ id: edits.id, version: edits.version, size: edits.size, storageKey: edits.storageKey, createdAt: edits.createdAt })
     .from(edits)
     .where(where)
     .orderBy(desc(edits.version))
@@ -492,7 +533,7 @@ export async function editVideoResponse(
   let filename: string | null = null;
   if (options.download) {
     const product = await getProductFor(user, video.productId);
-    filename = `${fileSlug(product.name, "producto")}-video-${video.id}-editado.mp4`;
+    filename = editFileName(product.name, await videoNumber(video), edit.createdAt);
     common["Content-Disposition"] = `attachment; filename="${filename}"; filename*=UTF-8''${encodeURIComponent(filename)}`;
   }
   // En el almacén: el navegador lo lee directamente de ahí con un enlace firmado (rápido, sin pasar por aquí).

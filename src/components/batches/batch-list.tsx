@@ -3,7 +3,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { format } from "date-fns";
 import { es } from "date-fns/locale";
-import { ArrowRight, CircleAlert, Layers, Package, PencilLine, Plus } from "lucide-react";
+import { ArrowRight, CircleAlert, CircleCheck, Layers, Package, PencilLine, Plus } from "lucide-react";
 import Link from "next/link";
 import type { ProductView } from "@/components/products/labels";
 import { EmptyState } from "@/components/shell/empty-state";
@@ -100,6 +100,12 @@ function BatchCard({ batch, showCreator }: { batch: BatchSummaryJson; showCreato
               {showCreator ? ` · ${batch.mine ? "Tú" : (batch.creatorName ?? "Otra persona")}` : null}
             </p>
           </div>
+          {batch.edited > 0 ? (
+            <p className="inline-flex w-fit items-center gap-1.5 rounded-full bg-success/15 px-2.5 py-1 text-xs font-medium text-success-ink ring-1 ring-success/25">
+              <CircleCheck className="size-3.5" aria-hidden />
+              {batch.edited === 1 ? "1 vídeo terminado" : `${batch.edited} vídeos terminados`} · Descargar
+            </p>
+          ) : null}
           <div className="mt-auto flex items-center gap-3">
             <div
               role="progressbar"

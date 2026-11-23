@@ -152,3 +152,30 @@ dibujo simple con Pillow y lo avisa.
   El resultado quedó en el almacén (`pruebas/pedido54-gancho-cuerpo-*.mp4`).
 - Para lanzarla se añadió una llave SSH temporal a la cuenta de Railway (con el OK del dueño) y se
   borró después (de Railway y del disco).
+
+## Descargar los vídeos terminados de un lote (23/11/2026)
+
+Pedido por Emmanuel: no sabía dónde ver los resultados de un lote, y al terminar pasa todos los
+vídeos al iPhone por AirDrop.
+
+- **Dónde**: en el lote, arriba del todo, el bloque **«Vídeos terminados · N de M»** (verde cuando
+  el lote ha terminado). En la lista de lotes, cada tarjeta dice «N vídeos terminados · Descargar».
+  La barra de abajo del lote lleva «Descargar terminados (N)» (el ZIP).
+- **Opciones**: «Descargar todos (ZIP)» con una carpeta por cuenta; por cuenta, «ZIP de <cuenta>» y
+  «Sueltos»; «N archivos sueltos» para todos; y cada vídeo por separado (sus nombres, debajo de su
+  cuenta). AirDrop desde el Mac va mejor con MP4 sueltos: el ZIP se abre con doble clic y deja una
+  carpeta con los vídeos; «sueltos» los deja directamente en Descargas (el navegador puede pedir
+  permiso una vez para varias descargas).
+- **Nombres**: «EisWerk - 03 - 2026-11-23.mp4» = cuenta (nombre del producto), número del vídeo en
+  el lote (orden de creación, el del tablero) y fecha del montaje en hora de Alemania. Igual en el ZIP
+  y en la descarga suelta.
+- **ZIP en el servidor** (`src/server/media/zip.ts`, `/api/lotes/[id]/editados?formato=zip`): sin
+  comprimir (los MP4 ya lo están), en flujo desde el almacén (no se carga ningún vídeo en memoria),
+  ZIP64 si pasa de 4 GB, nombres UTF-8. Comprobado con `zipfile` de Python y con la utilidad de
+  archivos de macOS (`ditto`).
+- **Arreglo**: las descargas sueltas del tablero se hacían con `fetch` + archivo en memoria; con el
+  almacén, el servidor redirige al enlace firmado de otro dominio y eso chocaba con CORS. Ahora se
+  abren en segundo plano (un `iframe` oculto), que sigue la redirección sin problema.
+- Probado en local con un lote de dos cuentas y tres vídeos reales del pedido 54 montados
+  (`scripts/seed-demo-terminados.ts`). En la nube aún no hay lotes con vídeos montados: el primer
+  lote real que termine es la prueba de verdad.
