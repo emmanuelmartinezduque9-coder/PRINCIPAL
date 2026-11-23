@@ -32,6 +32,10 @@ startWorker().then(
   () => {
     console.log("[worker] en marcha");
     startEditLoop();
+    // TEMPORAL: volcado para comparar la imagen del vídeo 2 con el método anterior (se quita después).
+    void import("@/server/videos/volcado-temporal")
+      .then(({ dumpVideoForDebug }) => dumpVideoForDebug(2))
+      .catch((error) => console.error("[depuracion] No se pudo volcar el vídeo 2:", error));
   },
   (error) => {
     // Sin cola no hay nada que hacer: se sale con error para que el servicio se reinicie.
