@@ -444,6 +444,7 @@ async function fetchVideo(url: string, store: ObjectStore, deps: IntakeDeps, now
 function profileProblem(error: string | null): string {
   if (error?.includes("[aviso]")) return "Instagram enseña un aviso en tu cuenta: ábrela en Brave en tu Mac y ciérralo. Se reintenta solo.";
   if (error?.includes("[sin_sesion]")) return "Entra en Instagram con Brave en tu Mac (la sesión se cerró). Se reintenta solo.";
+  if (error?.includes("[sin_reels]")) return "Tu Mac no vio ningún reel en la cuenta. Se reintenta solo.";
   if (error?.includes("[sin_brave]")) return "Hace falta Brave en tu Mac para leer Instagram. Se reintenta solo.";
   return "Tu Mac no pudo leer la cuenta esta vez. Se reintenta solo.";
 }

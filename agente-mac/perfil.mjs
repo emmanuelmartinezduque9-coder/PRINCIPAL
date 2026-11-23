@@ -89,7 +89,7 @@ const READ_PAGE = `(() => {
     miniatura: a.querySelector('img')?.src || null,
     texto: a.querySelector('img')?.alt || null,
   }));
-  return JSON.stringify({ login, aviso, titulo: document.title, cabecera: text(header).slice(0, 1500), enlaces, descripcion: meta('og:description') || meta('description'), reels });
+  return JSON.stringify({ login, aviso, texto: body.slice(0, 300), titulo: document.title, cabecera: text(header).slice(0, 1500), enlaces, descripcion: meta('og:description') || meta('description'), reels });
 })()`;
 
 async function cdp(wsUrl) {
@@ -157,6 +157,10 @@ export async function readInstagramProfile(usuario, { cookiesFile, brave = BRAVE
     if (reelsPage.login) return { ok: false, codigo: "sin_sesion", error: "Instagram pide iniciar sesión: la sesión guardada ya no vale." };
     if (reelsPage.aviso && (reelsPage.reels ?? []).length === 0) {
       return { ok: false, codigo: "aviso", error: `Instagram enseña un aviso en la cuenta y no deja ver el perfil: «${reelsPage.aviso.slice(0, 200)}»` };
+    }
+    if ((reelsPage.reels ?? []).length === 0) {
+      // Sin reels no hay nada que mirar: mejor reintentar que seguir a ciegas.
+      return { ok: false, codigo: "sin_reels", error: `Instagram no enseñó ningún reel de la cuenta. Se veía: «${(reelsPage.texto ?? "").replace(/\s+/g, " ").slice(0, 200)}»` };
     }
     const reels = [];
     for (const reel of reelsPage.reels ?? []) {
