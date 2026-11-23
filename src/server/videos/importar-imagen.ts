@@ -73,3 +73,55 @@ export async function rejectFrameOnce(videoId: number, round: number, reason: st
   await rejectFrame(owner, videoId, reason);
   console.log(`[imagen] Vídeo ${videoId}: ronda ${round} rechazada para regenerarla (${reason}).`);
 }
+
+/**
+ * Una vez (23/11/2026): la foto «funcionamiento» de FalterPfote (el perro con el collar
+ * proyectando las alas de mariposa, asset del sistema anterior subido al almacén) entra en el
+ * producto si aún no tiene ninguna con ese papel. Después se rehacen los prompts con sala de sus
+ * vídeos y la última imagen del vídeo `videoId` (si no está aprobada ni rechazada) se rechaza con
+ * `reason` para que el lote la regenere con el efecto correcto. Una sola vez: si ya hay una ronda
+ * rechazada con `reason`, no hace nada más.
+ */
+export async function ensureWorkingPhoto(productName: string, objectKey: string, videoId: number, reason: string): Promise<void> {
+  const { getObjectStore } = await import("@/lib/object-store");
+  const { listProductsFor } = await import("@/server/products");
+  const { addProductPhoto, listProductPhotos } = await import("@/server/photos");
+  const owners = await getDb().select({ id: schema.users.id }).from(schema.users).where(eq(schema.users.role, "dueno"));
+  const owner = owners.length > 0 ? await getActiveUser(owners[0].id) : null;
+  if (!owner) return;
+  const product = (await listProductsFor(owner, "todos")).find((p) => p.name.toLowerCase() === productName.toLowerCase());
+  if (!product) return;
+  const photos = await listProductPhotos(owner, product.id);
+  if (!photos.some((photo) => photo.role === "funcionamiento")) {
+    const store = getObjectStore();
+    if (!store) return;
+    const fs = await import("node:fs/promises");
+    const os = await import("node:os");
+    const path = await import("node:path");
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "activo-"));
+    try {
+      const file = path.join(dir, "funcionamiento.png");
+      await store.download(objectKey, file);
+      await addProductPhoto(owner, product.id, await fs.readFile(file), "funcionamiento");
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+    console.log(`[imagen] ${product.name}: foto «funcionamiento» añadida.`);
+  }
+  const [done] = await getDb()
+    .select({ id: schema.generations.id })
+    .from(schema.generations)
+    .where(and(eq(schema.generations.videoId, videoId), eq(schema.generations.rejectReason, reason)))
+    .limit(1);
+  if (done) return;
+  // Los prompts con sala de sus vídeos se rehacen (ahora ven y citan la foto de funcionamiento).
+  const videos = await getDb().select({ id: schema.videos.id }).from(schema.videos).where(eq(schema.videos.productId, product.id));
+  for (const { id } of videos) await getDb().delete(schema.videoPinterestRefs).where(eq(schema.videoPinterestRefs.videoId, id));
+  const [last] = await getDb()
+    .select({ round: schema.generations.round })
+    .from(schema.generations)
+    .where(and(eq(schema.generations.videoId, videoId), eq(schema.generations.kind, "frame")))
+    .orderBy(desc(schema.generations.round))
+    .limit(1);
+  if (last) await rejectFrameOnce(videoId, last.round, reason);
+}

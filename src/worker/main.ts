@@ -43,13 +43,18 @@ startWorker().then(
         ),
       )
       .catch((error) => console.error("[imagen] No se pudo importar la imagen aprobada del vídeo 2:", error));
-    // Una vez (23/11/2026): la imagen del vídeo 6 (lote FalterPfote) salió con las alas del original;
-    // se rechaza para que el lote la regenere con el producto del encargo y su foto de funcionamiento.
+    // Una vez (23/11/2026): FalterPfote recibe su foto «funcionamiento» (alas de mariposa proyectadas)
+    // y la imagen del vídeo 6 se rechaza para que el lote la regenere con ese efecto.
     void import("@/server/videos/importar-imagen")
-      .then(({ rejectFrameOnce }) =>
-        rejectFrameOnce(6, 1, "Salieron las alas del vídeo original: tienen que ser las alas de mariposa proyectadas de FalterPfote"),
+      .then(({ ensureWorkingPhoto }) =>
+        ensureWorkingPhoto(
+          "FalterPfote",
+          "activos/falterpfote/funcionamiento-c67c4de4926b8503.png",
+          6,
+          "Las alas tienen que ser las alas de mariposa proyectadas de FalterPfote (foto de funcionamiento), no las del vídeo original",
+        ),
       )
-      .catch((error) => console.error("[imagen] No se pudo rechazar la imagen del vídeo 6:", error));
+      .catch((error) => console.error("[imagen] No se pudo preparar la foto de funcionamiento de FalterPfote:", error));
   },
   (error) => {
     // Sin cola no hay nada que hacer: se sale con error para que el servicio se reinicie.
