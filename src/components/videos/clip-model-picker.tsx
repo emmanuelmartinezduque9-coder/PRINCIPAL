@@ -50,7 +50,12 @@ export function ClipModelSelect({
         {compact ? <Film className="size-3.5 text-muted-foreground" aria-hidden /> : null}
         {fromGroup ? <span className="text-muted-foreground">Del grupo · {CLIP_MODEL_LABEL[inherited!].replace("Genjutsu · ", "")}</span> : <SelectValue />}
       </SelectTrigger>
-      <SelectContent>
+      {/*
+        Debajo del botón (`popper`), no alineada con la opción elegida: una tarjeta que hereda del grupo
+        guarda `auto`, que no es una opción, y con la alineación por defecto la lista se abría fuera de
+        la pantalla y la página parecía congelada (24/11/2026).
+      */}
+      <SelectContent position="popper" align="start">
         {allowNone ? <SelectItem value={NO_GROUP_CHOICE}>Modelo: sin elegir</SelectItem> : null}
         {CLIP_MODEL_OPTIONS.map((choice) => (
           <SelectItem key={choice} value={choice}>
