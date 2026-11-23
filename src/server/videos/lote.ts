@@ -979,8 +979,62 @@ export async function advanceBatch(batchId: number, deps: GenDeps = {}): Promise
   }
 }
 
+/** Última línea de diagnóstico de cada lote: solo se vuelve a escribir cuando cambia. */
+const lastDiagnosis = new Map<number, string>();
+
+/**
+ * Diagnóstico para el registro (petición de Emmanuel, 23/11/2026): una línea por lote sin terminar
+ * con su estado, el paso y por qué no envía (pausa, saldo, preguntas, referencias, presupuesto…).
+ * Solo se escribe cuando cambia, para no llenar el registro cada minuto.
+ */
+async function diagnoseBatch(batch: Batch): Promise<string> {
+  const creator = await getActiveUser(batch.createdBy);
+  if (!creator) return `lote ${batch.id} «${batch.name}» ${batch.status}: quien lo creó ya no está activo`;
+  const rows = await rowsOf(creator, batch);
+  const parts = [`lote ${batch.id} «${batch.name}» ${batch.status}`, `autoConfirm=${batch.autoConfirm}`, `${rows.length} vídeos`];
+  if (batch.pause) parts.push(`pausa ${batch.pause.kind}: ${batch.pause.reason}`);
+  if (batch.advancingAt) parts.push(`avanzando desde ${batch.advancingAt.toISOString()}`);
+  if (batch.budgetCredits !== null) parts.push(`presupuesto ${batch.budgetCredits}, comprometido ${await committedCredits(batch)}`);
+  const asks = batch.status === "preguntas" ? await askRows(creator, rows) : new Map<number, RowAsk>();
+  for (const row of rows) {
+    const v = row.video;
+    const ask = asks.get(v.id);
+    const why =
+      ask?.state === "questions"
+        ? `preguntas: ${ask.questions.map((q) => q.text).join(" | ")}`
+        : ask
+          ? ask.state
+          : `imagen ${frameStage(row, batch)}, clip ${clipStage(row, batch)}`;
+    const analysis = row.analyses[0] ? `desglose ${row.analyses[0].status}` : "sin desglose";
+    parts.push(`[vídeo ${v.id}: referencia ${v.referenceStatus}, ${analysis}, ${why}${v.editStatus ? `, montaje ${v.editStatus}` : ""}]`);
+  }
+  return parts.join(" · ");
+}
+
+async function logBatchStates(): Promise<void> {
+  const open = await getDb()
+    .select()
+    .from(schema.batches)
+    .where(inArray(schema.batches.status, [...RUNNING, "pausado", "borrador"]));
+  for (const batch of open) {
+    try {
+      const line = await diagnoseBatch(batch);
+      if (lastDiagnosis.get(batch.id) === line) continue;
+      lastDiagnosis.set(batch.id, line);
+      console.log(`[lotes] ${line}`);
+    } catch (error) {
+      console.error(`[lotes] No se pudo diagnosticar el lote ${batch.id}:`, error);
+    }
+  }
+}
+
 /** Para el seguimiento de cada minuto: avanza cada lote que va solo, uno detrás de otro. */
 export async function advanceRunningBatches(deps: GenDeps = {}): Promise<void> {
+  try {
+    await logBatchStates();
+  } catch (error) {
+    console.error("[lotes] No se pudo escribir el diagnóstico de los lotes:", error);
+  }
   const ids = await getDb().select({ id: schema.batches.id }).from(schema.batches).where(inArray(schema.batches.status, RUNNING));
   for (const { id } of ids) {
     try {
