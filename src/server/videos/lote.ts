@@ -873,7 +873,7 @@ async function canStillSwitch(pause: NonNullable<Batch["pause"]>): Promise<boole
 
 /** ¿La pausa «máximo de regeneraciones» de un clip deja de serlo sin contar los bloqueos del filtro? */
 async function maxedOnlyByBlocks(pause: NonNullable<Batch["pause"]>): Promise<boolean> {
-  if (pause.kindOf !== "clip" || pause.videoId === null || !pause.reason.includes("ha llegado al máximo de")) return false;
+  if (pause.kindOf !== "clip" || pause.videoId === null || !pause.reason.includes("llegado al máximo de")) return false;
   const [row] = await getDb()
     .select({ n: sql<number>`count(*)::int` })
     .from(schema.generations)

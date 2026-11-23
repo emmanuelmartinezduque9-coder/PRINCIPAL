@@ -307,8 +307,11 @@ function nextRound(rows: Generation[]): number {
   if (rows.some((row) => row.status === "unknown")) throw new HttpError(409, CHECKING);
   if (rows.some((row) => ACTIVE.includes(row.status as GenerationStatus))) throw new HttpError(409, BUSY);
   const spent = rows.filter((row) => SPENT.includes(row.status as GenerationStatus));
-  const round = spent.length + 1;
-  if (round > 1 + MAX_REGENERATIONS) throw new HttpError(409, MAX_REACHED);
+  // Un bloqueo del filtro de Higgsfield no es una regeneración: Higgsfield lo devuelve (sus
+  // movimientos, 23/11/2026) y el lote lo repite solo con el prompt o el modelo corregidos.
+  const counted = spent.filter((row) => !(row.status === "failed" && row.error === BLOCKED)).length;
+  if (counted + 1 > 1 + MAX_REGENERATIONS) throw new HttpError(409, MAX_REACHED);
+  const round = Math.max(spent.length, ...spent.map((row) => row.round)) + 1;
   if (round > 1) {
     const last = spent.reduce((a, b) => (b.round > a.round ? b : a));
     if (last.status !== "failed" && !last.rejectReason) throw new HttpError(409, REJECT_FIRST);
