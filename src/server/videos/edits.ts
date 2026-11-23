@@ -1,35 +1,34 @@
 import { and, desc, eq, inArray, max, sql } from "drizzle-orm";
 import { getDb, schema } from "@/db/client";
 import { MAX_EDIT_BYTES, MAX_EDIT_TEXT } from "@/db/schema";
-import { macOwnerId, queueMontajeTask, taskStatusesOf } from "@/server/agent-tasks";
 import { getActiveUser, type AuthUser } from "@/server/auth";
 import { HttpError } from "@/server/http";
 import { getProductFor, type Product } from "@/server/products";
 import { parseRange, songSummaries } from "@/server/songs";
 import type { Analysis } from "@/server/videos/analysis";
 import { bodiesOfVideo } from "@/server/videos/bodies";
-import { downloadableClipUrl, servableClipUrl } from "@/server/videos/clip";
+import { getObjectStore } from "@/lib/object-store";
+import { downloadableClip, servableClipUrl } from "@/server/videos/clip";
 import { fileSlug } from "@/server/videos/filename";
 import { canChooseSong, effectiveEditReferenceUrl, getVideoFor, hookTiming, type Video } from "@/server/videos/videos";
 
 /**
- * Montaje automático (el paso que sigue a los clips): cada vídeo se monta en el Mac del dueño, que
- * siempre está encendido, con el montador (`montador/montar_auto.py`). Aquí se hace la «ficha de
- * montaje» (`EditSpec`: los clips, la canción con su drop, los rótulos, la referencia de edición),
- * se pone la tarea en la cola del Mac (`agent_tasks`, tipo `montaje`) y se guarda el MP4 que
- * vuelve (`edits`, una versión por montaje), que se sirve con `Range`.
+ * Montaje automático (el paso que sigue a los clips), en la nube: el proceso en segundo plano de
+ * Railway monta cada vídeo con el montador (`montador/montar_auto.py`; ver `montaje-nube.ts`).
+ * Aquí se hace la «ficha de montaje» (`EditSpec`: los clips, la canción con su drop, los rótulos,
+ * la referencia de edición), se pone el montaje en su cola (`edit_runs`) y se guarda el MP4 que
+ * sale (`edits`, una versión por montaje; el archivo en el almacén de objetos), que se sirve con
+ * un enlace firmado (o con `Range` desde la base de datos, los antiguos).
  *
  * - Al quedar un lote `listo`, se monta cada vídeo suyo (`startBatchEdits`, enganchado con
- *   `onBatchReady` en `src/jobs/video-jobs.ts`, donde corre el avance de los lotes), solo si hay un Mac del
- *   dueño; si no, el vídeo queda «Montaje: necesita el Mac». Cuando todos han terminado (bien o
- *   con su motivo), el lote pasa a `montado`.
+ *   `onBatchReady` en `src/jobs/video-jobs.ts`). Cuando todos han terminado (bien o con su
+ *   motivo), el lote pasa a `montado`.
  * - «Montar» / «Volver a montar» a mano: quien creó el vídeo o el dueño (`canChooseSong`).
- * - El protocolo con el Mac (reserva, trozos, cierre) está en `src/server/montaje-tasks.ts`, que
- *   llama aquí para guardar o dar por fallido el montaje. Este módulo no importa el del agente.
+ * - El Mac ya no monta (hasta el 23/11/2026 lo hacía): solo trae los enlaces que la nube no
+ *   alcanza (`src/server/link-media.ts`). Si está apagado, el montaje sigue sin ellos y lo avisa.
  */
-
-export const NEEDS_MAC = "Montaje: necesita el Mac";
 export const NO_CLIP = "El vídeo aún no tiene clip.";
+export const CREATOR_GONE = "Quien creó el lote ya no está activo.";
 export const CLIP_NOT_SERVABLE = "El clip no se puede descargar.";
 export const BODY_NOT_SERVABLE = "Un cuerpo no se puede descargar.";
 export const ALREADY_RUNNING = "Este vídeo ya se está montando.";
@@ -48,33 +47,30 @@ type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
 
 // ───────────────────────── Ficha de montaje ─────────────────────────
 
-/** Lo que el Mac recibe para montar un vídeo (va tal cual en `agent_tasks.payload`). */
+/** Lo que el montador recibe para montar un vídeo (va tal cual en `edit_runs.spec`). */
 export interface EditSpec {
-  version: 1;
+  version: 2;
   videoId: number;
   title: string;
   kind: string;
   product: { name: string; language: string };
   /**
    * Los clips en orden: con «Solo gancho», el gancho (`hook`) y detrás sus cuerpos (`body`); con los
-   * otros tipos, el clip aprobado (`clip`). Siempre direcciones de Higgsfield (`servableClipUrl`).
+   * otros tipos, el clip aprobado (`clip`). `jobId` es el trabajo de Higgsfield (su copia en el
+   * almacén propio, si ya está); `url`, su dirección de Higgsfield (`servableClipUrl`) por si no.
    */
-  clips: Array<{ role: "hook" | "body" | "clip"; url: string }>;
+  clips: Array<{ role: "hook" | "body" | "clip"; jobId: string | null; url: string }>;
   /** Con «Solo gancho», lo que dura de verdad el gancho (el clip generado puede ser más largo). */
   hookMs: number | null;
-  /**
-   * La canción: `url` es una ruta de la web que el Mac pide con su ficha mientras tiene la tarea.
-   * `null`: audio original.
-   */
-  song: { url: string; id: number; title: string; dropMs: number | null; startMs: number; durationMs: number } | null;
+  /** La canción de la biblioteca (con su drop). `null`: audio original. */
+  song: { id: number; title: string; dropMs: number | null; startMs: number; durationMs: number } | null;
   /**
    * «Audio original» (sin canción): el audio del vídeo de REFERENCIA, desde 0 y recortado a lo que
    * dure el montaje (los clips de Seedance salen mudos). `web`: la pista guardada al preparar la
-   * referencia, por la ruta de esta tarea (`referenceAudioRouteOf`), que el Mac pide con su ficha.
-   * `enlace`: si no se guardó, el enlace de la referencia, que el Mac trae con yt-dlp. `null`: con
-   * canción, o sin ninguna de las dos.
+   * referencia. `enlace`: si no se guardó, el enlace de la referencia (se trae como la referencia de
+   * edición: `link-media.ts`). `null`: con canción, o sin ninguna de las dos.
    */
-  referenceAudio: { url: string; source: "web" | "enlace" } | null;
+  referenceAudio: { source: "web" } | { source: "enlace"; url: string } | null;
   texts: { main: string; cta: string };
   editReferenceUrl: string | null;
 }
@@ -128,11 +124,6 @@ async function latestAnalysisResult(videoId: number): Promise<Analysis | null> {
   return (row?.result as Analysis | null) ?? null;
 }
 
-/** La ruta de la canción de una tarea de montaje, que el Mac pide con su ficha. */
-export const songRouteOf = (taskId: number) => `/api/agente/tareas/${taskId}/cancion`;
-/** La ruta del audio de la referencia de una tarea de montaje, que el Mac pide con su ficha. */
-export const referenceAudioRouteOf = (taskId: number) => `/api/agente/tareas/${taskId}/audio-referencia`;
-
 /** El audio de la referencia guardado para `videoId`, o `null`. */
 export async function readReferenceAudio(videoId: number): Promise<{ mime: string; data: Buffer } | null> {
   const [row] = await getDb()
@@ -155,39 +146,34 @@ async function referenceAudioSource(video: Video): Promise<"web" | { link: strin
 }
 
 /**
- * Lo que necesita la ficha y no depende de la tarea: los clips (409 si falta alguno o no se puede
- * descargar), la canción, los rótulos y el resto. Se calcula antes de abrir la transacción.
+ * La ficha de montaje de `video`: los clips (409 si falta alguno o no se puede descargar), la
+ * canción, los rótulos y el resto. Se calcula antes de abrir la transacción.
  */
-async function specParts(
-  video: Video,
-  product: Product,
-): Promise<Omit<EditSpec, "song" | "referenceAudio"> & { songOf: (taskId: number) => EditSpec["song"]; referenceAudioOf: (taskId: number) => EditSpec["referenceAudio"] }> {
-  const clipUrl = await downloadableClipUrl(video);
-  if (!clipUrl) throw new HttpError(409, NO_CLIP);
+async function buildSpec(video: Video, product: Product): Promise<EditSpec> {
+  const clip = await downloadableClip(video);
+  if (!clip) throw new HttpError(409, NO_CLIP);
   const clips: EditSpec["clips"] = [];
   if (video.kind === "solo_gancho") {
-    clips.push({ role: "hook", url: clipUrl });
-    for (const body of await bodiesOfVideo(video)) {
+    clips.push({ role: "hook", jobId: clip.jobId, url: clip.url });
+    for (const body of await bodiesOfVideo(video, { raw: true })) {
       if (!servableClipUrl(body.videoUrl)) throw new HttpError(409, BODY_NOT_SERVABLE);
-      clips.push({ role: "body", url: body.videoUrl });
+      clips.push({ role: "body", jobId: body.jobId, url: body.videoUrl });
     }
   } else {
-    clips.push({ role: "clip", url: clipUrl });
+    clips.push({ role: "clip", jobId: clip.jobId, url: clip.url });
   }
   const song = video.songId === null ? null : ((await songSummaries([video.songId])).get(video.songId) ?? null);
   const original = await referenceAudioSource(video);
   return {
-    version: 1,
+    version: 2,
     videoId: video.id,
     title: video.title,
     kind: video.kind,
     product: { name: product.name, language: product.language },
     clips,
     hookMs: hookTiming(video)?.hookMs ?? null,
-    songOf: (taskId) =>
-      song ? { url: songRouteOf(taskId), id: song.id, title: song.title, dropMs: song.dropMs, startMs: song.startMs, durationMs: song.durationMs } : null,
-    referenceAudioOf: (taskId) =>
-      original === "web" ? { url: referenceAudioRouteOf(taskId), source: "web" } : original ? { url: original.link, source: "enlace" } : null,
+    song: song ? { id: song.id, title: song.title, dropMs: song.dropMs, startMs: song.startMs, durationMs: song.durationMs } : null,
+    referenceAudio: original === "web" ? { source: "web" } : original ? { source: "enlace", url: original.link } : null,
     texts: editTextsFor(video, product, await latestAnalysisResult(video.id)),
     // La del vídeo o, si no tiene, la de su producto en el lote.
     editReferenceUrl: await effectiveEditReferenceUrl(video),
@@ -201,55 +187,55 @@ async function lockVideo(tx: Tx, videoId: number): Promise<Video | null> {
 }
 
 /**
- * Pone en cola el montaje de `video` (de `product`) en el Mac de `ownerId`, con su ficha. Los
+ * Pone en cola el montaje de `video` (de `product`), pedido por `requestedBy`, con su ficha. Los
  * rótulos que no estaban guardados quedan guardados en el vídeo (para que se puedan cambiar). 409
  * si ya hay uno en marcha o si falta algún clip.
  */
-async function queueEdit(video: Video, product: Product, ownerId: number, now: Date): Promise<{ taskId: number }> {
-  const { songOf, referenceAudioOf, ...parts } = await specParts(video, product);
+async function queueEdit(video: Video, product: Product, requestedBy: number, now: Date): Promise<{ runId: number }> {
+  const spec = await buildSpec(video, product);
   return getDb().transaction(async (tx) => {
     const locked = await lockVideo(tx, video.id);
     if (!locked) throw new HttpError(404, "Vídeo no encontrado.");
-    const taskId = await queueMontajeTask(
-      tx,
-      { videoId: video.id, ownerId, url: parts.clips[0].url, payload: (id): EditSpec => ({ ...parts, song: songOf(id), referenceAudio: referenceAudioOf(id) }) },
-      now,
-    );
-    if (taskId === null) throw new HttpError(409, ALREADY_RUNNING);
+    const [active] = await tx
+      .select({ id: schema.editRuns.id })
+      .from(schema.editRuns)
+      .where(and(eq(schema.editRuns.videoId, video.id), inArray(schema.editRuns.status, ["queued", "running"])));
+    if (active) throw new HttpError(409, ALREADY_RUNNING);
+    const [run] = await tx
+      .insert(schema.editRuns)
+      .values({ videoId: video.id, spec, requestedBy, createdAt: now, availableAt: now })
+      .returning({ id: schema.editRuns.id });
     await tx
       .update(videos)
       .set({
         editStatus: "en_marcha",
         editError: null,
-        editTaskId: taskId,
-        editMainText: locked.editMainText ?? parts.texts.main,
-        editCtaText: locked.editCtaText ?? parts.texts.cta,
+        editRunId: run.id,
+        editMainText: locked.editMainText ?? spec.texts.main,
+        editCtaText: locked.editCtaText ?? spec.texts.cta,
       })
       .where(eq(videos.id, video.id));
-    return { taskId };
+    return { runId: run.id };
   });
 }
 
 /**
  * «Montar» / «Volver a montar» un vídeo que `user` ve: quien lo creó o el dueño (403 si no). Hace
- * falta un Mac del dueño (409 «Montaje: necesita el Mac») y el clip hecho (409). Si ya hay un
- * montaje en marcha, 409.
+ * falta el clip hecho (409). Si ya hay un montaje en marcha, 409. No hace falta el Mac.
  */
-export async function startEdit(user: AuthUser, videoId: number, now: Date = new Date()): Promise<{ taskId: number }> {
+export async function startEdit(user: AuthUser, videoId: number, now: Date = new Date()): Promise<{ runId: number }> {
   const video = await getVideoFor(user, videoId);
   if (!canChooseSong(user, video)) throw new HttpError(403, CANNOT_START);
-  const ownerId = await macOwnerId();
-  if (ownerId === null) throw new HttpError(409, NEEDS_MAC);
   const product = await getProductFor(user, video.productId);
-  return queueEdit(video, product, ownerId, now);
+  return queueEdit(video, product, user.id, now);
 }
 
 /** El vídeo queda con el montaje fallido y su motivo (sin tocar el montaje anterior, si lo hay). */
-async function markFailed(executor: Pick<Db, "update">, videoId: number, reason: string, taskId?: number): Promise<void> {
+async function markFailed(executor: Pick<Db, "update">, videoId: number, reason: string, runId?: number): Promise<void> {
   await executor
     .update(videos)
     .set({ editStatus: "fallido", editError: reason.slice(0, MAX_ERROR) })
-    .where(taskId === undefined ? eq(videos.id, videoId) : and(eq(videos.id, videoId), eq(videos.editTaskId, taskId)));
+    .where(runId === undefined ? eq(videos.id, videoId) : and(eq(videos.id, videoId), eq(videos.editRunId, runId)));
 }
 
 /** Los vídeos de un lote que lleva su envío automático: los de quien lo creó, sin «Saltar». */
@@ -263,23 +249,22 @@ async function batchVideos(batch: { id: number; createdBy: number }): Promise<Vi
 
 /**
  * Enganche de `listo`: pone en cola el montaje de cada vídeo del lote que aún no tiene uno (ni en
- * marcha ni hecho). Sin Mac del dueño, cada uno queda «Montaje: necesita el Mac»; si un vídeo no se
- * puede montar (le falta un clip descargable), queda fallido con el motivo. Repetirlo no duplica nada.
+ * marcha ni hecho). Si un vídeo no se puede montar (le falta un clip descargable), queda fallido
+ * con el motivo. Repetirlo no duplica nada.
  */
 export async function startBatchEdits(batchId: number, now: Date = new Date()): Promise<void> {
   const [batch] = await getDb().select().from(schema.batches).where(eq(schema.batches.id, batchId));
   if (!batch) return;
   const creator = await getActiveUser(batch.createdBy);
-  const ownerId = await macOwnerId();
   for (const video of await batchVideos(batch)) {
     if (video.editStatus === "en_marcha" || video.editStatus === "hecho") continue;
-    if (ownerId === null || creator === null) {
-      await markFailed(getDb(), video.id, NEEDS_MAC);
+    if (creator === null) {
+      await markFailed(getDb(), video.id, CREATOR_GONE);
       continue;
     }
     try {
       const product = await getProductFor(creator, video.productId);
-      await queueEdit(video, product, ownerId, now);
+      await queueEdit(video, product, creator.id, now);
     } catch (error) {
       if (!(error instanceof HttpError)) throw error;
       if (error.message !== ALREADY_RUNNING) await markFailed(getDb(), video.id, error.message);
@@ -310,7 +295,7 @@ export async function settleEditedBatches(): Promise<void> {
   for (const { id } of ids) await settleBatch(id);
 }
 
-// ───────────────────────── Lo que devuelve el Mac ─────────────────────────
+// ───────────────────────── Lo que deja el montador ─────────────────────────
 
 /** Lo que se guarda de la autocomprobación del montador (lo demás se descarta). */
 export interface EditSelfCheck {
@@ -324,7 +309,7 @@ export interface EditSelfCheck {
 
 const asCount = (value: unknown) => (typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : null);
 
-/** La autocomprobación tal como la manda el Mac, recortada a lo que se enseña (`null` si no vale). */
+/** La autocomprobación tal como la deja el montador, recortada a lo que se enseña (`null` si no vale). */
 export function cleanSelfCheck(value: unknown): EditSelfCheck | null {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
   const raw = value as Record<string, unknown>;
@@ -340,42 +325,41 @@ export function cleanSelfCheck(value: unknown): EditSelfCheck | null {
 }
 
 /**
- * Guarda el MP4 de un montaje terminado como versión nueva del vídeo, dentro de la transacción de
- * quien cierra la tarea `taskId`, y el vídeo queda «hecho» (si ese montaje sigue siendo el suyo).
+ * Guarda un montaje terminado como versión nueva del vídeo y el vídeo queda «hecho» (si ese
+ * montaje, `runId`, sigue siendo el suyo). El MP4 ya está en el almacén (`storageKey`) o, sin
+ * almacén, va en la base de datos (`bytes`).
  */
 export async function saveEdit(
   tx: Tx,
-  input: { videoId: number; taskId: number; bytes: Buffer; durationMs: number; selfCheck: EditSelfCheck | null },
+  input: { videoId: number; runId: number; size: number; storageKey: string | null; bytes: Buffer | null; durationMs: number; selfCheck: EditSelfCheck | null },
   now: Date = new Date(),
 ): Promise<{ version: number }> {
-  if (input.bytes.length === 0 || input.bytes.length > MAX_EDIT_BYTES) throw new HttpError(400, "El vídeo montado no es válido.");
+  if (input.size <= 0 || input.size > MAX_EDIT_BYTES || (input.storageKey === null && input.bytes === null)) throw new HttpError(400, "El vídeo montado no es válido.");
   await lockVideo(tx, input.videoId);
   const [{ last }] = await tx.select({ last: max(edits.version) }).from(edits).where(eq(edits.videoId, input.videoId));
   const version = (last ?? 0) + 1;
   await tx.insert(edits).values({
     videoId: input.videoId,
     version,
-    size: input.bytes.length,
-    data: input.bytes,
+    size: input.size,
+    data: input.storageKey === null ? input.bytes : null,
+    storageKey: input.storageKey,
     durationMs: Math.max(1, Math.round(input.durationMs)),
     selfCheck: input.selfCheck,
-    taskId: input.taskId,
+    taskId: input.runId,
     createdAt: now,
   });
   await tx
     .update(videos)
     .set({ editStatus: "hecho", editError: null })
-    .where(and(eq(videos.id, input.videoId), eq(videos.editTaskId, input.taskId)));
+    .where(and(eq(videos.id, input.videoId), eq(videos.editRunId, input.runId)));
   return { version };
 }
 
-/**
- * El montaje de la tarea `taskId` no se pudo hacer: el vídeo lo dice con `reason` (si ese montaje
- * sigue siendo el suyo). Dentro de la transacción de quien cierra la tarea.
- */
-export async function failEdit(tx: Tx, videoId: number, taskId: number, reason: string): Promise<void> {
+/** El montaje `runId` no se pudo hacer: el vídeo lo dice con `reason` (si ese montaje sigue siendo el suyo). */
+export async function failEdit(tx: Tx, videoId: number, runId: number, reason: string): Promise<void> {
   await lockVideo(tx, videoId);
-  await markFailed(tx, videoId, reason, taskId);
+  await markFailed(tx, videoId, reason, runId);
 }
 
 /** El lote de un vídeo (para `settleBatch` después de cerrar su montaje). */
@@ -416,12 +400,18 @@ export async function editViews(user: AuthUser, list: Array<Video & { clipReady:
     .where(inArray(edits.videoId, ids))
     .orderBy(edits.videoId, desc(edits.version));
   const latestOf = new Map(latest.map((row) => [row.videoId, row]));
-  const tasks = await taskStatusesOf(list.flatMap((video) => (video.editStatus === "en_marcha" && video.editTaskId !== null ? [video.editTaskId] : [])));
+  const runIds = list.flatMap((video) => (video.editStatus === "en_marcha" && video.editRunId !== null ? [video.editRunId] : []));
+  const runs = new Map(
+    (runIds.length === 0
+      ? []
+      : await getDb().select({ id: schema.editRuns.id, status: schema.editRuns.status }).from(schema.editRuns).where(inArray(schema.editRuns.id, runIds))
+    ).map((run) => [run.id, run.status]),
+  );
   for (const video of list) {
     const last = latestOf.get(video.id);
     const status: EditStatus =
       video.editStatus === "en_marcha"
-        ? tasks.get(video.editTaskId ?? 0) === "leased"
+        ? runs.get(video.editRunId ?? 0) === "running"
           ? "montando"
           : "en_cola"
         : video.editStatus === "hecho" || video.editStatus === "fallido"
@@ -486,7 +476,7 @@ export async function editVideoResponse(
       : eq(edits.videoId, video.id);
   const db = getDb();
   const [edit] = await db
-    .select({ id: edits.id, version: edits.version, size: edits.size })
+    .select({ id: edits.id, version: edits.version, size: edits.size, storageKey: edits.storageKey })
     .from(edits)
     .where(where)
     .orderBy(desc(edits.version))
@@ -499,10 +489,18 @@ export async function editVideoResponse(
     ETag: `"edit-${edit.id}"`,
     "X-Content-Type-Options": "nosniff",
   };
+  let filename: string | null = null;
   if (options.download) {
     const product = await getProductFor(user, video.productId);
-    const filename = `${fileSlug(product.name, "producto")}-video-${video.id}-editado.mp4`;
+    filename = `${fileSlug(product.name, "producto")}-video-${video.id}-editado.mp4`;
     common["Content-Disposition"] = `attachment; filename="${filename}"; filename*=UTF-8''${encodeURIComponent(filename)}`;
+  }
+  // En el almacén: el navegador lo lee directamente de ahí con un enlace firmado (rápido, sin pasar por aquí).
+  if (edit.storageKey) {
+    const store = getObjectStore();
+    if (!store) throw new HttpError(503, "El almacén de archivos no está disponible ahora mismo.");
+    const location = await store.signedUrl(edit.storageKey, { expiresIn: 60 * 60, ...(filename ? { downloadName: filename } : {}) });
+    return new Response(null, { status: 302, headers: { Location: location, "Cache-Control": "private, max-age=600" } });
   }
   // La descarga va entera; el reproductor pide trozos.
   const range = options.download ? null : parseRange(rangeHeader, edit.size);

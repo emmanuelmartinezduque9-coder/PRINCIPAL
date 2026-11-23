@@ -21,7 +21,7 @@ const STEPS = [
   { status: "listo", label: "Montaje", icon: Scissors, count: (a: AutoViewJson) => a.steps.montaje },
 ] as const;
 
-/** `listo`: clips hechos y montándose en el Mac; `montado`: todos los montajes terminados (el final). */
+/** `listo`: clips hechos y montándose en la nube; `montado`: todos los montajes terminados (el final). */
 const ORDER: Status[] = ["borrador", "preguntas", "imagenes", "revision_imagenes", "clips", "listo", "montado"];
 
 /** El paso en el que está (en pausa: el paso en el que se paró). */

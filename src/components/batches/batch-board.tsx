@@ -767,7 +767,7 @@ export function BatchBoard({ batchId }: { batchId: number }) {
                       referenceState(row, upload),
                       analysisState(row),
                       generationState(row.frame, "frame"),
-                      // Con el clip hecho, la columna enseña su montaje en el Mac.
+                      // Con el clip hecho, la columna enseña su montaje.
                       row.edit.status === "none" ? generationState(row.clip, "clip") : editState(row.edit),
                     ];
                     // El error de la última acción en bloque y, si no hay, el del enlace o el del paso que falló.

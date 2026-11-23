@@ -94,7 +94,7 @@ function BodyThumb({
   );
   const media = (
     <>
-      <ClipPreview thumbUrl={body.thumbUrl} videoUrl={body.videoUrl} active={preview.active} className={cn(!picked && "opacity-55 transition-opacity group-hover/body:opacity-100")} />
+      <ClipPreview thumbUrl={body.thumbUrl} videoUrl={body.previewUrl ?? body.videoUrl} active={preview.active} className={cn(!picked && "opacity-55 transition-opacity group-hover/body:opacity-100")} />
       {picked ? (
         <span className="absolute top-1 left-1 grid size-5 place-items-center rounded-full bg-foreground text-[11px] font-semibold text-background tabular-nums">
           {order}

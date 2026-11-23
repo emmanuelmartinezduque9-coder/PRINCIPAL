@@ -29,9 +29,9 @@ function parseResult(body: unknown): TaskResult | null {
 }
 
 /**
- * El Mac termina la tarea: `{ ok: true, uploadId, totalBytes, title?, selfCheck? }` (el archivo llegó entero:
- * una referencia se prepara como una subida; una canción se guarda con `title`, el de yt-dlp; un
- * montaje se guarda con `selfCheck`, la autocomprobación del montador) o `{ ok: false, uploadId, error }` (no pudo: el vídeo lo dice).
+ * El Mac termina la tarea: `{ ok: true, uploadId, totalBytes, title? }` (el archivo llegó entero:
+ * una referencia se prepara como una subida; una canción se guarda con `title`, el de yt-dlp; el
+ * vídeo de un enlace para el montaje va al almacén) o `{ ok: false, uploadId, error }` (no pudo).
  * `uploadId` es el que recibió al reservarla. 409 si la tarea ya no es suya o la sesión es de un
  * intento anterior.
  */

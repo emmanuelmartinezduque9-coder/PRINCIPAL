@@ -6,28 +6,27 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vites
 import { getDb, schema } from "@/db/client";
 import { stopWorker } from "@/jobs/boss";
 import "@/jobs/video-jobs";
-import { agentHeartbeat, appendTaskChunk, claimTask, createAgentToken, expireLeases, finishTask, LEASE_MS, MAX_MONTAJE_LEASE_AGE_MS, type ClaimedTask } from "@/server/agent";
-import { cancelLinkTasks } from "@/server/agent-tasks";
+import { LocalStore, setObjectStoreForTests } from "@/lib/object-store";
+import { agentHeartbeat, appendTaskChunk, claimTask, createAgentToken, finishTask, type ClaimedTask } from "@/server/agent";
 import { login, resetLoginAttempts, type AuthUser } from "@/server/auth";
 import { uploadSong } from "@/server/songs";
+import { archiveSweep } from "@/server/videos/archive";
 import { CHUNK_BYTES } from "@/server/videos/upload";
 import { createVideo, getVideoFor, videoView, type Video } from "@/server/videos/videos";
 import { batchView, createBatch } from "@/server/videos/batches";
+import { editTextsFor, editVideoResponse, setEditTexts, standardCta, startBatchEdits, startEdit, type EditSpec } from "@/server/videos/edits";
 import {
-  editTextsFor,
-  editVideoResponse,
-  NEEDS_MAC,
-  setEditTexts,
-  standardCta,
-  startBatchEdits,
-  startEdit,
-  type EditSpec,
-} from "@/server/videos/edits";
-import { MONTAJE_TOO_SLOW } from "@/server/montaje-tasks";
-import { POST as claimRoute } from "@/app/api/agente/tareas/reclamar/route";
-import { GET as songRoute } from "@/app/api/agente/tareas/[taskId]/cancion/route";
-import { GET as referenceAudioRoute } from "@/app/api/agente/tareas/[taskId]/audio-referencia/route";
-import { POST as finishRoute } from "@/app/api/agente/tareas/[taskId]/terminar/route";
+  claimRun,
+  editLoopTick,
+  INTERRUPTED,
+  MAX_RUN_ATTEMPTS,
+  MONTAJE_CONCURRENCY,
+  requeueStaleRuns,
+  RUN_STALE_MS,
+  runEdit,
+  waitForActiveEdits,
+  type MontajeDeps,
+} from "@/server/videos/montaje-nube";
 import { POST as startRoute } from "@/app/api/videos/[videoId]/montaje/route";
 import { PUT as textsRoute } from "@/app/api/videos/[videoId]/montaje/textos/route";
 import { GET as editVideoRoute } from "@/app/api/videos/[videoId]/montaje/video/route";
@@ -35,6 +34,13 @@ import { makeProduct, makeUser, TEST_PASSWORD } from "./helpers/fixtures";
 import { truncateAll } from "./helpers/global-setup";
 import { makeSampleAudio } from "./helpers/sample-audio";
 import { makeSampleVideo } from "./helpers/sample-video";
+
+/**
+ * Montaje en la nube (`montaje-nube.ts`): la ficha, la cola `edit_runs`, el montaje con un
+ * montador simulado (un `montar_auto.py` de prueba que copia el primer clip y apunta lo que
+ * recibió), los enlaces (nube con yt-dlp simulado y, si no, el Mac) y el lote. El montador de
+ * verdad tiene sus pruebas en `montador/test_montar_auto.py`.
+ */
 
 const cookie = vi.hoisted(() => ({ value: undefined as string | undefined }));
 vi.mock("next/headers", () => ({
@@ -47,23 +53,53 @@ vi.mock("next/headers", () => ({
 const T0 = new Date("2026-11-22T10:00:00Z");
 const later = (ms: number) => new Date(T0.getTime() + ms);
 const CLIP = "https://d1abc.cloudfront.net/clip.mp4";
-const TASK_LOST = { status: 409, message: "Esta tarea ya no es tuya." };
-const CAN = { can: ["montaje"] as const };
+const CAN = { can: ["enlace_medio"] as const };
+const REEL = "https://www.instagram.com/reel/abc/";
 
 let dueno: AuthUser;
 let ana: AuthUser;
 let beto: AuthUser;
 let sampleDir: string;
+let montadorDir: string;
+let fontPath: string;
 let mp4: Buffer;
 let mp3: Buffer;
+let store: LocalStore;
+const fetched: string[] = [];
+
+/** Un `montar_auto.py` de prueba: copia el primer clip como salida y guarda la ficha que recibió. */
+const FAKE_MONTADOR = `
+import json, shutil, sys
+from pathlib import Path
+spec = json.loads(Path(sys.argv[1]).read_text())
+work = Path(sys.argv[2])
+(work / 'ficha-recibida.json').write_text(json.dumps(spec))
+if spec.get('title') == 'falla':
+    (work / 'resultado.json').write_text(json.dumps({'ok': False, 'error': 'Falta un clip descargado'}))
+    sys.exit(1)
+shutil.copy(spec['clips'][0]['path'], work / 'salida.mp4')
+(work / 'resultado.json').write_text(json.dumps({'ok': True, 'avisos': spec.get('avisos', []),
+  'autocomprobacion': {'ok': True, 'avisos': [], 'planos': 7, 'cortesEnBeat': '5/6', 'intentos': 1}}))
+`;
+
+const fakeFetch: typeof fetch = async (input) => {
+  fetched.push(String(input));
+  return new Response(new Uint8Array(mp4), { headers: { "content-length": String(mp4.length) } });
+};
 
 beforeAll(async () => {
   sampleDir = fs.mkdtempSync(path.join(os.tmpdir(), "prueba-montaje-"));
   mp4 = fs.readFileSync(await makeSampleVideo(sampleDir, { seconds: 3 }));
   mp3 = fs.readFileSync(await makeSampleAudio(sampleDir, "mp3", { seconds: 12 }));
+  montadorDir = path.join(sampleDir, "montador");
+  fs.mkdirSync(montadorDir);
+  fs.writeFileSync(path.join(montadorDir, "montar_auto.py"), FAKE_MONTADOR);
+  fontPath = path.join(sampleDir, "fuente.ttf");
+  fs.writeFileSync(fontPath, "fuente de prueba");
 }, 120_000);
 
 afterAll(async () => {
+  setObjectStoreForTests(undefined);
   fs.rmSync(sampleDir, { recursive: true, force: true });
   await stopWorker();
 });
@@ -72,32 +108,51 @@ beforeEach(async () => {
   await truncateAll();
   resetLoginAttempts();
   cookie.value = undefined;
+  fetched.length = 0;
+  store = new LocalStore(path.join(sampleDir, `objetos-${Math.random().toString(36).slice(2)}`), Buffer.alloc(32, 3));
+  setObjectStoreForTests(store);
   dueno = await makeUser("dueno");
   ana = await makeUser("colaborador");
   beto = await makeUser("colaborador");
+});
+
+/** El yt-dlp de la nube simulado: `ok` deja el vídeo de muestra donde se le pide. */
+const ytDlp = (ok: boolean) => async (args: string[]) => {
+  if (ok) fs.writeFileSync(args[args.indexOf("-o") + 1], mp4);
+  return { ok, error: ok ? null : "ERROR: [Instagram] login required" };
+};
+const deps = (over: Partial<MontajeDeps> = {}): MontajeDeps => ({
+  fetch: fakeFetch,
+  python: "python3",
+  reaPython: null,
+  font: fontPath,
+  montadorDir,
+  runYtDlp: ytDlp(false),
+  ...over,
 });
 
 const as = async (user: AuthUser) => {
   cookie.value = (await login(user.email, TEST_PASSWORD))!.token;
 };
 const params = (videoId: number) => ({ params: Promise.resolve({ videoId: String(videoId) }) });
-const taskParams = (taskId: number) => ({ params: Promise.resolve({ taskId: String(taskId) }) });
 
-/** Un Mac del dueño (programa 1.3.0) con un latido en `at`. */
-async function mac(at: Date = T0) {
+/** Un Mac del dueño (programa 1.4.0) con un latido en `at`. */
+async function mac(at: Date = new Date()) {
   const created = await createAgentToken(dueno, "Mac de casa");
-  await agentHeartbeat(created.agentId, { version: "1.3.0", ytDlp: "2026.11.01" }, at);
+  await agentHeartbeat(created.agentId, { version: "1.4.0", ytDlp: "2026.11.01" }, at);
   return created;
 }
 
 /** Un clip terminado (con su resultado de Higgsfield) para el vídeo. */
-async function withClip(video: Video, url = CLIP): Promise<void> {
+async function withClip(video: Video, url = CLIP): Promise<string> {
   const db = getDb();
   const [gen] = await db
     .insert(schema.generations)
     .values({ videoId: video.id, kind: "clip", round: 1, status: "done", userId: video.createdBy, request: {}, count: 1, quotedCredits: 10 })
     .returning({ id: schema.generations.id });
-  await db.insert(schema.generationResults).values({ generationId: gen.id, index: 0, jobId: `job-${video.id}-${gen.id}`, ok: true, url });
+  const jobId = `job-${video.id}-${gen.id}`;
+  await db.insert(schema.generationResults).values({ generationId: gen.id, index: 0, jobId, ok: true, url });
+  return jobId;
 }
 
 /** Un cuerpo del producto (un clip de la biblioteca de `user`). */
@@ -118,100 +173,57 @@ async function videoWithClip(user: AuthUser, over: Partial<typeof schema.videos.
   return getVideoFor(user, video.id);
 }
 
-const taskRow = async (taskId: number) => (await getDb().select().from(schema.agentTasks).where(eq(schema.agentTasks.id, taskId)))[0];
-const editRows = (videoId: number) => getDb().select({ version: schema.edits.version, size: schema.edits.size, durationMs: schema.edits.durationMs, selfCheck: schema.edits.selfCheck }).from(schema.edits).where(eq(schema.edits.videoId, videoId)).orderBy(schema.edits.version);
-
-/** Sube el MP4 entero por trozos con la sesión de la reserva. */
-async function deliver(agentId: number, task: ClaimedTask, bytes: Buffer = mp4, now: Date = T0): Promise<void> {
-  for (let index = 0; index * CHUNK_BYTES < bytes.length; index++) {
-    await appendTaskChunk(agentId, task.taskId, task.uploadId, index, bytes.subarray(index * CHUNK_BYTES, (index + 1) * CHUNK_BYTES), now);
-  }
-}
-
-const SELF_CHECK = { ok: true, avisos: [], planos: 7, cortesEnBeat: "5/6", intentos: 1, referencia: false, extra: "x".repeat(10) };
+const runRow = async (runId: number) => (await getDb().select().from(schema.editRuns).where(eq(schema.editRuns.id, runId)))[0];
+const specOf = async (runId: number) => (await runRow(runId)).spec as EditSpec;
+const editRows = (videoId: number) =>
+  getDb()
+    .select({ version: schema.edits.version, size: schema.edits.size, storageKey: schema.edits.storageKey, selfCheck: schema.edits.selfCheck })
+    .from(schema.edits)
+    .where(eq(schema.edits.videoId, videoId))
+    .orderBy(schema.edits.version);
 
 describe("ficha de montaje", () => {
-  it("«Solo gancho»: el gancho y detrás los cuerpos en su orden; la canción con su drop y su ruta para el Mac", async () => {
-    await mac();
+  it("«Solo gancho»: el gancho y detrás los cuerpos en su orden, con su trabajo; la canción con su drop", async () => {
     const product = await makeProduct(dueno, { name: "EisWerk" });
     const b1 = await body(dueno, product.id, "https://d1abc.cloudfront.net/b1.mp4", "Uno");
     const b2 = await body(dueno, product.id, "https://d1abc.cloudfront.net/b2.mp4", "Dos");
     const { song } = await uploadSong(dueno, mp3, { title: "Canción 2", dropMs: 9320, startMs: 1000 });
     const video = await videoWithClip(
       dueno,
-      { kind: "solo_gancho", hookSeconds: 5, segmentDurationMs: 4600, bodyClipIds: [b2, b1], songId: song.id, audioMode: "cancion", editReferenceUrl: "https://www.instagram.com/reel/abc/" },
+      { kind: "solo_gancho", hookSeconds: 5, segmentDurationMs: 4600, bodyClipIds: [b2, b1], songId: song.id, audioMode: "cancion", editReferenceUrl: REEL },
       product,
     );
-    const { taskId } = await startEdit(dueno, video.id, T0);
-    const spec = (await taskRow(taskId)).payload as EditSpec;
-    expect(spec).toMatchObject({
-      version: 1,
+    const { runId } = await startEdit(dueno, video.id, T0);
+    expect(await specOf(runId)).toMatchObject({
+      version: 2,
       videoId: video.id,
       kind: "solo_gancho",
       product: { name: "EisWerk", language: "de" },
       hookMs: 4600,
       clips: [
-        { role: "hook", url: CLIP },
-        { role: "body", url: "https://d1abc.cloudfront.net/b2.mp4" },
-        { role: "body", url: "https://d1abc.cloudfront.net/b1.mp4" },
+        { role: "hook", url: CLIP, jobId: expect.stringMatching(/^job-/) },
+        { role: "body", url: "https://d1abc.cloudfront.net/b2.mp4", jobId: "lib-Dos" },
+        { role: "body", url: "https://d1abc.cloudfront.net/b1.mp4", jobId: "lib-Uno" },
       ],
-      song: { url: `/api/agente/tareas/${taskId}/cancion`, id: song.id, dropMs: 9320, startMs: 1000 },
-      // Con canción, nunca el audio de la referencia.
+      song: { id: song.id, dropMs: 9320, startMs: 1000 },
       referenceAudio: null,
       texts: { main: "EISWERK 😍", cta: "Kommentiere „EisWerk“, wenn du auch eine willst! 🤩" },
-      editReferenceUrl: "https://www.instagram.com/reel/abc/",
+      editReferenceUrl: REEL,
     });
-    // Los rótulos quedan guardados en el vídeo para poder cambiarlos.
-    expect(await getVideoFor(dueno, video.id)).toMatchObject({ editStatus: "en_marcha", editTaskId: taskId, editMainText: "EISWERK 😍" });
+    expect(await getVideoFor(dueno, video.id)).toMatchObject({ editStatus: "en_marcha", editRunId: runId, editMainText: "EISWERK 😍" });
+    expect((await runRow(runId)).requestedBy).toBe(dueno.id);
   });
 
-  it("otros tipos: solo el clip aprobado; sin canción, audio original", async () => {
-    await mac();
-    const video = await videoWithClip(dueno);
-    const { taskId } = await startEdit(dueno, video.id, T0);
-    expect((await taskRow(taskId)).payload).toMatchObject({ kind: "replicar", clips: [{ role: "clip", url: CLIP }], song: null, hookMs: null, editReferenceUrl: null });
-  });
-
-  it("«Audio original» es el audio de la referencia: el guardado por la web; si no, el enlace; si no hay ninguno, nada", async () => {
-    await mac();
-    const audioOf = async (video: Video) => ((await taskRow((await startEdit(dueno, video.id, T0)).taskId)).payload as EditSpec).referenceAudio;
-    // Guardado al preparar la referencia (subida o enlace): por la ruta de la tarea.
-    const guardado = await videoWithClip(dueno, { referenceSource: "link", referenceUrl: "https://www.instagram.com/reel/ref/" });
+  it("«Audio original» es el audio de la referencia: el guardado; si no, el enlace; si no hay ninguno, nada", async () => {
+    const audioOf = async (video: Video) => (await specOf((await startEdit(dueno, video.id, T0)).runId)).referenceAudio;
+    const guardado = await videoWithClip(dueno, { referenceSource: "link", referenceUrl: REEL });
     await getDb().insert(schema.videoReferenceAudio).values({ videoId: guardado.id, mime: "audio/mp4", size: 3, durationMs: 1000, data: Buffer.from("m4a") });
-    const { taskId } = await startEdit(dueno, guardado.id, T0);
-    expect(((await taskRow(taskId)).payload as EditSpec).referenceAudio).toEqual({ url: `/api/agente/tareas/${taskId}/audio-referencia`, source: "web" });
-    // Sin audio guardado, de un enlace: el Mac lo trae.
-    const enlace = await videoWithClip(dueno, { referenceSource: "link", referenceUrl: "https://www.instagram.com/reel/ref/" });
-    expect(await audioOf(enlace)).toEqual({ url: "https://www.instagram.com/reel/ref/", source: "enlace" });
-    // Un archivo sin audio guardado: nada.
+    expect(await audioOf(guardado)).toEqual({ source: "web" });
+    expect(await audioOf(await videoWithClip(dueno, { referenceSource: "link", referenceUrl: REEL }))).toEqual({ source: "enlace", url: REEL });
     expect(await audioOf(await videoWithClip(dueno, { referenceSource: "file" }))).toBeNull();
   });
 
-  it("el audio de la referencia solo para el Mac que tiene la tarea, y solo si la ficha lo lleva", async () => {
-    const { agentId, token } = await mac();
-    const other = await createAgentToken(dueno, "Otro Mac");
-    const video = await videoWithClip(dueno);
-    await getDb().insert(schema.videoReferenceAudio).values({ videoId: video.id, mime: "audio/mp4", size: 4, durationMs: 1000, data: Buffer.from("aac!") });
-    const { taskId } = await startEdit(dueno, video.id, T0);
-    const get = (t: string, id = taskId) => referenceAudioRoute(new Request("http://localhost/x", { headers: { Authorization: `Bearer ${t}` } }), taskParams(id));
-    expect((await get(token)).status).toBe(409);
-    await claimTask(agentId, T0, CAN);
-    const response = await get(token);
-    expect(response.status).toBe(200);
-    expect(response.headers.get("content-type")).toBe("audio/mp4");
-    expect(Buffer.from(await response.arrayBuffer()).toString()).toBe("aac!");
-    expect((await get(other.token)).status).toBe(409);
-    expect((await referenceAudioRoute(new Request("http://localhost/x"), taskParams(taskId))).status).toBe(401);
-    // Una ficha que no lo lleva por la web (con canción, o por enlace): 404.
-    await getDb()
-      .update(schema.agentTasks)
-      .set({ payload: { ...((await taskRow(taskId)).payload as EditSpec), referenceAudio: { url: "https://www.instagram.com/reel/x/", source: "enlace" } } })
-      .where(eq(schema.agentTasks.id, taskId));
-    expect((await get(token)).status).toBe(404);
-  });
-
   it("la edición de referencia: la del vídeo o, si no tiene, la de su producto en el lote", async () => {
-    await mac();
     const batch = await createBatch(dueno, "Lote");
     const product = await makeProduct(dueno, { name: "EisWerk" });
     const GRUPO = "https://www.instagram.com/reel/grupo/";
@@ -219,8 +231,8 @@ describe("ficha de montaje", () => {
     await getDb().insert(schema.batchProducts).values({ batchId: batch.id, productId: product.id, editReferenceUrl: GRUPO });
     const heredada = await videoWithClip(dueno, { batchId: batch.id }, product);
     const propia = await videoWithClip(dueno, { batchId: batch.id, editReferenceUrl: PROPIA }, product);
-    expect((await taskRow((await startEdit(dueno, heredada.id, T0)).taskId)).payload).toMatchObject({ editReferenceUrl: GRUPO });
-    expect((await taskRow((await startEdit(dueno, propia.id, T0)).taskId)).payload).toMatchObject({ editReferenceUrl: PROPIA });
+    expect(await specOf((await startEdit(dueno, heredada.id, T0)).runId)).toMatchObject({ editReferenceUrl: GRUPO });
+    expect(await specOf((await startEdit(dueno, propia.id, T0)).runId)).toMatchObject({ editReferenceUrl: PROPIA });
   });
 
   it("rótulos: los guardados mandan; si no, los del desglose; si no, las indicaciones y el CTA de siempre", () => {
@@ -251,197 +263,166 @@ describe("ficha de montaje", () => {
 });
 
 describe("quién monta", () => {
-  it("quien creó el vídeo o el dueño; otra persona que lo ve, 403; quien no lo ve, 404", async () => {
-    await mac();
+  it("quien creó el vídeo o el dueño; otra persona que lo ve, 403; quien no lo ve, 404; sin Mac", async () => {
     const product = await makeProduct(ana, { name: "Lumi" });
     const video = await videoWithClip(ana, {}, product);
     await expect(startEdit(beto, video.id)).rejects.toMatchObject({ status: 404 });
     await getDb().insert(schema.productAssignments).values({ productId: product.id, userId: beto.id, assignedBy: dueno.id });
     await expect(startEdit(beto, video.id)).rejects.toMatchObject({ status: 403 });
-    // El dueño monta el vídeo de Ana; mientras está en marcha, otro «Montar» da 409.
-    expect((await startEdit(dueno, video.id)).taskId).toBeGreaterThan(0);
+    expect((await startEdit(dueno, video.id)).runId).toBeGreaterThan(0);
     await expect(startEdit(ana, video.id)).rejects.toMatchObject({ status: 409, message: "Este vídeo ya se está montando." });
-    // El Mac es del dueño: la tarea va a su cola.
-    expect((await getDb().select().from(schema.agentTasks))[0]).toMatchObject({ kind: "montaje", createdBy: dueno.id, status: "queued" });
+    // Va a la cola de la nube; el Mac no interviene.
+    expect(await getDb().select().from(schema.agentTasks)).toHaveLength(0);
+    expect(await getDb().select().from(schema.editRuns)).toHaveLength(1);
   });
 
-  it("sin Mac del dueño, 409 «Montaje: necesita el Mac»; sin clip, 409", async () => {
-    const video = await videoWithClip(dueno);
-    await expect(startEdit(dueno, video.id)).rejects.toMatchObject({ status: 409, message: NEEDS_MAC });
-    await mac();
+  it("sin clip, 409; la ruta responde 202", async () => {
     const empty = await createVideo(dueno, (await makeProduct(dueno)).id);
     await expect(startEdit(dueno, empty.id)).rejects.toMatchObject({ status: 409, message: "El vídeo aún no tiene clip." });
+    const video = await videoWithClip(dueno);
     await as(dueno);
     expect((await startRoute(new Request("http://localhost/x", { method: "POST" }), params(video.id))).status).toBe(202);
-  });
-
-  it("pegar otro enlace de referencia no cancela el montaje en marcha", async () => {
-    await mac();
-    const video = await videoWithClip(dueno);
-    const { taskId } = await startEdit(dueno, video.id);
-    await cancelLinkTasks(getDb(), video.id, "Sustituida por otro enlace.");
-    expect((await taskRow(taskId)).status).toBe("queued");
+    expect((await videoView(dueno, video.id)).edit).toMatchObject({ status: "en_cola", canStart: false });
   });
 });
 
-describe("el Mac monta", () => {
-  it("un Mac que no dice que sabe montar no se lleva montajes; el que sí, la ficha y su sesión", async () => {
-    const { agentId, token } = await mac();
-    const video = await videoWithClip(dueno);
-    const { taskId } = await startEdit(dueno, video.id, T0);
-    expect(await claimTask(agentId, T0)).toBeNull();
-    // Por la ruta: sin cuerpo (un programa anterior), nada; con `puede`, la tarea.
-    const claim = (body?: unknown) =>
-      claimRoute(new Request("http://localhost/x", { method: "POST", headers: { Authorization: `Bearer ${token}` }, body: body === undefined ? undefined : JSON.stringify(body) }));
-    expect((await claim()).status).toBe(204);
-    const response = await claim({ puede: ["montaje"] });
-    expect(response.status).toBe(200);
-    const task = (await response.json()) as ClaimedTask;
-    expect(task).toMatchObject({ taskId, kind: "montaje", chunkBytes: CHUNK_BYTES, maxBytes: 200 * 1024 * 1024, spec: { videoId: video.id } });
-    expect(task.uploadId).toMatch(/^[A-Za-z0-9_-]{32}$/);
-    expect((await videoView(dueno, video.id)).edit).toMatchObject({ status: "montando", canStart: false });
-  });
-
-  it("la canción solo para el Mac que tiene la tarea", async () => {
-    const { agentId, token } = await mac();
-    const other = await createAgentToken(dueno, "Otro Mac");
-    const { song } = await uploadSong(dueno, mp3, { title: "Canción", dropMs: 2000 });
+describe("la nube monta", () => {
+  it("monta con los clips del almacén propio (o de Higgsfield si no están), la canción y guarda el MP4 en el almacén", async () => {
+    const { song } = await uploadSong(dueno, mp3, { title: "Canción", dropMs: 4000 });
     const video = await videoWithClip(dueno, { songId: song.id, audioMode: "cancion" });
-    const { taskId } = await startEdit(dueno, video.id, T0);
-    const get = (t: string) => songRoute(new Request("http://localhost/x", { headers: { Authorization: `Bearer ${t}` } }), taskParams(taskId));
-    // Aún sin reservar: de nadie.
-    expect((await get(token)).status).toBe(409);
-    await claimTask(agentId, T0, CAN);
-    const response = await get(token);
-    expect(response.status).toBe(200);
-    expect(response.headers.get("content-type")).toBe("audio/mpeg");
-    expect(Buffer.from(await response.arrayBuffer()).equals(mp3)).toBe(true);
-    expect((await get(other.token)).status).toBe(409);
-    expect((await songRoute(new Request("http://localhost/x"), taskParams(taskId))).status).toBe(401);
-  });
-
-  it("entrega el MP4: versión 1, el vídeo «hecho» y se sirve con Range; «Volver a montar» añade la versión 2", async () => {
-    const { agentId, token } = await mac();
-    const video = await videoWithClip(dueno);
-    await startEdit(dueno, video.id, T0);
-    const task = (await claimTask(agentId, T0, CAN))!;
-    // El primer trozo tiene que ser un MP4.
-    await expect(appendTaskChunk(agentId, task.taskId, task.uploadId, 0, Buffer.from("ID3 no es un vídeo"), T0)).rejects.toMatchObject({ status: 400 });
-    await deliver(agentId, task);
-    // Le falta un byte: no está entero.
-    await expect(finishTask(agentId, task.taskId, { ok: true, uploadId: task.uploadId, totalBytes: mp4.length + 1 }, T0)).rejects.toMatchObject({ status: 400 });
-    const done = await finishRoute(
-      new Request("http://localhost/x", {
-        method: "POST",
-        headers: { Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ ok: true, uploadId: task.uploadId, totalBytes: mp4.length, selfCheck: SELF_CHECK }),
-      }),
-      taskParams(task.taskId),
-    );
-    expect(done.status).toBe(200);
-    // Repetirlo no hace nada.
-    await finishTask(agentId, task.taskId, { ok: true, uploadId: task.uploadId, totalBytes: mp4.length }, T0);
-    const rows = await editRows(video.id);
-    expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({ version: 1, size: mp4.length, selfCheck: { ok: true, planos: 7, cortesEnBeat: "5/6", intentos: 1, referencia: false, avisos: [] } });
-    expect(rows[0].selfCheck).not.toHaveProperty("extra");
-    expect(rows[0].durationMs).toBeGreaterThan(2500);
-    expect((await taskRow(task.taskId)).status).toBe("done");
-    expect((await videoView(dueno, video.id)).edit).toMatchObject({ status: "hecho", error: null, canStart: true, latest: { version: 1, size: mp4.length } });
-
+    await archiveSweep({ fetch: fakeFetch, store });
+    expect((await getDb().select().from(schema.storedMedia)).map((r) => [r.status, r.error])).toEqual([["done", null]]);
+    fetched.length = 0;
+    const { runId } = await startEdit(dueno, video.id);
+    const run = (await claimRun(new Date()))!;
+    expect(run.id).toBe(runId);
+    expect((await videoView(dueno, video.id)).edit).toMatchObject({ status: "montando" });
+    expect(await runEdit(run, deps())).toBe("done");
+    // El clip vino del almacén propio: no se pidió nada a Higgsfield.
+    expect(fetched).toEqual([]);
+    const [edit] = await editRows(video.id);
+    expect(edit).toMatchObject({ version: 1, size: mp4.length, storageKey: `montajes/${video.id}/${runId}.mp4`, selfCheck: { ok: true, planos: 7, cortesEnBeat: "5/6" } });
+    expect(await store.head(edit.storageKey!)).toBe(mp4.length);
+    expect(await runRow(runId)).toMatchObject({ status: "done", attempts: 1 });
+    expect((await videoView(dueno, video.id)).edit).toMatchObject({ status: "hecho", canStart: true, latest: { version: 1 } });
+    // Se sirve con un enlace firmado del almacén (también la descarga, con su nombre).
     await as(dueno);
-    const partial = await editVideoRoute(new Request("http://localhost/x", { headers: { Range: "bytes=0-99" } }), params(video.id));
-    expect(partial.status).toBe(206);
-    expect(partial.headers.get("content-range")).toBe(`bytes 0-99/${mp4.length}`);
-    expect(Buffer.from(await partial.arrayBuffer()).equals(mp4.subarray(0, 100))).toBe(true);
-    const whole = await editVideoRoute(new Request("http://localhost/x?descargar=1"), params(video.id));
-    expect(whole.status).toBe(200);
-    expect(whole.headers.get("content-disposition")).toContain(`eiswerk-video-${video.id}-editado.mp4`);
-    expect(Buffer.from(await whole.arrayBuffer()).equals(mp4)).toBe(true);
-
-    // «Volver a montar»: otra tarea, otra versión; la 1 sigue ahí.
-    await startEdit(dueno, video.id, later(1000));
-    const again = (await claimTask(agentId, later(1000), CAN))!;
-    expect(again.uploadId).not.toBe(task.uploadId);
-    await deliver(agentId, again, mp4, later(1000));
-    await finishTask(agentId, again.taskId, { ok: true, uploadId: again.uploadId, totalBytes: mp4.length }, later(1000));
+    const played = await editVideoRoute(new Request("http://localhost/x"), params(video.id));
+    expect(played.status).toBe(302);
+    expect(played.headers.get("location")).toMatch(/^\/api\/objetos\/montajes\//);
+    const download = await editVideoRoute(new Request("http://localhost/x?descargar=1"), params(video.id));
+    expect(download.headers.get("location")).toContain("n=eiswerk-video-");
+    // «Volver a montar»: versión 2, ahora con el clip de Higgsfield (sin copia propia).
+    await getDb().delete(schema.storedMedia);
+    await startEdit(dueno, video.id);
+    expect(await runEdit((await claimRun(new Date()))!, deps())).toBe("done");
+    expect(fetched).toEqual([CLIP]);
     expect((await editRows(video.id)).map((row) => row.version)).toEqual([1, 2]);
-    expect((await editVideoRoute(new Request("http://localhost/x?v=1", { headers: { Range: "bytes=0-9" } }), params(video.id))).status).toBe(206);
-    // Quien no ve el vídeo, 404.
-    await as(beto);
-    expect((await editVideoRoute(new Request("http://localhost/x"), params(video.id))).status).toBe(404);
-  });
-
-  it("un archivo que no es un vídeo de verdad deja el montaje fallido", async () => {
-    const { agentId } = await mac();
-    const video = await videoWithClip(dueno);
-    await startEdit(dueno, video.id, T0);
-    const task = (await claimTask(agentId, T0, CAN))!;
-    const fake = Buffer.concat([Buffer.from([0, 0, 0, 0x18]), Buffer.from("ftypisom"), Buffer.alloc(500, 7)]);
-    await deliver(agentId, task, fake);
-    await expect(finishTask(agentId, task.taskId, { ok: true, uploadId: task.uploadId, totalBytes: fake.length }, T0)).rejects.toMatchObject({ status: 400 });
-    expect(await getVideoFor(dueno, video.id)).toMatchObject({ editStatus: "fallido", editError: "El Mac entregó un archivo que no es un vídeo." });
-    expect(await editRows(video.id)).toEqual([]);
   });
 
   it("si el montador no puede, el vídeo lo dice con su motivo y se puede volver a montar", async () => {
-    const { agentId } = await mac();
+    const video = await videoWithClip(dueno, { title: "falla" });
+    await startEdit(dueno, video.id);
+    expect(await runEdit((await claimRun(new Date()))!, deps())).toBe("failed");
+    expect(await getVideoFor(dueno, video.id)).toMatchObject({ editStatus: "fallido", editError: "No se pudo montar: Falta un clip descargado" });
+    expect((await videoView(dueno, video.id)).edit).toMatchObject({ status: "fallido", canStart: true });
+  });
+
+  it("sin la fuente de los rótulos, falla con un motivo claro", async () => {
     const video = await videoWithClip(dueno);
-    await startEdit(dueno, video.id, T0);
-    const task = (await claimTask(agentId, T0, CAN))!;
-    await finishTask(agentId, task.taskId, { ok: false, uploadId: task.uploadId, error: "La canción se acaba antes que el vídeo" }, T0);
-    expect((await videoView(dueno, video.id)).edit).toMatchObject({
-      status: "fallido",
-      error: "No se pudo montar: La canción se acaba antes que el vídeo",
-      canStart: true,
-      latest: null,
-    });
-    expect((await startEdit(dueno, video.id)).taskId).toBeGreaterThan(task.taskId);
+    await startEdit(dueno, video.id);
+    expect(await runEdit((await claimRun(new Date()))!, deps({ font: path.join(sampleDir, "no-existe.ttf") }))).toBe("failed");
+    expect((await getVideoFor(dueno, video.id)).editError).toBe("No se pudo montar: falta la fuente de los rótulos en el servidor");
+  });
+
+  it("sin almacén, el MP4 va a la base de datos y se sirve con Range", async () => {
+    setObjectStoreForTests(null);
+    const video = await videoWithClip(dueno);
+    await startEdit(dueno, video.id);
+    expect(await runEdit((await claimRun(new Date()))!, deps({ store: null }))).toBe("done");
+    expect((await editRows(video.id))[0]).toMatchObject({ storageKey: null, size: mp4.length });
+    const partial = await editVideoResponse(dueno, video.id, "bytes=0-99");
+    expect(partial.status).toBe(206);
+    expect((await partial.arrayBuffer()).byteLength).toBe(100);
+    expect((await editVideoResponse(dueno, video.id, `bytes=${mp4.length + 10}-`)).status).toBe(416);
+  });
+
+  it("un montaje sin latido vuelve a la cola; a los 3 intentos falla y el vídeo lo dice", async () => {
+    const video = await videoWithClip(dueno);
+    const { runId } = await startEdit(dueno, video.id, T0);
+    for (let attempt = 1; attempt <= MAX_RUN_ATTEMPTS; attempt++) {
+      const claimed = await claimRun(later(attempt * 10 * 60_000));
+      expect(claimed?.id).toBe(runId);
+      await requeueStaleRuns(later(attempt * 10 * 60_000 + RUN_STALE_MS + 1000));
+    }
+    expect(await runRow(runId)).toMatchObject({ status: "failed", attempts: MAX_RUN_ATTEMPTS });
+    expect(await getVideoFor(dueno, video.id)).toMatchObject({ editStatus: "fallido", editError: INTERRUPTED });
+  });
+
+  it("varias personas a la vez: cada proceso monta como mucho MONTAJE_CONCURRENCIA a la vez, por orden", async () => {
+    const ids: number[] = [];
+    for (const user of [ana, beto, dueno]) {
+      const video = await videoWithClip(user, {}, await makeProduct(user, { name: "P" }));
+      ids.push((await startEdit(user, video.id)).runId);
+    }
+    await editLoopTick(deps());
+    const running = (await getDb().select().from(schema.editRuns)).filter((run) => run.status !== "queued");
+    expect(running.map((run) => run.id)).toEqual(ids.slice(0, MONTAJE_CONCURRENCY));
+    await waitForActiveEdits();
+    await editLoopTick(deps());
+    await waitForActiveEdits();
+    expect((await getDb().select().from(schema.editRuns)).map((run) => run.status)).toEqual(["done", "done", "done"]);
   });
 });
 
-describe("reservas y sesiones (fencing)", () => {
-  it("una reserva caducada vuelve a la cola con otra sesión: los trozos y el cierre de la anterior dan 409", async () => {
-    const { agentId } = await mac();
-    const video = await videoWithClip(dueno);
-    await startEdit(dueno, video.id, T0);
-    const first = (await claimTask(agentId, T0, CAN))!;
-    await appendTaskChunk(agentId, first.taskId, first.uploadId, 0, mp4.subarray(0, 1000), T0);
-    // Sin latido en 5 minutos: vuelve a la cola.
-    await expireLeases(later(LEASE_MS + 1));
-    expect((await taskRow(first.taskId)).status).toBe("queued");
-    const second = (await claimTask(agentId, later(LEASE_MS + 2), CAN))!;
-    expect(second.taskId).toBe(first.taskId);
-    expect(second.uploadId).not.toBe(first.uploadId);
-    const now = later(LEASE_MS + 3);
-    await expect(appendTaskChunk(agentId, first.taskId, first.uploadId, 1, mp4.subarray(1000, 2000), now)).rejects.toMatchObject(TASK_LOST);
-    await expect(finishTask(agentId, first.taskId, { ok: true, uploadId: first.uploadId, totalBytes: mp4.length }, now)).rejects.toMatchObject(TASK_LOST);
-    await expect(finishTask(agentId, first.taskId, { ok: false, uploadId: first.uploadId, error: "x" }, now)).rejects.toMatchObject(TASK_LOST);
-    // Otro Mac no puede tocarla.
-    const other = await createAgentToken(dueno, "Otro");
-    await expect(appendTaskChunk(other.agentId, second.taskId, second.uploadId, 0, mp4.subarray(0, 1000), now)).rejects.toMatchObject(TASK_LOST);
-    // La sesión nueva empieza de cero y entrega.
-    await deliver(agentId, second, mp4, now);
-    await finishTask(agentId, second.taskId, { ok: true, uploadId: second.uploadId, totalBytes: mp4.length }, now);
-    expect((await editRows(video.id)).map((row) => row.size)).toEqual([mp4.length]);
+describe("enlaces para el montaje", () => {
+  it("la referencia de edición se trae en la nube si se puede (una sola vez por enlace)", async () => {
+    const video = await videoWithClip(dueno, { editReferenceUrl: REEL });
+    await startEdit(dueno, video.id);
+    expect(await runEdit((await claimRun(new Date()))!, deps({ runYtDlp: ytDlp(true) }))).toBe("done");
+    const [media] = await getDb().select().from(schema.linkMedia);
+    expect(media).toMatchObject({ url: REEL, status: "ready", objectKey: `enlaces/${media.id}.mp4`, mime: "video/mp4" });
+    expect(await store.head(media.objectKey!)).toBe(mp4.length);
+    // rea-video no está (pruebas): se monta con el patrón de siempre y se apunta; no se vuelve a intentar.
+    expect(media.breakdownStatus).toBe("failed");
+    expect((await editRows(video.id))[0].selfCheck).toMatchObject({ avisos: expect.arrayContaining([expect.stringContaining("rea-video")]) });
   });
 
-  it("un montaje dura como mucho una hora reservado; después falla y el vídeo lo dice", async () => {
+  it("si la nube no puede, lo trae el Mac y el montaje espera; con el enlace ya en el almacén, monta", async () => {
     const { agentId } = await mac();
-    const video = await videoWithClip(dueno);
-    await startEdit(dueno, video.id, T0);
-    const task = (await claimTask(agentId, T0, CAN))!;
-    // Con latidos, a los 40 minutos sigue (más que los 30 de un enlace).
-    for (let minute = 4; minute <= 40; minute += 4) {
-      await agentHeartbeat(agentId, { version: "1.3.0", ytDlp: null }, later(minute * 60_000));
-      await getDb().update(schema.agentTasks).set({ leaseExpiresAt: later(minute * 60_000 + LEASE_MS) }).where(eq(schema.agentTasks.id, task.taskId));
-      await expireLeases(later(minute * 60_000));
+    const video = await videoWithClip(dueno, { editReferenceUrl: REEL });
+    const { runId } = await startEdit(dueno, video.id);
+    expect(await runEdit((await claimRun(new Date()))!, deps())).toBe("deferred");
+    // Vuelve a la cola sin gastar el intento, para dentro de un minuto.
+    expect(await runRow(runId)).toMatchObject({ status: "queued", attempts: 0 });
+    expect(await claimRun(new Date())).toBeNull();
+    // El Mac 1.4.0 se lleva la tarea y entrega el vídeo; uno anterior no la ve.
+    expect(await claimTask(agentId, new Date())).toBeNull();
+    const task = (await claimTask(agentId, new Date(), CAN)) as ClaimedTask & { kind: string };
+    expect(task).toMatchObject({ kind: "enlace_medio", url: REEL });
+    for (let index = 0; index * CHUNK_BYTES < mp4.length; index++) {
+      await appendTaskChunk(agentId, task.taskId, task.uploadId, index, mp4.subarray(index * CHUNK_BYTES, (index + 1) * CHUNK_BYTES));
     }
-    expect((await taskRow(task.taskId)).status).toBe("leased");
-    await getDb().update(schema.agentTasks).set({ leaseExpiresAt: later(MAX_MONTAJE_LEASE_AGE_MS + LEASE_MS) }).where(eq(schema.agentTasks.id, task.taskId));
-    await expireLeases(later(MAX_MONTAJE_LEASE_AGE_MS + 1));
-    expect((await taskRow(task.taskId)).status).toBe("failed");
-    expect(await getVideoFor(dueno, video.id)).toMatchObject({ editStatus: "fallido", editError: MONTAJE_TOO_SLOW });
+    await finishTask(agentId, task.taskId, { ok: true, uploadId: task.uploadId, totalBytes: mp4.length });
+    expect((await getDb().select().from(schema.linkMedia))[0]).toMatchObject({ status: "ready" });
+    await getDb().update(schema.editRuns).set({ availableAt: new Date() }).where(eq(schema.editRuns.id, runId));
+    expect(await runEdit((await claimRun(new Date()))!, deps())).toBe("done");
+  });
+
+  it("si el Mac no responde, monta sin la referencia y lo avisa (nada se bloquea)", async () => {
+    await mac(new Date(Date.now() - 10 * 60_000));
+    const video = await videoWithClip(dueno, { editReferenceUrl: REEL });
+    await startEdit(dueno, video.id);
+    expect(await runEdit((await claimRun(new Date()))!, deps())).toBe("done");
+    const [edit] = await editRows(video.id);
+    expect(edit.selfCheck).toMatchObject({ referencia: false, avisos: expect.arrayContaining([expect.stringContaining("El Mac no responde")]) });
+  });
+
+  it("«Audio original» de un enlace: se saca su audio para el montador", async () => {
+    const video = await videoWithClip(dueno, { referenceSource: "link", referenceUrl: REEL });
+    await startEdit(dueno, video.id);
+    expect(await runEdit((await claimRun(new Date()))!, deps({ runYtDlp: ytDlp(true) }))).toBe("done");
+    expect((await editRows(video.id))[0].selfCheck).toMatchObject({ ok: true });
   });
 });
 
@@ -450,44 +431,28 @@ describe("el lote", () => {
     const batch = await createBatch(dueno, "Lote");
     const product = await makeProduct(dueno, { name: "EisWerk" });
     const list: Video[] = [];
-    for (let i = 0; i < n; i++) list.push(await videoWithClip(dueno, { batchId: batch.id }, product));
+    for (let i = 0; i < n; i++) list.push(await videoWithClip(dueno, { batchId: batch.id, ...(i === 1 ? { title: "falla" } : {}) }, product));
     await getDb().update(schema.batches).set({ status: "listo" }).where(eq(schema.batches.id, batch.id));
     return { batch, list };
   }
   const statusOf = async (batchId: number) => (await getDb().select().from(schema.batches).where(eq(schema.batches.id, batchId)))[0].status;
 
-  it("al quedar listo, un montaje por vídeo; con todos terminados (bien o con su motivo), «montado»", async () => {
-    const { agentId } = await mac();
+  it("al quedar listo, un montaje por vídeo (sin Mac); con todos terminados (bien o con su motivo), «montado»", async () => {
     const { batch, list } = await batchOf(2);
     await startBatchEdits(batch.id, T0);
-    // Repetirlo no duplica nada.
     await startBatchEdits(batch.id, T0);
-    expect(await getDb().select().from(schema.agentTasks)).toHaveLength(2);
+    expect(await getDb().select().from(schema.editRuns)).toHaveLength(2);
     expect(await statusOf(batch.id)).toBe("listo");
-
-    const a = (await claimTask(agentId, T0, CAN))!;
-    await deliver(agentId, a);
-    await finishTask(agentId, a.taskId, { ok: true, uploadId: a.uploadId, totalBytes: mp4.length }, T0);
+    expect(await runEdit((await claimRun(new Date()))!, deps())).toBe("done");
     expect(await statusOf(batch.id)).toBe("listo");
-    const b = (await claimTask(agentId, T0, CAN))!;
-    await finishTask(agentId, b.taskId, { ok: false, uploadId: b.uploadId, error: "Falta la fuente" }, T0);
+    expect(await runEdit((await claimRun(new Date()))!, deps())).toBe("failed");
     expect(await statusOf(batch.id)).toBe("montado");
-
     const view = await batchView(dueno, batch.id);
     expect(view.rows.map((row) => row.edit.status)).toEqual(["hecho", "fallido"]);
     expect(view.rows.map((row) => row.id)).toEqual(list.map((video) => video.id));
   });
 
-  it("sin Mac del dueño, cada vídeo queda «Montaje: necesita el Mac» y el lote, montado", async () => {
-    const { batch, list } = await batchOf(2);
-    await startBatchEdits(batch.id, T0);
-    for (const video of list) expect(await getVideoFor(dueno, video.id)).toMatchObject({ editStatus: "fallido", editError: NEEDS_MAC });
-    expect(await statusOf(batch.id)).toBe("montado");
-    expect(await getDb().select().from(schema.agentTasks)).toHaveLength(0);
-  });
-
   it("un vídeo cuyo clip no se puede descargar queda fallido con el motivo; los demás se montan", async () => {
-    await mac();
     const { batch, list } = await batchOf(2);
     await getDb().update(schema.generationResults).set({ url: "https://otro-sitio.example/x.mp4" }).where(eq(schema.generationResults.jobId, (await getDb().select().from(schema.generationResults))[0].jobId));
     await startBatchEdits(batch.id, T0);
@@ -497,14 +462,8 @@ describe("el lote", () => {
 });
 
 describe("respuestas del vídeo montado", () => {
-  it("sin montaje, 404; un rango fuera, 416", async () => {
-    const { agentId } = await mac();
+  it("sin montaje, 404", async () => {
     const video = await videoWithClip(dueno);
     await expect(editVideoResponse(dueno, video.id, null)).rejects.toMatchObject({ status: 404 });
-    await startEdit(dueno, video.id, T0);
-    const task = (await claimTask(agentId, T0, CAN))!;
-    await deliver(agentId, task);
-    await finishTask(agentId, task.taskId, { ok: true, uploadId: task.uploadId, totalBytes: mp4.length }, T0);
-    expect((await editVideoResponse(dueno, video.id, `bytes=${mp4.length + 10}-`)).status).toBe(416);
   });
 });

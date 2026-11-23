@@ -560,7 +560,7 @@ describe("descarga del clip", () => {
 
     const clipId = await sendClip();
     await finish(clipId, () => `${CDN}/clip-1.mp4`);
-    const expected = { url: `${CDN}/clip-1.mp4`, filename: `brillomax-nandu-video-${v.id}.mp4` };
+    const expected = { url: `${CDN}/clip-1.mp4`, jobId: expect.any(String), filename: `brillomax-nandu-video-${v.id}.mp4` };
     expect(await clipDownload(ana, v.id)).toEqual(expected);
     expect(await clipDownload(dueno, v.id)).toEqual(expected);
     await expect(clipDownload(luis, v.id)).rejects.toMatchObject({ status: 404, message: "Vídeo no encontrado." });

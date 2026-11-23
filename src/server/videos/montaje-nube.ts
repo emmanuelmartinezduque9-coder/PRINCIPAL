@@ -1,0 +1,445 @@
+import { createWriteStream } from "node:fs";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
+import { and, eq, inArray, lt, sql } from "drizzle-orm";
+import { getDb, schema } from "@/db/client";
+import { getObjectStore, type ObjectStore } from "@/lib/object-store";
+import { macOnline } from "@/server/agent-tasks";
+import { downloadLinkMedia, ensureLinkMedia, fetchInCloud, macTaskStatus, requestFromMac, saveBreakdown, type FetchDeps } from "@/server/link-media";
+import { extractAudio, MediaError, probeVideo } from "@/server/media/ffmpeg";
+import { killPrograms, lastLine, runProgram } from "@/server/media/programs";
+import { readSongFile } from "@/server/songs";
+import { storedOriginalKey } from "@/server/videos/archive";
+import { openClipStream } from "@/server/videos/clip";
+import { batchOfVideo, cleanSelfCheck, failEdit, MAX_EDIT_BYTES, readReferenceAudio, saveEdit, settleBatch, type EditSpec } from "@/server/videos/edits";
+
+/**
+ * El montaje en la nube: el proceso en segundo plano de Railway monta los vídeos de la cola
+ * `edit_runs` con el montador de siempre (`montador/montar_auto.py`, Python con librosa; los
+ * rótulos con `texto06b.py`, igual que el Swift del Mac) y rea-video para la referencia de edición.
+ *
+ * - **Varias personas a la vez**: cada proceso monta hasta `MONTAJE_CONCURRENCIA` vídeos a la vez
+ *   (2 por defecto); el resto espera en la cola, por orden de llegada. Reservar es `for update
+ *   skip locked`: dos procesos nunca montan el mismo.
+ * - **Latido** cada 30 s. Un montaje sin latido en 3 minutos (el proceso se reinició, una
+ *   publicación nueva) vuelve a la cola; a los 3 intentos falla y el vídeo lo dice.
+ * - **Entradas**: los clips del almacén propio (o de Higgsfield si aún no se copiaron), la canción
+ *   de la biblioteca, el audio de la referencia y la referencia de edición (`link-media.ts`: la
+ *   nube con yt-dlp y, si no puede, el Mac). Mientras el Mac trae un enlace y da señales, el
+ *   montaje espera (hasta 20 minutos desde que se pidió); si el Mac no responde, monta sin ese
+ *   enlace y lo avisa. Nada importante depende del Mac.
+ * - **Salida**: el MP4 al almacén (`montajes/<vídeo>/<montaje>.mp4`; sin almacén, a la base de
+ *   datos) y una versión nueva en `edits`.
+ */
+
+export const MONTAJE_CONCURRENCY = Math.max(1, Math.min(8, Number(process.env.MONTAJE_CONCURRENCIA) || 2));
+export const RUN_HEARTBEAT_MS = 30_000;
+export const RUN_STALE_MS = 3 * 60_000;
+export const MAX_RUN_ATTEMPTS = 3;
+export const MONTADOR_TIMEOUT_MS = 25 * 60_000;
+export const REA_VIDEO_TIMEOUT_MS = 10 * 60_000;
+/** Lo más que un montaje espera a que el Mac traiga un enlace, desde que se pidió el montaje. */
+export const LINK_WAIT_MAX_MS = 20 * 60_000;
+/** Cada cuánto se vuelve a mirar si el enlace ya llegó. */
+export const LINK_RECHECK_MS = 60_000;
+/** Dónde está la fuente de los rótulos en el almacén (se sube una vez: `scripts/subir-fuente.ts`). */
+export const FONT_KEY = "recursos/fuentes/TikTok-Display-Medium.ttf";
+
+export const INTERRUPTED = "El montaje se interrumpió varias veces. Vuelve a montarlo.";
+export const INTERNAL = "No se pudo montar: error interno del montaje.";
+export const montajeFailure = (detail: string) => `No se pudo montar: ${detail || "el montador no dio detalles"}`;
+
+const runs = schema.editRuns;
+type Run = typeof runs.$inferSelect;
+const messageOf = (error: unknown) => (error instanceof Error ? error.message : String(error)).slice(0, 500);
+
+export interface MontajeDeps {
+  store?: ObjectStore | null;
+  fetch?: typeof fetch;
+  now?: () => Date;
+  /** Python con las dependencias del montador (`MONTADOR_PYTHON`, por defecto `python3`). */
+  python?: string;
+  /** Python con rea-video (`REA_VIDEO_PYTHON`; sin él, el del montador). `null`: no desglosar. */
+  reaPython?: string | null;
+  /** Fuente de los rótulos ya en el disco (si no, `MONTADOR_FUENTE` o la del almacén). */
+  font?: string;
+  /** Carpeta del montador (por defecto `montador/` del proyecto). */
+  montadorDir?: string;
+  /** yt-dlp simulado (pruebas). */
+  runYtDlp?: FetchDeps["runYtDlp"];
+}
+
+const nowOf = (deps: MontajeDeps) => deps.now?.() ?? new Date();
+
+// ───────────────────────── Cola ─────────────────────────
+
+/** Reserva el montaje más antiguo cuya hora ha llegado; `null` si no hay. */
+export async function claimRun(now: Date): Promise<Run | null> {
+  const result = await getDb().execute<{ id: string }>(sql`
+    update edit_runs set status = 'running', attempts = attempts + 1, started_at = ${now.toISOString()}::timestamptz,
+      heartbeat_at = ${now.toISOString()}::timestamptz
+    where id = (
+      select id from edit_runs where status = 'queued' and available_at <= ${now.toISOString()}::timestamptz
+      order by id limit 1 for update skip locked)
+    returning id`);
+  const id = result.rows[0]?.id;
+  if (!id) return null;
+  const [run] = await getDb().select().from(runs).where(eq(runs.id, Number(id)));
+  return run ?? null;
+}
+
+/** Montajes sin latido: vuelven a la cola o, agotados los intentos, fallan. */
+export async function requeueStaleRuns(now: Date): Promise<void> {
+  const stale = await getDb()
+    .select()
+    .from(runs)
+    .where(and(eq(runs.status, "running"), lt(runs.heartbeatAt, new Date(now.getTime() - RUN_STALE_MS))));
+  for (const run of stale) {
+    if (run.attempts < MAX_RUN_ATTEMPTS) {
+      await getDb()
+        .update(runs)
+        .set({ status: "queued", availableAt: now })
+        .where(and(eq(runs.id, run.id), eq(runs.status, "running"), lt(runs.heartbeatAt, new Date(now.getTime() - RUN_STALE_MS))));
+    } else {
+      await finishFailed(run, INTERRUPTED, "sin latido", now);
+    }
+  }
+}
+
+async function finishFailed(run: Run, shown: string, detail: string, now: Date, notes: string[] = []): Promise<void> {
+  await getDb().transaction(async (tx) => {
+    const [row] = await tx
+      .update(runs)
+      .set({ status: "failed", error: detail.slice(0, 500), finishedAt: now, notes })
+      .where(and(eq(runs.id, run.id), eq(runs.status, "running")))
+      .returning({ id: runs.id });
+    if (row) await failEdit(tx, run.videoId, run.id, shown);
+  });
+  await settleBatch(await batchOfVideo(run.videoId));
+}
+
+/** Devuelve el montaje a la cola para dentro de `delayMs` sin gastar un intento (espera a un enlace). */
+async function defer(run: Run, delayMs: number, now: Date): Promise<void> {
+  await getDb()
+    .update(runs)
+    .set({ status: "queued", attempts: sql`greatest(${runs.attempts} - 1, 0)`, availableAt: new Date(now.getTime() + delayMs) })
+    .where(and(eq(runs.id, run.id), eq(runs.status, "running")));
+}
+
+// ───────────────────────── Programas ─────────────────────────
+
+/** Mata los programas en marcha (al parar el proceso). */
+export function killMontajePrograms(): void {
+  killPrograms();
+}
+
+const fontCache = path.join(os.tmpdir(), "principal-recursos");
+
+/** La fuente de los rótulos en el disco: la indicada, `MONTADOR_FUENTE` o la del almacén (se baja una vez). */
+async function fontFile(store: ObjectStore | null, deps: MontajeDeps): Promise<string | null> {
+  for (const candidate of [deps.font, process.env.MONTADOR_FUENTE]) {
+    if (candidate && (await fs.stat(candidate).then((s) => s.isFile(), () => false))) return candidate;
+  }
+  if (!store) return null;
+  const target = path.join(fontCache, path.basename(FONT_KEY));
+  if (await fs.stat(target).then((s) => s.size > 0, () => false)) return target;
+  if ((await store.head(FONT_KEY)) === null) return null;
+  await fs.mkdir(fontCache, { recursive: true });
+  const temp = `${target}.${process.pid}.tmp`;
+  await store.download(FONT_KEY, temp);
+  await fs.rename(temp, target);
+  return target;
+}
+
+// ───────────────────────── Entradas ─────────────────────────
+
+/** Un clip a `target`: del almacén propio si ya está copiado; si no, de Higgsfield. */
+async function fetchClip(clip: EditSpec["clips"][number], target: string, store: ObjectStore | null, deps: MontajeDeps): Promise<void> {
+  const key = store && clip.jobId ? await storedOriginalKey(clip.jobId) : null;
+  if (store && key) {
+    await store.download(key, target);
+    return;
+  }
+  const { body } = await openClipStream(clip.url, { fetch: deps.fetch });
+  await pipeline(Readable.fromWeb(body as import("node:stream/web").ReadableStream), createWriteStream(target));
+}
+
+type LinkOutcome = { file: string | null; breakdown: string | null; defer: boolean };
+
+/**
+ * Lo que hace falta de un enlace (`kind`: referencia de edición o audio de la referencia). Lo
+ * baja si ya está; si no, lo intenta en la nube y, si no puede, se lo pide al Mac y dice si
+ * merece la pena esperar (`defer`). Lo que no llega se apunta en `notes`.
+ */
+async function resolveLink(
+  url: string,
+  kind: "edicion" | "audio",
+  run: Run,
+  dir: string,
+  store: ObjectStore | null,
+  notes: string[],
+  deps: MontajeDeps,
+): Promise<LinkOutcome> {
+  const what = kind === "edicion" ? "la referencia de edición" : "el audio de la referencia";
+  const none: LinkOutcome = { file: null, breakdown: null, defer: false };
+  if (!store) {
+    notes.push(`Sin almacén de archivos: se monta sin ${what}`);
+    return none;
+  }
+  let row = await ensureLinkMedia(url);
+  if (!row) {
+    notes.push(`El enlace de ${what} no es de un sitio admitido: se monta sin ${what}`);
+    return none;
+  }
+  if (row.status === "pending" && !row.cloudTriedAt) {
+    await fetchInCloud(row, { store, runYtDlp: deps.runYtDlp, now: deps.now });
+    row = (await ensureLinkMedia(url))!;
+  }
+  if (row.status === "pending") {
+    const task = await macTaskStatus(row);
+    if (task === null || task === "done" || task === "failed") {
+      if (!(await requestFromMac(row, nowOf(deps)))) {
+        notes.push(`La nube no pudo traer ${what} y no hay Mac: se monta sin ella`);
+        return none;
+      }
+    }
+    const waited = nowOf(deps).getTime() - run.createdAt.getTime();
+    if (waited < LINK_WAIT_MAX_MS && (await macOnline(nowOf(deps)))) return { ...none, defer: true };
+    notes.push(`El Mac no responde y la nube no pudo traer ${what}: se monta sin ella`);
+    return none;
+  }
+  if (row.status !== "ready") {
+    notes.push(`No se pudo traer ${what}: se monta sin ella`);
+    return none;
+  }
+  const file = path.join(dir, kind === "edicion" ? "referencia-edicion.mp4" : "referencia-audio.mp4");
+  await downloadLinkMedia(row, file, { store });
+  if (kind === "audio") return { file, breakdown: null, defer: false };
+
+  // El desglose de rea-video se hace una vez por enlace.
+  let breakdown = row.breakdownStatus === "done" ? row.breakdown : null;
+  if (row.breakdownStatus === null) {
+    breakdown = await decompose(file, dir, deps);
+    await saveBreakdown(row.id, breakdown, nowOf(deps));
+    if (!breakdown) notes.push("rea-video no pudo analizar la referencia de edición: se monta con el patrón de siempre");
+  }
+  if (!breakdown) return { file, breakdown: null, defer: false };
+  const breakdownFile = path.join(dir, "breakdown.json");
+  await fs.writeFile(breakdownFile, JSON.stringify(breakdown));
+  return { file, breakdown: breakdownFile, defer: false };
+}
+
+/** rea-video `decompose` de un vídeo: su `breakdown.json` o `null`. */
+async function decompose(file: string, dir: string, deps: MontajeDeps): Promise<unknown | null> {
+  const python = deps.reaPython === undefined ? process.env.REA_VIDEO_PYTHON || deps.python || process.env.MONTADOR_PYTHON || "python3" : deps.reaPython;
+  if (!python) return null;
+  const out = path.join(dir, "rea");
+  const ran = await runProgram(python, ["-m", "rea_video", "decompose", file, "-o", out], { cwd: dir, timeoutMs: REA_VIDEO_TIMEOUT_MS, env: safeEnv() });
+  if (ran.code !== 0) {
+    console.warn(`[montaje] rea-video no pudo: ${ran.timedOut ? "tardó demasiado" : lastLine(ran.stderr)}`);
+    return null;
+  }
+  try {
+    return JSON.parse(await fs.readFile(path.join(out, "breakdown.json"), "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+/** Entorno de los programas: sin secretos de la web (base de datos, bóveda, claves). */
+function safeEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv {
+  const keep = ["PATH", "HOME", "LANG", "LC_ALL", "TMPDIR", "PYTHONPATH", "UV_CACHE_DIR", "XDG_CACHE_HOME", "NUMBA_CACHE_DIR", "MPLCONFIGDIR", "EMOJI_FONT", "REA_VIDEO_HOME", "REA_VIDEO_MODELS"];
+  const env: Record<string, string> = {};
+  for (const name of keep) if (process.env[name]) env[name] = process.env[name]!;
+  return { ...env, PYTHONDONTWRITEBYTECODE: "1", ...extra } as unknown as NodeJS.ProcessEnv;
+}
+
+const AUDIO_EXT: Record<string, string> = { "audio/mpeg": "mp3", "audio/mp4": "m4a", "audio/wav": "wav" };
+
+// ───────────────────────── Montar ─────────────────────────
+
+/**
+ * Monta el vídeo de un montaje ya reservado (`running`). Termina siempre: bien (versión nueva),
+ * mal (el vídeo dice por qué) o de vuelta a la cola (esperando un enlace del Mac).
+ */
+export async function runEdit(run: Run, deps: MontajeDeps = {}): Promise<"done" | "failed" | "deferred"> {
+  const store = deps.store === undefined ? getObjectStore() : deps.store;
+  const spec = run.spec as EditSpec;
+  const notes: string[] = [];
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), `montaje-${run.id}-`));
+  const beat = setInterval(() => {
+    void getDb().update(runs).set({ heartbeatAt: new Date() }).where(and(eq(runs.id, run.id), eq(runs.status, "running"))).catch(() => {});
+  }, RUN_HEARTBEAT_MS);
+  try {
+    // 1. Enlaces (antes de bajar nada: si hay que esperar al Mac, no se ha gastado nada).
+    const editRef = spec.editReferenceUrl ? await resolveLink(spec.editReferenceUrl, "edicion", run, dir, store, notes, deps) : null;
+    const audioLink = spec.referenceAudio?.source === "enlace" ? await resolveLink(spec.referenceAudio.url, "audio", run, dir, store, notes, deps) : null;
+    if (editRef?.defer || audioLink?.defer) {
+      await defer(run, LINK_RECHECK_MS, nowOf(deps));
+      return "deferred";
+    }
+
+    // 2. Clips, canción, audio de la referencia y fuente.
+    const clips: Array<{ role: string; path: string }> = [];
+    for (const [i, clip] of spec.clips.entries()) {
+      const target = path.join(dir, `clip-${i}.mp4`);
+      try {
+        await fetchClip(clip, target, store, deps);
+      } catch (error) {
+        await finishFailed(run, montajeFailure("no se pudo descargar un clip"), messageOf(error), nowOf(deps), notes);
+        return "failed";
+      }
+      clips.push({ role: clip.role, path: target });
+    }
+    let song: (NonNullable<EditSpec["song"]> & { path: string }) | null = null;
+    if (spec.song) {
+      const file = await readSongFile(spec.song.id);
+      if (!file) {
+        await finishFailed(run, montajeFailure("la canción ya no está en la biblioteca"), "canción borrada", nowOf(deps), notes);
+        return "failed";
+      }
+      const songPath = path.join(dir, `cancion.${AUDIO_EXT[file.mime] ?? "mp3"}`);
+      await fs.writeFile(songPath, file.data);
+      song = { ...spec.song, path: songPath };
+    }
+    let referenceAudio: { path: string } | null = null;
+    if (spec.referenceAudio?.source === "web") {
+      const audio = await readReferenceAudio(spec.videoId);
+      if (audio) {
+        referenceAudio = { path: path.join(dir, "referencia-audio.m4a") };
+        await fs.writeFile(referenceAudio.path, audio.data);
+      } else notes.push("No está el audio de la referencia: el vídeo queda sin él");
+    } else if (audioLink?.file) {
+      const out = path.join(dir, "referencia-audio.m4a");
+      try {
+        if (await extractAudio(audioLink.file, out)) referenceAudio = { path: out };
+        else notes.push("La referencia no trae audio: el vídeo queda sin él");
+      } catch (error) {
+        if (!(error instanceof MediaError)) throw error;
+        notes.push("No se pudo sacar el audio de la referencia: el vídeo queda sin él");
+      }
+    }
+    const font = await fontFile(store, deps);
+    if (!font) {
+      await finishFailed(run, montajeFailure("falta la fuente de los rótulos en el servidor"), "sin fuente", nowOf(deps), notes);
+      return "failed";
+    }
+
+    // 3. El montador.
+    const work = path.join(dir, "trabajo");
+    await fs.mkdir(work);
+    const specPath = path.join(dir, "ficha.json");
+    await fs.writeFile(
+      specPath,
+      JSON.stringify({ ...spec, clips, song, referenceAudio, referencia: editRef?.breakdown ? { breakdown: editRef.breakdown } : null, avisos: notes }),
+    );
+    const montadorDir = deps.montadorDir ?? path.join(process.cwd(), "montador");
+    const python = deps.python ?? process.env.MONTADOR_PYTHON ?? "python3";
+    const ran = await runProgram(python, ["-B", path.join(montadorDir, "montar_auto.py"), specPath, work], {
+      cwd: montadorDir,
+      timeoutMs: MONTADOR_TIMEOUT_MS,
+      env: safeEnv({ MONTADOR_FUENTE: font, MONTADOR_CACHE: path.join(os.tmpdir(), "montador-cache") }),
+    });
+    let result: { ok?: boolean; error?: string; autocomprobacion?: unknown; avisos?: unknown } | null = null;
+    try {
+      result = JSON.parse(await fs.readFile(path.join(work, "resultado.json"), "utf8"));
+    } catch {
+      result = null;
+    }
+    if (!result || result.ok !== true) {
+      const detail = ran.timedOut ? "el montador tardó más de 25 minutos" : (result?.error ?? (lastLine(ran.stderr) ?? "el montador no dejó resultado"));
+      await finishFailed(run, montajeFailure(String(detail).slice(0, 250)), String(detail), nowOf(deps), notes);
+      return "failed";
+    }
+
+    // 4. Guardar.
+    const output = path.join(work, "salida.mp4");
+    const { size } = await fs.stat(output);
+    if (size <= 0 || size > MAX_EDIT_BYTES) {
+      await finishFailed(run, montajeFailure("el vídeo montado pesa más de 200 MB"), `tamaño ${size}`, nowOf(deps), notes);
+      return "failed";
+    }
+    const { durationMs } = await probeVideo(output);
+    const key = store ? `montajes/${spec.videoId}/${run.id}.mp4` : null;
+    if (store && key) await store.putFile(key, output, { contentType: "video/mp4" });
+    const bytes = key ? null : await fs.readFile(output);
+    const avisos = Array.isArray(result.avisos) ? result.avisos.filter((a): a is string => typeof a === "string") : [];
+    const check = cleanSelfCheck({ ...(result.autocomprobacion as object), referencia: !!editRef?.breakdown });
+    if (check) check.avisos = [...new Set([...avisos, ...check.avisos])].slice(0, 20);
+    const finished = await getDb().transaction(async (tx) => {
+      const [row] = await tx
+        .update(runs)
+        .set({ status: "done", finishedAt: nowOf(deps), error: null, notes: avisos })
+        .where(and(eq(runs.id, run.id), eq(runs.status, "running")))
+        .returning({ id: runs.id });
+      if (!row) return false;
+      await saveEdit(tx, { videoId: spec.videoId, runId: run.id, size, storageKey: key, bytes, durationMs, selfCheck: check }, nowOf(deps));
+      return true;
+    });
+    if (!finished && store && key) await store.delete(key).catch(() => {});
+    await settleBatch(await batchOfVideo(spec.videoId));
+    return finished ? "done" : "failed";
+  } catch (error) {
+    console.error(`[montaje] el montaje ${run.id} falló: ${messageOf(error)}`);
+    await finishFailed(run, INTERNAL, messageOf(error), nowOf(deps), notes).catch(() => {});
+    return "failed";
+  } finally {
+    clearInterval(beat);
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+}
+
+// ───────────────────────── Bucle del proceso en segundo plano ─────────────────────────
+
+const active = new Map<number, Promise<unknown>>();
+let timer: NodeJS.Timeout | null = null;
+let stopping = false;
+
+/** Una vuelta: devuelve a la cola lo que se quedó sin latido y llena los huecos libres. */
+export async function editLoopTick(deps: MontajeDeps = {}): Promise<void> {
+  if (stopping) return;
+  const now = nowOf(deps);
+  await requeueStaleRuns(now);
+  while (!stopping && active.size < MONTAJE_CONCURRENCY) {
+    const run = await claimRun(nowOf(deps));
+    if (!run) break;
+    const job = runEdit(run, deps).finally(() => active.delete(run.id));
+    active.set(run.id, job);
+  }
+}
+
+/** Arranca el bucle de montajes (cada 10 s) en el proceso en segundo plano. */
+export function startEditLoop(): void {
+  if (timer) return;
+  stopping = false;
+  const tick = () => editLoopTick().catch((error) => console.error(`[montaje] ${messageOf(error)}`));
+  timer = setInterval(tick, 10_000);
+  void tick();
+  console.log(`[montaje] en marcha (${MONTAJE_CONCURRENCY} a la vez)`);
+}
+
+/**
+ * Para el bucle: no reserva más, mata los programas en marcha y devuelve sus montajes a la cola
+ * (sin gastar el intento) para que el proceso nuevo los haga.
+ */
+export async function stopEditLoop(): Promise<void> {
+  stopping = true;
+  if (timer) clearInterval(timer);
+  timer = null;
+  const ids = [...active.keys()];
+  if (ids.length > 0) {
+    await getDb()
+      .update(runs)
+      .set({ status: "queued", attempts: sql`greatest(${runs.attempts} - 1, 0)`, availableAt: new Date() })
+      .where(and(inArray(runs.id, ids), eq(runs.status, "running")));
+  }
+  killMontajePrograms();
+}
+
+/** Solo para pruebas: espera a que terminen los montajes en marcha. */
+export async function waitForActiveEdits(): Promise<void> {
+  await Promise.allSettled([...active.values()]);
+}

@@ -763,6 +763,8 @@ El dueño pidió que la app se viera profesional e intuitiva, con imágenes ante
 
 ## Montaje automático en el Mac (22/11)
 
+> **Sustituido el 23/11/2026**: el montaje se hace en la nube y el Mac solo trae enlaces. Ver `docs/decisiones-almacen-y-montaje-nube.md`.
+
 - **Cuándo**: al quedar un lote `listo` (`onBatchReady`, registrado en `src/jobs/video-jobs.ts` porque `edits.ts` no puede importar `lote.ts` sin ciclo), un montaje por vídeo del lote (los de quien lo creó, sin «Saltar»), solo si hay un Mac del dueño (ficha en vigor; no hace falta que esté conectado en ese momento: la tarea espera en su cola). Sin Mac, cada vídeo queda «Montaje: necesita el Mac». A mano: «Montar» / «Volver a montar» (quien creó el vídeo o el dueño, como la música). Un solo montaje vivo por vídeo (índice único parcial).
 - **Estado del lote**: nuevo estado final `montado` cuando todos los vídeos tienen su montaje `hecho` o `fallido` (con su motivo). Se comprueba al cerrar cada montaje y en el seguimiento de cada minuto. En los pasos del tablero «Listo» pasa a «Montaje» (n montados / total).
 - **Tarea `montaje`** en `agent_tasks` (`video_id` obligatorio, `payload` = la ficha). Se reserva como una canción: sesión de subida propia (`upload_id` nuevo en cada reserva) y la misma defensa: trozos y cierre solo con la sesión de la reserva en curso (409 si no), latido de 5 min, 3 intentos, máximo **60 min** reservada (30 los demás tipos), 6 h en cola, 10 min en cola sin señales del Mac. Primer trozo MP4 por contenido, máximo **200 MB**. Al cerrar, ffprobe mide la duración aquí (un archivo que no lee deja el montaje fallido). `cancelLinkTasks` solo cancela enlaces (pegar otro enlace no cancela un montaje).

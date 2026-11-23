@@ -94,24 +94,6 @@ mkdir -p "$DESTINO" "$(dirname "$PLIST")" "$(dirname "$REGISTRO")"
 cp "$ORIGEN/agente.mjs" "$ORIGEN/lib.mjs" "$ORIGEN/README.md" "$DESTINO/"
 echo "Programa copiado a $DESTINO"
 
-# 3b. El montaje automático: montador.py y montar_auto.py van a ~/.principal-tools/montador/ (la copia
-#     que se ejecuta). Si allí había otro montador.py distinto, se guarda al lado con la fecha.
-MONTADOR_ORIGEN="$ORIGEN/../montador"
-MONTADOR_DESTINO="$HOME/.principal-tools/montador"
-if [ -f "$MONTADOR_ORIGEN/montar_auto.py" ]; then
-  mkdir -p "$MONTADOR_DESTINO"
-  for archivo in montador.py montar_auto.py texto06b.swift; do
-    if [ -f "$MONTADOR_DESTINO/$archivo" ] && ! cmp -s "$MONTADOR_ORIGEN/$archivo" "$MONTADOR_DESTINO/$archivo"; then
-      cp "$MONTADOR_DESTINO/$archivo" "$MONTADOR_DESTINO/$archivo.anterior-$(date +%Y%m%d-%H%M%S)"
-    fi
-    cp "$MONTADOR_ORIGEN/$archivo" "$MONTADOR_DESTINO/"
-  done
-  echo "Montador copiado a $MONTADOR_DESTINO"
-  if [ -z "$(buscar uv)" ]; then
-    echo "Aviso: no se encuentra uv; el agente no aceptará montajes hasta que esté (en $RUTA)."
-  fi
-fi
-
 # 4. launchd: rutas completas, sin ~ ni PATH del terminal.
 escapar() { printf '%s' "$1" | sed -e 's/[&|\\]/\\&/g'; }
 sed -e "s|__HOME__|$(escapar "$HOME")|g" -e "s|__NODE__|$(escapar "$NODE")|g" -e "s|__PATH__|$(escapar "$RUTA")|g" "$ORIGEN/com.principal.agente.plist" > "$PLIST"

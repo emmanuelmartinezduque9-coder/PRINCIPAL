@@ -6,6 +6,10 @@ const ok = {
   VAULT_KEY: Buffer.alloc(32, 1).toString("base64"),
   ANTHROPIC_API_KEY: "k",
   PUBLIC_URL: "https://web.up.railway.app",
+  BUCKET_ENDPOINT: "https://t3.storageapi.dev",
+  BUCKET_NAME: "cubo",
+  BUCKET_ACCESS_KEY_ID: "k",
+  BUCKET_SECRET_ACCESS_KEY: "s",
 };
 
 describe("checkCloudEnv", () => {

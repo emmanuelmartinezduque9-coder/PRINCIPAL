@@ -1,4 +1,5 @@
 import { handle } from "@/server/http";
+import { mediaDownloadUrl } from "@/server/videos/archive";
 import { bodyDownload } from "@/server/videos/bodies";
 import { openClipStream } from "@/server/videos/clip";
 
@@ -12,7 +13,10 @@ const parseId = (value: string) => (/^[1-9]\d{0,15}$/.test(value) ? Number(value
 export async function GET(_request: Request, { params }: { params: Promise<{ bodyId: string }> }) {
   return handle(async (user) => {
     const { bodyId } = await params;
-    const { url, filename } = await bodyDownload(user!, parseId(bodyId));
+    const { url, jobId, filename } = await bodyDownload(user!, parseId(bodyId));
+    // Ya copiado al almacén propio: se descarga directamente de ahí (más rápido y sin pasar por Higgsfield).
+    const stored = jobId ? await mediaDownloadUrl(jobId, filename) : null;
+    if (stored) return new Response(null, { status: 302, headers: { Location: stored, "Cache-Control": "private, no-store" } });
     const { body, length } = await openClipStream(url);
     const headers = new Headers({
       "Content-Type": "video/mp4",

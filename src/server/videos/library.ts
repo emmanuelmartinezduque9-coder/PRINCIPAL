@@ -15,6 +15,7 @@ import type { AuthUser } from "@/server/auth";
 import { credentialStatus } from "@/server/credentials";
 import { HttpError } from "@/server/http";
 import { getProductFor, listProductsFor, productDisplayName } from "@/server/products";
+import { mediaLinks } from "@/server/videos/archive";
 import { servableClipUrl } from "@/server/videos/clip";
 
 /**
@@ -259,6 +260,8 @@ export interface LibraryClip {
   id: number;
   thumbUrl: string | null;
   videoUrl: string;
+  /** Vista ligera (MP4 pequeño sin sonido) del almacén propio; `null` si el clip aún no está copiado. */
+  previewUrl: string | null;
   /** El modelo y el principio del prompt, solo de los clips propios: de los ajenos (cuerpos de un producto) no se enseñan. */
   model: string | null;
   createdAt: Date;
@@ -343,14 +346,16 @@ export async function listLibrary(
       : await db.select({ id: schema.videos.id, productId: schema.videos.productId }).from(schema.videos).where(inArray(schema.videos.id, videoIds));
   const videoOf = new Map(videos.filter((video) => products.has(video.productId)).map((video) => [video.id, video]));
 
+  const links = await mediaLinks(page.map((row) => row.jobId));
   const [{ total }] = await db.select({ total: count() }).from(clips).where(eq(clips.userId, user.id));
   const { refreshedAt } = await refreshState(user.id);
   const now = deps.now?.() ?? new Date();
   return {
     clips: page.map((row) => ({
       id: row.id,
-      thumbUrl: row.thumbUrl,
-      videoUrl: row.videoUrl,
+      thumbUrl: links.get(row.jobId)?.thumb ?? row.thumbUrl,
+      videoUrl: links.get(row.jobId)?.original ?? row.videoUrl,
+      previewUrl: links.get(row.jobId)?.preview ?? null,
       // De un clip ajeno (cuerpo de un producto que se ve) solo se enseña el vídeo: ni modelo ni prompt.
       model: row.userId === user.id ? row.model : null,
       createdAt: row.createdAtHf,

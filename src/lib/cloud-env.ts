@@ -1,3 +1,4 @@
+import { bucketEnvState } from "./object-store";
 import { parseVaultKey } from "./vault-key";
 
 type Env = Record<string, string | undefined>;
@@ -41,6 +42,12 @@ export function checkCloudEnv(env: Env): { problems: string[]; warnings: string[
     problems.push("PUBLIC_URL debe empezar por https://.");
   } else if (!httpsOrigin(publicUrl)) {
     problems.push("PUBLIC_URL no es una dirección válida.");
+  }
+  const bucket = bucketEnvState(env);
+  if (bucket === "partial") {
+    problems.push("Faltan variables del almacén (BUCKET_ENDPOINT, BUCKET_NAME, BUCKET_ACCESS_KEY_ID y BUCKET_SECRET_ACCESS_KEY van juntas).");
+  } else if (bucket === "none") {
+    warnings.push("Sin almacén de archivos (BUCKET_*): los vídeos generados se sirven desde Higgsfield y no se copian.");
   }
   if (!env.ANTHROPIC_API_KEY?.trim()) {
     warnings.push("Falta ANTHROPIC_API_KEY: la IA no funcionará hasta añadirla.");

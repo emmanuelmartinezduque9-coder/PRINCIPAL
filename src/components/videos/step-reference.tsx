@@ -184,7 +184,7 @@ function LinkField({ videoId, offline, onRequested }: { videoId: number; offline
       {offline ? (
         <p role="status" className="flex items-center gap-1.5 text-xs text-muted-foreground">
           <MonitorOff className="size-3.5 shrink-0" aria-hidden />
-          El Mac no está conectado.
+          El Mac no responde (apagado o sin conexión): los enlaces los trae él. Enciéndelo o sube el archivo del vídeo.
         </p>
       ) : error ? (
         <p role="alert" className="flex items-center gap-1.5 text-xs text-destructive">

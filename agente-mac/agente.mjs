@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Agente del Mac de PRINCIPAL: descarga con yt-dlp los enlaces que se pegan en la web (Instagram,
-// TikTok…) y entrega el archivo; y monta los vídeos de los lotes con el montador
-// (~/.principal-tools/montador/montar_auto.py). Todas las conexiones salen de este Mac, por HTTPS.
+// TikTok…) y los que necesita el montaje en la nube, y entrega el archivo. Todas las conexiones
+// salen de este Mac, por HTTPS.
 //
 //   node agente.mjs
 //
@@ -16,7 +16,6 @@ import path from "node:path";
 import {
   acquireLock,
   BAD_TOKEN_MESSAGE,
-  checkMontaje,
   checkTools,
   cleanLeftovers,
   heartbeat,
@@ -114,21 +113,11 @@ async function waitForTools() {
   }
 }
 
-/**
- * Si este Mac puede montar (está el montador y `uv`): solo entonces pide montajes a la web. Se
- * vuelve a mirar cada 5 minutos, por si se instala después.
- */
-const MONTAJE_RECHECK_MS = 5 * 60_000;
-async function refreshMontaje() {
-  const { missing } = await checkMontaje(deps, config);
-  const can = missing.length === 0;
-  if (can !== (config.puede?.length > 0)) {
-    log(can ? "Montaje automático activado." : `Montaje automático desactivado: falta ${missing.join(" y ")}.`);
-  }
-  config.puede = can ? ["montaje"] : [];
-}
-await refreshMontaje();
-setInterval(() => void refreshMontaje().catch(() => {}), MONTAJE_RECHECK_MS);
+// Además de las referencias y las canciones, trae los enlaces que pide el montaje en la nube y que
+// la nube no puede descargar (referencias de edición de Instagram, «Audio original» de un enlace).
+// Solo necesita yt-dlp y ffmpeg, que ya hacen falta para todo lo demás.
+config.puede = ["enlace_medio"];
+log("Listo para traer enlaces (también los que pide el montaje en la nube).");
 
 let connected = null;
 async function beat() {

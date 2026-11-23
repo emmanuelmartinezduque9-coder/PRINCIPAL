@@ -17,6 +17,7 @@ import {
   type HiggsfieldPort,
 } from "@/connectors/higgsfield";
 import { getDb, schema } from "@/db/client";
+import { mediaLinks } from "@/server/videos/archive";
 import { HIGGSFIELD_CONNECT } from "@/lib/error-codes";
 import { enqueueJob } from "@/jobs/boss";
 import { getActiveUser, type AuthUser } from "@/server/auth";
@@ -1267,13 +1268,16 @@ export async function generationView(video: Video, kind: GenerationKind, viewerI
   const rows = await rowsOf(getDb(), video.id, kind);
   const spent = rows.filter((row) => SPENT.includes(row.status as GenerationStatus)).length;
   const current = rows.at(-1) ?? null;
-  const list = current
+  const rawList = current
     ? await getDb()
-        .select({ id: results.id, ok: results.ok, url: results.url, hasThumb: sql<boolean>`${results.thumb} is not null` })
+        .select({ id: results.id, ok: results.ok, url: results.url, jobId: results.jobId, hasThumb: sql<boolean>`${results.thumb} is not null` })
         .from(results)
         .where(eq(results.generationId, current.id))
         .orderBy(asc(results.index))
     : [];
+  // Lo ya copiado al almacén propio se sirve desde ahí (rápido y sin depender de Higgsfield).
+  const links = await mediaLinks(rawList.filter((row) => row.ok).map((row) => row.jobId));
+  const list = rawList.map(({ jobId, ...row }) => ({ ...row, url: links.get(jobId)?.original ?? row.url }));
   return {
     round: current?.round ?? 0,
     regenerationsLeft: Math.max(0, 1 + MAX_REGENERATIONS - Math.max(spent, 1)),

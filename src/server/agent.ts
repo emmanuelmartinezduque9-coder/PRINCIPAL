@@ -1,22 +1,20 @@
 import crypto from "node:crypto";
 import { and, asc, eq, gte, inArray, isNull, lt, lte, max, ne, notExists, or, sql, type SQL } from "drizzle-orm";
 import { getDb, schema } from "@/db/client";
-import { cancelLinkTasks, LINK_FAILED, MONTAJE_TASK, TASK_TOO_OLD } from "@/server/agent-tasks";
+import { cancelLinkTasks, LINK_FAILED, TASK_TOO_OLD } from "@/server/agent-tasks";
 import { getActiveUser, type AuthUser } from "@/server/auth";
 import { HttpError } from "@/server/http";
 import { getProductFor } from "@/server/products";
 import { LINK_HOSTS, linkOf, songLinkOf } from "@/lib/links";
 import {
-  appendMontajeChunk,
-  claimMontajeTask,
-  failMontajeTask,
-  finishMontajeTask,
-  MONTAJE_TOO_SLOW,
-  MONTAJE_UNCLAIMED,
-  montajeFailure,
-  type ClaimedMontaje,
-  type MontajeResult,
-} from "@/server/montaje-tasks";
+  appendMediaFetchChunk,
+  claimMediaFetchTask,
+  failMediaFetchTask,
+  finishMediaFetchTask,
+  MEDIA_FETCH_TASK,
+  type ClaimedMediaFetch,
+  type MediaFetchResult,
+} from "@/server/link-media";
 import { appendSongChunk, finishSongTask, openSongUpload, removeSongFile, SONG_TASK } from "@/server/song-downloads";
 import { MAX_SONG_BYTES } from "@/server/songs";
 import {
@@ -65,10 +63,12 @@ export const MAX_TASK_ATTEMPTS = 3;
 export const QUEUE_WAIT_MS = 10 * 60_000;
 /** Lo más que dura una reserva desde que el Mac se la llevó, aunque siga dando latidos (una descarga colgada). */
 export const MAX_LEASE_AGE_MS = 30 * 60_000;
-/** Lo mismo para un montaje (descargas, rea-video, el montador con su autocomprobación y la subida). */
-export const MAX_MONTAJE_LEASE_AGE_MS = 60 * 60_000;
-/** Los tipos de tarea que un Mac puede pedir además de enlaces y canciones (los que dice que sabe hacer al reclamar). */
-export const OPTIONAL_TASKS = ["montaje"] as const;
+/**
+ * Los tipos de tarea que un Mac puede pedir además de enlaces y canciones (los que dice que sabe
+ * hacer al reclamar): `enlace_medio` = traer el vídeo de un enlace para el montaje en la nube
+ * (programa 1.4.0). El montaje en el Mac (`montaje`, 1.3.x) se retiró el 23/11/2026: ahora monta la nube.
+ */
+export const OPTIONAL_TASKS = ["enlace_medio"] as const;
 export type OptionalTask = (typeof OPTIONAL_TASKS)[number];
 /**
  * Lo más que espera una tarea en la cola desde que se pegó el enlace, con el Mac vivo: da para que
@@ -347,8 +347,8 @@ export type ClaimedTask =
       chunkBytes: number;
       maxBytes: number;
     }
-  /** `montaje`: montar un vídeo con su ficha (`spec`) y entregar el MP4. */
-  | ClaimedMontaje;
+  /** `enlace_medio`: traer el vídeo de un enlace que necesita el montaje en la nube y entregarlo. */
+  | ClaimedMediaFetch;
 
 /**
  * El Mac se lleva la tarea más antigua de la cola de su dueño, o `null` si no hay: las de varios
@@ -360,8 +360,8 @@ export async function claimTask(agentId: number, now: Date = new Date(), options
   const db = getDb();
   const [agent] = await db.select({ createdBy: agents.createdBy }).from(agents).where(and(eq(agents.id, agentId), isNull(agents.revokedAt)));
   if (!agent) return null;
-  // Un Mac que no dice que sabe montar (un programa anterior a 1.3.0) no se lleva montajes.
-  const kinds = options.can?.includes("montaje") ? undefined : ne(agentTasks.kind, MONTAJE_TASK);
+  // Un Mac que no dice que sabe traer vídeos de enlaces para el montaje (anterior a 1.4.0) no se los lleva.
+  const kinds = options.can?.includes("enlace_medio") ? undefined : ne(agentTasks.kind, MEDIA_FETCH_TASK);
   // Un reintento automático espera a su hora.
   const queued = and(
     eq(agentTasks.status, "queued"),
@@ -377,9 +377,9 @@ export async function claimTask(agentId: number, now: Date = new Date(), options
       .orderBy(asc(agentTasks.id))
       .limit(1);
     if (!candidate) return null;
-    if (candidate.kind === MONTAJE_TASK) {
-      const montaje = await claimMontajeTask(candidate.id, queued, leaseValues(agentId, now));
-      if (montaje) return montaje;
+    if (candidate.kind === MEDIA_FETCH_TASK) {
+      const fetched = await claimMediaFetchTask(candidate.id, queued, leaseValues(agentId, now));
+      if (fetched) return fetched;
       continue;
     }
     if (candidate.videoId === null) {
@@ -473,11 +473,11 @@ export async function appendTaskChunk(
   // Primero, que la reserva y su sesión sean las de quien llama; solo entonces se prolonga.
   if (!isId(taskId)) throw taskLost();
   const [held] = await getDb().select({ kind: agentTasks.kind, uploadId: agentTasks.uploadId }).from(agentTasks).where(leasedBy(agentId, taskId));
-  if (held?.kind === SONG_TASK || held?.kind === MONTAJE_TASK) {
-    // Una canción o un montaje: su sesión es la de la propia tarea.
+  if (held?.kind === SONG_TASK || held?.kind === MEDIA_FETCH_TASK) {
+    // Una canción o un vídeo de enlace para el montaje: su sesión es la de la propia tarea.
     if (held.uploadId !== uploadId) throw taskLost();
     await extendLease(agentId, taskId, now);
-    return held.kind === SONG_TASK ? appendSongChunk(taskId, uploadId, index, bytes) : appendMontajeChunk(taskId, uploadId, index, bytes);
+    return held.kind === SONG_TASK ? appendSongChunk(taskId, uploadId, index, bytes) : appendMediaFetchChunk(taskId, uploadId, index, bytes);
   }
   if (!held || (await agentUploadId(taskId)) !== uploadId) throw taskLost();
   await extendLease(agentId, taskId, now);
@@ -495,7 +495,7 @@ export async function appendTaskChunk(
  * una canción, `title` es el título que dio yt-dlp.
  */
 export type TaskResult =
-  | { ok: true; uploadId: string; totalBytes: number; title?: string; selfCheck?: unknown }
+  | { ok: true; uploadId: string; totalBytes: number; title?: string }
   | { ok: false; uploadId: string; error: string };
 
 /**
@@ -514,8 +514,8 @@ export async function finishTask(agentId: number, taskId: number, result: TaskRe
     .from(agentTasks)
     .where(eq(agentTasks.id, taskId));
   if (!found || found.agentId !== agentId) throw taskLost();
-  // Un montaje se cierra (y se guarda) en `montaje-tasks`.
-  if (found.kind === MONTAJE_TASK) return finishMontajeTask(agentId, taskId, result as MontajeResult, now);
+  // Un vídeo de enlace para el montaje se cierra (y se guarda) en `link-media`.
+  if (found.kind === MEDIA_FETCH_TASK) return finishMediaFetchTask(agentId, taskId, result as MediaFetchResult, { now: () => now });
   // Una canción se cierra (y se guarda) en `song-downloads`.
   if (found.videoId === null) return finishSongTask(agentId, taskId, result, now);
   const task = { ...found, videoId: found.videoId };
@@ -587,10 +587,7 @@ async function retryOrFailLink(tx: Tx, taskId: number, videoId: number, now: Dat
  */
 async function failTask(task: { id: number; videoId: number | null; kind: string }, condition: SQL | undefined, reason: string, now: Date): Promise<void> {
   const { videoId } = task;
-  if (task.kind === MONTAJE_TASK && videoId !== null) {
-    const shown = reason === UNCLAIMED ? MONTAJE_UNCLAIMED : reason === TASK_TOO_OLD ? MONTAJE_TOO_SLOW : montajeFailure(reason);
-    return failMontajeTask({ id: task.id, videoId }, condition, reason, shown, now);
-  }
+  if (task.kind === MEDIA_FETCH_TASK) return failMediaFetchTask(task, condition, reason, now);
   if (videoId === null) {
     const [before] = await getDb().select({ uploadId: agentTasks.uploadId }).from(agentTasks).where(eq(agentTasks.id, task.id));
     const [closed] = await getDb()
@@ -629,14 +626,7 @@ export async function expireLeases(now: Date = new Date()): Promise<void> {
     .from(agents)
     .where(and(eq(agents.createdBy, agentTasks.createdBy), isNull(agents.revokedAt), gte(agents.lastSeenAt, waitLimit)));
   const failures: Array<{ condition: SQL | undefined; reason: string }> = [
-    {
-      condition: and(eq(agentTasks.status, "leased"), ne(agentTasks.kind, MONTAJE_TASK), lt(agentTasks.leasedAt, new Date(now.getTime() - MAX_LEASE_AGE_MS))),
-      reason: TASK_TOO_OLD,
-    },
-    {
-      condition: and(eq(agentTasks.status, "leased"), eq(agentTasks.kind, MONTAJE_TASK), lt(agentTasks.leasedAt, new Date(now.getTime() - MAX_MONTAJE_LEASE_AGE_MS))),
-      reason: TASK_TOO_OLD,
-    },
+    { condition: and(eq(agentTasks.status, "leased"), lt(agentTasks.leasedAt, new Date(now.getTime() - MAX_LEASE_AGE_MS))), reason: TASK_TOO_OLD },
     { condition: and(eq(agentTasks.status, "queued"), lt(agentTasks.createdAt, new Date(now.getTime() - MAX_QUEUE_AGE_MS))), reason: TASK_TOO_OLD },
     { condition: and(expired, gte(agentTasks.attempts, MAX_TASK_ATTEMPTS)), reason: NO_HEARTBEAT },
     { condition: and(eq(agentTasks.status, "queued"), lt(agentTasks.updatedAt, waitLimit), notExists(macSeen)), reason: UNCLAIMED },

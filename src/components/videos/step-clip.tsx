@@ -158,7 +158,7 @@ function BodyRow({ body, order }: { body: BodyJson; order: number }) {
     <li className="flex items-center gap-3 py-2">
       <span className="w-4 shrink-0 text-right text-xs font-medium text-muted-foreground tabular-nums">{order}</span>
       <span className="relative h-16 w-9 shrink-0 overflow-hidden rounded-md bg-muted ring-1 ring-foreground/10" {...preview.handlers}>
-        <ClipPreview thumbUrl={body.thumbUrl} videoUrl={body.videoUrl} active={preview.active} />
+        <ClipPreview thumbUrl={body.thumbUrl} videoUrl={body.previewUrl ?? body.videoUrl} active={preview.active} />
       </span>
       <span className="min-w-0 flex-1 truncate text-sm" title={body.label}>
         {body.label}

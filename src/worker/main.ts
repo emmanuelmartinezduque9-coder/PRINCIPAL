@@ -1,6 +1,7 @@
 import { startWorker, stopWorker } from "@/jobs/boss";
 import "@/jobs/system-check";
 import "@/jobs/video-jobs";
+import { startEditLoop, stopEditLoop } from "@/server/videos/montaje-nube";
 
 /**
  * Proceso en segundo plano: ejecuta los trabajos de la cola y las tareas programadas. Los módulos
@@ -13,6 +14,8 @@ async function stop(): Promise<void> {
   if (stopping) return;
   stopping = true;
   try {
+    // Los montajes en marcha vuelven a la cola para el proceso siguiente.
+    await stopEditLoop();
     await stopWorker();
   } catch (error) {
     console.error(`[worker] No se pudo parar con limpieza: ${error instanceof Error ? error.message : String(error)}`);
@@ -25,7 +28,10 @@ process.on("SIGTERM", () => void stop());
 process.on("SIGINT", () => void stop());
 
 startWorker().then(
-  () => console.log("[worker] en marcha"),
+  () => {
+    console.log("[worker] en marcha");
+    startEditLoop();
+  },
   (error) => {
     // Sin cola no hay nada que hacer: se sale con error para que el servicio se reinicie.
     console.error(`[worker] No se pudo arrancar: ${error instanceof Error ? error.message : String(error)}`);

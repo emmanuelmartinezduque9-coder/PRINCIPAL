@@ -1,5 +1,10 @@
 # Montador (v1)
 
+> **Desde el 23/11/2026 corre en la nube** (proceso en segundo plano de Railway, `src/server/videos/montaje-nube.ts`;
+> imagen en `Dockerfile`, dependencias en `requirements.txt`). Los rótulos los dibuja `texto06b.py` (HarfBuzz + FreeType,
+> igual que `texto06b.swift`, que queda como referencia; comparación en `test_texto06b.py` con `referencias-06b/`).
+> Decisiones: `docs/decisiones-almacen-y-montaje-nube.md`.
+
 Programa pequeño que monta los vídeos del dueño a partir de un **plan de montaje** (un JSON por vídeo).
 Se escribió para el piloto del pedido 54: v0 en `docs/piloto-pedido-54/montaje-v0.md`; **v1 (ritmo de los virales)
 en `docs/piloto-pedido-54/montaje-v1.md`**, con el patrón medido en `docs/casos/referencias-edicion/patron-viral-eiswerk.md`.

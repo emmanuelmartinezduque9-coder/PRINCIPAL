@@ -40,7 +40,7 @@ function ClipTile({ clip, filterProductId, onOpen }: { clip: LibraryClipJson; fi
         aria-label={`Clip del ${format(date, "d 'de' MMMM, HH:mm", { locale: es })}${markText ? `, cuerpo: ${markText}` : ""}`}
         className="group relative block aspect-[9/16] w-full overflow-hidden rounded-lg bg-muted ring-1 ring-foreground/10 outline-none transition-shadow hover:ring-foreground/30 focus-visible:ring-3 focus-visible:ring-ring/60"
       >
-        <ClipPreview thumbUrl={clip.thumbUrl} videoUrl={clip.videoUrl} active={preview.active} />
+        <ClipPreview thumbUrl={clip.thumbUrl} videoUrl={clip.previewUrl ?? clip.videoUrl} active={preview.active} />
         {markText ? (
           <span className="absolute top-1.5 left-1.5 inline-flex h-5 max-w-[calc(100%-0.75rem)] items-center gap-1 rounded-full bg-background/90 pr-2 pl-1.5 text-[11px] font-medium text-foreground shadow-sm">
             <Bookmark className="size-3 shrink-0 fill-current" aria-hidden />

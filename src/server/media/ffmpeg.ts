@@ -378,3 +378,75 @@ export async function probeAudio(input: Buffer): Promise<{ mime: AudioMime; dura
     await fs.rm(dir, { recursive: true, force: true });
   }
 }
+
+/** Tipo de un archivo de imagen por sus primeros bytes; `null` si no es JPEG, PNG, WebP ni GIF. */
+export function imageMimeOf(head: Buffer): "image/jpeg" | "image/png" | "image/webp" | "image/gif" | null {
+  try {
+    const demuxer = imageDemuxer(head);
+    return demuxer === "jpeg_pipe" ? "image/jpeg" : demuxer === "png_pipe" ? "image/png" : demuxer === "webp_pipe" ? "image/webp" : "image/gif";
+  } catch {
+    return null;
+  }
+}
+
+/** Primeros 16 bytes de un archivo. */
+async function headOf(filePath: string): Promise<Buffer> {
+  const handle = await fs.open(filePath, "r");
+  try {
+    const head = Buffer.alloc(16);
+    const { bytesRead } = await handle.read(head, 0, 16, 0);
+    return head.subarray(0, bytesRead);
+  } finally {
+    await handle.close();
+  }
+}
+
+/**
+ * Imagen JPEG reducida (lado largo ≤ `maxSide`) de un vídeo (su primer fotograma) o de una imagen,
+ * leída de un archivo. Para miniaturas y vistas ligeras.
+ */
+export async function makeImageFile(filePath: string, outPath: string, kind: "image" | "video", maxSide: number, quality = 4): Promise<void> {
+  const head = await headOf(filePath);
+  const demuxer = kind === "video" ? videoDemuxer(head) : imageDemuxer(head);
+  assertSafePath(outPath);
+  try {
+    await run("ffmpeg", [
+      "-v", "error", "-nostdin", "-y", "-threads", "2",
+      ...inputArgs(demuxer, filePath),
+      "-frames:v", "1",
+      "-vf", scaleFilter(maxSide),
+      "-q:v", String(quality),
+      "-f", "image2", "-c:v", "mjpeg",
+      `file:${outPath}`,
+    ], "No hemos podido preparar la miniatura.");
+  } catch (error) {
+    await fs.rm(outPath, { force: true });
+    throw error;
+  }
+}
+
+/**
+ * Vista previa ligera de un clip: MP4 H.264 sin sonido, lado largo ≤ `maxSide` (por defecto 480),
+ * 24 fps y calidad baja, preparada para empezar a verse enseguida (`faststart`). Un clip de 10 s
+ * queda en unos cientos de KB.
+ */
+export async function makePreviewVideo(filePath: string, outPath: string, maxSide = 480): Promise<void> {
+  const demuxer = await fileDemuxer(filePath);
+  assertSafePath(outPath);
+  try {
+    await run("ffmpeg", [
+      "-v", "error", "-nostdin", "-y", "-threads", "2",
+      ...inputArgs(demuxer, filePath),
+      "-t", "60",
+      "-an",
+      "-vf", `${scaleFilter(maxSide)},fps=24,format=yuv420p`,
+      "-c:v", "libx264", "-preset", "veryfast", "-crf", "30", "-profile:v", "main",
+      "-movflags", "+faststart",
+      "-f", "mp4",
+      `file:${outPath}`,
+    ], UNREADABLE);
+  } catch (error) {
+    await fs.rm(outPath, { force: true });
+    throw error;
+  }
+}

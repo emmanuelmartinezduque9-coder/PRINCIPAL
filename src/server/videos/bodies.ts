@@ -2,6 +2,7 @@ import { and, asc, count, eq, inArray } from "drizzle-orm";
 import { getDb, schema } from "@/db/client";
 import type { AuthUser } from "@/server/auth";
 import { HttpError } from "@/server/http";
+import { mediaLinks } from "@/server/videos/archive";
 import { getProductFor } from "@/server/products";
 import { fileSlug } from "@/server/videos/filename";
 
@@ -32,8 +33,21 @@ export interface ProductBody {
   label: string;
   thumbUrl: string | null;
   videoUrl: string;
+  /** Vista ligera (MP4 pequeño sin sonido) del almacén propio; `null` si aún no está copiado. */
+  previewUrl: string | null;
   /** Puede desmarcarlo quien lo marcó y el dueño. */
   canRemove: boolean;
+}
+
+/** Sustituye las direcciones de Higgsfield por las del almacén propio cuando el clip ya está copiado. */
+async function withStoredLinks<T extends { jobId: string; thumbUrl: string | null; videoUrl: string }>(
+  rows: T[],
+): Promise<Array<Omit<T, "jobId"> & { previewUrl: string | null }>> {
+  const links = await mediaLinks(rows.map((row) => row.jobId));
+  return rows.map(({ jobId, ...row }) => {
+    const link = links.get(jobId);
+    return { ...row, thumbUrl: link?.thumb ?? row.thumbUrl, videoUrl: link?.original ?? row.videoUrl, previewUrl: link?.preview ?? null };
+  });
 }
 
 const isId = (value: unknown): value is number => typeof value === "number" && Number.isSafeInteger(value) && value > 0;
@@ -42,12 +56,12 @@ const isId = (value: unknown): value is number => typeof value === "number" && N
 export async function listProductBodies(user: AuthUser, productId: number): Promise<ProductBody[]> {
   const product = await getProductFor(user, productId);
   const rows = await getDb()
-    .select({ id: bodies.id, productId: bodies.productId, label: bodies.label, createdBy: bodies.createdBy, thumbUrl: clips.thumbUrl, videoUrl: clips.videoUrl })
+    .select({ id: bodies.id, productId: bodies.productId, label: bodies.label, createdBy: bodies.createdBy, jobId: clips.jobId, thumbUrl: clips.thumbUrl, videoUrl: clips.videoUrl })
     .from(bodies)
     .innerJoin(clips, eq(clips.id, bodies.libraryClipId))
     .where(eq(bodies.productId, product.id))
     .orderBy(asc(bodies.id));
-  return rows.map(({ createdBy, ...row }) => ({ ...row, canRemove: createdBy === user.id || user.role === "dueno" }));
+  return (await withStoredLinks(rows)).map(({ createdBy, ...row }) => ({ ...row, canRemove: createdBy === user.id || user.role === "dueno" }));
 }
 
 /**
@@ -85,7 +99,7 @@ export async function markBody(user: AuthUser, productId: number, input: { clipI
 async function getBodyFor(user: AuthUser, bodyId: number) {
   if (!isId(bodyId)) throw new HttpError(404, NOT_FOUND);
   const [body] = await getDb()
-    .select({ id: bodies.id, productId: bodies.productId, label: bodies.label, createdBy: bodies.createdBy, videoUrl: clips.videoUrl })
+    .select({ id: bodies.id, productId: bodies.productId, label: bodies.label, createdBy: bodies.createdBy, jobId: clips.jobId, videoUrl: clips.videoUrl })
     .from(bodies)
     .innerJoin(clips, eq(clips.id, bodies.libraryClipId))
     .where(eq(bodies.id, bodyId));
@@ -106,9 +120,9 @@ export async function unmarkBody(user: AuthUser, bodyId: number): Promise<void> 
 }
 
 /** Qué se descarga de un cuerpo de un producto que `user` ve: su dirección y `<producto>-cuerpo-<nombre>.mp4`. */
-export async function bodyDownload(user: AuthUser, bodyId: number): Promise<{ url: string; filename: string }> {
+export async function bodyDownload(user: AuthUser, bodyId: number): Promise<{ url: string; jobId: string; filename: string }> {
   const { body, product } = await getBodyFor(user, bodyId);
-  return { url: body.videoUrl, filename: `${fileSlug(product.name, "producto")}-cuerpo-${fileSlug(body.label, String(body.id))}.mp4` };
+  return { url: body.videoUrl, jobId: body.jobId, filename: `${fileSlug(product.name, "producto")}-cuerpo-${fileSlug(body.label, String(body.id))}.mp4` };
 }
 
 /**
@@ -132,35 +146,47 @@ export interface VideoBody {
   label: string;
   thumbUrl: string | null;
   videoUrl: string;
+  previewUrl: string | null;
+  /** El trabajo de Higgsfield del clip (para el montaje). */
+  jobId: string;
 }
 
 /**
  * Los cuerpos de varios vídeos ya comprobados (`getVideoFor`), cada uno en su orden. Un cuerpo que
  * se desmarcó después (o que ya no es de ese producto) deja de salir.
  */
-export async function bodiesOfVideos(videos: Array<{ id: number; productId: number; bodyClipIds: number[] }>): Promise<Map<number, VideoBody[]>> {
+export async function bodiesOfVideos(
+  videos: Array<{ id: number; productId: number; bodyClipIds: number[] }>,
+  options: { raw?: boolean } = {},
+): Promise<Map<number, VideoBody[]>> {
   const ids = [...new Set(videos.flatMap((video) => video.bodyClipIds))];
   const rows =
     ids.length === 0
       ? []
       : await getDb()
-          .select({ id: bodies.id, productId: bodies.productId, label: bodies.label, thumbUrl: clips.thumbUrl, videoUrl: clips.videoUrl })
+          .select({ id: bodies.id, productId: bodies.productId, label: bodies.label, jobId: clips.jobId, thumbUrl: clips.thumbUrl, videoUrl: clips.videoUrl })
           .from(bodies)
           .innerJoin(clips, eq(clips.id, bodies.libraryClipId))
-          .where(inArray(bodies.id, ids));
+          .where(inArray(bodies.id, ids))
+          .then(async (found) => {
+            // `raw`: las direcciones de Higgsfield tal cual (el montaje busca él mismo la copia propia).
+            if (options.raw) return found.map((row) => ({ ...row, previewUrl: null as string | null }));
+            const linked = await withStoredLinks(found);
+            return linked.map((row, i) => ({ ...row, jobId: found[i].jobId }));
+          });
   const byId = new Map(rows.map((row) => [row.id, row]));
   return new Map(
     videos.map((video) => [
       video.id,
       video.bodyClipIds.flatMap((id) => {
         const body = byId.get(id);
-        return body && body.productId === video.productId ? [{ id: body.id, label: body.label, thumbUrl: body.thumbUrl, videoUrl: body.videoUrl }] : [];
+        return body && body.productId === video.productId ? [{ id: body.id, label: body.label, thumbUrl: body.thumbUrl, videoUrl: body.videoUrl, previewUrl: body.previewUrl, jobId: body.jobId }] : [];
       }),
     ]),
   );
 }
 
 /** Los cuerpos de un vídeo ya comprobado, en su orden. */
-export async function bodiesOfVideo(video: { id: number; productId: number; bodyClipIds: number[] }): Promise<VideoBody[]> {
-  return (await bodiesOfVideos([video])).get(video.id) ?? [];
+export async function bodiesOfVideo(video: { id: number; productId: number; bodyClipIds: number[] }, options: { raw?: boolean } = {}): Promise<VideoBody[]> {
+  return (await bodiesOfVideos([video], options)).get(video.id) ?? [];
 }

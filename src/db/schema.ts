@@ -636,14 +636,16 @@ export const videos = pgTable(
      */
     editReferenceUrl: text("edit_reference_url"),
     /**
-     * Montaje automático en el Mac (`src/server/videos/edits.ts`): `null` (nunca se pidió),
-     * `en_marcha` (su tarea `edit_task_id` espera o la tiene un Mac), `hecho` (la última versión está
-     * en `edits`) o `fallido` (con `edit_error`, apto para la persona: p. ej. «Montaje: necesita el Mac»).
+     * Montaje automático en la nube (`src/server/videos/edits.ts`): `null` (nunca se pidió),
+     * `en_marcha` (su montaje `edit_run_id` espera o se está haciendo), `hecho` (la última versión está
+     * en `edits`) o `fallido` (con `edit_error`, apto para la persona).
      */
     editStatus: text("edit_status"),
     editError: text("edit_error"),
-    /** La tarea del Mac del último montaje pedido. */
+    /** Antiguo: la tarea del Mac del último montaje pedido cuando se montaba en el Mac (hasta el 23/11/2026). */
     editTaskId: bigint("edit_task_id", { mode: "number" }).references((): AnyPgColumn => agentTasks.id, { onDelete: "set null" }),
+    /** El último montaje pedido (`edit_runs`). */
+    editRunId: bigint("edit_run_id", { mode: "number" }).references((): AnyPgColumn => editRuns.id, { onDelete: "set null" }),
     /** Rótulos del montaje (el principal y el CTA). Los propone el desglose; quien creó el vídeo o el dueño los cambia. */
     editMainText: text("edit_main_text"),
     editCtaText: text("edit_cta_text"),
@@ -1063,7 +1065,10 @@ export const agentTasks = pgTable(
     uniqueIndex("agent_tasks_one_active_song_link")
       .on(t.createdBy, t.url)
       .where(sql`${t.kind} = 'song_download' and ${t.status} in ('queued', 'leased')`),
-    check("agent_tasks_kind_valid", sql`${t.kind} in ('link_download', 'song_download', 'montaje')`),
+    uniqueIndex("agent_tasks_one_active_media_fetch")
+      .on(t.url)
+      .where(sql`${t.kind} = 'media_fetch' and ${t.status} in ('queued', 'leased')`),
+    check("agent_tasks_kind_valid", sql`${t.kind} in ('link_download', 'song_download', 'montaje', 'media_fetch')`),
     // Una referencia y un montaje son siempre de un vídeo; una canción, de ninguno.
     check("agent_tasks_target_valid", sql`(${t.kind} in ('link_download', 'montaje')) = (${t.videoId} is not null)`),
     check("agent_tasks_status_valid", sql`${t.status} in ('queued', 'leased', 'done', 'failed')`),
@@ -1087,11 +1092,14 @@ export const edits = pgTable(
       .references(() => videos.id, { onDelete: "cascade" }),
     version: integer("version").notNull(),
     size: integer("size").notNull(),
-    data: bytea("data").notNull(),
+    /** El MP4 en la base de datos: solo los montajes antiguos o si no hay almacén de objetos. */
+    data: bytea("data"),
+    /** Dónde está el MP4 en el almacén de objetos (`montajes/<vídeo>/<montaje>.mp4`). */
+    storageKey: text("storage_key"),
     durationMs: integer("duration_ms").notNull(),
     /** Resumen de la autocomprobación del montador (planos, cortes en beat, avisos). */
     selfCheck: jsonb("self_check"),
-    /** La tarea del Mac que lo entregó (sin clave ajena: es un apunte). */
+    /** El montaje (`edit_runs`) que lo hizo, o la tarea del Mac en los antiguos (sin clave ajena: es un apunte). */
     taskId: bigint("task_id", { mode: "number" }),
     createdAt: instant("created_at").notNull().defaultNow(),
   },
@@ -1100,5 +1108,119 @@ export const edits = pgTable(
     check("edits_size_valid", sql`${t.size} > 0 and ${t.size} <= ${sql.raw(String(MAX_EDIT_BYTES))}`),
     check("edits_version_valid", sql`${t.version} >= 1`),
     check("edits_duration_valid", sql`${t.durationMs} > 0`),
+    check("edits_content_present", sql`${t.data} is not null or ${t.storageKey} is not null`),
+  ],
+);
+
+/**
+ * Copia propia en el almacén de objetos (`src/lib/object-store.ts`) de cada vídeo o imagen que
+ * genera Higgsfield: una fila por trabajo (`job_id`, el mismo de `generation_results` y de
+ * `library_clips`). `src/server/media/archive.ts` la crea sola para todo lo que aparece en esas
+ * dos tablas y la copia en segundo plano, con reintentos: `pending` → `done` | `failed`. Las claves
+ * del almacén salen del trabajo, así que repetir una copia sustituye los mismos archivos.
+ */
+export const storedMedia = pgTable(
+  "stored_media",
+  {
+    jobId: text("job_id").primaryKey(),
+    /** `video` o `image`. */
+    kind: text("kind").notNull(),
+    /** De dónde se copia (dirección de Higgsfield). */
+    sourceUrl: text("source_url").notNull(),
+    status: text("status").notNull().default("pending"),
+    attempts: integer("attempts").notNull().default(0),
+    /** No se intenta antes de esta hora (reintentos espaciados). */
+    nextAttemptAt: instant("next_attempt_at").notNull().defaultNow(),
+    /** Reserva de quien la está copiando (otra copia no la toca hasta que caduque). */
+    claimedUntil: instant("claimed_until"),
+    /** Claves en el almacén: el archivo tal cual, la miniatura (JPEG) y la vista ligera (MP4 pequeño o JPEG). */
+    originalKey: text("original_key"),
+    thumbKey: text("thumb_key"),
+    previewKey: text("preview_key"),
+    mime: text("mime"),
+    size: bigint("size", { mode: "number" }),
+    durationMs: integer("duration_ms"),
+    width: integer("width"),
+    height: integer("height"),
+    error: text("error"),
+    createdAt: instant("created_at").notNull().defaultNow(),
+    storedAt: instant("stored_at"),
+  },
+  (t) => [
+    index("stored_media_due").on(t.status, t.nextAttemptAt),
+    check("stored_media_kind_valid", sql`${t.kind} in ('video', 'image')`),
+    check("stored_media_status_valid", sql`${t.status} in ('pending', 'done', 'failed')`),
+    check("stored_media_done_complete", sql`${t.status} <> 'done' or (${t.originalKey} is not null and ${t.thumbKey} is not null and ${t.previewKey} is not null)`),
+  ],
+);
+
+/**
+ * Montajes en la nube (`src/server/videos/montaje-nube.ts`): uno por cada «Montar» / «Volver a
+ * montar» o lote listo. `queued` → `running` (un proceso en segundo plano lo tiene reservado y da
+ * señales en `heartbeat_at`) → `done` | `failed`. Un montaje cuyo proceso deja de dar señales
+ * (reinicio, publicación nueva) vuelve a la cola hasta 3 veces. `spec` es la ficha
+ * (`EditSpec` en `edits.ts`). Como mucho uno vivo por vídeo.
+ */
+export const editRuns = pgTable(
+  "edit_runs",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    videoId: bigint("video_id", { mode: "number" })
+      .notNull()
+      .references((): AnyPgColumn => videos.id, { onDelete: "cascade" }),
+    status: text("status").notNull().default("queued"),
+    spec: jsonb("spec").notNull(),
+    /** Quien lo pidió (o quien creó el lote). Sin clave ajena, como `videos.created_by`. */
+    requestedBy: bigint("requested_by", { mode: "number" }).notNull(),
+    attempts: integer("attempts").notNull().default(0),
+    /** No se empieza antes (espera a que el Mac traiga un enlace). */
+    availableAt: instant("available_at").notNull().defaultNow(),
+    heartbeatAt: instant("heartbeat_at"),
+    startedAt: instant("started_at"),
+    finishedAt: instant("finished_at"),
+    /** Detalle técnico (para el dueño); a la persona se le enseña `videos.edit_error`. */
+    error: text("error"),
+    /** Avisos del montaje (referencia que no llegó, Mac apagado…), además de la autocomprobación. */
+    notes: jsonb("notes").$type<string[]>(),
+    createdAt: instant("created_at").notNull().defaultNow(),
+  },
+  (t) => [
+    index("edit_runs_queue").on(t.status, t.availableAt, t.id),
+    uniqueIndex("edit_runs_one_active").on(t.videoId).where(sql`${t.status} in ('queued', 'running')`),
+    check("edit_runs_status_valid", sql`${t.status} in ('queued', 'running', 'done', 'failed')`),
+  ],
+);
+
+/**
+ * Vídeos de enlaces (Instagram, TikTok…) que hace falta tener para montar: la referencia de
+ * edición y, con «Audio original», la referencia de un vídeo que no guardó su audio. Una fila por
+ * enlace (`url`), compartida por todos los montajes que lo usan. Se trae en la nube con yt-dlp y,
+ * si la nube no puede (Instagram), lo trae el Mac (tarea `media_fetch`). El archivo va al almacén
+ * (`enlaces/<id>.<ext>`); `breakdown` es el desglose de rea-video, hecho una sola vez.
+ * `pending` → `ready` | `failed`. Solo `src/server/link-media.ts` toca esta tabla.
+ */
+export const linkMedia = pgTable(
+  "link_media",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    url: text("url").notNull().unique(),
+    status: text("status").notNull().default("pending"),
+    /** Dónde se intentó: la nube primero; después el Mac. */
+    cloudTriedAt: instant("cloud_tried_at"),
+    agentTaskId: bigint("agent_task_id", { mode: "number" }).references((): AnyPgColumn => agentTasks.id, { onDelete: "set null" }),
+    objectKey: text("object_key"),
+    mime: text("mime"),
+    size: bigint("size", { mode: "number" }),
+    durationMs: integer("duration_ms"),
+    breakdown: jsonb("breakdown"),
+    /** `null` (aún no), `done` o `failed` (rea-video no pudo; no se repite). */
+    breakdownStatus: text("breakdown_status"),
+    error: text("error"),
+    createdAt: instant("created_at").notNull().defaultNow(),
+    updatedAt: instant("updated_at").notNull().defaultNow(),
+  },
+  (t) => [
+    check("link_media_status_valid", sql`${t.status} in ('pending', 'ready', 'failed')`),
+    check("link_media_ready_complete", sql`${t.status} <> 'ready' or ${t.objectKey} is not null`),
   ],
 );

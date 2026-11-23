@@ -214,12 +214,13 @@ export function servableClipUrl(url: string | null): url is string {
  * Qué se descarga del clip de un vídeo que `user` ve: el aprobado o, si no hay (o su dirección no
  * se puede servir, `servableClipUrl`), el último terminado bien. Nombre `<producto>-video-<id>.mp4`.
  */
-export async function clipDownload(user: AuthUser, videoId: number): Promise<{ url: string; filename: string }> {
+export async function clipDownload(user: AuthUser, videoId: number): Promise<{ url: string; jobId: string | null; filename: string }> {
   const video = await getVideoFor(user, videoId);
   const product = await getProductFor(user, video.productId);
-  const url = await downloadableClipUrl(video);
-  if (!url) throw new HttpError(404, NO_CLIP);
-  return { url, filename: `${fileSlug(product.name, "producto")}-video-${video.id}.mp4` };
+  const chosen = await downloadableClip(video);
+  if (!chosen) throw new HttpError(404, NO_CLIP);
+  const { url, jobId } = chosen;
+  return { url, jobId, filename: `${fileSlug(product.name, "producto")}-video-${video.id}.mp4` };
 }
 
 /**
@@ -227,8 +228,13 @@ export async function clipDownload(user: AuthUser, videoId: number): Promise<{ u
  * o, si no hay (o no se puede servir), el último terminado bien; `null` si no hay ninguno.
  */
 export async function downloadableClipUrl(video: Video): Promise<string | null> {
+  return (await downloadableClip(video))?.url ?? null;
+}
+
+/** Como `downloadableClipUrl`, con el trabajo de Higgsfield (para buscar su copia en el almacén propio). */
+export async function downloadableClip(video: Video): Promise<{ url: string; jobId: string } | null> {
   const results = await getDb()
-    .select({ id: schema.generationResults.id, url: schema.generationResults.url })
+    .select({ id: schema.generationResults.id, url: schema.generationResults.url, jobId: schema.generationResults.jobId })
     .from(schema.generationResults)
     .innerJoin(schema.generations, eq(schema.generations.id, schema.generationResults.generationId))
     .where(
@@ -242,7 +248,7 @@ export async function downloadableClipUrl(video: Video): Promise<string | null> 
     .orderBy(desc(schema.generations.id), asc(schema.generationResults.index));
   const approved = results.find((result) => result.id === video.approvedClipResultId);
   const chosen = [approved, ...results].find((result) => result && servableClipUrl(result.url));
-  return chosen?.url ?? null;
+  return chosen?.url ? { url: chosen.url, jobId: chosen.jobId } : null;
 }
 
 /** Tope para que Higgsfield empiece a responder. */

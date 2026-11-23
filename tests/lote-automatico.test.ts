@@ -255,11 +255,10 @@ describe("estados del envío", () => {
     await cycle(batchId);
     expect(ready).toEqual([]);
     await advanceBatch(batchId, deps);
-    // `listo` y enseguida el montaje (`onBatchReady`): sin Mac del dueño, cada vídeo queda
-    // «Montaje: necesita el Mac» y el lote, `montado`.
-    expect(await statusOf(batchId)).toBe("montado");
+    // `listo` y enseguida el montaje (`onBatchReady`): cada vídeo entra en la cola de la nube (sin Mac).
+    expect(await statusOf(batchId)).toBe("listo");
     expect(ready).toEqual([batchId]);
-    for (const video of videos) expect((await getVideoFor(ana, video.id)).editError).toBe("Montaje: necesita el Mac");
+    for (const video of videos) expect((await getVideoFor(ana, video.id)).editStatus).toBe("en_marcha");
     expect((await generations()).filter((g) => g.kind === "clip" && g.status === "done")).toHaveLength(3);
     expect(await committed(batchId)).toBe(66);
   });
@@ -401,7 +400,8 @@ describe("presupuesto y dinero", () => {
     expect((await generations()).filter((g) => g.videoId === videos[0].id && g.kind === "frame").map((g) => g.round)).toEqual([1, 2]);
     await approveFrame(ana, videos[0].id, await firstCandidate(videos[0].id));
     await cycle(batchId, 3);
-    expect(await statusOf(batchId)).toBe("montado");
+    // Clips hechos: los montajes esperan en la cola de la nube.
+    expect(await statusOf(batchId)).toBe("listo");
     expect(await committed(batchId)).toBe(48);
     expect(await committed(batchId)).toBeLessThanOrEqual((await getBatchFor(ana, batchId)).budgetCredits!);
   });

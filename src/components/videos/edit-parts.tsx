@@ -11,7 +11,7 @@ import { cn } from "@/lib/utils";
 import type { EditView } from "@/server/videos/edits";
 
 /**
- * Piezas del montaje automático (el vídeo editado en el Mac) que comparten el tablero del lote y
+ * Piezas del montaje automático (el vídeo editado en la nube) que comparten el tablero del lote y
  * la página del vídeo: el reproductor, la descarga y «Montar» / «Volver a montar».
  */
 
@@ -22,10 +22,10 @@ export const editUrl = (videoId: number, version: number) => `/api/videos/${vide
 /** La misma versión como descarga (`<producto>-video-<id>-editado.mp4`). */
 export const editDownloadUrl = (videoId: number, version: number) => `/api/videos/${videoId}/montaje/video?v=${version}&descargar=1`;
 
-/** Hay un montaje en la cola del Mac o montándose. */
+/** Hay un montaje en la cola o montándose. */
 export const editRunning = (edit: EditJson) => edit.status === "en_cola" || edit.status === "montando";
 
-/** «Montar» / «Volver a montar»: pone el montaje en la cola del Mac; `onDone` refresca lo que lo enseña. */
+/** «Montar» / «Volver a montar»: pone el montaje en la cola de la nube; `onDone` refresca lo que lo enseña. */
 export function useStartEdit(videoId: number, onDone?: () => void) {
   const client = useQueryClient();
   return useMutation({
@@ -78,7 +78,7 @@ export function EditPlayer({ videoId, edit, className }: { videoId: number; edit
       ) : (
         <div role={latest ? "alert" : undefined} className="absolute inset-0 flex flex-col items-center justify-center gap-2 px-6 text-center text-sm text-white/75">
           {editRunning(edit) ? <Loader2 className="size-7 animate-spin" aria-hidden /> : latest ? <VideoOff className="size-7" aria-hidden /> : <Scissors className="size-7" aria-hidden />}
-          {editRunning(edit) ? (edit.status === "montando" ? "Montando en el Mac…" : "En la cola del Mac") : latest ? "No se pudo cargar el vídeo." : null}
+          {editRunning(edit) ? (edit.status === "montando" ? "Montando…" : "En cola para montar") : latest ? "No se pudo cargar el vídeo." : null}
         </div>
       )}
     </div>
@@ -102,7 +102,7 @@ export function EditNotice({ edit }: { edit: EditJson }) {
     return (
       <p role="status" className="flex items-center gap-2 rounded-lg bg-warning/10 px-3 py-2.5 text-sm ring-1 ring-warning/20">
         <Loader2 className="size-4 shrink-0 animate-spin text-warning-ink" aria-hidden />
-        {edit.status === "montando" ? "Montando en el Mac" : "En la cola del Mac"}
+        {edit.status === "montando" ? "Montando en la nube" : "En cola para montar"}
       </p>
     );
   }

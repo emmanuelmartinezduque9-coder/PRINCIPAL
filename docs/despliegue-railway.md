@@ -43,6 +43,8 @@ Abre el servicio `principal` → pestaña **Variables** → **New Variable**. Cr
 | `TZ` | `Europe/Berlin` | Pone la hora de Alemania en los registros. |
 | `OWNER_EMAIL` | tu correo | Prepara el enlace para crear tu cuenta de dueño. |
 | `ANTHROPIC_API_KEY` | la clave de Claude, ver más abajo | Permite que la web use la IA de Claude. |
+| `BUCKET_ENDPOINT`, `BUCKET_NAME`, `BUCKET_ACCESS_KEY_ID`, `BUCKET_SECRET_ACCESS_KEY` | referencias al bucket de Railway (`${{<bucket>.ENDPOINT}}`, `${{<bucket>.BUCKET}}`, `${{<bucket>.ACCESS_KEY_ID}}`, `${{<bucket>.SECRET_ACCESS_KEY}}`) | Almacén de los vídeos, imágenes y montajes (ver `docs/decisiones-almacen-y-montaje-nube.md`). |
+| `MONTAJE_CONCURRENCIA` | opcional, `2` | Cuántos vídeos se montan a la vez. |
 
 **Cómo crear `VAULT_KEY`.** En la terminal escribe:
 

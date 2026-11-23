@@ -69,7 +69,7 @@ describe("marcar y desmarcar cuerpos", () => {
     const body = await markBody(ana, producto.id, { clipId, label: "  Demostración   en  mano " });
     expect(body.label).toBe("Demostración en mano");
     expect(await listProductBodies(ana, producto.id)).toEqual([
-      { id: body.id, productId: producto.id, label: "Demostración en mano", thumbUrl: `${CDN}/hf-1_min.webp`, videoUrl: `${CDN}/hf-1.mp4`, canRemove: true },
+      { id: body.id, productId: producto.id, label: "Demostración en mano", thumbUrl: `${CDN}/hf-1_min.webp`, videoUrl: `${CDN}/hf-1.mp4`, previewUrl: null, canRemove: true },
     ]);
     // Sin nombre, «Cuerpo N».
     const second = await markBody(ana, producto.id, { clipId: await libraryClip(ana) });
@@ -104,8 +104,8 @@ describe("marcar y desmarcar cuerpos", () => {
     expect(await labels(marta)).toEqual(["De Ana:false", "De Marta:true"]);
     await expect(listProductBodies(luis, producto.id)).rejects.toMatchObject({ status: 404 });
     await expect(bodyDownload(luis, body.id)).rejects.toMatchObject({ status: 404, message: "Cuerpo no encontrado." });
-    expect(await bodyDownload(marta, deMarta.id)).toEqual({ url: `${CDN}/hf-2.mp4`, filename: "brillomax-grifo-cuerpo-de-marta.mp4" });
-    expect(await bodyDownload(dueno, body.id)).toEqual({ url: `${CDN}/hf-1.mp4`, filename: "brillomax-grifo-cuerpo-de-ana.mp4" });
+    expect(await bodyDownload(marta, deMarta.id)).toEqual({ url: `${CDN}/hf-2.mp4`, jobId: "hf-2", filename: "brillomax-grifo-cuerpo-de-marta.mp4" });
+    expect(await bodyDownload(dueno, body.id)).toEqual({ url: `${CDN}/hf-1.mp4`, jobId: "hf-1", filename: "brillomax-grifo-cuerpo-de-ana.mp4" });
   });
 
   it("desmarca quien marcó o el dueño; otra persona que ve el producto, 403; quien no lo ve, 404", async () => {
@@ -133,8 +133,8 @@ describe("los cuerpos de un vídeo «Solo gancho»", () => {
     await updateVideoChoices(ana, video.id, { kind: "solo_gancho", bodyClipIds: [b.id, a.id] });
     expect((await getVideoFor(ana, video.id)).bodyClipIds).toEqual([b.id, a.id]);
     expect((await videoView(ana, video.id)).bodies).toEqual([
-      { id: b.id, label: "B", thumbUrl: `${CDN}/hf-2_min.webp`, videoUrl: `${CDN}/hf-2.mp4` },
-      { id: a.id, label: "A", thumbUrl: `${CDN}/hf-1_min.webp`, videoUrl: `${CDN}/hf-1.mp4` },
+      { id: b.id, label: "B", thumbUrl: `${CDN}/hf-2_min.webp`, videoUrl: `${CDN}/hf-2.mp4`, previewUrl: null, jobId: "hf-2" },
+      { id: a.id, label: "A", thumbUrl: `${CDN}/hf-1_min.webp`, videoUrl: `${CDN}/hf-1.mp4`, previewUrl: null, jobId: "hf-1" },
     ]);
 
     for (const bad of [[ajeno.id], [a.id, a.id], [999_999], ["1"], [0], "1", null, Array.from({ length: 11 }, (_, i) => i + 1)]) {

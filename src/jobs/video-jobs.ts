@@ -6,6 +6,7 @@ import { FINALIZE_JOB, finalizeGeneration, SUBMIT_JOB, submitGeneration } from "
 import { startBatchEdits } from "@/server/videos/edits";
 import { ADVANCE_JOB, advanceBatch, kickBatchOfGeneration, onBatchReady } from "@/server/videos/lote";
 import { processReference } from "@/server/videos/intake";
+import { archiveSweep } from "@/server/videos/archive";
 import { videoSweep } from "@/server/videos/sweep";
 import { REFERENCE_JOB } from "@/server/videos/upload";
 
@@ -80,3 +81,9 @@ defineJob<{ batchId: number }>(
 
 /** Cada minuto: subidas abandonadas, referencias atascadas, desgloses que no terminan y generaciones en curso o en duda. */
 defineSchedule("video.seguimiento", "* * * * *", () => videoSweep());
+
+/**
+ * Cada minuto: copia al almacén propio lo que haya generado Higgsfield y aún no esté (vídeos e
+ * imágenes, con miniatura y vista ligera; `archive.ts`). Sin bucket configurado no hace nada.
+ */
+defineSchedule("medios.copia", "* * * * *", () => archiveSweep());

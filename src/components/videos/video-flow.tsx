@@ -41,7 +41,7 @@ function pollEvery(view: VideoViewJson | undefined): number | false {
   const generations = [view.frame.current?.status, view.clip.current?.status];
   if (generations.some((s) => s !== undefined && RUNNING_STATUSES.includes(s))) return 3000;
   if (generations.includes("unknown")) return 15_000;
-  // Un montaje en la cola del Mac o montándose.
+  // Un montaje en la cola o montándose.
   if (view.edit.status === "en_cola" || view.edit.status === "montando") return 5000;
   return false;
 }

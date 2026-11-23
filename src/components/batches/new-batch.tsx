@@ -172,7 +172,7 @@ function SourceZone({
   const hint = !links
     ? null
     : offline
-      ? "El Mac no está conectado"
+      ? "El Mac no responde: enciéndelo para traer enlaces, o suelta el archivo del vídeo"
       : invalid > 0
         ? invalid === 1
           ? "No es un enlace de Instagram, TikTok, YouTube o Facebook"

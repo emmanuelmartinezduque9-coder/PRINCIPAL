@@ -27,7 +27,8 @@ Qué decide solo (el resto lo decide montador.py, como en el pedido 54; ver docs
   - Canción sin drop marcado: suena desde su marca de inicio.
   - Referencia de edición: de sus planos salen las duraciones del patrón (cuerpo y final) y dónde entra el
     CTA (último o penúltimo corte); ver `pistas_referencia`.
-Fuera del Mac (pruebas): sin `swift` los rótulos se dibujan con Pillow; sin librosa no hay beats (aviso).
+Rótulos: texto06b.py (mismo dibujo que el Swift del Mac, en cualquier sistema); sin librosa no hay beats (aviso).
+Corre igual en el Mac y en la nube (proceso en segundo plano de Railway: src/server/videos/montaje-nube.ts).
 """
 import contextlib
 import json
@@ -72,8 +73,14 @@ def herramientas(avisos, fuente=None):
         raise Fallo(f'Falta la fuente de los rótulos ({font}); ¿está conectado el disco?')
     if not Path(m.LABEL_FONT).exists():
         m.LABEL_FONT = font
-    if not Path('/usr/bin/swift').exists():
+    # Rótulos 06B con texto06b.py (igual que el Swift del Mac, en cualquier sistema). Sin sus dependencias
+    # (freetype-py, uharfbuzz), con Pillow a secas y un aviso.
+    try:
+        import texto06b  # noqa: F401
+        m.render_texts = rotulos_06b
+    except ImportError:
         m.render_texts = rotulos_pillow
+        avisos.append('Rótulos dibujados sin texto06b (faltan freetype-py/uharfbuzz): pueden verse algo distintos')
     try:
         import librosa  # noqa: F401
     except ImportError:
@@ -85,6 +92,22 @@ def herramientas(avisos, fuente=None):
 def beats_vacios(audio, work, cache_dir, anchor=None):
     return dict(audio=str(audio), beats=[], beat_strength=[], onsets=[], downbeats=[], tempo_bpm=None, file=None,
                 method='sin librosa')
+
+
+def rotulos_06b(cues, dur, work, font):
+    """Rótulos 06B con texto06b.py (el mismo dibujo que texto06b.swift, sin depender del Mac)."""
+    import texto06b
+    out = Path(work) / 'textos'
+    out.mkdir(parents=True, exist_ok=True)
+    fuente = texto06b.Fuente(font)
+    for i, c in enumerate(cues):
+        c['lines'] = c.get('lines') or m.wrap(c['text'])
+        c['text'] = ' '.join(c['lines'])
+        size = texto06b.fit_size(fuente, c['lines'])
+        c['png'] = str(out / f'cue-{i}.png')
+        texto06b.render(fuente, c['lines'], size).save(c['png'])
+        c['font_size_px'] = float(size)
+    return cues
 
 
 def rotulos_pillow(cues, dur, work, font):

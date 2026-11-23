@@ -58,7 +58,7 @@ function EditTexts({ view }: { view: VideoViewJson }) {
   );
 }
 
-/** Paso «Montaje»: el vídeo montado en el Mac, su descarga, «Montar» / «Volver a montar» y sus rótulos. */
+/** Paso «Montaje»: el vídeo montado en la nube, su descarga, «Montar» / «Volver a montar» y sus rótulos. */
 export function StepEdit({ view }: { view: VideoViewJson }) {
   const { video, edit } = view;
   return (

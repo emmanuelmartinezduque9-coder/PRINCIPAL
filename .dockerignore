@@ -1,0 +1,8 @@
+node_modules
+.next
+.git
+**/._*
+**/.DS_Store
+docs
+tests
+*.log

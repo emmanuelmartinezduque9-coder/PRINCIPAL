@@ -26,3 +26,16 @@ jobs:
       - run: npm test
       - run: npm run build
       - run: npm run lint
+
+  imagen:
+    # La misma imagen que publica Railway (Dockerfile): que se construye y que el montador funciona dentro
+    # (Python, librosa, rótulos 06B con freetype/harfbuzz, rea-video, yt-dlp y ffmpeg), con un montaje de verdad.
+    name: Imagen de Railway y montador
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t principal .
+      - run: docker run --rm principal sh -c 'ffmpeg -version | head -1 && /opt/montador/bin/yt-dlp --version && /opt/montador/bin/python -m rea_video --help | head -3 && ls -la /opt/rea-models'
+      - run: docker run --rm -v "$PWD/montador:/m" -w /m principal /opt/montador/bin/python -I -B test_montar_auto.py
+      - run: docker run --rm -v "$PWD/montador:/m" -w /m principal /opt/montador/bin/python -I -B test_texto06b.py
