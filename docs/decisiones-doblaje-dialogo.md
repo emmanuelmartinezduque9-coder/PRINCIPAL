@@ -55,8 +55,17 @@ El método, tal cual:
 
 ## Coste
 
-Higgsfield `dubbing`: **66 créditos por 12 s** en la prueba real de Codex (~5,5 créditos por segundo de vídeo).
-BandIt v2 y la mezcla son gratis (CPU de Railway, ~15–60 s por vídeo).
+Higgsfield `dubbing`: **44 créditos por 12 s** en la prueba real de PRINCIPAL (23/11/2026; 66 en la de Codex del
+19/11). Emmanuel autorizó hasta ~66 créditos por vídeo de 12 s, solo cuando se elige la opción. BandIt v2 y la
+mezcla son gratis (CPU de Railway, ~15–60 s por vídeo).
+
+## Prueba real (23/11/2026)
+
+`referencias-pedido-54/ref-v1.mp4` (diálogo inglés «Three, two, one. Let's see how this comes out.» sobre música)
+→ voz alemana «3, 2, 1, mal sehen wie das wird.» (Whisper: alemán) sobre la música original (al restar la voz
+alemana queda la música separada, correlación 0,9994), 12,24 s como el original. 44 créditos (trabajo
+`3b769c1f-de86-42d5-8966-8992821ae973`). Archivos para escuchar en
+`side-session-notes/local_1e4352e4-…/doblaje-aleman/`.
 
 ## Pendiente / mejoras
 
