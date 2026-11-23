@@ -55,6 +55,17 @@ startWorker().then(
         ),
       )
       .catch((error) => console.error("[imagen] No se pudo preparar la foto de funcionamiento de FalterPfote:", error));
+    // Una vez (23/11/2026): la imagen del vídeo 6 con las alas de mariposa corregidas (segundo paso de
+    // edición del efecto, revisada) entra como candidata para «Aprobar», sin gastar otra vez.
+    void import("@/server/videos/importar-imagen")
+      .then(({ importFrameCandidate }) =>
+        importFrameCandidate(
+          6,
+          "https://d8j0ntlcm91z4.cloudfront.net/user_3K2PXlowqZBlWpF8Twpyltbd8YU/hf_20261123_171720_a0cf828e-aac8-498e-ba40-7cf395bfd6b0.png",
+          "Alas de mariposa de la foto de funcionamiento (segundo paso de edición del efecto), revisada",
+        ),
+      )
+      .catch((error) => console.error("[imagen] No se pudo importar la imagen corregida del vídeo 6:", error));
   },
   (error) => {
     // Sin cola no hay nada que hacer: se sale con error para que el servicio se reinicie.
