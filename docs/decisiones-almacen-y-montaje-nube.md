@@ -138,3 +138,17 @@ dibujo simple con Pillow y lo avisa.
   (se pueden pasar al almacén y borrar más adelante).
 - Canciones y fotos siguen en `bytea` (ver arriba).
 - El tope de yt-dlp en el Mac es 100 MB por vídeo (suficiente para un reel).
+
+## Comprobación con datos reales (23/11/2026)
+
+- **Almacén**: a la media hora de publicar, 288 trabajos copiados (4,3 GB) y 222 en cola, sin
+  ningún error.
+- **Montaje en la nube** (dentro del servidor de Railway, sin crear nada en la base de datos): los
+  dos clips del pedido 54 que el dueño dio por buenos (gancho `88a7e7b3…` + vídeo `263f4aa8…` como
+  cuerpo reutilizado), desde el almacén propio, con «Let It Snow» y su drop (7,49 s) y los rótulos
+  del V02. Tardó **47 s**: 14,0 s de vídeo, 10 planos, 5/9 cortes en beat, autocomprobación bien.
+  El mismo montaje en el Mac con `texto06b.swift` da exactamente lo mismo (duración, planos,
+  cortes); los fotogramas no se distinguen (solo el dibujo de los emojis, Noto en vez de Apple).
+  El resultado quedó en el almacén (`pruebas/pedido54-gancho-cuerpo-*.mp4`).
+- Para lanzarla se añadió una llave SSH temporal a la cuenta de Railway (con el OK del dueño) y se
+  borró después (de Railway y del disco).
