@@ -16,7 +16,7 @@ import { estimateClipCredits } from "@/server/videos/clip";
 import { PINTEREST_PENDING } from "@/server/videos/pinterest";
 // Registra el constructor de la imagen inicial (`frame`) en las generaciones.
 import { approveFrame, rejectFrame } from "@/server/videos/frame";
-import { BLOCKED, MAX_REGENERATIONS, quoteGeneration, requestGeneration, type GenDeps, type GenerationKind } from "@/server/videos/generations";
+import { BLOCKED, MAX_REGENERATIONS, quoteGeneration, SYSTEM_REJECT_PREFIX, requestGeneration, type GenDeps, type GenerationKind } from "@/server/videos/generations";
 import { clipModelProblem, getVideoFor, setVideoSong, referenceOutdated, REFERENCE_OUTDATED, staleness, updateVideoChoices, withProductNotes, type Video } from "@/server/videos/videos";
 import { CLIP_MODEL_LABEL, CLIP_MODELS, resolveClipModel, SEEDANCE, sourceProblem } from "@/lib/clip-models";
 import { isPromptProblem, PROMPT_ERROR } from "@/server/videos/prompt-check";
@@ -163,7 +163,10 @@ export function stageOf(
   if (!last) return "need";
   if (BUSY_GENERATION.includes(last.status)) return "busy";
   // Un bloqueo del filtro de Higgsfield no es una ronda gastada: lo devuelve y tiene sus propios reintentos.
-  const spent = gens.filter((g) => SPENT.includes(g.status) && !(g.status === "failed" && g.error === BLOCKED)).length;
+  // Tampoco un rechazo que hizo la aplicación para aplicar una corrección.
+  const spent = gens.filter(
+    (g) => SPENT.includes(g.status) && !(g.status === "failed" && g.error === BLOCKED) && !g.rejectReason?.startsWith(SYSTEM_REJECT_PREFIX),
+  ).length;
   const roundsLeft = spent < 1 + MAX_REGENERATIONS;
   if (last.status === "done" && !last.rejectReason) return "done";
   if (last.rejectReason) return roundsLeft ? "need" : "maxed";
@@ -879,16 +882,17 @@ async function canStillSwitch(pause: NonNullable<Batch["pause"]>): Promise<boole
 
 /** ¿La pausa «máximo de regeneraciones» de un clip deja de serlo sin contar los bloqueos del filtro? */
 async function maxedOnlyByBlocks(pause: NonNullable<Batch["pause"]>): Promise<boolean> {
-  if (pause.kindOf !== "clip" || pause.videoId === null || !pause.reason.includes("llegado al máximo de")) return false;
+  if ((pause.kindOf !== "clip" && pause.kindOf !== "frame") || pause.videoId === null || !pause.reason.includes("llegado al máximo de")) return false;
   const [row] = await getDb()
     .select({ n: sql<number>`count(*)::int` })
     .from(schema.generations)
     .where(
       and(
         eq(schema.generations.videoId, pause.videoId),
-        eq(schema.generations.kind, "clip"),
+        eq(schema.generations.kind, pause.kindOf),
         inArray(schema.generations.status, SPENT),
         sql`not (${schema.generations.status} = 'failed' and ${schema.generations.error} is not distinct from ${BLOCKED})`,
+        sql`coalesce(${schema.generations.rejectReason}, '') not like ${SYSTEM_REJECT_PREFIX + "%"}`,
       ),
     );
   return (row?.n ?? 0) < 1 + MAX_REGENERATIONS;

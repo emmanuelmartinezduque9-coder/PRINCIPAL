@@ -46,6 +46,11 @@ import { getVideoFor, latestDoneAnalysis, requireVideoOwner, type Video } from "
  */
 
 export const MAX_REGENERATIONS = 2;
+/**
+ * Motivo de un rechazo que hace la propia aplicación para aplicar una corrección (no el dueño): no
+ * gasta una de sus regeneraciones, igual que un bloqueo del filtro de Higgsfield.
+ */
+export const SYSTEM_REJECT_PREFIX = "Corrección automática: ";
 export const SUBMIT_STALE_MS = 2 * 60 * 1000;
 export const RECONCILE_GIVE_UP_MS = 10 * 60 * 1000;
 export const GENERATION_TIMEOUT_MS = 60 * 60 * 1000;
@@ -309,7 +314,7 @@ function nextRound(rows: Generation[]): number {
   const spent = rows.filter((row) => SPENT.includes(row.status as GenerationStatus));
   // Un bloqueo del filtro de Higgsfield no es una regeneración: Higgsfield lo devuelve (sus
   // movimientos, 23/11/2026) y el lote lo repite solo con el prompt o el modelo corregidos.
-  const counted = spent.filter((row) => !(row.status === "failed" && row.error === BLOCKED)).length;
+  const counted = spent.filter((row) => !(row.status === "failed" && row.error === BLOCKED) && !row.rejectReason?.startsWith(SYSTEM_REJECT_PREFIX)).length;
   if (counted + 1 > 1 + MAX_REGENERATIONS) throw new HttpError(409, MAX_REACHED);
   const round = Math.max(spent.length, ...spent.map((row) => row.round)) + 1;
   if (round > 1) {

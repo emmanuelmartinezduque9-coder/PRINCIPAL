@@ -375,3 +375,15 @@ describe("si Pinterest no deja a la nube, busca el Mac del dueño", () => {
     expect(state.status).toBe("failed");
   });
 });
+
+describe("una corrección automática no gasta regeneraciones", () => {
+  it("un rechazo con «Corrección automática: …» no cuenta para el máximo de rondas", async () => {
+    const { stageOf } = await import("@/server/videos/lote");
+    const { SYSTEM_REJECT_PREFIX } = await import("@/server/videos/generations");
+    const at = new Date();
+    const round = (rejectReason: string | null) => ({ status: "done", rejectReason, finishedAt: at, intentAt: at, error: null });
+    const owner = [round("No me gusta"), round("Tampoco"), round("Otra vez no")];
+    expect(stageOf(owner, false, at)).toBe("maxed");
+    expect(stageOf([round("No me gusta"), round("Tampoco"), round(`${SYSTEM_REJECT_PREFIX}alas de mariposa`)], false, at)).toBe("need");
+  });
+});

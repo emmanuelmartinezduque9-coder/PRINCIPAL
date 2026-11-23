@@ -1,4 +1,4 @@
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import { getDb, schema } from "@/db/client";
 import { getActiveUser } from "@/server/auth";
 import { ensureMedia } from "@/server/higgsfield";
@@ -70,7 +70,8 @@ export async function rejectFrameOnce(videoId: number, round: number, reason: st
   const owner = await getActiveUser(video.createdBy);
   if (!owner) return;
   const { rejectFrame } = await import("@/server/videos/frame");
-  await rejectFrame(owner, videoId, reason);
+  const { SYSTEM_REJECT_PREFIX } = await import("@/server/videos/generations");
+  await rejectFrame(owner, videoId, `${SYSTEM_REJECT_PREFIX}${reason}`.slice(0, 300));
   console.log(`[imagen] Vídeo ${videoId}: ronda ${round} rechazada para regenerarla (${reason}).`);
 }
 
@@ -111,7 +112,7 @@ export async function ensureWorkingPhoto(productName: string, objectKey: string,
   const [done] = await getDb()
     .select({ id: schema.generations.id })
     .from(schema.generations)
-    .where(and(eq(schema.generations.videoId, videoId), eq(schema.generations.rejectReason, reason)))
+    .where(and(eq(schema.generations.videoId, videoId), inArray(schema.generations.rejectReason, [reason, `Corrección automática: ${reason}`.slice(0, 300)])))
     .limit(1);
   if (done) return;
   // Los prompts con sala de sus vídeos se rehacen (ahora ven y citan la foto de funcionamiento).
