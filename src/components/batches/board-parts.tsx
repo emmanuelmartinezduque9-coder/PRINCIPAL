@@ -168,14 +168,15 @@ export function GroupHeader({ batchId, group, editable, variants }: { batchId: n
 export function RowActions({ batchId, row }: { batchId: number; row: BatchRowJson }) {
   const client = useQueryClient();
   const { uploads } = useReferenceUploads();
-  const [busy, setBusy] = useState<null | "duplicate" | "remove">(null);
+  const [busy, setBusy] = useState<null | "duplicate" | "remove" | "include">(null);
   const [asking, setAsking] = useState(false);
   const uploading = uploads[row.id]?.kind === "uploading";
 
-  async function run(kind: "duplicate" | "remove") {
+  async function run(kind: "duplicate" | "remove" | "include") {
     setBusy(kind);
     try {
-      if (kind === "duplicate") await api(`/api/lotes/${batchId}/videos/${row.id}/duplicar`, { method: "POST" });
+      if (kind === "include") await api(`/api/lotes/${batchId}/videos/${row.id}/incluir`, { method: "POST" });
+      else if (kind === "duplicate") await api(`/api/lotes/${batchId}/videos/${row.id}/duplicar`, { method: "POST" });
       else await api(`/api/lotes/${batchId}/videos/${row.id}`, { method: "DELETE" });
       setAsking(false);
       await client.invalidateQueries({ queryKey: ["batch", batchId] });
@@ -189,6 +190,12 @@ export function RowActions({ batchId, row }: { batchId: number; row: BatchRowJso
 
   return (
     <>
+      {row.skipped ? (
+        <Button variant="outline" className="h-8 gap-1.5 px-2.5 text-sm" disabled={busy !== null} onClick={() => void run("include")}>
+          {busy === "include" ? <Loader2 className="animate-spin" aria-hidden /> : null}
+          Volver a incluir
+        </Button>
+      ) : null}
       <Button
         variant="ghost"
         size="icon"

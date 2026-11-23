@@ -37,6 +37,7 @@ const row = (over: Partial<BatchRowJson> = {}): BatchRowJson => ({
   editReferenceUrl: null,
   clipModel: "auto",
   clipModelResolved: "hf_mult_motion_control",
+  skipped: false,
   kind: "replicar",
   hookSeconds: 4,
   bodies: 0,

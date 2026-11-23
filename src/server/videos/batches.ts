@@ -420,6 +420,8 @@ export interface BatchRow {
   /** Cómo se genera la réplica: la elección (`auto` o un modelo) y el modelo con el que sale. */
   clipModel: string;
   clipModelResolved: ClipModel;
+  /** Fuera del envío automático del lote («Saltar»): se puede «Volver a incluir». */
+  skipped: boolean;
   kind: VideoKind;
   /** Duración del gancho (solo cuenta con «Solo gancho»). */
   hookSeconds: number;
@@ -586,6 +588,7 @@ export async function batchView(user: AuthUser, batchId: number): Promise<BatchV
         editReferenceUrl: video.editReferenceUrl,
         clipModel: video.clipModel,
         clipModelResolved: resolveClipModel(video.clipModel, video.segmentDurationMs),
+        skipped: video.autoSkipped,
         kind: video.kind as VideoKind,
         hookSeconds: video.hookSeconds,
         bodies: bodiesOf.get(video.id)?.length ?? 0,

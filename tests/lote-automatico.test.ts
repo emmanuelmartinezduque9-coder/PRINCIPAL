@@ -20,6 +20,7 @@ import {
   advanceBatch,
   advanceRunningBatches,
   answerQuestion,
+  includeBatchVideo,
   approveAllFrames,
   AUTO_PARALLEL,
   autoView,
@@ -237,6 +238,17 @@ describe("pausas por algo interno", () => {
     expect((await getBatchFor(ana, prompt.id)).status).not.toBe("pausado");
     expect((await getBatchFor(ana, prompt.id)).pause).toBeNull();
     expect((await getBatchFor(ana, saldo.id)).status).toBe("pausado");
+  });
+
+  it("«Saltar» en una pausa por un prompt interno no saca el vídeo; «Volver a incluir» devuelve uno saltado", async () => {
+    const { batchId, videos } = await batchWith(1);
+    const pause = { kind: "fallo", reason: "Video 1: Falta decir para qué sirve image [4].", from: "clips", extraCredits: 0, videoId: videos[0].id, kindOf: "clip", quoted: null };
+    await getPool().query("update batches set status = 'pausado', pause = $2::jsonb where id = $1", [batchId, JSON.stringify(pause)]);
+    await resumeBatch(ana, batchId, { skip: true });
+    expect((await getVideoFor(ana, videos[0].id)).autoSkipped).toBe(false);
+    await getPool().query("update videos set auto_skipped = true where id = $1", [videos[0].id]);
+    await includeBatchVideo(ana, batchId, videos[0].id);
+    expect((await getVideoFor(ana, videos[0].id)).autoSkipped).toBe(false);
   });
 });
 

@@ -654,7 +654,8 @@ export async function resumeBatch(user: AuthUser, batchId: number, input: { extr
   const batch = await ownBatch(user, batchId);
   const pause = batch.pause;
   if (batch.status !== "pausado" || !pause) throw new HttpError(409, NOT_PAUSED);
-  const skip = input.skip === true && pause.videoId !== null;
+  // Una pausa por un prompt interno no saca el vídeo del lote: eso se corrige solo (regla fija, 23/11/2026).
+  const skip = input.skip === true && pause.videoId !== null && !isPromptProblem(pause.reason);
   let budget = batch.budgetCredits ?? 0;
   const estimates = { ...(batch.estimates ?? {}) };
   if (skip) {
@@ -675,6 +676,18 @@ export async function resumeBatch(user: AuthUser, batchId: number, input: { extr
   if (!updated) throw new HttpError(409, NOT_PAUSED);
   await kickBatch(updated);
   return updated;
+}
+
+/**
+ * «Volver a incluir»: un vídeo que quedó fuera con «Saltar» vuelve al envío automático del lote y
+ * sigue donde estaba (con el presupuesto ya autorizado). Solo quien creó el lote.
+ */
+export async function includeBatchVideo(user: AuthUser, batchId: number, videoId: number): Promise<void> {
+  const batch = await ownBatch(user, batchId);
+  const video = await getVideoFor(user, videoId);
+  if (video.batchId !== batch.id || video.createdBy !== user.id) throw new HttpError(404, VIDEO_NOT_IN_BATCH);
+  await getDb().update(schema.videos).set({ autoSkipped: false, updatedAt: new Date() }).where(eq(schema.videos.id, video.id));
+  await kickBatch(batch);
 }
 
 // ───────────────────────── Avanzar (trabajo y seguimiento) ─────────────────────────
