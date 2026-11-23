@@ -34,6 +34,10 @@ Las pruebas `tests/flujo-automatico.test.ts` fijan estas reglas: si una cambia, 
 - **Toda imagen inicial (Nano Banana) lleva SIEMPRE fotos reales de Pinterest como referencia**, también
   al regenerar una imagen rechazada. Solo si el dueño pone una referencia de entorno a mano en el vídeo o
   la tarjeta, no se busca. Lo pidió tres veces (22 y 23/11/2026).
+- **Orden vigente (23/11/2026): de momento NO se busca en Pinterest.** Se reutiliza el banco de referencias
+  que él ya aprobó (`reference_bank`, sembrado desde `reglas/banco-referencias.json`; crece con cada imagen
+  aprobada que llevaba referencia a mano). La app elige sola la que encaja; él no elige nada. `BANK_ONLY`
+  en `pinterest.ts`: no lo pongas a `false` sin una orden expresa suya.
 - Está en código, no solo en texto: `src/server/videos/pinterest.ts` (búsqueda, elección con visión,
   almacén), `frame.ts` (la imagen no se pide sin ellas) y `reglas/referencias-pinterest.md` (qué buscar
   según la escena). No lo quites ni lo hagas opcional sin una orden expresa del dueño.

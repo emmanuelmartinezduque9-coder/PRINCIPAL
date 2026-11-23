@@ -15,7 +15,7 @@ import {
   type RequestBuilder,
 } from "@/server/videos/generations";
 import { imageManifest, type ManifestItem } from "@/server/videos/manifest";
-import { hasManualEnvironment, readPinterestImage, requirePinterestRefs, withPinterestRoles } from "@/server/videos/pinterest";
+import { addApprovedToBank, hasManualEnvironment, readPinterestImage, requirePinterestRefs, withPinterestRoles } from "@/server/videos/pinterest";
 import { checkImagePrompt } from "@/server/videos/prompt-check";
 import {
   BRIEF_CHANGED,
@@ -211,6 +211,8 @@ const noClip: GenerationGuard = async (tx, video) => {
 /** Aprueba una de las candidatas de la imagen inicial. */
 export async function approveFrame(user: AuthUser, videoId: number, resultId: number): Promise<void> {
   await approveResult(user, videoId, "frame", resultId, { guard: noClip });
+  // Lo que él aprueba alimenta el banco de referencias (su entorno puesto a mano, si lo llevaba).
+  await addApprovedToBank(user, videoId).catch((error) => console.error(`[imagen] No se pudo añadir al banco la referencia del vídeo ${videoId}:`, error));
 }
 
 /** Rechaza la última ronda de la imagen inicial con un motivo de una línea (y deja de estar aprobada). */

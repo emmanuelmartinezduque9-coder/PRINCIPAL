@@ -8,9 +8,9 @@ import type { VideoViewJson } from "./labels";
 type PinterestJson = NonNullable<VideoViewJson["pinterest"]>;
 
 const WAITING: Record<string, string> = {
-  pending: "Buscando referencias en Pinterest…",
-  searching: "Buscando referencias en Pinterest…",
-  waiting_mac: "Buscando en Pinterest desde tu Mac…",
+  pending: "Eligiendo referencias aprobadas…",
+  searching: "Eligiendo referencias aprobadas…",
+  waiting_mac: "Eligiendo referencias aprobadas…",
 };
 
 /**
@@ -24,7 +24,7 @@ export function PinterestRefs({ pinterest, compact = false }: { pinterest: Pinte
   const waiting = WAITING[pinterest.status];
   return (
     <section className={compact ? "flex flex-col gap-1.5" : "panel flex flex-col gap-2 p-4"} aria-label="Referencias de Pinterest">
-      <h3 className="text-xs font-medium text-muted-foreground">Referencias de Pinterest</h3>
+      <h3 className="text-xs font-medium text-muted-foreground">Referencias de Pinterest aprobadas</h3>
       {pinterest.refs.length > 0 ? (
         <ul className="flex flex-wrap gap-2">
           {pinterest.refs.map((ref) => (
@@ -33,7 +33,7 @@ export function PinterestRefs({ pinterest, compact = false }: { pinterest: Pinte
                 type="button"
                 className="block overflow-hidden rounded-md ring-1 ring-foreground/10 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
                 onClick={() => setZoomed(ref)}
-                title={`${ref.query}: ${ref.reason}`}
+                title={ref.reason}
               >
                 {/* eslint-disable-next-line @next/next/no-img-element -- enlace firmado del almacén */}
                 <img src={ref.url} alt={ref.reason} className={compact ? "h-14 w-auto max-w-24 object-cover" : "h-20 w-auto max-w-32 object-cover"} loading="lazy" />
@@ -47,7 +47,7 @@ export function PinterestRefs({ pinterest, compact = false }: { pinterest: Pinte
           {waiting}
         </p>
       ) : pinterest.status === "failed" ? (
-        <p className="text-xs text-pretty text-muted-foreground">{pinterest.error ?? "No se encontraron."} Se vuelve a buscar al pedir la imagen.</p>
+        <p className="text-xs text-pretty text-muted-foreground">{pinterest.error ?? "No se eligió ninguna."} Se vuelve a intentar sola.</p>
       ) : null}
       {!compact && pinterest.scene && pinterest.refs.length > 0 ? (
         <p className="text-xs text-pretty text-muted-foreground">{pinterest.scene.place}</p>
@@ -60,7 +60,7 @@ export function PinterestRefs({ pinterest, compact = false }: { pinterest: Pinte
               {/* eslint-disable-next-line @next/next/no-img-element -- enlace firmado del almacén */}
               <img src={zoomed.url} alt={zoomed.reason} className="max-h-[70vh] w-auto max-w-full rounded-lg" />
               <p className="text-sm text-pretty text-muted-foreground">
-                Búsqueda «{zoomed.query}». {zoomed.reason}
+                {zoomed.reason}
               </p>
             </>
           ) : null}

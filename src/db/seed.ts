@@ -1,3 +1,4 @@
+import { seedReferenceBank } from "../server/videos/pinterest";
 import { and, count, eq, isNull, sql } from "drizzle-orm";
 import { getDb, schema } from "./client";
 import { buildInvite } from "../server/auth";
@@ -38,6 +39,9 @@ export async function ensureOwnerInvite(
 export async function seed(url: string): Promise<void> {
   process.env.DATABASE_URL ??= url;
   await seedRules();
+  // El banco de referencias aprobadas (regla fija: ninguna imagen sin referencia).
+  const added = await seedReferenceBank();
+  if (added > 0) console.log(`[inicio] Banco de referencias aprobadas: ${added} nueva(s).`);
   const link = await ensureOwnerInvite(process.env);
   if (link) console.log(`[inicio] Enlace para crear la cuenta del dueño (un solo uso, 7 días): ${link}`);
 }

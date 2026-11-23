@@ -239,6 +239,13 @@
       "when": 1795406844516,
       "tag": "0033_datos_de_mercado",
       "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1795408165148,
+      "tag": "0034_banco_referencias",
+      "breakpoints": true
     }
   ]
 }

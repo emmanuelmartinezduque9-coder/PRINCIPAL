@@ -1,0 +1,438 @@
+[
+  {
+    "code": "R00",
+    "sha256": "bc4e598117c6efa2f3bb265e8c851f7f8d737c14e4a90ca2dfa8d028e8abc663",
+    "bytes": 112748,
+    "accounts": [
+      "ZIELALARM"
+    ],
+    "description": "Dormitorio claro con cama, árbol y muebles cotidianos",
+    "originalSha256": "99a12515106a9cfeb535f4d26eaf4a9d608fc16a7331b5abe019c9d73eb544cc"
+  },
+  {
+    "code": "R01",
+    "sha256": "9498f34b7f0999309dbffec3925ccf2dffa7494eca515ccfd1644ab2c2ae5c43",
+    "bytes": 153242,
+    "accounts": [
+      "EISWERK"
+    ],
+    "description": "POV sofá, manta, taza, perro, TV y árbol",
+    "originalSha256": "0cf14d33ee84989480ca24f27993229fe15ddf1a28e084c2998ca8e8d8df57c7"
+  },
+  {
+    "code": "R02",
+    "sha256": "0a95ca20fbea619b3a05ca485e8a52f458935fda98ff99f3776801803bef5156",
+    "bytes": 159633,
+    "accounts": [
+      "EISWERK"
+    ],
+    "description": "Isla de cocina clara con superficie útil y decoración navideña",
+    "originalSha256": "49757904f064a2088c82c5115506846d8e6c4e12a6292abe8df9eca5a455a43b"
+  },
+  {
+    "code": "R04",
+    "sha256": "6fc71329246e6d3f21831210774ef314c23f8d92aa1694602c5e707db64afbc5",
+    "bytes": 286659,
+    "accounts": [
+      "FABLESEAT"
+    ],
+    "description": "Atrio comercial con árbol y rótulo Liverpool; no acredita Target ni mercado estadounidense",
+    "originalSha256": "4e296791e4b440292b43880123fa24ea158dc4b500100526775e8b6721128bf8"
+  },
+  {
+    "code": "R05",
+    "sha256": "b7ee96c98e434cef2499bf0c204697961d2d500c51c6d8b6fd46e2ae7b064003",
+    "bytes": 92999,
+    "accounts": [
+      "FABLESEAT"
+    ],
+    "description": "Escritorio pastel azul y rosa, pantallas y decoración de princesa",
+    "originalSha256": "3029d0cea67fd3ea9b445fe64eaa6705b19e2942a0d275a13af2e8d7ac109f90"
+  },
+  {
+    "code": "R06",
+    "sha256": "5127912b01b521359e460521825a58d8b23ea0d6291a2e42d53f8f72fbb2dd18",
+    "bytes": 278908,
+    "accounts": [
+      "FABLESEAT"
+    ],
+    "description": "Rincón de escritorio pastel, silla y objetos cotidianos",
+    "originalSha256": "bb59c023e95bb2c20eb00e27e94ac94e3b3fdea9902e103a3227eee57fa2374d"
+  },
+  {
+    "code": "R09",
+    "sha256": "2809c65272d3dbdba65c222831a0a7fb47de99e61788ff9c42f98fc93df9389a",
+    "bytes": 259464,
+    "accounts": [
+      "EISWERK"
+    ],
+    "description": "Pasillo comercial de bebidas con profundidad y luz de techo",
+    "originalSha256": "7599e147c909995be29b6b6b88a745d68667a21bcec2d415d6309e8b8d072592"
+  },
+  {
+    "code": "R10",
+    "sha256": "d9802200b7e56db7f6d18e5c46a263a5f08102fddec4f3fddb2f62dd5dbacdac",
+    "bytes": 123610,
+    "accounts": [
+      "EISWERK"
+    ],
+    "description": "Salón alto luminoso, TV, chimenea, árbol y mesa",
+    "originalSha256": "29ac06fb9984b40063bc66592781e05f6d1129324d994c2e99648bfeda68a8ee"
+  },
+  {
+    "code": "R11",
+    "sha256": "1ce60c1b129f95f364dfdefaf17b686ec138242e572278cd18d7e628234c3860",
+    "bytes": 169255,
+    "accounts": [
+      "FRECHFLAUSCH"
+    ],
+    "description": "Interior de coche desde conductor, volante y consola",
+    "originalSha256": "4d779885b9e72fe387c7e7ddbef13857dfd365772c38211ce94552bb72f4742f"
+  },
+  {
+    "code": "R12",
+    "sha256": "d5d81f32cdcb0a2014fe617879e7795ca6c7ef73d853de0467c15dfaec4382f7",
+    "bytes": 459354,
+    "accounts": [
+      "FRECHFLAUSCH"
+    ],
+    "description": "Exposición navideña real con mercancía, compradores y techo comercial",
+    "originalSha256": "ea33a765a40bd3944c30ee598d0f2daa993d997b1cf01db91c150879350bada7"
+  },
+  {
+    "code": "R13",
+    "sha256": "e5645bcd3261e18143a83d862f565d1dd7fccc2ccde874b27d6b4f4947336d41",
+    "bytes": 111811,
+    "accounts": [
+      "HUPFPANDA"
+    ],
+    "description": "Sofá, TV, árbol y gato; ambiente doméstico",
+    "originalSha256": "fb6edda1652c8e3a14a683714ee770e5bee3ec8e213cc73bfdfccc2a8aba467f"
+  },
+  {
+    "code": "R14",
+    "sha256": "934d611b718c6d70aefbd5812558ac30961e1babf611b1da006ccfbed5522b90",
+    "bytes": 227373,
+    "accounts": [
+      "HAARZAUBER"
+    ],
+    "description": "Peluquería en uso con espejos, puestos y personas; no copiar identidades",
+    "originalSha256": "061c6446d4934c8992fb4aa951aa213db412cc04e8f1e13ba0ad5e3c262fcb23"
+  },
+  {
+    "code": "R15",
+    "sha256": "e5fc7ea76619b1ddff9b56df6afb47d7859f4545f2fdb9510aeecdb60a3bb12b",
+    "bytes": 135022,
+    "accounts": [
+      "HUPFPANDA"
+    ],
+    "description": "Salón familiar gris con mantas y decoración roja y verde",
+    "originalSha256": "31b86fd66d0c1625d7726ddd2a17377c24db0b9fbac6b8524b671f843a45ee73"
+  },
+  {
+    "code": "R16",
+    "sha256": "e69327b107135088ad74bd51e30f67552e16a295452009a24f4a52d14d85371a",
+    "bytes": 107256,
+    "accounts": [
+      "EISWERK"
+    ],
+    "description": "POV sofá con zapatillas y película; comodidad navideña",
+    "originalSha256": "5578dde02a0571d6b5f28c77600943cf6eb8c58760f8135306de9611d230389e"
+  },
+  {
+    "code": "R17",
+    "sha256": "a8dc0ef3b525a27ae95e0fcc1f5c02f0778f4a16a1527fe952f34b0bcf337f94",
+    "bytes": 401453,
+    "accounts": [
+      "EISWERK"
+    ],
+    "description": "Salón de día, pared de madera, TV, árbol y ventanas",
+    "originalSha256": "137328b146192f939cf2fb583ea355fe212bb4cfd19f3b801de681528e49821c"
+  },
+  {
+    "code": "R18",
+    "sha256": "dd9bbdabcdba6ee1321a18cacc75bbcbcb16022dac3fc9adccd2eabc587c8c29",
+    "bytes": 93622,
+    "accounts": [
+      "EISWERK"
+    ],
+    "description": "POV sofá bajo, mesa pequeña y taza, TV y árbol",
+    "originalSha256": "743c4ae8d8d63c1aa3e982049b563bc249f5c89f731ba4740cf8c199066e2a4b"
+  },
+  {
+    "code": "R20",
+    "sha256": "0477407cc20169d180fc7210e8de971f5e62060caa4f3c4ba7c32455a7cc4428",
+    "bytes": 107572,
+    "accounts": [
+      "EISWERK"
+    ],
+    "description": "Salón nocturno con chimenea, árbol y manta",
+    "originalSha256": "d5f760287b0c63ab6f5fe99aba65a4f89639526ddb1bc03698eae8624ff32740"
+  },
+  {
+    "code": "R21",
+    "sha256": "3796ae0b33afa3c92a90de9b9911e0e1a12735845a633059b2c9ac1510a84d0f",
+    "bytes": 215565,
+    "accounts": [
+      "EISWERK"
+    ],
+    "description": "Exposición comercial navideña con precios y mercancía",
+    "originalSha256": "1a3255cae3ddbd1b41658abb320c0a9e0399895fafc0a53998fc0ca42ee9d4de"
+  },
+  {
+    "code": "R22",
+    "sha256": "6cd5ae4efc4829c901bf6e680cdf42ad1d8f91324a20f7fd61023cc949a95708",
+    "bytes": 88012,
+    "accounts": [
+      "EISWERK"
+    ],
+    "description": "Portátil sobre manta y árbol: ocio doméstico nocturno",
+    "originalSha256": "b782bc3195c130410d48ee4823588646516951d4ec9a87423dadbce953d13bb3"
+  },
+  {
+    "code": "R23",
+    "sha256": "a35cbec95a3bb79fc46984e4576ed635d545e5d1e317614a0457fc070b9bbe69",
+    "bytes": 84549,
+    "accounts": [
+      "EISWERK"
+    ],
+    "description": "Persona cocinando en cocina de madera: entorno, no avatar",
+    "originalSha256": "296ee76e16b76c13726e064440a0250d9bccfc459c64f3bf4d1a287950b7f3ad"
+  },
+  {
+    "code": "R24",
+    "sha256": "7edd786fb71897c515ab5d82887a24044afe3ca3d44f00b8829543c87b962817",
+    "bytes": 96996,
+    "accounts": [
+      "EISWERK"
+    ],
+    "description": "Cocina blanca con isla, ventana y decoración navideña",
+    "originalSha256": "b9ff1fe66c69ddbc0714cd7ae5db70873262b886e1496f4c5115d1519c6a58a3"
+  },
+  {
+    "code": "R25",
+    "sha256": "2b7b8eacbdbbd957087721ca49f4f8fd1c4aaabea6b1c24d41eb488cd4bd875f",
+    "bytes": 479056,
+    "accounts": [
+      "EISWERK"
+    ],
+    "description": "Supermercado con guirnaldas, pasillos y precios; cadena sin verificar",
+    "originalSha256": "e0dee577d10dc8cf264286e3d9b041c9cc2aa656868fb1179e23f3d7f5332d09"
+  },
+  {
+    "code": "R26",
+    "sha256": "dfc782b9d0b9bdcbb91cc384ef5cbf0960873f3b6f9533d71827fc8e66b89067",
+    "bytes": 158504,
+    "accounts": [
+      "EISWERK"
+    ],
+    "description": "Salón con TV, árbol y lazos rojos",
+    "originalSha256": "a757563bc1bfe64c036faae0099dd1e8ce3b25e24c605c04b0c15ba54de5874b"
+  },
+  {
+    "code": "R27",
+    "sha256": "26d0aa48fdcc1505a0e373f66db0f9ee7c9a5679cfd24e41ee199d5dc8415223",
+    "bytes": 178624,
+    "accounts": [
+      "EISWERK"
+    ],
+    "description": "Chimenea y árbol con suelo visible y luz cálida",
+    "originalSha256": "3e416710cfe58a001ce2147a600eee5857cc545169d888da78e485b37853ae65"
+  },
+  {
+    "code": "R28",
+    "sha256": "adfcaacb4d83907838b8fd085602f1532f0a69338d5d6d4745142777133e93d4",
+    "bytes": 166619,
+    "accounts": [
+      "EISWERK"
+    ],
+    "description": "Cama, manta roja, portátil y nieve tras ventana",
+    "originalSha256": "6a972d5c8b8e181cb3e5d4a157abc7071180803480dd7b21538bc6e7c0acb395"
+  },
+  {
+    "code": "R29",
+    "sha256": "e21300923f5fc37219893b9d9bf3d1e133820017acb973af02afa0517437ada2",
+    "bytes": 481251,
+    "accounts": [
+      "EISWERK"
+    ],
+    "description": "Congelador comercial con recipientes de helado: función explícita",
+    "originalSha256": "3d4a3cc2177d150390186e8fb095c693a892eec1d1564ad6241d0263a88bd41e"
+  },
+  {
+    "code": "R30",
+    "sha256": "6bc5b3400bf18aef760ace448083467e655a1a27d0528b84277c22a0e5505f4b",
+    "bytes": 136868,
+    "accounts": [
+      "EISWERK"
+    ],
+    "description": "POV cama, portátil, taza y luz de ventana",
+    "originalSha256": "317990a51f6ff27974882f4be71feb70be2661b320bdf7ef4d39e1d23892de7e"
+  },
+  {
+    "code": "R31",
+    "sha256": "8aa7b15d6c495a274c3ccedfb7c03fb6032465f79fb1296eea5e7f382833fd08",
+    "bytes": 90042,
+    "accounts": [
+      "EISWERK"
+    ],
+    "description": "Película proyectada, sofá y árbol; flash pedido solo para esa tarjeta",
+    "originalSha256": "30ae0794aef0a47c04a0709070e9f5d4c80953da8f97c720c21bd657524fd5b2"
+  },
+  {
+    "code": "R32",
+    "sha256": "8b485416fc443ef720f3cbbcde06e245de7de4c7cb5ffc0f0ed38d6eade01ea2",
+    "bytes": 218020,
+    "accounts": [
+      "EISWERK"
+    ],
+    "description": "Entrada de tienda con decoración y rótulos; cadena/país sin verificar",
+    "originalSha256": "6e7bd6e1455bd43f9b146c5a8ef2fb6d4226aa62128c69ef3363894ec39c53d2"
+  },
+  {
+    "code": "R33",
+    "sha256": "575707c53d2af59328d51b8e8a2829ce3714b50c6b01fd00f4a4eebd0457d867",
+    "bytes": 121478,
+    "accounts": [
+      "EISWERK"
+    ],
+    "description": "Salón nocturno con sofá, chimenea y TV",
+    "originalSha256": "64a46d614b9be6a075ef8260fbc0b463703f54a8574ce32ac59091f7c29873b8"
+  },
+  {
+    "code": "R34",
+    "sha256": "806be266c11cba3cf7c050a4f790b57ae89f4de370d510d88eea79509296d623",
+    "bytes": 123165,
+    "accounts": [
+      "FENSTERFUNKELN"
+    ],
+    "description": "Salón de doble altura de acabado editorial: elección expresa, no patrón global",
+    "originalSha256": "ef7b82ae7ad2a45552ae9f5afce0ffccc6d06e9daaf0df66b02e83660ccdc1af"
+  },
+  {
+    "code": "R35",
+    "sha256": "cd8643acba59a802d60926656846246efb8b78086dcb85b9473e8f496667dff5",
+    "bytes": 128949,
+    "accounts": [
+      "EISWERK"
+    ],
+    "description": "Salón familiar diurno con TV, árbol y sofá",
+    "originalSha256": "8f15d9c70b939ad3c6219fb262a3e8ea3f12096d56de94074f45e1c2811eb566"
+  },
+  {
+    "code": "R36",
+    "sha256": "736bd32794a5874458157d13107bb5a206014f6675027cfc923039ac85ceba00",
+    "bytes": 91548,
+    "accounts": [
+      "EISWERK"
+    ],
+    "description": "POV sofá con piernas, TV, chimenea y árbol",
+    "originalSha256": "de1ca7da6f5e501f3d072296bf3040f0ab6ae6f3e4fa6d2cace0b463fb8344fe"
+  },
+  {
+    "code": "R37",
+    "sha256": "8c88e341ab01473db504a8009ef3a663db768ff2b971ef42d6381c5284ee4f39",
+    "bytes": 85386,
+    "accounts": [
+      "EISWERK"
+    ],
+    "description": "Dos personas desde POV sofá, TV y árbol; continuidad compartida",
+    "originalSha256": "307ba2cb92cbe47cecaf1bc919d89f794e9d466b6bc998660d45beb2ab11c2cf"
+  },
+  {
+    "code": "R38",
+    "sha256": "1a811e303aff35c70af2ca9ee54d6910843873a920842fc48ab6b2a001cf0dc8",
+    "bytes": 157828,
+    "accounts": [
+      "EISWERK"
+    ],
+    "description": "Chimenea de piedra, vigas, TV y árbol",
+    "originalSha256": "9d5a9856c53d4910bf8f47b81bc8a60e707120278215e3c82f5eeb19995e4608"
+  },
+  {
+    "code": "R39",
+    "sha256": "e84ee3fce3568106d84489cd9126cf3f457f6032dd2a4d208f580e2ba795ba84",
+    "bytes": 118417,
+    "accounts": [
+      "EISWERK"
+    ],
+    "description": "Salón blanco alto, árbol, TV y suelo despejado",
+    "originalSha256": "12efc79a4039017a98aab1d1c9bcbc52483424f84eff632eca08630e2ba3afa3"
+  },
+  {
+    "code": "R40",
+    "sha256": "e5c6511093b7e9dbcbead2a888e1ac2dab094a21da8ae4f30a861e2dc17fec79",
+    "bytes": 167180,
+    "accounts": [
+      "EISWERK"
+    ],
+    "description": "Salón habitado con sofá gris, TV y árbol",
+    "originalSha256": "334c158fea24b9d4509f1ffd0ca3b257abe678475035f8f6736cc4edb64d5a8d"
+  },
+  {
+    "code": "R41",
+    "sha256": "a54b466697660385bb0af74fb701ea0baa0a67e9a809fa6a1284ebd643a9fb98",
+    "bytes": 139931,
+    "accounts": [
+      "EISWERK"
+    ],
+    "description": "Salón con película, árbol y mesa lateral",
+    "originalSha256": "9f2fb2e3999d532edfefc605c35408b3a11ef1296b4bea172b17694beca0d938"
+  },
+  {
+    "code": "R43",
+    "sha256": "b9a6b32a25900c45c7d0e5faa5a0b856d223500181f77ce7384f38128f1ac9ac",
+    "bytes": 243144,
+    "accounts": [
+      "EISWERK"
+    ],
+    "description": "Cocina blanca, isla, horno y fregadero, lazos rojos",
+    "originalSha256": "c5bfb90d082ce502fb332ea2c16adb445844a90bb0724b57d67c4eeaf8f7e31d"
+  },
+  {
+    "code": "R44",
+    "sha256": "fef3b78416f02edc52220e2b7b0422e61af5dd2561b18cfd1aaef0471f9d532e",
+    "bytes": 63490,
+    "accounts": [
+      "FRECHFLAUSCH"
+    ],
+    "description": "Recepción clínica con mostrador y sillas; función de espera",
+    "originalSha256": "844cd9f1283d05340366f014803b351fee0db70a963950d6c800789822d89066"
+  },
+  {
+    "code": "R45",
+    "sha256": "58930fc5f119c13a91274b3aa235281384cfb8430996cbe63fe586d4ebdb5c0a",
+    "bytes": 224271,
+    "accounts": [
+      "WINTERDURCHBLICK"
+    ],
+    "description": "Calle nevada, coches y luz azul: contexto frío, localidad sin verificar",
+    "originalSha256": "b362fb04e9f32ffe1476142ba960374d6f90c53dc867f0a8e37690f0efd6ac41"
+  },
+  {
+    "code": "R46",
+    "sha256": "0588818b7dee1f57992523f620f30c0e24f374101b508f42cc1bd1a4462453ce",
+    "bytes": 252010,
+    "accounts": [
+      "WINTERDURCHBLICK"
+    ],
+    "description": "Coche nevado de noche; nota pide mañana fría de día",
+    "originalSha256": "17ea3e14e7cdd19f58118156b0073ee885512cfafbd57c0829c44e78826c7bc3"
+  },
+  {
+    "code": "R47",
+    "sha256": "ca70837b1a88282af256d70aa5354deb81bf4939ec8561441c966c962ab75393",
+    "bytes": 108614,
+    "accounts": [],
+    "description": "Target: cajas rojas, logotipos físicos, gran profundidad; referencia expresa para sustituir H&M.",
+    "originalSha256": "d0fa6e3b800a455c6052033252ed23beaa1c4fd6c4d08859d456cc760fdb769c"
+  },
+  {
+    "code": "R48",
+    "sha256": "64c0a278183147ba6ac234cbd40b748238a03f9ff00e786e4c65f682d459561a",
+    "bytes": 176891,
+    "accounts": [],
+    "description": "IKEA: carrito azul en primer plano, pasillo de almacén, estanterías y cajas; producto solicitado a la derecha.",
+    "originalSha256": "cf415ef0d88a5ed6415d9417203ee4a611cc75000314a75f911263b2572dfc7a"
+  }
+]

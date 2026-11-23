@@ -1451,3 +1451,26 @@ export const pinterestSearches = pgTable(
   },
   (t) => [check("pinterest_searches_status_valid", sql`${t.status} in ('pending', 'ready', 'failed')`)],
 );
+
+/**
+ * Banco de referencias aprobadas por el dueño (orden del 23/11/2026): de momento la imagen inicial
+ * no busca en Pinterest; reutiliza estas fotos, que él ya eligió a mano y aprobó en lotes. El
+ * archivo está en `pinterest_images` (por huella). Se siembra desde `reglas/banco-referencias.json`
+ * y crece con las referencias de las imágenes que él aprueba (`source = 'aprobada_en_lote'`).
+ */
+export const referenceBank = pgTable("reference_bank", {
+  sha256: text("sha256")
+    .primaryKey()
+    .references(() => pinterestImages.sha256, { onDelete: "cascade" }),
+  /** `R01`… para las del sistema anterior; `V<vídeo>` para las aprobadas aquí. */
+  code: text("code").notNull(),
+  description: text("description").notNull(),
+  /** Cuentas (tiendas) en las que se usó, en mayúsculas (`EISWERK`…). */
+  accounts: jsonb("accounts").notNull().default([]),
+  /** `aprobada_manual` (sembrada) o `aprobada_en_lote`. */
+  source: text("source").notNull(),
+  active: boolean("active").notNull().default(true),
+  /** Miniatura pequeña para que Claude elija (se hace la primera vez que hace falta). */
+  thumb: bytea("thumb"),
+  createdAt: instant("created_at").notNull().defaultNow(),
+});

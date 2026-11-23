@@ -4,6 +4,16 @@
 
 **Regla (fija):** por defecto, siempre se buscan referencias de Pinterest para cada imagen inicial, también al regenerar una rechazada. Excepción: si el vídeo lleva una referencia de entorno puesta a mano, no se busca. Texto completo para el modelo: `reglas/referencias-pinterest.md`.
 
+## Corrección del dueño (23/11/2026, la que manda ahora)
+
+Las 2 fotos que la búsqueda nueva eligió para la escena de EisWerk le parecieron falsas, de mala calidad, muy oscuras y sin decoración navideña. Orden: **de momento nada de buscar en Pinterest**; usar solo referencias que él ya puso a mano y aprobó, elegidas solas (sin ningún paso en que él elija), y que el banco crezca con lo que apruebe.
+
+- **Banco** (`reference_bank`): 44 fotos del sistema anterior (R00–R48 menos R03, R19 y R42, que no son sitios, y R07 y R08, que rechazó), pasadas a JPEG y subidas al almacén (`pinterest/<sha256>.jpg`). Índice con código, cuentas y descripción en `reglas/banco-referencias.json`; se siembra al arrancar (`seedReferenceBank`).
+- **Elección:** tras el desglose, Claude describe la escena (como antes) y, en vez de buscar, mira con visión las miniaturas de todo el banco con su descripción y su cuenta y elige como mucho 2 (`BANK_ONLY = true` en `pinterest.ts`). Las búsquedas anteriores se borraron en la migración 0033 para que todas se rehagan con el banco.
+- **Crece solo:** al aprobar una imagen de un vídeo con referencia de entorno puesta a mano, esa foto entra en el banco (`addApprovedToBank`, código `V<vídeo>`).
+- **Igual que antes:** la imagen no se pide sin referencias (salvo entorno a mano), van al final del manifiesto con su papel en el prompt y se ven en la tarjeta. Cada envío real deja en el registro «Imagen del vídeo N enviada: X referencias; referencias aprobadas de Pinterest: sí/no».
+- La búsqueda nueva (abajo) queda en el código, apagada, para afinarla más adelante.
+
 ## Cómo lo hacía el sistema anterior
 
 - No había un buscador automático: el agente abría `pinterest.com/search/pins/?q=…` en el navegador con la sesión del dueño, miraba los pines y bajaba la foto (`i.pinimg.com/736x/…`, a veces `originals`). Se intentó buscar sin navegador y Pinterest devolvía páginas vacías («Invalid Resource Request»); también se probó Bing filtrando pines (muchos resultados basura).

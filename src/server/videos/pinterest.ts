@@ -10,10 +10,11 @@ import { runStep, stepKey, StepFailedError, type JobContext } from "@/jobs/steps
 import { imagePart, textPart, type LlmContent } from "@/llm/content";
 import { getGateway, type LlmGateway } from "@/llm/gateway";
 import { getObjectStore } from "@/lib/object-store";
-import { getActiveUser } from "@/server/auth";
+import { getActiveUser, type AuthUser } from "@/server/auth";
 import { HttpError } from "@/server/http";
 import { makeThumbnail } from "@/server/media/ffmpeg";
 import type { PinCandidate, searchPins } from "@/server/pinterest-searches";
+import { readProductPhoto } from "@/server/photos";
 import { getProductFor } from "@/server/products";
 import { loadRules } from "@/server/rules";
 import type { ManifestItem } from "@/server/videos/manifest";
@@ -104,7 +105,7 @@ export function withPinterestRoles(prompt: string, manifest: ManifestItem[]): st
   const tags = manifest.filter((item) => item.source.kind === "pinterest").map((item) => item.tag);
   if (tags.length === 0) return prompt;
   const which = tags.length === 1 ? `${tags[0]} is a real everyday phone photo` : `${list(tags)} are real everyday phone photos`;
-  return `${prompt.trimEnd()}\n\n${which} found on Pinterest for this exact kind of place. Use ${tags.length === 1 ? "it" : "them"} as the environment and realism reference: the real place, its furniture, materials, decoration, lived-in details and the natural look of a vertical phone photo. Its observed practical lighting is the authority for the light of the whole scene. Rebuild the background of image 1 in that style so it reads as the same kind of real lived-in place, not a set. Keep the framing, camera distance, angle, pose, hands and action of image 1, the person's identity only from the avatar reference and the product only from its own references. Do not copy any person, face, text, logo, watermark or screen content from ${tags.length === 1 ? "that photo" : "those photos"}.`;
+  return `${prompt.trimEnd()}\n\n${which} of this kind of place, chosen and approved by the owner as references (from Pinterest). Use ${tags.length === 1 ? "it" : "them"} as the environment and realism reference: the real place, its furniture, materials, decoration, lived-in details and the natural look of a vertical phone photo. Its observed practical lighting is the authority for the light of the whole scene. Rebuild the background of image 1 in that style so it reads as the same kind of real lived-in place, not a set. Keep the framing, camera distance, angle, pose, hands and action of image 1, the person's identity only from the avatar reference and the product only from its own references. Do not copy any person, face, text, logo, watermark or screen content from ${tags.length === 1 ? "that photo" : "those photos"}.`;
 }
 
 // ───────────────────────── Guardar y leer fotos ─────────────────────────
@@ -378,6 +379,167 @@ export interface PinterestDeps {
   now?: Date;
 }
 
+// ───────────────────────── Banco de referencias aprobadas ─────────────────────────
+
+/**
+ * Orden del dueño (23/11/2026): las fotos que encontraba la búsqueda nueva no valían (falsas,
+ * oscuras, sin la decoración pedida). De momento NO se busca en Pinterest: cada imagen reutiliza
+ * referencias del banco que él ya eligió a mano y aprobó (`reference_bank`), elegidas solas por
+ * Claude según la escena. La búsqueda se queda en el código para afinarla más adelante.
+ */
+export const BANK_ONLY = true;
+const BANK_THUMB_SIDE = 384;
+const BANK_FILE = "reglas/banco-referencias.json";
+
+interface BankSeed {
+  code: string;
+  sha256: string;
+  bytes: number;
+  accounts: string[];
+  description: string;
+}
+
+/**
+ * Siembra el banco con las referencias aprobadas del sistema anterior (`reglas/banco-referencias.json`;
+ * los archivos ya están en el almacén, `pinterest/<sha256>.jpg`). No pisa nada: solo añade las que faltan.
+ */
+export async function seedReferenceBank(file: string = path.join(process.cwd(), BANK_FILE)): Promise<number> {
+  let entries: BankSeed[];
+  try {
+    entries = JSON.parse(await fs.readFile(file, "utf8")) as BankSeed[];
+  } catch {
+    return 0;
+  }
+  let added = 0;
+  for (const entry of entries) {
+    if (!/^[0-9a-f]{64}$/.test(entry.sha256)) continue;
+    await getDb()
+      .insert(images)
+      .values({ sha256: entry.sha256, mime: "image/jpeg", bytes: entry.bytes, objectKey: objectKeyOf(entry.sha256), sourceUrl: `banco:${entry.code}`, pinId: null })
+      .onConflictDoNothing();
+    const inserted = await getDb()
+      .insert(schema.referenceBank)
+      .values({ sha256: entry.sha256, code: entry.code, description: entry.description, accounts: entry.accounts, source: "aprobada_manual" })
+      .onConflictDoNothing()
+      .returning({ sha256: schema.referenceBank.sha256 });
+    added += inserted.length;
+  }
+  return added;
+}
+
+/**
+ * Las imágenes que el dueño aprueba alimentan el banco: si el vídeo llevaba una referencia de
+ * entorno puesta a mano, esa foto pasa al banco de aprobadas (una vez por huella).
+ */
+export async function addApprovedToBank(user: AuthUser, videoId: number): Promise<void> {
+  const [video] = await getDb()
+    .select({ environmentPhotoId: schema.videos.environmentPhotoId, productId: schema.videos.productId })
+    .from(schema.videos)
+    .where(eq(schema.videos.id, videoId));
+  if (!video || video.environmentPhotoId === null) return;
+  const product = await getProductFor(user, video.productId);
+  const photo = await readProductPhoto(user, video.environmentPhotoId);
+  const row = { photo: { id: video.environmentPhotoId, data: photo.data }, productName: product.name };
+  let jpeg: Buffer;
+  try {
+    jpeg = await makeThumbnail(Buffer.from(row.photo.data), "image", STORED_SIDE);
+  } catch {
+    return;
+  }
+  const hash = await storePinterestImage(jpeg, { url: `foto:${row.photo.id}`, pinId: "", width: null, height: null });
+  await getDb()
+    .insert(schema.referenceBank)
+    .values({
+      sha256: hash,
+      code: `V${videoId}`,
+      description: `Referencia de entorno que el dueño puso a mano en un vídeo de ${row.productName} y aprobó`,
+      accounts: [row.productName.toUpperCase()],
+      source: "aprobada_en_lote",
+    })
+    .onConflictDoNothing();
+}
+
+/** La miniatura de una foto del banco (se hace y se guarda la primera vez). */
+async function bankThumb(hash: string, cached: Buffer | null): Promise<Buffer | null> {
+  if (cached) return Buffer.from(cached);
+  try {
+    const { data } = await readPinterestImage(hash);
+    const thumb = await makeThumbnail(data, "image", BANK_THUMB_SIDE);
+    await getDb().update(schema.referenceBank).set({ thumb }).where(eq(schema.referenceBank.sha256, hash));
+    return thumb;
+  } catch (error) {
+    console.error(`[pinterest] No se pudo preparar la foto ${hash.slice(0, 12)} del banco:`, error);
+    return null;
+  }
+}
+
+const BANK_INSTRUCTIONS = `Eliges, del banco de referencias que el dueño ya eligió a mano y aprobó en lotes anteriores, las fotos que acompañarán a la imagen inicial de un anuncio como referencia de entorno y realismo (no aportan personas, producto ni encuadre: eso sale de otras referencias). Todas son válidas para él; tu trabajo es elegir la que mejor encaja con la escena.
+
+Elige por este orden: el mismo tipo de sitio que la toma y que la acción quepa (salón con sofá y árbol para una escena de sofá navideña; cocina para preparar; congelador para sacar algo del congelador; tienda para comprar); la época y la decoración (si la escena es navideña, una con decoración navideña clara); la luz y el momento del día del primer fotograma; el punto de vista (un POV desde el sofá si la toma lo es); y, a igualdad, una usada en la misma cuenta. Elige como mucho ${MAX_PINTEREST_REFS}, de mejor a peor, por su número. Si de verdad ninguna es del mismo tipo de sitio, elige la más cercana y dilo en el motivo.`;
+
+/** Elige del banco con visión y deja lista la búsqueda (sin bajar nada: las fotos ya están en el almacén). */
+async function pickFromBank(
+  run: Run,
+  ctx: JobContext,
+  gateway: LlmGateway,
+  rules: Awaited<ReturnType<typeof loadRules>>,
+  scene: PinterestScene,
+  product: { name: string; countries: string[] },
+  frameJpeg: Buffer | null,
+): Promise<void> {
+  const bank = await getDb().select().from(schema.referenceBank).where(eq(schema.referenceBank.active, true)).orderBy(schema.referenceBank.code);
+  const shown: Array<{ row: (typeof bank)[number]; thumb: Buffer }> = [];
+  for (let start = 0; start < bank.length; start += THUMB_PARALLEL) {
+    const part = await Promise.all(bank.slice(start, start + THUMB_PARALLEL).map(async (row) => ({ row, thumb: await bankThumb(row.sha256, row.thumb) })));
+    for (const item of part) if (item.thumb) shown.push({ row: item.row, thumb: item.thumb });
+  }
+  if (shown.length === 0) {
+    await failRun(run, "El banco de referencias aprobadas está vacío");
+    return;
+  }
+  const content: LlmContent = [
+    textPart(
+      [
+        `Producto: ${product.name} (cuenta ${product.name.toUpperCase()}). Países: ${product.countries.join(", ")}.`,
+        `Sitio de la toma: ${scene.place}. Época: ${scene.season ?? "sin época concreta"}. Luz: ${scene.light}. Estilo: ${scene.style}.`,
+        `Tiene que verse: ${scene.needs}.`,
+      ].join("\n"),
+    ),
+    ...(frameJpeg ? [textPart("Primer fotograma de la referencia (composición que se conserva):"), imagePart(frameJpeg, "image/jpeg")] : []),
+    ...shown.flatMap((item, i) => {
+      const accounts = (item.row.accounts as string[]).join(", ") || "sin cuenta";
+      return [textPart(`Referencia ${i + 1} (${item.row.code}, usada en ${accounts}): ${item.row.description}`), imagePart(item.thumb, "image/jpeg")];
+    }),
+  ];
+  const picked = await runStep(ctx, stepKey(ctx, "banco", { runId: run.id, attempt: run.attempts }), async () => {
+    const answer = await gateway.call({
+      tier: "medium",
+      stepKey: stepKey(ctx, "banco", { runId: run.id, attempt: run.attempts }),
+      userId: ctx.userId,
+      productId: ctx.productId,
+      rules,
+      instructions: BANK_INSTRUCTIONS,
+      content,
+      maxTokens: 3_000,
+      schema: pickSchema,
+    });
+    return answer.data!;
+  });
+  const chosen = [...new Map(picked.picks.filter((p) => p.n >= 1 && p.n <= shown.length).map((p) => [p.n, p])).values()].slice(0, MAX_PINTEREST_REFS);
+  if (chosen.length === 0) {
+    await failRun(run, `No se eligió ninguna referencia del banco (${picked.rejected})`);
+    return;
+  }
+  const refs: PinterestRef[] = chosen.map((pick) => {
+    const { row } = shown[pick.n - 1];
+    return { sha256: row.sha256, query: `banco ${row.code}`, pinId: row.code, sourceUrl: `banco:${row.code}`, reason: pick.reason };
+  });
+  await setRun(run.id, { status: "ready", refs, error: null });
+  console.log(
+    `[pinterest] Vídeo ${run.videoId} (${product.name}): ${refs.length} referencia(s) del banco de aprobadas para «${scene.place}»: ${refs.map((r) => r.pinId).join(", ")} (${refs.map((r) => r.sha256).join(", ")})`,
+  );
+}
+
 // ───────────────────────── El trabajo ─────────────────────────
 
 async function setRun(runId: number, changes: Partial<typeof runs.$inferInsert>): Promise<void> {
@@ -470,7 +632,13 @@ export async function runPinterest(runId: number, deps: PinterestDeps = {}): Pro
     await setRun(run.id, { scene, queries: scene.queries });
   }
 
-  // 2. Buscar (nube; si no deja, el Mac).
+  // 2. Orden del dueño (23/11): de momento no se busca en Pinterest; se elige del banco de aprobadas.
+  if (BANK_ONLY) {
+    await pickFromBank(run, ctx, gateway, rules, scene, product, frameJpeg);
+    return;
+  }
+
+  // 2. Buscar (nube; si no deja, el Mac). Retirado de momento (`BANK_ONLY`).
   // Se carga aquí: `pinterest-searches` arrastra la cola de trabajos (subidas → trabajos de vídeo →
   // este módulo), y cargarlo arriba crea un ciclo de importaciones que rompe la compilación.
   const search = deps.search ?? (await import("@/server/pinterest-searches")).searchPins;

@@ -23,7 +23,10 @@ import {
   PINTEREST_PENDING,
   readyPinterestRefs,
   requirePinterestRefs,
+  addApprovedToBank,
   runPinterest,
+  seedReferenceBank,
+  storePinterestImage,
   sweepPinterest,
   withPinterestRoles,
   type PinterestDeps,
@@ -49,6 +52,7 @@ let ana: AuthUser;
 let producto: Product;
 let v: Video;
 const ids = { avatar: 0, articulo: 0, entorno: 0 };
+const bank: string[] = [];
 
 function makeImage(name: string, color: string): Buffer {
   const file = path.join(dir, name);
@@ -154,6 +158,17 @@ beforeEach(async () => {
   ids.articulo = (await addProductPhoto(ana, producto.id, jpeg, "articulo")).id;
   ids.avatar = (await addProductPhoto(ana, producto.id, Buffer.concat([jpeg, Buffer.from("avatar")]), "avatar")).id;
   ids.entorno = (await addProductPhoto(ana, producto.id, Buffer.concat([jpeg, Buffer.from("entorno")]), "entorno")).id;
+  // Banco de aprobadas: tres fotos distintas (verde, azul y blanca).
+  bank.length = 0;
+  for (const [code, color, description] of [
+    ["R01", "green", "POV sofá, manta, taza, perro, TV y árbol"],
+    ["R24", "blue", "Cocina blanca con isla, ventana y decoración navideña"],
+    ["R36", "white", "POV sofá con piernas, TV, chimenea y árbol"],
+  ] as const) {
+    const sha256 = await storePinterestImage(makeImage(`${code}.jpg`, color), { url: `banco:${code}`, pinId: code, width: null, height: null });
+    await getDb().insert(schema.referenceBank).values({ sha256, code, description, accounts: ["EISWERK"], source: "aprobada_manual" });
+    bank.push(sha256);
+  }
   v = await createVideo(ana, producto.id);
   await updateVideoChoices(ana, v.id, { avatarPhotoId: ids.avatar });
   await analysed(v.id);
@@ -177,7 +192,7 @@ describe("el papel de las fotos en el prompt", () => {
     const manifest = imageManifest({ ...v, environmentPhotoId: null }, { photos: [], variant: null, avatar: null, pinterest: ["a".repeat(64), "b".repeat(64)] });
     expect(manifest.map((m) => m.role)).toEqual(["composicion", "pinterest", "pinterest"]);
     const prompt = withPinterestRoles(PROMPT, manifest);
-    expect(prompt).toContain("image 2 and image 3 are real everyday phone photos found on Pinterest");
+    expect(prompt).toContain("image 2 and image 3 are real everyday phone photos of this kind of place, chosen and approved by the owner");
     expect(prompt).toContain("Do not copy any person, face, text, logo, watermark");
   });
 
@@ -192,36 +207,55 @@ describe("el papel de las fotos en el prompt", () => {
 });
 
 describe("la imagen inicial lleva siempre referencias de Pinterest", () => {
-  it("sin referencia a mano: espera a Pinterest, las busca, elige con visión, las guarda y las adjunta", async () => {
-    // Antes de tenerlas, la imagen no se pide: se ponen a buscar.
+  it("sin referencia a mano: espera, elige sola del banco de aprobadas (sin buscar en Pinterest) y las adjunta", async () => {
+    // Antes de tenerlas, la imagen no se pide.
     await expect(buildFrameRequest(ana, v, deps)).rejects.toMatchObject({ status: 409, message: PINTEREST_PENDING });
     const run = await runOfVideo(v.id);
     expect(run.status).toBe("pending");
 
+    let searched = false;
     const { gateway, calls } = gatewayFor();
-    await runPinterest(run.id, pinterestDeps({ gateway }));
+    await runPinterest(run.id, pinterestDeps({ gateway, search: async () => ((searched = true), { status: "failed", error: "no" }) }));
+    expect(searched).toBe(false); // orden del dueño: de momento no se busca en Pinterest
     const done = await runOfVideo(v.id);
     expect(done.status).toBe("ready");
-    expect(done.queries).toEqual(SCENE.queries);
-    const refs = done.refs as Array<{ query: string; pinId: string; reason: string; sha256: string }>;
-    // Candidatas 3 y 1, en ese orden (repartidas: 4 de la primera búsqueda y 4 de la segunda).
-    expect(refs.map((r) => r.pinId)).toEqual(["de3", "de1"]);
-    expect(refs[0]).toMatchObject({ query: SCENE.queries[0], reason: "Salón real de móvil con árbol." });
-    // Claude miró las candidatas con visión (8 miniaturas y el fotograma).
-    const images = (calls[1].messages[0].content as Array<{ type: string }>).filter((b) => b.type === "image");
-    expect(images).toHaveLength(9);
-    // La misma foto (misma huella) se guarda una sola vez.
-    const stored = await getDb().select().from(schema.pinterestImages);
-    expect(stored).toHaveLength(1);
+    const refs = done.refs as Array<{ pinId: string; reason: string; sha256: string }>;
+    // Referencias 3 y 1 del banco, en ese orden.
+    expect(refs.map((r) => r.pinId)).toEqual(["R36", "R01"]);
+    expect(refs.map((r) => r.sha256)).toEqual([bank[2], bank[0]]);
+    expect(refs[0].reason).toBe("Salón real de móvil con árbol.");
+    // Claude miró todo el banco con visión (3 fotos y el fotograma), con su descripción.
+    const content = calls[1].messages[0].content as Array<{ type: string; text?: string }>;
+    expect(content.filter((b) => b.type === "image")).toHaveLength(4);
+    expect(content.some((b) => b.text?.includes("R24, usada en EISWERK"))).toBe(true);
     expect(await readyPinterestRefs(v.id)).toHaveLength(2);
 
     const { request } = await buildFrameRequest(ana, await getVideoFor(ana, v.id), deps);
     const image = request as { prompt: string; medias: Array<{ value: string }> };
-    // Composición, avatar, artículo y las dos de Pinterest.
+    // Composición, avatar, artículo y las dos del banco.
     expect(image.medias).toHaveLength(5);
-    expect(image.prompt).toContain("image 4 and image 5 are real everyday phone photos found on Pinterest");
+    expect(image.prompt).toContain("image 4 and image 5 are real everyday phone photos of this kind of place, chosen and approved by the owner");
     const uploaded = fake.calls.filter((c) => c.method === "uploadMedia").map((c) => (c.args as { filename: string }).filename);
-    expect(uploaded.some((name) => name.startsWith("pinterest-"))).toBe(true);
+    expect(uploaded.filter((name) => name.startsWith("pinterest-"))).toHaveLength(2);
+  });
+
+  it("lo que él aprueba alimenta el banco: su referencia puesta a mano pasa a las aprobadas", async () => {
+    await updateVideoChoices(ana, v.id, { environmentPhotoId: ids.entorno });
+    await addApprovedToBank(ana, v.id);
+    await addApprovedToBank(ana, v.id);
+    const added = await getDb().select().from(schema.referenceBank).where(eq(schema.referenceBank.code, `V${v.id}`));
+    expect(added).toHaveLength(1);
+    expect(added[0]).toMatchObject({ source: "aprobada_en_lote", accounts: ["EISWERK"] });
+  });
+
+  it("el banco se siembra con las aprobadas del sistema anterior, sin repetir", async () => {
+    await getDb().delete(schema.referenceBank);
+    const first = await seedReferenceBank();
+    expect(first).toBe(44);
+    expect(await seedReferenceBank()).toBe(0);
+    const codes = (await getDb().select({ code: schema.referenceBank.code }).from(schema.referenceBank)).map((r) => r.code);
+    // Fuera las que no son sitios (R03, R19, R42) y las que él rechazó (R07, R08).
+    for (const out of ["R03", "R07", "R08", "R19", "R42"]) expect(codes).not.toContain(out);
   });
 
   it("con referencia a mano en el vídeo: no busca en Pinterest y genera con la suya", async () => {
@@ -251,16 +285,16 @@ describe("la imagen inicial lleva siempre referencias de Pinterest", () => {
     const request = row.request as { prompt: string; medias: unknown[] };
     expect(row.round).toBe(2);
     expect(request.medias).toHaveLength(5);
-    expect(request.prompt).toContain("found on Pinterest");
+    expect(request.prompt).toContain("chosen and approved by the owner");
   });
 
-  it("si ninguna vale, vuelve a buscar con otras consultas antes de rendirse", async () => {
+  it("si no elige ninguna, lo vuelve a intentar antes de rendirse", async () => {
     await requirePinterestRefs(v.id).catch(() => {});
     const run = await runOfVideo(v.id);
     await runPinterest(run.id, pinterestDeps(gatewayFor([])));
     const again = await runOfVideo(v.id);
     expect(again).toMatchObject({ status: "pending", attempts: 1, scene: null });
-    expect(again.error).toContain("Ninguna foto de Pinterest valía");
+    expect(again.error).toContain("No se eligió ninguna referencia del banco");
   });
 });
 

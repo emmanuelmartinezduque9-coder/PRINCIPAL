@@ -4,7 +4,11 @@
 
 **Única excepción:** si el dueño pone una referencia de entorno a mano en la tarjeta o en el vídeo, esa manda y **no** se busca en Pinterest para ese vídeo.
 
-La aplicación lo hace sola: al terminar el desglose busca, elige, guarda y adjunta. La imagen no se pide sin estas fotos. En la tarjeta se ven como «Referencias de Pinterest».
+**Orden del dueño del 23/11/2026, vigente: de momento NO se busca en Pinterest.** Las fotos que encontraba la búsqueda nueva salían falsas, oscuras y sin la decoración pedida. Cada imagen reutiliza fotos del **banco de referencias aprobadas**: las que el dueño ya eligió a mano y aprobó en lotes anteriores (44 del sistema anterior, R00–R48 sin las que no son sitios ni las que rechazó). La aplicación elige sola, con visión, la que mejor encaja con la escena (p. ej. un salón navideño para la escena del sofá y el árbol). El dueño no elige nada ni aprueba ningún paso.
+
+El banco crece solo: cuando el dueño aprueba una imagen que llevaba una referencia de entorno puesta a mano, esa foto pasa al banco. La búsqueda nueva en Pinterest (secciones 3 y 4) se ajustará más adelante; hasta entonces sirven para elegir dentro del banco.
+
+La aplicación lo hace sola: al terminar el desglose describe la escena, elige del banco y adjunta. La imagen no se pide sin estas referencias. En la tarjeta se ven como «Referencias de Pinterest aprobadas».
 
 ## 1. Para qué sirve la foto
 
@@ -46,6 +50,8 @@ Consultas cortas (3–7 palabras): tipo de sitio + punto de vista si importa + t
 En Alemania, si la tarjeta no dice tienda, elegir con lógica de producto entre Lidl, Action, Aldi y MediaMarkt. Nunca una cadena de otro país (Target en una prueba para Alemania). El idioma del pin o la decoración no prueban el país.
 
 ## 4. Cómo se elige (con visión, mirando cada candidata)
+
+Dentro del banco de aprobadas todas valen: se elige por tipo de sitio y acción, época y decoración, luz y momento del día, punto de vista y, a igualdad, la misma cuenta. Lo de abajo es para cuando vuelva la búsqueda nueva.
 
 **Vale** una foto que:
 - es una foto real de móvil, o lo parece: casa o tienda habitada (mantas, tazas, mandos, zapatillas, platos), luz práctica del sitio, encuadre algo imperfecto, sin simetría de catálogo;
