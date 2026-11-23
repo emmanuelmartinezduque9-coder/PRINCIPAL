@@ -1074,7 +1074,10 @@ export const agentTasks = pgTable(
     uniqueIndex("agent_tasks_one_active_media_fetch")
       .on(t.url)
       .where(sql`${t.kind} = 'media_fetch' and ${t.status} in ('queued', 'leased')`),
-    check("agent_tasks_kind_valid", sql`${t.kind} in ('link_download', 'song_download', 'montaje', 'media_fetch')`),
+    uniqueIndex("agent_tasks_one_active_profile_fetch")
+      .on(t.url)
+      .where(sql`${t.kind} = 'profile_fetch' and ${t.status} in ('queued', 'leased')`),
+    check("agent_tasks_kind_valid", sql`${t.kind} in ('link_download', 'song_download', 'montaje', 'media_fetch', 'profile_fetch')`),
     // Una referencia y un montaje son siempre de un vídeo; una canción, de ninguno.
     check("agent_tasks_target_valid", sql`(${t.kind} in ('link_download', 'montaje')) = (${t.videoId} is not null)`),
     check("agent_tasks_status_valid", sql`${t.status} in ('queued', 'leased', 'done', 'failed')`),
@@ -1232,6 +1235,29 @@ export const linkMedia = pgTable(
 );
 
 /**
+ * Perfiles de Instagram o TikTok leídos por el Mac del dueño (tarea `profile_fetch`) para el alta
+ * de productos: biografía, enlaces y reels con sus vistas (`data`). Una fila por perfil.
+ */
+export const linkProfiles = pgTable(
+  "link_profiles",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    url: text("url").notNull().unique(),
+    /** `pending`, `ready` o `failed`. */
+    status: text("status").notNull().default("pending"),
+    agentTaskId: bigint("agent_task_id", { mode: "number" }).references((): AnyPgColumn => agentTasks.id, { onDelete: "set null" }),
+    data: jsonb("data"),
+    /** Por qué falló (con el código del Mac entre corchetes, p. ej. `[aviso]`). */
+    error: text("error"),
+    /** Veces que el Mac no pudo leerlo (se vuelve a pedir solo). */
+    failures: integer("failures").notNull().default(0),
+    createdAt: instant("created_at").notNull().defaultNow(),
+    updatedAt: instant("updated_at").notNull().defaultNow(),
+  },
+  (t) => [check("link_profiles_status_valid", sql`${t.status} in ('pending', 'ready', 'failed')`)],
+);
+
+/**
  * Alta automática de un producto desde un enlace («Nuevo producto» → pegar enlace). Una fila por
  * alta: trae el vídeo si hace falta (nube o Mac), Claude entiende el producto con búsqueda en
  * internet y rellena la ficha y la marca, y se genera el mockup sobre gris en el Higgsfield de
@@ -1253,6 +1279,9 @@ export const productIntakes = pgTable(
     /** Lo que ve la persona ahora (en español, sin detalles técnicos); `null` si nada. */
     message: text("message"),
     linkMediaId: bigint("link_media_id", { mode: "number" }).references((): AnyPgColumn => linkMedia.id, { onDelete: "set null" }),
+    /** Con una cuenta: el perfil que lee el Mac y los reels elegidos (los más vistos) para mirarlos. */
+    linkProfileId: bigint("link_profile_id", { mode: "number" }).references((): AnyPgColumn => linkProfiles.id, { onDelete: "set null" }),
+    reelUrls: text("reel_urls").array(),
     /** Ficha que devolvió Claude (producto, qué hace, nicho, marca, fuentes…). */
     result: jsonb("result"),
     /** Mockup: `pendiente`, `enviado`, `hecho`, `omitido` o `fallido`. */

@@ -113,3 +113,14 @@ bash agente-mac/instalar.sh
   privado, borrado o sesión cerrada), el programa tampoco puede. Sube el archivo del vídeo.
 - **Tarda mucho**: cada enlace tiene 4 minutos como mucho; pasado ese tiempo se corta y la web te
   lo dice.
+
+
+## 1.5.0: leer perfiles de Instagram y TikTok (23/11/2026)
+
+Para dar de alta un producto pegando solo la cuenta. Instagram se lee con un Brave sin ventana (una
+carpeta temporal, nunca tu perfil de Brave) y tu sesión de Instagram guardada en
+`~/.principal-agente-cookies.txt`. Si Instagram cierra la sesión, vuelve a guardarla:
+
+    bash agente-mac/exportar-sesion.sh
+
+(hace falta haber entrado en instagram.com con Brave). TikTok se lee con yt-dlp.

@@ -32,6 +32,7 @@ import {
   ytDlpArgs,
   ytDlpAudioArgs,
 } from "../agente-mac/lib.mjs";
+import { instagramCookies, parseCount, profileOf, tiktokProfileFrom } from "../agente-mac/perfil.mjs";
 import { SONG_LINK_HOSTS as SERVER_SONG_HOSTS, songLinkOf } from "@/lib/links";
 import { LINK_HOSTS as SERVER_HOSTS, linkOf } from "@/server/agent";
 
@@ -515,8 +516,8 @@ describe("canciones", () => {
     };
   }
 
-  it("el Mac es de la versión 1.4.0 (sin montaje: solo trae enlaces)", () => {
-    expect(VERSION).toBe("1.4.0");
+  it("el Mac es de la versión 1.5.0 (trae enlaces y lee perfiles)", () => {
+    expect(VERSION).toBe("1.5.0");
   });
 
   it("saca el audio como MP3 con una lista de argumentos fija y el enlace detrás de `--`", () => {
@@ -634,7 +635,7 @@ describe("enlaces del montaje en la nube", () => {
 
   it("el programa del Mac pide siempre `enlace_medio` y ya no monta", () => {
     const source = fsSync.readFileSync(path.resolve(__dirname, "..", "agente-mac", "agente.mjs"), "utf8");
-    expect(source).toContain('config.puede = ["enlace_medio"]');
+    expect(source).toContain('config.puede = ["enlace_medio", "perfil"]');
     expect(source).not.toMatch(/montaje"|checkMontaje|montar_auto/);
   });
 
@@ -677,6 +678,43 @@ describe("enlaces del montaje en la nube", () => {
     expect(paths().some((p) => p.startsWith("PUT "))).toBe(false);
     expect(calls.at(-1)!.body).toEqual({ ok: false, uploadId: MEDIO.uploadId, error: "yt-dlp no pudo descargar el enlace: ERROR: privado" });
     expect(leftovers()).toEqual([]);
+  });
+});
+
+describe("perfiles de cuentas (1.5.0)", () => {
+  const PERFIL = { taskId: 12, kind: "perfil", url: "https://www.instagram.com/frozenglow.us/", uploadId: "p".repeat(32), chunkBytes: CHUNK, maxBytes: 2 * 1024 * 1024 };
+  const DATA = { red: "instagram", usuario: "frozenglow.us", cabecera: "Frozen Glow", descripcion: null, enlaces: ["https://tienda.example"], reels: [{ url: "https://www.instagram.com/reel/AAA/", vistas: 12300, texto: "x", miniatura: null }] };
+
+  it("lee el perfil de Instagram (sin yt-dlp), lo sube en JSON y termina", async () => {
+    const read = async (usuario: string) => ({ ok: true, perfil: { ...DATA, usuario } });
+    const deps = { ...depsWith(fakeFetch(claimed(PERFIL)), fakeSpawn()), readInstagramProfile: read };
+    const outcome = await runOnce({ ...config(), puede: ["enlace_medio", "perfil"] }, deps);
+    expect(outcome).toBe("done");
+    expect(spawned).toEqual([]);
+    const sent = Buffer.concat(calls.filter((call) => call.method === "PUT").map((call) => call.body as Buffer));
+    expect(JSON.parse(sent.toString())).toEqual(DATA);
+    expect(calls.at(-1)!.body).toEqual({ ok: true, uploadId: PERFIL.uploadId, totalBytes: sent.length });
+    expect(leftovers()).toEqual([]);
+  });
+
+  it("si Instagram enseña un aviso, lo comunica con su código y no sube nada", async () => {
+    const read = async () => ({ ok: false, codigo: "aviso", error: "Instagram enseña un aviso" });
+    const deps = { ...depsWith(fakeFetch(claimed(PERFIL)), fakeSpawn()), readInstagramProfile: read };
+    expect(await runOnce(config(), deps)).toBe("failed");
+    expect(paths().some((p) => p.startsWith("PUT "))).toBe(false);
+    expect(calls.at(-1)!.body).toEqual({ ok: false, uploadId: PERFIL.uploadId, error: "[aviso] Instagram enseña un aviso" });
+  });
+
+  it("entiende enlaces de perfil, cookies y vistas abreviadas", () => {
+    expect(profileOf("https://www.instagram.com/frozenglow.us/")).toEqual({ red: "instagram", usuario: "frozenglow.us" });
+    expect(profileOf("https://www.instagram.com/reel/ABC/")).toBeNull();
+    expect(profileOf("https://www.tiktok.com/@tienda")).toEqual({ red: "tiktok", usuario: "tienda" });
+    expect(profileOf("https://www.tiktok.com/@tienda/video/1")).toBeNull();
+    expect(instagramCookies("# Netscape\n.instagram.com\tTRUE\t/\tTRUE\t0\tsessionid\tabc\n#HttpOnly_.instagram.com\tTRUE\t/\tTRUE\t0\tcsrftoken\tdef\n.otra.com\tTRUE\t/\tTRUE\t0\tx\ty\n").map((c) => c.name)).toEqual(["sessionid", "csrftoken"]);
+    expect([parseCount("12,3K"), parseCount("1,2 Mio."), parseCount("4.512"), parseCount("1.2M"), parseCount("830"), parseCount("hola")]).toEqual([12300, 1200000, 4512, 1200000, 830, null]);
+    expect(tiktokProfileFrom({ title: "Tienda", entries: [{ url: "https://www.tiktok.com/@t/video/1", view_count: 5000, title: "Hola" }] }, "t").reels).toEqual([
+      { url: "https://www.tiktok.com/@t/video/1", vistas: 5000, texto: "Hola", miniatura: null },
+    ]);
   });
 });
 
@@ -831,7 +869,7 @@ describe("instalar.sh", () => {
     const first = run();
     expect(first.status, first.stderr).toBe(0);
     const dest = path.join(home, ".principal-tools", "agente-mac");
-    expect(fsSync.readdirSync(dest).sort()).toEqual(["README.md", "agente.mjs", "lib.mjs"]);
+    expect(fsSync.readdirSync(dest).sort()).toEqual(["README.md", "agente.mjs", "lib.mjs", "perfil.mjs"]);
     expect(fsSync.readFileSync(path.join(dest, "lib.mjs"), "utf8")).toBe(fsSync.readFileSync(path.join(ROOT, "agente-mac", "lib.mjs"), "utf8"));
 
     const plistPath = path.join(home, "Library", "LaunchAgents", "com.principal.agente.plist");

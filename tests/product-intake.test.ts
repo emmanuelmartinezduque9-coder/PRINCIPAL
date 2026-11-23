@@ -15,6 +15,8 @@ import {
   isPrivateAddress,
   latestIntake,
   MAC_WAIT_MS,
+  PROFILE_RETRY_MS,
+  WAITING_FOR_MAC,
   requestMockup,
   shopFacts,
   startIntake,
@@ -22,6 +24,8 @@ import {
   type IntakeDeps,
 } from "@/server/product-intake";
 import { addProductPhoto, listProductPhotos } from "@/server/photos";
+import { agentHeartbeat, appendTaskChunk, claimTask, createAgentToken, finishTask } from "@/server/agent";
+import { ensureLinkProfile, linkProfileById, requestProfileFromMac } from "@/server/link-profiles";
 import { getProductFor } from "@/server/products";
 import { seedRules } from "@/server/rules";
 import { fakeMessages, type FakeReply } from "./helpers/fake-llm";
@@ -175,13 +179,13 @@ describe("alta desde un enlace", () => {
   });
 
   it("si Claude no lo identifica, lo dice claro y no gasta en Higgsfield", async () => {
-    const { product, intake } = await createProductFromLink(dueno, { url: "https://www.instagram.com/cuentarara/", country: "IT" });
-    expect(intake.kind).toBe("cuenta");
-    const { d } = deps([claudeReply({ ...ANSWER, identificado: false, motivo: "la cuenta es privada" })]);
+    const { product, intake } = await createProductFromLink(dueno, { url: "https://www.aliexpress.com/item/1.html", country: "IT" });
+    const { d } = deps([claudeReply({ ...ANSWER, identificado: false, motivo: "la página es un captcha" })]);
     await advanceIntake(intake.id, d);
     const view = await intakeViewFor(dueno, product.id);
     expect(view?.status).toBe("fallido");
-    expect(view?.message).toContain("la cuenta es privada");
+    // Corto y sin detalles técnicos ni «rellena a mano».
+    expect(view?.message).toBe("No se ha podido identificar el producto. Pulsa «Volver a analizar» para intentarlo otra vez.");
     expect(hf.calls.filter((c) => c.method === "submitImages")).toHaveLength(0);
   });
 
@@ -203,7 +207,7 @@ describe("alta desde un enlace", () => {
     expect(hf.calls.filter((c) => c.method === "submitImages")).toHaveLength(1);
   });
 
-  it("reel de Instagram: sin Mac lo dice y, pasado el tiempo, sigue sin el vídeo", async () => {
+  it("reel de Instagram: sin Mac espera sin rendirse («Esperando a tu Mac…»); si el Mac no puede, sigue sin el vídeo", async () => {
     // Un Mac del dueño que no da señales.
     await getDb().insert(schema.agents).values({ name: "Mac", tokenHash: "h", createdBy: dueno.id, lastSeenAt: new Date(Date.now() - 3_600_000) });
     const { product, intake } = await createProductFromLink(dueno, { url: "https://www.instagram.com/reel/ABC123/", country: "DE" });
@@ -215,22 +219,89 @@ describe("alta desde un enlace", () => {
     });
     await advanceIntake(intake.id, d);
     let view = await intakeViewFor(dueno, product.id);
-    expect(view?.status).toBe("trayendo");
-    expect(view?.message).toContain("tu Mac no responde");
+    expect(view).toMatchObject({ status: "trayendo", message: WAITING_FOR_MAC });
     const [task] = await getDb().select().from(schema.agentTasks).where(eq(schema.agentTasks.kind, "media_fetch"));
     expect(task?.url).toBe("https://www.instagram.com/reel/ABC123/");
 
-    now = new Date(Date.now() + MAC_WAIT_MS + 1_000);
+    // Aunque pase mucho tiempo, sin Mac no se rinde.
+    now = new Date(Date.now() + 5 * MAC_WAIT_MS);
+    await advanceIntake(intake.id, d);
+    expect((await intakeViewFor(dueno, product.id))?.message).toBe(WAITING_FOR_MAC);
+    expect(calls).toHaveLength(0);
+
+    // El Mac vuelve y dice que no pudo: se sigue sin el vídeo.
+    await getDb().update(schema.linkMedia).set({ status: "failed" });
     await advanceIntake(intake.id, d);
     view = await intakeViewFor(dueno, product.id);
     expect(calls).toHaveLength(1);
-    expect(JSON.stringify(calls[0].messages)).toContain("No se pudo traer el vídeo");
     expect(view).toMatchObject({ status: "listo", mockupStatus: "omitido" });
     expect(view?.result?.sinVideo).toBe(true);
   });
 
+  it("cuenta de Instagram: el Mac lee el perfil, se miran los reels más vistos y la tienda Shopify", async () => {
+    await getDb().insert(schema.agents).values({ name: "Mac", tokenHash: "h2", createdBy: dueno.id, lastSeenAt: new Date() });
+    const { product, intake } = await createProductFromLink(dueno, { url: "https://www.instagram.com/frozenglow.us/", country: "DE" });
+    expect(intake).toMatchObject({ kind: "cuenta", status: "trayendo" });
+    const products = JSON.stringify({ products: [{ title: "Glow Eiswürfelform", product_type: "Küche", body_html: "<p>Leuchtende Eiswürfel</p>", handle: "glow", images: [{ src: "https://cdn.shopify.com/glow.png" }], variants: [{ price: "19.90" }] }] });
+    const { d, calls } = deps([claudeReply({ ...ANSWER, referencia: { tipo: "foto_tienda", numero: 1 } })], {
+      macOnline: async () => true,
+      fetchPublic: async (url) => (url.startsWith("https://tienda.example/products.json") ? { bytes: Buffer.from(products), type: "application/json" } : { bytes: PNG, type: "image/png" }),
+    });
+
+    // 1. Se pide el perfil al Mac.
+    await advanceIntake(intake.id, d);
+    expect((await intakeViewFor(dueno, product.id))?.message).toBe("Tu Mac está leyendo la cuenta…");
+    const [task] = await getDb().select().from(schema.agentTasks).where(eq(schema.agentTasks.kind, "profile_fetch"));
+    expect(task.url).toBe("https://www.instagram.com/frozenglow.us/");
+
+    // 2. El Mac lo entrega: dos reels; se piden los más vistos.
+    const data = {
+      red: "instagram",
+      usuario: "frozenglow.us",
+      cabecera: "Frozen Glow · Leuchtende Eiswürfel",
+      descripcion: null,
+      enlaces: ["https://tienda.example/"],
+      reels: [
+        { url: "https://www.instagram.com/reel/POCO/", vistas: 900, texto: "poco", miniatura: "https://cdn.example/poco.jpg" },
+        { url: "https://www.instagram.com/reel/MUCHO/", vistas: 1_200_000, texto: "mucho", miniatura: "https://cdn.example/mucho.jpg" },
+      ],
+    };
+    await getDb().update(schema.linkProfiles).set({ status: "ready", data });
+    await advanceIntake(intake.id, d);
+    const row = await latestIntake(product.id);
+    expect(row?.reelUrls).toEqual(["https://www.instagram.com/reel/MUCHO/", "https://www.instagram.com/reel/POCO/"]);
+    expect(row?.message).toBe("Tu Mac está trayendo los reels más vistos de la cuenta…");
+
+    // 3. Los reels no se pudieron traer: se analiza con el perfil, las miniaturas y la tienda.
+    await getDb().update(schema.linkMedia).set({ status: "failed" });
+    await advanceIntake(intake.id, d);
+    const sent = JSON.stringify(calls[0].messages);
+    expect(sent).toContain("Frozen Glow · Leuchtende Eiswürfel");
+    expect(sent).toContain("1200000 vistas");
+    expect(sent).toContain("Miniatura 1");
+    expect(sent).toContain("Glow Eiswürfelform");
+    expect(sent).toContain("Foto de la tienda 1");
+    expect((await intakeViewFor(dueno, product.id))?.mockupStatus).toBe("enviado");
+  });
+
+  it("si el Mac no puede leer el perfil por un aviso de Instagram, lo dice claro y lo reintenta solo", async () => {
+    await getDb().insert(schema.agents).values({ name: "Mac", tokenHash: "h3", createdBy: dueno.id, lastSeenAt: new Date() });
+    const { product, intake } = await createProductFromLink(dueno, { url: "https://www.instagram.com/frozenglow.us/", country: "DE" });
+    let now = new Date();
+    const { d } = deps([], { macOnline: async () => true, now: () => now });
+    await advanceIntake(intake.id, d);
+    await getDb().update(schema.linkProfiles).set({ status: "failed", failures: 1, error: "[aviso] Instagram enseña un aviso", updatedAt: now });
+    await getDb().update(schema.agentTasks).set({ status: "failed" });
+    await advanceIntake(intake.id, d);
+    expect((await intakeViewFor(dueno, product.id))?.message).toContain("Instagram enseña un aviso en tu cuenta");
+    now = new Date(now.getTime() + PROFILE_RETRY_MS + 1_000);
+    await advanceIntake(intake.id, d);
+    expect(await getDb().select().from(schema.agentTasks).where(eq(schema.agentTasks.status, "queued"))).toHaveLength(1);
+    expect((await intakeViewFor(dueno, product.id))?.status).toBe("trayendo");
+  });
+
   it("con una captura subida: espera a las fotos, Claude la ve y sirve de referencia del mockup", async () => {
-    const { product, intake } = await createProductFromLink(dueno, { url: "https://www.instagram.com/tienda/", country: "DE", waitForPhotos: true });
+    const { product, intake } = await createProductFromLink(dueno, { url: "https://www.aliexpress.com/item/1.html", country: "DE", waitForPhotos: true });
     const { d, calls } = deps([claudeReply({ ...ANSWER, referencia: { tipo: "foto_subida", numero: 1 } })]);
     await advanceIntake(intake.id, d);
     expect(calls).toHaveLength(0); // todavía esperando a las fotos
@@ -253,5 +324,39 @@ describe("alta desde un enlace", () => {
     await advanceIntake(intake.id, d);
     expect(calls).toHaveLength(1);
     expect((await latestIntake(intake.productId))?.status).not.toBe("fallido");
+  });
+});
+
+describe("perfiles que lee el Mac (tarea `profile_fetch`)", () => {
+  beforeEach(async () => {
+    await truncateAll();
+  });
+
+  it("solo un Mac 1.5.0 se lleva la tarea; entrega el JSON por trozos y el perfil queda listo", async () => {
+    const dueno = await makeUser("dueno");
+    const { agentId } = await createAgentToken(dueno, "Mac de casa");
+    await agentHeartbeat(agentId, { version: "1.5.0", ytDlp: "2026.11.01" });
+    const profile = await ensureLinkProfile("https://www.instagram.com/frozenglow.us/");
+    expect(await requestProfileFromMac(profile)).toBe(true);
+
+    expect(await claimTask(agentId, new Date(), { can: ["enlace_medio"] })).toBeNull();
+    const task = await claimTask(agentId, new Date(), { can: ["enlace_medio", "perfil"] });
+    expect(task).toMatchObject({ kind: "perfil", url: "https://www.instagram.com/frozenglow.us/" });
+    const json = Buffer.from(JSON.stringify({ red: "instagram", usuario: "frozenglow.us", cabecera: "Hola", enlaces: ["https://t.example", "javascript:x"], reels: [{ url: "https://www.instagram.com/reel/A/", vistas: 10 }, { url: "no" }] }));
+    await appendTaskChunk(agentId, task!.taskId, task!.uploadId, 0, json);
+    await finishTask(agentId, task!.taskId, { ok: true, uploadId: task!.uploadId, totalBytes: json.length });
+    const row = (await linkProfileById(profile.id))!;
+    expect(row.status).toBe("ready");
+    expect(row.data).toMatchObject({ enlaces: ["https://t.example/"], reels: [{ url: "https://www.instagram.com/reel/A/", vistas: 10, texto: null, miniatura: null }] });
+  });
+
+  it("si el Mac no puede, el perfil queda fallido con su motivo y cuenta el fallo", async () => {
+    const dueno = await makeUser("dueno");
+    const { agentId } = await createAgentToken(dueno, "Mac");
+    const profile = await ensureLinkProfile("https://www.instagram.com/x/");
+    await requestProfileFromMac(profile);
+    const task = await claimTask(agentId, new Date(), { can: ["perfil"] });
+    await finishTask(agentId, task!.taskId, { ok: false, uploadId: task!.uploadId, error: "[aviso] Instagram enseña un aviso" });
+    expect(await linkProfileById(profile.id)).toMatchObject({ status: "failed", failures: 1, error: "[aviso] Instagram enseña un aviso" });
   });
 });

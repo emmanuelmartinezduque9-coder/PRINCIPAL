@@ -5,6 +5,7 @@
 import os from "node:os";
 import path from "node:path";
 import { existsSync } from "node:fs";
+import { profileOf, readInstagramProfile, tiktokProfileArgs, tiktokProfileFrom } from "./perfil.mjs";
 
 /**
  * Archivo de cookies exportado de Brave (formato Netscape, modo 600). El programa corre con launchd y
@@ -18,7 +19,7 @@ export function cookieArgs(file = COOKIES_FILE, exists = existsSync) {
   return exists(file) ? ["--cookies", file] : ["--cookies-from-browser", "brave"];
 }
 
-export const VERSION = "1.4.0";
+export const VERSION = "1.5.0";
 
 /** Sitios de los que se descarga, con sus subdominios. La misma lista que el servidor. */
 export const LINK_HOSTS = ["instagram.com", "tiktok.com", "youtube.com", "youtu.be", "facebook.com", "fb.watch"];
@@ -336,12 +337,18 @@ function killGroup(child) {
  * `{ ok: false, error }` (con `messages.failed(detalle)` o `messages.timedOut`), `{ lost: true }`
  * (la web retiró la tarea) o `{ local: true, error }` (no se pudo ni lanzar: es cosa de este Mac).
  */
-async function runTool(config, deps, task, command, args, { timeoutMs, messages }) {
+async function runTool(config, deps, task, command, args, { timeoutMs, messages, capture = false }) {
   let child;
   try {
-    child = deps.spawn(command, args, { stdio: ["ignore", "ignore", "pipe"], detached: true });
+    child = deps.spawn(command, args, { stdio: ["ignore", capture ? "pipe" : "ignore", "pipe"], detached: true });
   } catch (error) {
     return { local: true, error: messageOf(error) };
+  }
+  let stdout = "";
+  if (capture) {
+    child.stdout?.on("data", (chunk) => {
+      if (stdout.length < MAX_CAPTURE) stdout += chunk;
+    });
   }
   let stderr = "";
   child.stderr?.on("data", (chunk) => {
@@ -360,7 +367,7 @@ async function runTool(config, deps, task, command, args, { timeoutMs, messages 
     const result = await Promise.race([exited, deps.sleep(LEASE_BEAT_MS).then(() => null)]);
     if (result) {
       if (result.error) return { local: true, error: messageOf(result.error) };
-      if (result.code === 0) return { ok: true };
+      if (result.code === 0) return { ok: true, stdout };
       return { ok: false, error: messages.failed(stderr.trim().split("\n").pop()?.trim() ?? "") };
     }
     waited += LEASE_BEAT_MS;
@@ -385,6 +392,38 @@ function download(config, deps, task, args) {
       timedOut: "yt-dlp tardó más de 4 minutos y se cortó",
     },
   });
+}
+
+/** Lo más que se guarda de lo que escribe un programa por su salida (la lista de un perfil). */
+const MAX_CAPTURE = 8 * 1024 * 1024;
+
+/**
+ * Lee un perfil (`perfil`): Instagram con Brave sin ventana (`perfil.mjs`), TikTok con yt-dlp.
+ * Deja `perfil.json` en `file`. Devuelve lo mismo que `runTool` (`ok`, `lost`, `local`, `error`).
+ */
+async function readProfile(config, deps, task, file) {
+  const who = profileOf(task.url);
+  if (!who) return { ok: false, error: "El enlace no es un perfil de Instagram ni de TikTok" };
+  let result;
+  if (who.red === "instagram") {
+    const read = deps.readInstagramProfile ?? readInstagramProfile;
+    result = await read(who.usuario, { cookiesFile: config.cookiesFile ?? COOKIES_FILE, sleep: deps.sleep });
+  } else {
+    const ran = await runTool(config, deps, task, config.ytDlp ?? "yt-dlp", tiktokProfileArgs(task.url, cookieArgs()), {
+      timeoutMs: YT_DLP_TIMEOUT_MS,
+      capture: true,
+      messages: { failed: (d) => `yt-dlp no pudo leer el perfil de TikTok${d ? `: ${d}` : ""}`, timedOut: "yt-dlp tardó demasiado con el perfil" },
+    });
+    if (!ran.ok) return ran;
+    try {
+      result = { ok: true, perfil: tiktokProfileFrom(JSON.parse(ran.stdout), who.usuario) };
+    } catch {
+      result = { ok: false, error: "yt-dlp no devolvió la lista del perfil" };
+    }
+  }
+  if (!result.ok) return { ok: false, error: result.codigo ? `[${result.codigo}] ${result.error}` : result.error };
+  await deps.fs.writeFile(file, JSON.stringify(result.perfil));
+  return { ok: true };
 }
 
 /** El título que dejó yt-dlp: la primera línea, sin espacios de más y recortada; `null` si no hay. */
@@ -486,19 +525,20 @@ export async function runOnce(config, deps) {
     return "failed";
   };
 
-  // Una canción trae el audio (MP3); cualquier otra cosa (`referencia`, `enlace_medio`), el vídeo.
+  // Una canción trae el audio (MP3); un perfil, sus datos (JSON); lo demás (`referencia`, `enlace_medio`), el vídeo.
   const song = task.kind === "cancion";
+  const profile = task.kind === "perfil";
   // Aunque la web ya lo comprobó, este Mac no lanza yt-dlp con un enlace de fuera de la lista.
   if (!(song ? allowedSongUrl(task.url) : allowedUrl(task.url))) return giveUp("El enlace no es de un sitio admitido");
 
   // Carpeta temporal propia (solo la puede leer este usuario: `mkdtemp` la crea con 700).
   const dir = await deps.fs.mkdtemp(path.join(config.tmpDir ?? os.tmpdir(), TMP_PREFIX));
-  const file = path.join(dir, song ? SONG_FILE : "video.mp4");
+  const file = path.join(dir, song ? SONG_FILE : profile ? "perfil.json" : "video.mp4");
   const url = new URL(task.url).href;
   const maxMb = song ? 25 : 100;
   try {
-    log(`Descargando ${task.url}`);
-    const downloaded = await download(config, deps, task, song ? ytDlpAudioArgs(url, dir) : ytDlpArgs(url, file));
+    log(profile ? `Leyendo el perfil ${task.url}` : `Descargando ${task.url}`);
+    const downloaded = profile ? await readProfile(config, deps, task, file) : await download(config, deps, task, song ? ytDlpAudioArgs(url, dir) : ytDlpArgs(url, file));
     if (downloaded.lost) return lost();
     if (downloaded.local) {
       // Cosa de este Mac, no del enlace: no se da por fallido.
@@ -508,7 +548,7 @@ export async function runOnce(config, deps) {
     if (!downloaded.ok) return await giveUp(downloaded.error);
 
     const size = await sizeOf(deps.fs, file);
-    const what = song ? "La canción" : "El vídeo";
+    const what = song ? "La canción" : profile ? "El perfil" : "El vídeo";
     if (!size) return await giveUp(`yt-dlp no dejó ningún archivo (puede que ${what.toLowerCase()} pese más de ${maxMb} MB)`);
     if (task.maxBytes > 0 && size > task.maxBytes) return await giveUp(`${what} descargad${song ? "a" : "o"} pesa más de ${maxMb} MB`);
 

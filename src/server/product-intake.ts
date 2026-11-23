@@ -24,6 +24,7 @@ import { getActiveUser, type AuthUser } from "@/server/auth";
 import { ensureMedia } from "@/server/higgsfield";
 import { HttpError } from "@/server/http";
 import { downloadLinkMedia, ensureLinkMedia, fetchInCloud, macTaskStatus, requestFromMac, type FetchDeps } from "@/server/link-media";
+import { ensureLinkProfile, linkProfileById, resetLinkProfile, MAX_PROFILE_FAILURES, profileDataOf, profileTaskStatus, requestProfileFromMac, topReels, type ProfileData } from "@/server/link-profiles";
 import { extractFrames, imageMimeOf, makeThumbnail, probeVideo } from "@/server/media/ffmpeg";
 import { addProductPhoto, listProductPhotos, readProductPhoto } from "@/server/photos";
 import { allProductNames, createProduct, getProductFor, setProductFacts, type Product } from "@/server/products";
@@ -67,6 +68,8 @@ const FRAME_COUNT = 8;
 const SHOP_IMAGES = 3;
 /** Fotos subidas por la persona que ve Claude. */
 const UPLOADED_IMAGES = 3;
+/** Miniaturas de reels de la cuenta que ve Claude. */
+const THUMBS = 4;
 const MAX_SHOP_PAGE_BYTES = 3 * 1024 * 1024;
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
 const MAX_RESULT_BYTES = 40 * 1024 * 1024;
@@ -244,7 +247,7 @@ export async function createProductFromLink(
             kind: link.kind,
             country,
             createdBy: user.id,
-            status: link.kind === "reel" ? "trayendo" : "analizando",
+            status: needsFetch(link) ? "trayendo" : "analizando",
             message: firstMessage(link.kind),
             // Con fotos por subir, nadie la empieza hasta que lleguen (`startIntake`) o pasen unos minutos.
             leaseUntil: input.waitForPhotos ? new Date(Date.now() + PHOTO_WAIT_MS) : null,
@@ -256,9 +259,12 @@ export async function createProductFromLink(
   return { product, intake: intake! };
 }
 
+/** Reels y cuentas pasan por «trayendo» (el vídeo o el perfil, por la nube o el Mac). */
+const needsFetch = (link: { kind: IntakeKind }) => link.kind === "reel" || link.kind === "cuenta";
+
 function firstMessage(kind: IntakeKind): string {
   if (kind === "reel") return "Trayendo el vídeo…";
-  if (kind === "cuenta") return "Buscando la cuenta y su producto en internet…";
+  if (kind === "cuenta") return "Leyendo la cuenta…";
   return "Leyendo la tienda…";
 }
 
@@ -281,9 +287,11 @@ export async function restartIntake(user: AuthUser, productId: number, input: { 
   const link = classifyLink(input.url ?? last?.url ?? product.sourceUrl);
   if (!link) throw new HttpError(400, "Este producto no tiene un enlace válido para analizar.");
   const country = last?.country ?? product.countries[0] ?? "DE";
+  // Volver a analizar una cuenta vuelve a leer su perfil (también si falló).
+  if (link.kind === "cuenta") await resetLinkProfile(link.url);
   const [intake] = await getDb()
     .insert(intakes)
-    .values({ productId: product.id, url: link.url, kind: link.kind, country, createdBy: user.id, status: link.kind === "reel" ? "trayendo" : "analizando", message: firstMessage(link.kind) })
+    .values({ productId: product.id, url: link.url, kind: link.kind, country, createdBy: user.id, status: needsFetch(link) ? "trayendo" : "analizando", message: firstMessage(link.kind) })
     .returning();
   if (link.url !== product.sourceUrl) await setProductFacts(product.id, { sourceUrl: link.url });
   return intake;
@@ -354,34 +362,90 @@ export async function intakeSweep(deps: IntakeDeps = {}): Promise<void> {
 
 // 1. Traer el vídeo ────────────────────────────────────────────
 
+/** Lo que ve la persona mientras el Mac no responde (Instagram solo se lee con el Mac). */
+export const WAITING_FOR_MAC = "Esperando a tu Mac para leer Instagram…";
+/** Cada cuánto se vuelve a pedir al Mac un perfil que no pudo leer. */
+export const PROFILE_RETRY_MS = 5 * 60_000;
+/** Reels de una cuenta que se miran (los más vistos). */
+export const PROFILE_REELS = 2;
+
+const isInstagram = (url: string) => /(^|\.)instagram\.com$/i.test(new URL(url).hostname);
+
 async function stepFetch(row: Intake, deps: IntakeDeps): Promise<Intake> {
   const now = nowOf(deps);
   const store = deps.store === undefined ? getObjectStore() : deps.store;
   const goOn = (message: string) => save(row.id, { status: "analizando", message }, now);
+  const say = (message: string) => (row.message === message ? row : save(row.id, { message }, now));
+  const online = () => (deps.macOnline ?? (() => macOnline(now)))();
+
+  // Una cuenta: primero su perfil, que lee el Mac.
+  if (row.kind === "cuenta") {
+    let profile = await ensureLinkProfile(row.url);
+    if (row.linkProfileId !== profile.id) row = await save(row.id, { linkProfileId: profile.id }, now);
+    if (profile.status === "failed") {
+      if (profile.failures >= MAX_PROFILE_FAILURES) return goOn("No se pudo leer la cuenta; se analiza con lo que hay en internet.");
+      if (now.getTime() - profile.updatedAt.getTime() < PROFILE_RETRY_MS) return say(profileProblem(profile.error));
+      if (!(await requestProfileFromMac(profile, now))) return say(WAITING_FOR_MAC);
+      profile = (await linkProfileById(profile.id))!;
+    }
+    if (profile.status === "pending") {
+      const task = await profileTaskStatus(profile);
+      if ((task === null || task === "done" || task === "failed") && !(await requestProfileFromMac(profile, now))) return say(WAITING_FOR_MAC);
+      return say((await online()) ? "Tu Mac está leyendo la cuenta…" : WAITING_FOR_MAC);
+    }
+    // Perfil listo: se traen sus reels más vistos (como cualquier reel).
+    const data = profileDataOf(profile.data);
+    const reels = data ? topReels(data, PROFILE_REELS).map((r) => r.url) : [];
+    if (!row.reelUrls) row = await save(row.id, { reelUrls: reels }, now);
+    if (!store || reels.length === 0) return goOn("Mirando la cuenta y buscando el producto en internet…");
+    let pending = 0;
+    for (const url of row.reelUrls ?? []) {
+      const state = await fetchVideo(url, store, deps, now);
+      if (state === "pending") pending += 1;
+      if (state === "no_mac") return say(WAITING_FOR_MAC);
+    }
+    if (pending === 0) return goOn("Mirando los reels más vistos y buscando el producto…");
+    if (!(await online())) return say(WAITING_FOR_MAC);
+    if (now.getTime() - row.updatedAt.getTime() >= MAC_WAIT_MS) return goOn("Mirando la cuenta y buscando el producto…");
+    return say("Tu Mac está trayendo los reels más vistos de la cuenta…");
+  }
+
+  // Un reel suelto.
   if (!store) return goOn("Sin almacén de archivos: se analiza el enlace sin el vídeo.");
-  let media = await ensureLinkMedia(row.url);
+  const media = await ensureLinkMedia(row.url);
   if (!media) return goOn("Analizando el enlace…");
   if (row.linkMediaId !== media.id) row = await save(row.id, { linkMediaId: media.id }, now);
-  if (media.status === "pending" && !media.cloudTriedAt) {
-    await fetchInCloud(media, { store, runYtDlp: deps.runYtDlp, now: deps.now });
-    media = (await ensureLinkMedia(row.url))!;
-  }
-  if (media.status === "ready") return goOn("Mirando el vídeo y buscando el producto en internet…");
-  if (media.status === "failed") return goOn("No se pudo traer el vídeo; se analiza con lo que hay en internet.");
+  const state = await fetchVideo(row.url, store, deps, now);
+  if (state === "ready") return goOn("Mirando el vídeo y buscando el producto en internet…");
+  if (state === "failed") return goOn("No se pudo traer el vídeo; se analiza con lo que hay en internet.");
+  if (state === "no_mac") return isInstagram(row.url) ? say(WAITING_FOR_MAC) : goOn("No se pudo traer el vídeo; se analiza con lo que hay en internet.");
+  // Instagram solo lo trae el Mac: sin Mac, se espera (y se reintenta) sin rendirse.
+  if (!(await online())) return isInstagram(row.url) ? say(WAITING_FOR_MAC) : say("Esperando a tu Mac para traer el vídeo…");
+  if (now.getTime() - row.createdAt.getTime() >= MAC_WAIT_MS) return goOn("El Mac no trajo el vídeo a tiempo: se analiza con lo que hay en internet.");
+  return say("Tu Mac está trayendo el vídeo…");
+}
 
+/** Trae un vídeo de enlace: la nube primero y, si no puede, el Mac. */
+async function fetchVideo(url: string, store: ObjectStore, deps: IntakeDeps, now: Date): Promise<"ready" | "failed" | "pending" | "no_mac"> {
+  let media = await ensureLinkMedia(url);
+  if (!media) return "failed";
+  // Instagram no deja entrar a la nube: directo al Mac (yt-dlp en la nube solo perdería minutos).
+  if (media.status === "pending" && !media.cloudTriedAt && !isInstagram(url)) {
+    await fetchInCloud(media, { store, runYtDlp: deps.runYtDlp, now: deps.now });
+    media = (await ensureLinkMedia(url))!;
+  }
+  if (media.status === "ready" || media.status === "failed") return media.status;
   const task = await macTaskStatus(media);
-  if (task === null || task === "done" || task === "failed") {
-    if (!(await requestFromMac(media, now))) return goOn("La nube no pudo traer el vídeo y no hay Mac conectado: se analiza con lo que hay en internet.");
-  }
-  const waited = now.getTime() - row.createdAt.getTime();
-  const online = await (deps.macOnline ?? (() => macOnline(now)))();
-  if (waited >= MAC_WAIT_MS) {
-    return goOn(online ? "El Mac no trajo el vídeo a tiempo: se analiza con lo que hay en internet." : "El Mac no responde: se analiza sin el vídeo, solo con lo que hay en internet.");
-  }
-  const message = online
-    ? "Instagram no deja entrar a la nube: el vídeo lo está trayendo tu Mac…"
-    : "Instagram no deja entrar a la nube y tu Mac no responde. Enciéndelo y abre el agente de PRINCIPAL; si no, en unos minutos se sigue sin el vídeo.";
-  return row.message === message ? row : save(row.id, { message }, now);
+  if ((task === null || task === "done" || task === "failed") && !(await requestFromMac(media, now))) return "no_mac";
+  return "pending";
+}
+
+/** Qué decir cuando el Mac no pudo leer el perfil (se reintenta solo). */
+function profileProblem(error: string | null): string {
+  if (error?.includes("[aviso]")) return "Instagram enseña un aviso en tu cuenta: ábrela en Brave en tu Mac y ciérralo. Se reintenta solo.";
+  if (error?.includes("[sin_sesion]")) return "Entra en Instagram con Brave en tu Mac (la sesión se cerró). Se reintenta solo.";
+  if (error?.includes("[sin_brave]")) return "Hace falta Brave en tu Mac para leer Instagram. Se reintenta solo.";
+  return "Tu Mac no pudo leer la cuenta esta vez. Se reintenta solo.";
 }
 
 // 2. Entender el producto ──────────────────────────────────────
@@ -397,7 +461,7 @@ const intakeSchema = z.object({
   anguloActual: z.string(),
   emoji: z.string(),
   marca: z.object({ nombre: z.string(), porQue: z.string(), alternativas: z.array(z.string()) }),
-  referencia: z.object({ tipo: z.enum(["fotograma", "foto_tienda", "foto_subida", "ninguna"]), numero: z.number().int() }),
+  referencia: z.object({ tipo: z.enum(["fotograma", "foto_tienda", "foto_subida", "miniatura", "ninguna"]), numero: z.number().int() }),
   promptMockup: z.string(),
   fuentes: z.array(z.object({ url: z.string(), que: z.string() })),
 });
@@ -411,15 +475,28 @@ export interface IntakeResult extends Omit<IntakeAnswer, "fuentes"> {
   costeMicros: number;
 }
 
+interface ShopProduct {
+  title: string;
+  type: string;
+  text: string;
+  price: string | null;
+  image: string | null;
+  url: string;
+}
+
 interface Inputs {
-  frames: Array<{ timeMs: number; jpeg: Buffer }>;
+  frames: Array<{ timeMs: number; jpeg: Buffer; video?: string }>;
+  /** Miniaturas de los reels más vistos de la cuenta. */
+  thumbs: Array<{ url: string; vistas: number | null; bytes: Buffer; mime: "image/jpeg" | "image/png" | "image/webp" }>;
+  /** El perfil que leyó el Mac. */
+  profile: ProfileData | null;
   /** Fotos o capturas que subió la persona al crear el producto (opcionales). */
   uploaded: Array<{ id: number; jpeg: Buffer }>;
-  shop: { title: string | null; description: string | null; images: Array<{ url: string; bytes: Buffer; mime: "image/jpeg" | "image/png" | "image/webp" }> };
+  shop: { title: string | null; description: string | null; products: ShopProduct[]; images: Array<{ url: string; bytes: Buffer; mime: "image/jpeg" | "image/png" | "image/webp" }> };
 }
 
 async function gatherInputs(row: Intake, owner: AuthUser, deps: IntakeDeps): Promise<Inputs> {
-  const inputs: Inputs = { frames: [], uploaded: [], shop: { title: null, description: null, images: [] } };
+  const inputs: Inputs = { frames: [], uploaded: [], thumbs: [], profile: null, shop: { title: null, description: null, products: [], images: [] } };
   const photos = (await listProductPhotos(owner, row.productId)).filter((p) => p.role !== "avatar" && p.role !== "entorno").slice(-UPLOADED_IMAGES);
   for (const photo of photos) {
     try {
@@ -429,29 +506,60 @@ async function gatherInputs(row: Intake, owner: AuthUser, deps: IntakeDeps): Pro
       // Una foto que no se puede leer no impide seguir.
     }
   }
-  if (row.kind === "reel" && row.linkMediaId) {
-    const store = deps.store === undefined ? getObjectStore() : deps.store;
-    const [media] = await getDb().select().from(schema.linkMedia).where(eq(schema.linkMedia.id, row.linkMediaId));
-    if (media?.status === "ready" && store) {
-      const dir = await fs.mkdtemp(path.join(os.tmpdir(), "alta-"));
-      try {
-        const file = path.join(dir, "video.mp4");
-        if (await downloadLinkMedia(media, file, { store })) {
-          const { durationMs } = await probeVideo(file);
-          const times = Array.from({ length: FRAME_COUNT }, (_, i) => Math.round(((i + 0.5) * durationMs) / FRAME_COUNT));
-          inputs.frames = await extractFrames(file, times);
-        }
-      } catch (error) {
-        console.warn(`[altas] No se pudieron sacar fotogramas del alta ${row.id}:`, error instanceof Error ? error.message : error);
-      } finally {
-        await fs.rm(dir, { recursive: true, force: true });
+  const store = deps.store === undefined ? getObjectStore() : deps.store;
+  // Fotogramas: del reel pegado, o de los reels más vistos de la cuenta.
+  const videos = row.kind === "reel" ? [row.url] : (row.reelUrls ?? []);
+  const perVideo = videos.length > 1 ? Math.ceil(FRAME_COUNT / 2) : FRAME_COUNT;
+  for (const url of videos) {
+    const media = await ensureLinkMedia(url);
+    if (media?.status !== "ready" || !store) continue;
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "alta-"));
+    try {
+      const file = path.join(dir, "video.mp4");
+      if (await downloadLinkMedia(media, file, { store })) {
+        const { durationMs } = await probeVideo(file);
+        const times = Array.from({ length: perVideo }, (_, i) => Math.round(((i + 0.5) * durationMs) / perVideo));
+        inputs.frames.push(...(await extractFrames(file, times)).map((f) => ({ ...f, video: url })));
+      }
+    } catch (error) {
+      console.warn(`[altas] No se pudieron sacar fotogramas del alta ${row.id}:`, error instanceof Error ? error.message : error);
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  }
+  // La cuenta: lo que leyó el Mac y las miniaturas de sus reels más vistos.
+  let shopLinks: string[] = row.kind === "aliexpress" || row.kind === "web" ? [row.url] : [];
+  if (row.kind === "cuenta" && row.linkProfileId) {
+    const profile = await linkProfileById(row.linkProfileId);
+    const data = profile?.status === "ready" ? profileDataOf(profile.data) : null;
+    if (data) {
+      inputs.profile = data;
+      shopLinks = data.enlaces;
+      for (const reel of topReels(data, THUMBS)) {
+        if (!reel.miniatura) continue;
+        const image = await fetchPublic(reel.miniatura, MAX_IMAGE_BYTES, deps);
+        const mime = image ? imageMimeOf(image.bytes.subarray(0, 16)) : null;
+        if (image && (mime === "image/jpeg" || mime === "image/png" || mime === "image/webp")) inputs.thumbs.push({ url: reel.url, vistas: reel.vistas, bytes: image.bytes, mime });
       }
     }
   }
-  if (row.kind === "aliexpress" || row.kind === "web") {
-    const page = await fetchPublic(row.url, MAX_SHOP_PAGE_BYTES, deps);
+  // La tienda: Shopify (`/products.json`) o la página con sus fotos.
+  for (const link of shopLinks.slice(0, 2)) {
+    const shopify = await shopifyProducts(link, deps);
+    if (shopify.length > 0) {
+      inputs.shop.products = shopify;
+      for (const product of shopify) {
+        if (inputs.shop.images.length >= SHOP_IMAGES) break;
+        if (!product.image) continue;
+        const image = await fetchPublic(product.image, MAX_IMAGE_BYTES, deps);
+        const mime = image ? imageMimeOf(image.bytes.subarray(0, 16)) : null;
+        if (image && (mime === "image/jpeg" || mime === "image/png" || mime === "image/webp")) inputs.shop.images.push({ url: product.image, bytes: image.bytes, mime });
+      }
+      break;
+    }
+    const page = await fetchPublic(link, MAX_SHOP_PAGE_BYTES, deps);
     if (page && /html/i.test(page.type || "text/html")) {
-      const facts = shopFacts(page.bytes.toString("utf8"), row.url);
+      const facts = shopFacts(page.bytes.toString("utf8"), link);
       inputs.shop.title = facts.title;
       inputs.shop.description = facts.description;
       for (const url of facts.images) {
@@ -460,15 +568,46 @@ async function gatherInputs(row: Intake, owner: AuthUser, deps: IntakeDeps): Pro
         const mime = image ? imageMimeOf(image.bytes.subarray(0, 16)) : null;
         if (image && (mime === "image/jpeg" || mime === "image/png" || mime === "image/webp")) inputs.shop.images.push({ url, bytes: image.bytes, mime });
       }
+      if (inputs.shop.images.length > 0 || inputs.shop.title) break;
     }
   }
   return inputs;
 }
 
+/** Productos de una tienda Shopify (`/products.json`), los primeros; vacío si no es Shopify. */
+export async function shopifyProducts(link: string, deps: IntakeDeps): Promise<ShopProduct[]> {
+  let origin: string;
+  try {
+    origin = new URL(link).origin;
+  } catch {
+    return [];
+  }
+  const response = await fetchPublic(`${origin}/products.json?limit=8`, MAX_SHOP_PAGE_BYTES, deps);
+  if (!response) return [];
+  try {
+    const json = JSON.parse(response.bytes.toString("utf8")) as { products?: Array<Record<string, unknown>> };
+    if (!Array.isArray(json.products)) return [];
+    return json.products.slice(0, 8).map((p) => {
+      const images = Array.isArray(p.images) ? (p.images as Array<{ src?: unknown }>) : [];
+      const variants = Array.isArray(p.variants) ? (p.variants as Array<{ price?: unknown }>) : [];
+      return {
+        title: typeof p.title === "string" ? p.title.slice(0, 200) : "",
+        type: typeof p.product_type === "string" ? p.product_type.slice(0, 100) : "",
+        text: typeof p.body_html === "string" ? p.body_html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim().slice(0, 400) : "",
+        price: typeof variants[0]?.price === "string" ? variants[0].price : null,
+        image: typeof images[0]?.src === "string" ? (images[0].src as string) : null,
+        url: typeof p.handle === "string" ? `${origin}/products/${p.handle}` : origin,
+      };
+    });
+  } catch {
+    return [];
+  }
+}
+
 function intakeInstructions(row: Intake, language: string, brands: string[]): string {
   const kindText: Record<IntakeKind, string> = {
     reel: "un reel o vídeo de una cuenta que vende el producto",
-    cuenta: "la cuenta (perfil) de Instagram o TikTok de quien vende el producto; no tienes sus vídeos: búscala en internet (su tienda enlazada, sus vídeos más vistos, AliExpress, Amazon) para saber qué vende",
+    cuenta: "la cuenta (perfil) de Instagram o TikTok de quien vende el producto. Tienes lo que leyó el Mac del perfil (cabecera, enlaces, reels con sus vistas), las miniaturas y fotogramas de sus reels más vistos y, si la hay, su tienda; el producto es el protagonista de los reels más vistos. Completa con la búsqueda en internet (la tienda, AliExpress, Amazon) si hace falta",
     aliexpress: "un producto de AliExpress",
     web: "la página de una tienda que vende el producto",
   };
@@ -477,7 +616,7 @@ function intakeInstructions(row: Intake, language: string, brands: string[]): st
     `El enlace es ${kindText[row.kind as IntakeKind]}. Mercado: ${COUNTRY_NAME[row.country] ?? row.country} (idioma ${LANGUAGE_NAME[language] ?? language}).`,
     "Aplica las reglas «Alta de producto desde un enlace» y «Nombres de marca». Usa la búsqueda en internet para identificar el artículo concreto y comprobar datos; mira primero el propio enlace con web_fetch.",
     `Marcas que Emmanuel ya usa (no repitas sus raíces salvo que sea la misma familia): ${brands.join(", ") || "ninguna"}.`,
-    "Campos: `producto` (qué es, en español, corto), `queHace` (una frase sencilla en español), `mecanismo`, `nicho`, `audiencia` (quién compra y quién usa), `anguloActual` (con qué motivo se vende en la fuente), `emoji` (uno), `marca` (la mejor opción y dos alternativas, en el idioma del mercado, con el porqué en español), `referencia` (la imagen numerada donde mejor se ve el producto entero y limpio para el mockup: `fotograma`, `foto_tienda` o `foto_subida` con su número empezando en 1, o `ninguna`), `promptMockup` (en inglés, según la regla), `fuentes` (direcciones que de verdad consultaste y qué sacaste de cada una).",
+    "Campos: `producto` (qué es, en español, corto), `queHace` (una frase sencilla en español), `mecanismo`, `nicho`, `audiencia` (quién compra y quién usa), `anguloActual` (con qué motivo se vende en la fuente), `emoji` (uno), `marca` (la mejor opción y dos alternativas, en el idioma del mercado, con el porqué en español), `referencia` (la imagen numerada donde mejor se ve el producto entero y limpio para el mockup: `fotograma`, `foto_tienda`, `foto_subida` o `miniatura` con su número empezando en 1, o `ninguna`; mejor una foto limpia de la tienda que un fotograma), `promptMockup` (en inglés, según la regla), `fuentes` (direcciones que de verdad consultaste y qué sacaste de cada una).",
     "Si no puedes identificar el producto con seguridad, `identificado: false` y en `motivo` explica en una frase sencilla por qué y qué haría falta; deja el resto vacío. Si lo identificas, `motivo` puede quedar vacío o avisar de una duda.",
   ].join("\n");
 }
@@ -500,9 +639,18 @@ async function stepAnalyze(row: Intake, owner: AuthUser, deps: IntakeDeps): Prom
       const content: LlmContent = [textPart(`Enlace: ${row.url}`)];
       if (inputs.frames.length > 0) {
         content.push(textPart(`Fotogramas del vídeo (${inputs.frames.length}):`));
-        inputs.frames.forEach((frame, i) => content.push(textPart(`Fotograma ${i + 1} — ${(frame.timeMs / 1000).toFixed(1)} s`), imagePart(frame.jpeg, "image/jpeg")));
-      } else if (row.kind === "reel") {
+        inputs.frames.forEach((frame, i) => content.push(textPart(`Fotograma ${i + 1} — ${(frame.timeMs / 1000).toFixed(1)} s${frame.video && row.kind === "cuenta" ? ` de ${frame.video}` : ""}`), imagePart(frame.jpeg, "image/jpeg")));
+      } else if (row.kind === "reel" || (row.reelUrls?.length ?? 0) > 0) {
         content.push(textPart("No se pudo traer el vídeo: identifícalo por el enlace y la búsqueda en internet."));
+      }
+      if (inputs.profile) {
+        const p = inputs.profile;
+        const reels = p.reels.slice(0, 12).map((r, i) => `${i + 1}. ${r.url} — ${r.vistas === null ? "vistas ?" : `${r.vistas} vistas`}${r.texto ? ` — «${r.texto.slice(0, 200)}»` : ""}`);
+        content.push(textPart([`Perfil de ${p.red} @${p.usuario} (lo leyó el Mac):`, `Cabecera: ${p.cabecera || "—"}`, p.descripcion ? `Descripción: ${p.descripcion}` : null, `Enlaces: ${p.enlaces.join(" ") || "ninguno"}`, "Reels:", ...reels].filter(Boolean).join("\n")));
+      }
+      inputs.thumbs.forEach((thumb, i) => content.push(textPart(`Miniatura ${i + 1} — ${thumb.url}${thumb.vistas === null ? "" : ` (${thumb.vistas} vistas)`}`), imagePart(thumb.bytes, thumb.mime)));
+      if (inputs.shop.products.length > 0) {
+        content.push(textPart(["Productos de su tienda Shopify (/products.json):", ...inputs.shop.products.map((pr, i) => `${i + 1}. ${pr.title}${pr.type ? ` [${pr.type}]` : ""}${pr.price ? ` — ${pr.price}` : ""} — ${pr.url}${pr.text ? ` — ${pr.text}` : ""}`)].join("\n")));
       }
       if (inputs.shop.title || inputs.shop.description) content.push(textPart(`Datos de la página: ${[inputs.shop.title, inputs.shop.description].filter(Boolean).join(" — ")}`));
       inputs.shop.images.forEach((image, i) => content.push(textPart(`Foto de la tienda ${i + 1}`), imagePart(image.bytes, image.mime)));
@@ -544,8 +692,8 @@ async function stepAnalyze(row: Intake, owner: AuthUser, deps: IntakeDeps): Prom
   };
 
   if (!data.identificado) {
-    await setProductFacts(product.id, { name: "Producto sin identificar", summary: data.motivo.trim() || "No se pudo identificar el producto del enlace." });
-    return save(row.id, { status: "fallido", result, message: `No se ha podido identificar el producto: ${data.motivo.trim() || "el enlace no deja ver qué vende"}. Prueba con el enlace de un reel concreto, o rellena el producto a mano.` }, now);
+    await setProductFacts(product.id, { name: "Producto sin identificar", summary: "No se pudo identificar el producto del enlace." });
+    return save(row.id, { status: "fallido", result, message: "No se ha podido identificar el producto. Pulsa «Volver a analizar» para intentarlo otra vez." }, now);
   }
 
   // La imagen de referencia del mockup se guarda como foto del producto (papel «Otra»).
@@ -572,6 +720,7 @@ async function stepAnalyze(row: Intake, owner: AuthUser, deps: IntakeDeps): Prom
     // Una foto subida ya es del producto: sirve tal cual.
     if (ref.tipo === "foto_subida") return fresh.uploaded[ref.numero - 1]?.id ?? fresh.uploaded[0]?.id ?? null;
     if (ref.tipo === "fotograma") bytes = fresh.frames[ref.numero - 1]?.jpeg ?? fresh.frames[0]?.jpeg ?? null;
+    else if (ref.tipo === "miniatura") bytes = fresh.thumbs[ref.numero - 1]?.bytes ?? null;
     else if (ref.tipo === "foto_tienda") bytes = fresh.shop.images[ref.numero - 1]?.bytes ?? fresh.shop.images[0]?.bytes ?? null;
     if (!bytes) return null;
     try {
@@ -590,9 +739,9 @@ function gatewayMessage(error: unknown): string | null {
   if (error instanceof LlmCapReachedError) return error.message;
   if (error instanceof LlmNotConfiguredError) return "Falta la clave de Claude en la web; avisa al dueño.";
   if (error instanceof LlmCallError || error instanceof LlmRefusalError || error instanceof LlmTruncatedError || error instanceof LlmInvalidOutputError) {
-    return `Claude no pudo analizar el enlace (${error.message}). Pulsa «Volver a analizar».`;
+    return "No se pudo terminar el análisis. Pulsa «Volver a analizar».";
   }
-  if (error instanceof StepFailedError) return `No se pudo analizar el enlace: ${error.message}`;
+  if (error instanceof StepFailedError) return "No se pudo terminar el análisis. Pulsa «Volver a analizar».";
   return null;
 }
 

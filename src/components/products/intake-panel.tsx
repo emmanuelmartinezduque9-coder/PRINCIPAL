@@ -93,7 +93,7 @@ export function IntakePanel({ productId }: { productId: number }) {
     >
       {running || failed ? (
         <ol className="flex flex-col gap-2">
-          {STEPS.filter((s) => s.key !== "trayendo" || intake.kind === "reel").map((step) => {
+          {STEPS.filter((s) => s.key !== "trayendo" || intake.kind === "reel" || intake.kind === "cuenta").map((step) => {
             const state = failed ? (stepState(intake.status, step.key) === "hecho" ? "hecho" : "pendiente") : stepState(intake.status, step.key);
             return (
               <li key={step.key} className="flex items-center gap-2 text-sm">
@@ -104,7 +104,9 @@ export function IntakePanel({ productId }: { productId: number }) {
                 ) : (
                   <span className="size-4 rounded-full border" aria-hidden />
                 )}
-                <span className={state === "pendiente" ? "text-muted-foreground" : ""}>{step.label}</span>
+                <span className={state === "pendiente" ? "text-muted-foreground" : ""}>
+                  {step.key === "trayendo" && intake.kind === "cuenta" ? "Leer la cuenta y sus reels más vistos" : step.label}
+                </span>
               </li>
             );
           })}

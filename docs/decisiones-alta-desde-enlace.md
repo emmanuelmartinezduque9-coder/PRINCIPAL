@@ -118,11 +118,46 @@ fijas, con tope de gasto y apunte en el libro.
   caliente) con pruebas de tiendas alemanas y suizas y Amazon.de, todas comprobadas; ganchos en
   alemán. 0,19–0,25 $ por búsqueda, 60–80 s.
 
+## Cuentas de Instagram y TikTok por el Mac (23/11/2026, después del fallo de @frozenglow.us)
+
+Emmanuel pegó solo el perfil `instagram.com/frozenglow.us` (producto 55) y el alta falló pidiendo
+un reel o rellenarlo a mano. Eso no vale: él pega la cuenta y el país y el sistema lo resuelve solo,
+como Codex (que usaba un navegador con su sesión).
+
+- **Instagram y TikTok pasan siempre por el agente del Mac** (programa **1.5.0**, `puede:
+  ["enlace_medio", "perfil"]`). Tarea nueva `profile_fetch` (tabla `link_profiles`,
+  `src/server/link-profiles.ts`): el Mac entrega un JSON con la cabecera del perfil (nombre y
+  biografía), sus enlaces (la tienda) y hasta 15 reels con sus vistas, texto y miniatura.
+- **Cómo lee Instagram el Mac** (`agente-mac/perfil.mjs`): un **Brave sin ventana** con una carpeta
+  de perfil temporal (nunca la de Emmanuel) y las cookies de Instagram de
+  `~/.principal-agente-cookies.txt`; abre `instagram.com/<cuenta>/reels/` y lee la cuadrícula.
+  Comprobado el 23/11: la extracción de perfiles de yt-dlp está marcada como rota, la API pública de
+  perfiles da 404 y la API web con sesión da 429 a programas; el HTML ya no trae los reels. Solo un
+  navegador de verdad los ve.
+- **TikTok**: yt-dlp `tiktok:user` con `--flat-playlist --playlist-items 1-15 -J` (trae vistas).
+- **Sesión**: el agente arranca con launchd y macOS no le deja leer las cookies de Brave; el archivo
+  `~/.principal-agente-cookies.txt` que tenía **no llevaba la sesión iniciada** (`sessionid`).
+  `agente-mac/exportar-sesion.sh` (desde el Terminal) la copia de Brave con yt-dlp; repetirlo si
+  Instagram cierra la sesión. El agente avisa con un código: `[aviso]`, `[sin_sesion]`, `[sin_brave]`.
+- **Después del perfil**: se eligen los **2 reels más vistos** y se traen por el camino de siempre
+  (`media_fetch`; los de Instagram, directos al Mac, sin perder minutos con yt-dlp en la nube). Claude
+  recibe el perfil, las miniaturas de los 4 más vistos (con sus vistas), los fotogramas de esos reels
+  y, si el enlace de la biografía es una **tienda Shopify**, sus productos de `/products.json` con
+  sus fotos (también para una tienda pegada directamente). La foto de referencia del mockup puede
+  ser de la tienda, un fotograma o una miniatura.
+- **Si el Mac no responde**: la pantalla dice solo «Esperando a tu Mac para leer Instagram…» y se
+  reintenta sola cada minuto, **sin rendirse ni pedir rellenar nada**. Si el Mac no puede leer el
+  perfil, se vuelve a pedir cada 5 minutos (hasta 6 veces) con un mensaje claro según el motivo.
+  Los fallos de análisis se muestran con una frase corta («No se ha podido identificar el producto.
+  Pulsa «Volver a analizar»…»), sin el texto técnico.
+- «Volver a analizar» una cuenta vuelve a leer su perfil.
+
+**Bloqueo encontrado en la prueba real (23/11/2026)**: la cuenta de Instagram de Emmanuel enseña un
+aviso de seguridad («Es posible que tu correo electrónico no sea seguro — Actualizar dirección de
+correo electrónico») que tapa todas las páginas. Mientras siga, ningún programa puede leer perfiles
+con su sesión (el agente lo detecta y lo dice: `[aviso]`). Solo lo puede resolver él en Instagram.
+
 ## Pendiente / siguientes pasos
-- **Cuentas de Instagram sin captura**: solo se pueden leer con la sesión de Instagram del Mac.
-  Siguiente paso propuesto: que el agente del Mac (1.5.0) traiga también el perfil (biografía, enlace
-  de la tienda y últimos reels con sus vistas) con la sesión de Brave, igual que trae los reels.
-  Mientras tanto: pegar un **reel** de la cuenta, o añadir una captura.
 - Países e idiomas nuevos (FR, ES, EE. UU., Reino Unido): hoy la web solo admite DE/AT/CH/IT.
 - Si Emmanuel quiere también **marca (logo)** y **embalaje** automáticos como en el motor antiguo,
   van con el mismo patrón que el mockup.
