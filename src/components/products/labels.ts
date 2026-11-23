@@ -15,6 +15,7 @@ export const PHOTO_ROLE_LABELS: Record<PhotoRole, string> = {
   embalaje: "Embalaje",
   avatar: "Avatar",
   entorno: "Entorno",
+  funcionamiento: "Funcionando",
   otro: "Otra",
 };
 export const PHOTO_ROLE_HINTS: Record<PhotoRole, string> = {
@@ -22,6 +23,7 @@ export const PHOTO_ROLE_HINTS: Record<PhotoRole, string> = {
   embalaje: "Embalaje: la caja o el envase",
   avatar: "Avatar: la persona que saldrá en los vídeos",
   entorno: "Entorno: el sitio o el estilo que quieres",
+  funcionamiento: "Funcionando: el producto en uso o su efecto (se adjunta con el artículo)",
   otro: "Otra",
 };
 

@@ -144,7 +144,7 @@ export const productPhotos = pgTable(
   },
   (t) => [
     index("product_photos_product").on(t.productId, t.id),
-    check("product_photos_role_valid", sql`${t.role} in ('articulo', 'embalaje', 'avatar', 'entorno', 'otro')`),
+    check("product_photos_role_valid", sql`${t.role} in ('articulo', 'embalaje', 'avatar', 'entorno', 'funcionamiento', 'otro')`),
   ],
 );
 

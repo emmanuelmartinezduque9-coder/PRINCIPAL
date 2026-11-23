@@ -52,3 +52,24 @@ export async function importFrameCandidate(videoId: number, url: string, note: s
   });
   console.log(`[imagen] Vídeo ${videoId}: imagen importada como candidata (${note}).`);
 }
+
+/**
+ * Una vez: rechaza la imagen de un vídeo (con su motivo) para que el lote la regenere solo con
+ * las reglas nuevas. Solo si su última ronda es `round`, está hecha, sin rechazar y sin aprobar.
+ */
+export async function rejectFrameOnce(videoId: number, round: number, reason: string): Promise<void> {
+  const [video] = await getDb().select().from(schema.videos).where(eq(schema.videos.id, videoId));
+  if (!video || video.approvedFrameResultId !== null) return;
+  const [last] = await getDb()
+    .select({ round: schema.generations.round, status: schema.generations.status, rejectReason: schema.generations.rejectReason })
+    .from(schema.generations)
+    .where(and(eq(schema.generations.videoId, videoId), eq(schema.generations.kind, "frame")))
+    .orderBy(desc(schema.generations.round))
+    .limit(1);
+  if (!last || last.round !== round || last.status !== "done" || last.rejectReason !== null) return;
+  const owner = await getActiveUser(video.createdBy);
+  if (!owner) return;
+  const { rejectFrame } = await import("@/server/videos/frame");
+  await rejectFrame(owner, videoId, reason);
+  console.log(`[imagen] Vídeo ${videoId}: ronda ${round} rechazada para regenerarla (${reason}).`);
+}

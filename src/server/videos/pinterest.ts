@@ -251,15 +251,18 @@ export async function readyPinterestRefs(videoId: number): Promise<string[]> {
 }
 
 /** Las fotos listas y si el producto no se ve en la toma (entonces no se adjuntan sus fotos). */
-export async function readyPinterest(videoId: number): Promise<{ refs: string[]; productHidden: boolean; approvedMethod: boolean }> {
-  const none = { refs: [], productHidden: false, approvedMethod: false };
+export async function readyPinterest(
+  videoId: number,
+): Promise<{ refs: string[]; productHidden: boolean; packagingHidden: boolean; approvedMethod: boolean }> {
+  const none = { refs: [], productHidden: false, packagingHidden: false, approvedMethod: false };
   const analysisId = await latestDoneAnalysisId(videoId);
   if (analysisId === null) return none;
   const run = await runOf(videoId, analysisId);
   if (run?.status !== "ready") return none;
   const refs = ((run.refs as PinterestRef[] | null) ?? []).map((ref) => ref.sha256);
   const approvedMethod = run.framePrompt !== null;
-  return { refs, approvedMethod, productHidden: approvedMethod && (run.scene as { productHidden?: boolean } | null)?.productHidden === true };
+  const scene = run.scene as { productHidden?: boolean; packagingHidden?: boolean } | null;
+  return { refs, approvedMethod, productHidden: approvedMethod && scene?.productHidden === true, packagingHidden: approvedMethod && scene?.packagingHidden === true };
 }
 
 /**
@@ -551,7 +554,7 @@ async function pickFromBank(
     error: null,
     framePrompt: composed.prompt,
     basePromptSha: composed.baseSha,
-    scene: { ...((current?.scene as object | null) ?? {}), productHidden: composed.productHidden },
+    scene: { ...((current?.scene as object | null) ?? {}), productHidden: composed.productHidden, packagingHidden: composed.packagingHidden },
   });
   console.log(`[pinterest] Prompt con la sala del vídeo ${run.videoId}:\n${composed.prompt}`);
   console.log(
@@ -560,6 +563,38 @@ async function pickFromBank(
 }
 
 // ───────────────────────── Prompt con la sala (método aprobado) ─────────────────────────
+
+/** Las fotos del producto que Claude mira al escribir el prompt (artículo, funcionamiento, caja), con su marca de cita. */
+async function productPhotosFor(videoId: number): Promise<Array<{ tag: string; label: string; jpeg: Buffer }>> {
+  const [video] = await getDb().select({ productId: schema.videos.productId }).from(schema.videos).where(eq(schema.videos.id, videoId));
+  if (!video) return [];
+  const rows = await getDb()
+    .select({ role: schema.productPhotos.role, data: schema.productPhotos.data })
+    .from(schema.productPhotos)
+    .where(and(eq(schema.productPhotos.productId, video.productId), inArray(schema.productPhotos.role, ["articulo", "funcionamiento", "embalaje"])))
+    .orderBy(schema.productPhotos.id);
+  const tags: Record<string, { tag: string; label: string }[]> = {
+    articulo: [
+      { tag: "{ARTICLE}", label: "el artículo del encargo (forma, color y materiales exactos)" },
+      { tag: "{ARTICLE2}", label: "otra vista del artículo del encargo" },
+    ],
+    funcionamiento: [{ tag: "{EFFECT}", label: "el producto del encargo funcionando: su efecto exacto (forma, color, luz)" }],
+    embalaje: [{ tag: "{PACKAGING}", label: "la caja del producto del encargo" }],
+  };
+  const out: Array<{ tag: string; label: string; jpeg: Buffer }> = [];
+  const used: Record<string, number> = {};
+  for (const row of rows) {
+    const slot = tags[row.role]?.[used[row.role] ?? 0];
+    if (!slot) continue;
+    used[row.role] = (used[row.role] ?? 0) + 1;
+    try {
+      out.push({ ...slot, jpeg: await makeThumbnail(Buffer.from(row.data), "image", 768) });
+    } catch {
+      // Una foto que no se puede leer no se enseña.
+    }
+  }
+  return out;
+}
 
 /**
  * Método del sistema anterior, copiado tal cual (orden del dueño, 23/11/2026; ver
@@ -584,7 +619,8 @@ const oneParagraph = z
   .min(40)
   .refine((text) => !/\n\s*\n/.test(text), "Un solo párrafo");
 const composedSchema = z.object({
-  productVisible: z.boolean().describe("Si el artículo o su caja se ven en esta toma (false si aún está envuelto, tapado o fuera de plano)."),
+  productVisible: z.boolean().describe("Si el artículo o su efecto se ven en esta toma (false si aún está envuelto, tapado o fuera de plano)."),
+  packagingVisible: z.boolean().describe("Si la caja o el envase del producto se ve en esta toma."),
   composition: oneParagraph.describe("Párrafo 1, en inglés."),
   identity: oneParagraph.describe("Párrafo 2, en inglés."),
   product: oneParagraph.describe("Párrafo 3, en inglés."),
@@ -601,11 +637,13 @@ Escribe en inglés, en prosa corrida, cinco párrafos (cada uno de un solo bloqu
 4. environment: «Reference image {ROOM} is the EXACT requested background, not an inspiration. Preserve its …» y entre 6 y 12 elementos que VES en esa foto, cada uno con su posición (LEFT, RIGHT, centre, foreground, background). Mete la cámara dentro de esa sala desde el punto de vista del fotograma original («Camera is … looking into this same room»), «Preserve recognizable architecture, furniture, ornaments and natural spatial depth.», «Do not add …» con lo que no debe aparecer, y «Never raise the camera just to fit the whole room.». Mantén la acción, las manos y el momento intactos.
 5. lighting: «Match the actual … light in reference image {ROOM}» con las fuentes, direcciones y temperatura que se ven en esa foto, y cómo comparten esa luz las manos, la persona y el objeto (sombras de contacto). Sin la frase fija de luz: la añade la aplicación.
 
-Primero decide productVisible: si el artículo o su caja se ven en esta toma. Si no se ven (envuelto, tapado, fuera de plano), como en el método aprobado NO se adjuntan sus fotos: no las cites.
+Primero decide productVisible (si el artículo o su efecto se ven en esta toma) y packagingVisible (si se ve la caja). Lo que no se ve no se adjunta, como en el método aprobado: no lo cites.
 
-Cita cada imagen por su papel, literal y con llaves, nunca con un número: el fotograma original es image 1; la sala, image {ROOM}; el avatar, image {AVATAR}; la primera foto del artículo, image {ARTICLE} (la segunda, image {ARTICLE2}…); la caja, image {PACKAGING}. La aplicación pone los números reales.
+Cita cada imagen por su papel, literal y con llaves, nunca con un número: el fotograma original es image 1; la sala, image {ROOM}; el avatar, image {AVATAR}; la primera foto del artículo, image {ARTICLE} (la segunda, image {ARTICLE2}…); la foto del producto funcionando o de su efecto, image {EFFECT}; la caja, image {PACKAGING}. La aplicación pone los números reales. Si en la lista de adjuntos no hay foto de funcionamiento, no cites {EFFECT}.
 
-Conserva tal cual los objetos del fotograma que sostiene o toca la persona (envoltorio, papel, colores, forma, pliegues) salvo que el dueño haya pedido cambiarlos en sus indicaciones: aunque el prompt del desglose proponga cambiar el papel o el envoltorio, no lo cambies.
+EL PRODUCTO SIEMPRE ES EL DEL ENCARGO. El producto que se ve en image 1 es de otra marca aunque se parezca: en el párrafo product nómbralo tal como se ve en image 1 (forma, color, material, efecto) y ordena sustituirlo, «Replace the [producto de image 1, descrito] of image 1 with the exact [producto] of image {ARTICLE}», con la forma, el color, los materiales y el efecto del producto del encargo copiados de sus fotos (image {ARTICLE} y, si hay, el efecto funcionando de image {EFFECT}), como en «Images [2] and [3] define the real FalterPfote device and pink-purple butterfly projection». De image 1 solo se conservan la posición, el tamaño en el encuadre, la orientación y cómo se usa o se sujeta; nunca su forma, su color ni su efecto («never the one in image 1»). No escribas «same as image 1» ni «as the … in image 1» para el aspecto del producto o de su efecto.
+
+Los demás objetos del fotograma que sostiene o toca la persona y que NO son el producto (envoltorio de regalo, papel, ropa, correa) se conservan tal cual salvo que el dueño haya pedido cambiarlos: aunque el prompt del desglose proponga cambiar el papel o el envoltorio, no lo cambies.
 
 En lighting, además de la luz de la sala, di cómo se vuelve a iluminar el sujeto (manos, brazos, persona, objeto) con esa misma luz: dirección, exposición, color, contraste, el lado en sombra, sombras de contacto y rebote de color, y que no conserva la luz de image 1. Nada de aspecto de recorte pegado.
 
@@ -623,7 +661,7 @@ async function composeFramePrompt(
   rules: Awaited<ReturnType<typeof loadRules>>,
   refs: PinterestRef[],
   frameJpeg: Buffer | null,
-): Promise<{ prompt: string; baseSha: string; productHidden: boolean } | null> {
+): Promise<{ prompt: string; baseSha: string; productHidden: boolean; packagingHidden: boolean } | null> {
   const [video] = await getDb().select({ imagePrompt: schema.videos.imagePrompt }).from(schema.videos).where(eq(schema.videos.id, run.videoId));
   const base = video?.imagePrompt ?? null;
   if (!base) {
@@ -631,8 +669,10 @@ async function composeFramePrompt(
     return null;
   }
   const room = await makeThumbnail((await readPinterestImage(refs[0].sha256)).data, "image", 1024);
+  const productPhotos = await productPhotosFor(run.videoId);
   const content: LlmContent = [
     textPart(`Prompt del desglose (lo que se conserva: acción, identidad, producto):\n${base}`),
+    ...productPhotos.flatMap((photo) => [textPart(`image ${photo.tag} — ${photo.label}:`), imagePart(photo.jpeg, "image/jpeg")]),
     ...(frameJpeg ? [textPart("image 1 — fotograma original (composición):"), imagePart(frameJpeg, "image/jpeg")] : []),
     textPart("image {ROOM} — la sala elegida, fondo EXACTO:"),
     imagePart(room, "image/jpeg"),
@@ -666,6 +706,7 @@ async function composeFramePrompt(
     prompt: paragraphs.join("\n\n"),
     baseSha: crypto.createHash("sha256").update(base).digest("hex"),
     productHidden: !written.productVisible,
+    packagingHidden: !written.packagingVisible,
   };
 }
 
@@ -690,6 +731,7 @@ export async function framePromptFor(videoId: number, imagePrompt: string, manif
     .replaceAll(REALISM_TAG, number(pins[1] ?? pins[0]))
     .replaceAll("{AVATAR}", number(byRole("avatar")[0]))
     .replaceAll("{PACKAGING}", number(byRole("embalaje")[0]))
+    .replaceAll("{EFFECT}", number(byRole("funcionamiento")[0]))
     .replace(/\{ARTICLE(\d?)\}/g, (_, n: string) => number(articles[(n ? Number(n) : 1) - 1]));
 }
 

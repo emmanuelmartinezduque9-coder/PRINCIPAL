@@ -17,6 +17,8 @@ export const FRAME_USES: readonly FrameUse[] = ["start_image", "contextual_refer
 
 export const MAX_ARTICLE_REFS = 4;
 export const MAX_PACKAGING_REFS = 2;
+/** Fotos del producto funcionando o de su efecto (`funcionamiento`), solo en la imagen inicial. */
+export const MAX_WORKING_REFS = 2;
 
 /**
  * Si `start_image` cuenta como @Image1 al numerar. Supuesto; se confirma en la PUERTA de la
@@ -70,6 +72,8 @@ export interface ManifestRefs {
    * el método aprobado, entonces no se adjuntan sus fotos ni su caja.
    */
   productHidden?: boolean;
+  /** Con el método aprobado: la caja no se ve en esta toma (entonces no se adjunta). */
+  packagingHidden?: boolean;
   /** El prompt con la sala está escrito con el método aprobado: entonces va su orden de adjuntos. */
   approvedMethod?: boolean;
 }
@@ -134,7 +138,8 @@ export function imageManifest(video: Video, input: ManifestRefs | PhotoInfo[]): 
   const environment = chosen(refs.photos, video.environmentPhotoId, "entorno");
   const bank = environment.length === 0 ? (refs.pinterest ?? []) : [];
   if (bank.length > 0 && refs.approvedMethod) return codexOrder(video, refs, bank);
-  const all = [...productRefs(video, refs), ...environment];
+  const working = firstOf(refs.photos, "funcionamiento", MAX_WORKING_REFS);
+  const all = [...productRefs(video, refs), ...working, ...environment];
   const items: ManifestItem[] = [
     { index: 1, tag: "image 1", source: { kind: "reference_frame" }, role: "composicion" },
     ...all.map((ref, i): ManifestItem => ({ index: i + 2, tag: `image ${i + 2}`, source: ref.source, role: ref.role })),
@@ -159,9 +164,12 @@ function codexOrder(video: Video, refs: ManifestRefs, bank: string[]): ManifestI
     ? []
     : [
         ...(refs.variant ? ofVariant(refs.photos, refs.variant.articlePhotoIds, "articulo", MAX_ARTICLE_REFS) : firstOf(refs.photos, "articulo", MAX_ARTICLE_REFS)),
-        ...(refs.variant
-          ? ofVariant(refs.photos, refs.variant.packagingPhotoId === null ? [] : [refs.variant.packagingPhotoId], "embalaje", MAX_PACKAGING_REFS)
-          : firstOf(refs.photos, "embalaje", MAX_PACKAGING_REFS)),
+        ...firstOf(refs.photos, "funcionamiento", MAX_WORKING_REFS),
+        ...(refs.packagingHidden
+          ? []
+          : refs.variant
+            ? ofVariant(refs.photos, refs.variant.packagingPhotoId === null ? [] : [refs.variant.packagingPhotoId], "embalaje", MAX_PACKAGING_REFS)
+            : firstOf(refs.photos, "embalaje", MAX_PACKAGING_REFS)),
       ];
   const pin = (sha256: string): Ref => ({ source: { kind: "pinterest", sha256 }, role: "pinterest" });
   const ordered: Ref[] = [...product, pin(bank[0]), ...avatarRefs(video, refs), ...bank.slice(1).map(pin)];

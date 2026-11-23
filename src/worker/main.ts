@@ -43,6 +43,13 @@ startWorker().then(
         ),
       )
       .catch((error) => console.error("[imagen] No se pudo importar la imagen aprobada del vídeo 2:", error));
+    // Una vez (23/11/2026): la imagen del vídeo 6 (lote FalterPfote) salió con las alas del original;
+    // se rechaza para que el lote la regenere con el producto del encargo y su foto de funcionamiento.
+    void import("@/server/videos/importar-imagen")
+      .then(({ rejectFrameOnce }) =>
+        rejectFrameOnce(6, 1, "Salieron las alas del vídeo original: tienen que ser las alas de mariposa proyectadas de FalterPfote"),
+      )
+      .catch((error) => console.error("[imagen] No se pudo rechazar la imagen del vídeo 6:", error));
   },
   (error) => {
     // Sin cola no hay nada que hacer: se sale con error para que el servicio se reinicie.

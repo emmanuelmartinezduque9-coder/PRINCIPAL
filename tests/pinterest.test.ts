@@ -99,6 +99,7 @@ const SCENE = {
 
 const COMPOSED = {
   productVisible: false,
+  packagingVisible: false,
   composition:
     "Use image 1 ONLY for the exact opening action and foreground arrangement: first-person view, two hands holding the round wrapped gift at 45 percent of frame width. Replace all original living room scenery with the exact living room in image {ROOM}. Do not copy the source shelves and mantel.",
   identity: "The hands and forearms are those of the woman in image {AVATAR} and only her, with fine creases and short natural nails.",
@@ -320,6 +321,17 @@ describe("la imagen inicial lleva siempre referencias de Pinterest", () => {
     const again = await runOfVideo(v.id);
     expect(again).toMatchObject({ status: "pending", attempts: 1, scene: null });
     expect(again.error).toContain("No se eligió ninguna referencia del banco");
+  });
+});
+
+describe("el producto funcionando", () => {
+  it("la foto «Funcionando» va con el artículo en la imagen (y la caja solo si se ve con el método aprobado)", async () => {
+    const working = (await addProductPhoto(ana, producto.id, Buffer.concat([jpeg, Buffer.from("efecto")]), "funcionamiento")).id;
+    const refs = await manifestRefsFor(ana, v);
+    const normal = imageManifest(v, refs);
+    expect(normal.find((m) => m.role === "funcionamiento")?.source).toEqual({ kind: "photo", photoId: working });
+    const codex = imageManifest(v, { ...refs, pinterest: [bank[0], bank[1]], approvedMethod: true, packagingHidden: true });
+    expect(codex.map((m) => m.role)).toEqual(["composicion", "articulo", "funcionamiento", "pinterest", "avatar", "pinterest"]);
   });
 });
 

@@ -316,6 +316,13 @@
       "when": 1795451540687,
       "tag": "0044_clip_hecho_con_seedance",
       "breakpoints": true
+    },
+    {
+      "idx": 45,
+      "version": "7",
+      "when": 1795452127997,
+      "tag": "0045_foto_funcionamiento",
+      "breakpoints": true
     }
   ]
 }
