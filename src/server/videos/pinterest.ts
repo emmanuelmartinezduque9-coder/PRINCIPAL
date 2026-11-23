@@ -537,6 +537,7 @@ async function pickFromBank(
   const composed = await composeFramePrompt(run, ctx, gateway, rules, refs, frameJpeg);
   if (!composed) return;
   await setRun(run.id, { status: "ready", refs, error: null, framePrompt: composed.prompt, basePromptSha: composed.baseSha });
+  console.log(`[pinterest] Prompt con la sala del vídeo ${run.videoId}:\n${composed.prompt}`);
   console.log(
     `[pinterest] Vídeo ${run.videoId} (${product.name}): ${refs.length} referencia(s) del banco de aprobadas para «${scene.place}»: ${refs.map((r) => r.pinId).join(", ")} (${refs.map((r) => r.sha256).join(", ")})`,
   );
