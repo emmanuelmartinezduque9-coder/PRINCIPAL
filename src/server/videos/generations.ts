@@ -803,7 +803,10 @@ export async function finalizeGeneration(generationId: number, deps: GenDeps = {
       ? { status: "done", error: null, recheckUntil }
       : notFound
         ? { status: "failed", error: JOB_NOT_FOUND, recheckUntil }
-        : { status: "failed", error: jobs.some(isBlocked) ? BLOCKED : JOB_FAILED, recheckUntil: null };
+        : // Todo bloqueado por el filtro: Higgsfield lo devuelve (sus movimientos: «refund»), así que no cuenta como gastado.
+          jobs.every(isBlocked)
+          ? { status: "failed", error: BLOCKED, recheckUntil: null, creditsSpent: 0 }
+          : { status: "failed", error: jobs.some(isBlocked) ? BLOCKED : JOB_FAILED, recheckUntil: null };
 
     await getDb().transaction(async (tx) => {
       const [finished] = await tx

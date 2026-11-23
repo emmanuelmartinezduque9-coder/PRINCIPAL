@@ -16,7 +16,7 @@ import { estimateClipCredits } from "@/server/videos/clip";
 import { PINTEREST_PENDING } from "@/server/videos/pinterest";
 // Registra el constructor de la imagen inicial (`frame`) en las generaciones.
 import { approveFrame } from "@/server/videos/frame";
-import { MAX_REGENERATIONS, quoteGeneration, requestGeneration, type GenDeps, type GenerationKind } from "@/server/videos/generations";
+import { BLOCKED, MAX_REGENERATIONS, quoteGeneration, requestGeneration, type GenDeps, type GenerationKind } from "@/server/videos/generations";
 import { clipModelProblem, getVideoFor, setVideoSong, referenceOutdated, REFERENCE_OUTDATED, staleness, updateVideoChoices, withProductNotes, type Video } from "@/server/videos/videos";
 import { CLIP_MODEL_LABEL, CLIP_MODELS, SEEDANCE, sourceProblem } from "@/lib/clip-models";
 import { isPromptProblem, PROMPT_ERROR } from "@/server/videos/prompt-check";
@@ -173,7 +173,54 @@ function retryAfterOf(batch: Batch): Date {
 }
 
 const frameStage = (row: Row, batch: Batch) => stageOf(row.frames, row.video.approvedFrameResultId !== null, retryAfterOf(batch));
-const clipStage = (row: Row, batch: Batch) => stageOf(row.clips, false, retryAfterOf(batch));
+
+/** Clips que Higgsfield bloqueó por su filtro de contenido o de marcas (los devuelve: no cobra). */
+const blockedClips = (row: Row) => row.clips.filter((g) => g.status === "failed" && g.error === BLOCKED).length;
+
+/**
+ * Reintentos solos de un clip bloqueado por el filtro de Higgsfield (`nsfw` / `ip_detected`). Como
+ * en Codex («Rephrase»: sin marcas, personajes ni personas reales), cada uno con el prompt reescrito.
+ */
+export const MAX_BLOCKED_RETRIES = 2;
+
+/** Un clip bloqueado con reintentos libres vuelve a pedirse (con el prompt saneado) en vez de parar el lote. */
+const clipStage = (row: Row, batch: Batch): Stage => {
+  const stage = stageOf(row.clips, false, retryAfterOf(batch));
+  return stage === "failed" && row.clips.at(-1)?.error === BLOCKED && blockedClips(row) <= MAX_BLOCKED_RETRIES ? "need" : stage;
+};
+
+/**
+ * La indicación interna para el desglose tras un bloqueo del filtro de Higgsfield, copiada de Codex
+ * (`higgsfield-generate`: «nsfw / ip_detected — content policy. Rephrase»; evitar personas reales,
+ * contenido sexual, marcas y personajes con marca). La segunda vez, más estricta.
+ */
+const BLOCKED_NOTES = [
+  "Higgsfield bloqueó el clip por su filtro de contenido o de marcas (nsfw / ip_detected). Reescribe los dos prompts sin marcas comerciales, logotipos ni nombres de tiendas o productos ajenos, sin personajes con derechos (dibujos, películas, juegos) y sin personas famosas: descríbelos de forma genérica. Pide que se quiten o neutralicen todos los logotipos y rótulos de marcas ajenas visibles en la escena (ropa, envases, carteles), conservando nuestro producto, su embalaje y su marca. Nada sexual ni sugerente.",
+  "Higgsfield volvió a bloquear el clip por su filtro de contenido o de marcas. Además de lo anterior: ninguna marca, logotipo, texto de marca ni uniforme reconocible de ninguna empresa ajena en ninguna toma (sustitúyelos por equivalentes genéricos sin marca), ropa neutra y discreta, ningún parecido con personajes ni personas conocidas. Conserva la acción, los cortes y nuestro producto.",
+];
+
+/**
+ * Antes de volver a pedir un clip bloqueado: guarda la indicación de este reintento (llega al
+ * desglose) y rehace el desglose. `true` mientras el prompt saneado no esté listo (se espera).
+ */
+async function sanitizeAfterBlock(user: AuthUser, row: Row): Promise<boolean> {
+  const blocked = blockedClips(row);
+  if (blocked === 0 || row.clips.at(-1)?.error !== BLOCKED) return false;
+  const key = `sys:bloqueo-${blocked}`;
+  const [latest] = row.analyses;
+  if (latest && ACTIVE_ANALYSIS.includes(latest.status)) return true;
+  if (!row.video.ownerAnswers.some((answer) => answer.key === key)) {
+    await saveAnswer(row.video.id, { key, question: "Higgsfield bloqueó el clip", answer: BLOCKED_NOTES[Math.min(blocked, BLOCKED_NOTES.length) - 1], inBrief: true });
+    try {
+      await requestAnalysis(user, row.video.id);
+      console.warn(`[lotes] Vídeo ${row.video.id}: clip bloqueado por el filtro de Higgsfield (${blocked}); se reescribe el prompt y se repite.`);
+    } catch (error) {
+      if (!(error instanceof HttpError)) throw error;
+    }
+    return true;
+  }
+  return false;
+}
 
 // ───────────────────────── Preguntas ─────────────────────────
 
@@ -703,6 +750,8 @@ async function committedCredits(batch: Batch): Promise<number> {
       and(
         eq(schema.videos.batchId, batch.id),
         ne(schema.generations.status, "not_sent"),
+        // Un bloqueo del filtro de Higgsfield se devuelve (comprobado en sus movimientos, 23/11/2026).
+        sql`not (${schema.generations.status} = 'failed' and ${schema.generations.error} is not distinct from ${BLOCKED})`,
         gte(schema.generations.intentAt, batch.confirmedAt),
       ),
     );
@@ -782,7 +831,8 @@ async function resumePromptPauses(): Promise<void> {
   const paused = await getDb().select().from(schema.batches).where(eq(schema.batches.status, "pausado"));
   for (const batch of paused) {
     const pause = batch.pause;
-    if (!pause || pause.kind !== "fallo" || !isPromptProblem(pause.reason)) continue;
+    // También un clip bloqueado por el filtro de Higgsfield: ahora se reescribe y se repite solo.
+    if (!pause || pause.kind !== "fallo" || !(isPromptProblem(pause.reason) || pause.reason.includes(BLOCKED))) continue;
     const [resumed] = await getDb()
       .update(schema.batches)
       .set({ status: pause.from, pause: null, resumedAt: new Date() })
@@ -985,6 +1035,8 @@ async function advanceGenerations(user: AuthUser, start: Batch, deps: GenDeps): 
       if (kind === "frame" && frameStage(row, batch) !== "need") continue;
       if (kind === "clip" && (frameStage(row, batch) !== "approved" || clipStage(row, batch) !== "need")) continue;
       if (row.frames.concat(row.clips).some((g) => BUSY_GENERATION.includes(g.status))) continue;
+      // Un clip bloqueado por el filtro se repite con el prompt reescrito (cuando el desglose esté listo).
+      if (kind === "clip" && (await sanitizeAfterBlock(user, row))) continue;
       if (await requestFor(user, batch, rows, row, kind, deps)) {
         slots -= 1;
         // Lo recién apuntado cuenta para el presupuesto y para los huecos de la siguiente fila.

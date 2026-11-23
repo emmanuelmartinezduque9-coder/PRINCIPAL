@@ -480,6 +480,29 @@ describe("presupuesto y dinero", () => {
   });
 });
 
+describe("clip bloqueado por el filtro de Higgsfield", () => {
+  it("no pausa: reescribe el prompt sin marcas (Codex: «Rephrase») y repite el clip; el bloqueo no cuenta como gastado", async () => {
+    const { batchId, videos } = await sentAndConfirmed(1);
+    await cycle(batchId, 1);
+    await approveFrame(ana, videos[0].id, await firstCandidate(videos[0].id));
+    await advanceBatch(batchId, deps);
+    const clip = (await generations()).find((g) => g.kind === "clip")!;
+    await submitGeneration(clip.id, deps);
+    const { rows } = await getPool().query("select job_ids as \"jobIds\" from generations where id = $1", [clip.id]);
+    for (const jobId of rows[0].jobIds) fake.state.jobs[jobId] = { jobId, status: "failed", failure: "ip_detected", error: null, urls: [] };
+    await finalizeGeneration(clip.id, deps);
+    expect((await getPool().query("select credits_spent as c from generations where id = $1", [clip.id])).rows[0].c).toBe(0);
+
+    await advanceBatch(batchId, deps);
+    expect((await getBatchFor(ana, batchId)).status).not.toBe("pausado");
+    expect((await getVideoFor(ana, videos[0].id)).ownerAnswers.map((a) => a.key)).toContain("sys:bloqueo-1");
+    expect((await getPool().query("select status from video_analyses where video_id = $1 order by id desc limit 1", [videos[0].id])).rows[0].status).toBe("queued");
+    await runQueuedAnalyses();
+    await advanceBatch(batchId, deps);
+    expect((await generations()).filter((g) => g.kind === "clip").map((g) => g.status)).toEqual(["failed", "intent"]);
+  });
+});
+
 // ───────────────────────── Concurrencia e idempotencia ─────────────────────────
 
 describe("como mucho 2 a la vez y sin envíos dobles", () => {
