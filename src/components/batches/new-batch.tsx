@@ -40,7 +40,9 @@ import {
   type VariantJson,
 } from "./batch-fields";
 import { autoBatchName } from "./labels";
-import { effectiveEditReference, newGroup, nextKey, type Group, type Row, type Source } from "./draft";
+import { effectiveClipModel, effectiveEditReference, newGroup, nextKey, type Group, type Row, type Source } from "./draft";
+import { ClipModelSelect } from "@/components/videos/clip-model-picker";
+import { CLIP_MODEL_HINT, CLIP_MODEL_LABEL, type ClipModelChoice } from "@/lib/clip-models";
 import { useNewBatchDraft } from "./draft-provider";
 import { checkLink, EditReferenceButton, EditReferenceField } from "./edit-reference";
 import { Indications } from "./indications";
@@ -408,6 +410,7 @@ function RowCard({
   busy,
   editReference,
   groupEditReference,
+  groupClipModel,
   onChange,
   onDuplicate,
   onRemove,
@@ -427,6 +430,8 @@ function RowCard({
   editReference: boolean;
   /** La «Edición de referencia» del grupo, la que usa la tarjeta si no tiene la suya. */
   groupEditReference: string;
+  /** El modelo del grupo, el que usa la tarjeta en «Automático». */
+  groupClipModel: ClipModelChoice;
   onChange: (changes: Partial<Row>) => void;
   onDuplicate: () => void;
   onRemove: () => void;
@@ -452,6 +457,9 @@ function RowCard({
               onChange={(choice) => onChange({ avatar: choice })}
             />
             <MusicPicker value={row.song} onChange={(song) => onChange({ song })} className="max-w-40" />
+            <span title={row.clipModel === "auto" && groupClipModel !== "auto" ? `Del grupo: ${CLIP_MODEL_LABEL[groupClipModel]}` : CLIP_MODEL_HINT[row.clipModel]}>
+              <ClipModelSelect compact label={`Modelo de ${name}`} value={row.clipModel} onChange={(clipModel) => clipModel && onChange({ clipModel })} />
+            </span>
             <span className="mx-1 h-5 w-px bg-border" aria-hidden />
             {editReference ? <EditReferenceButton value={row.editReference} inherited={groupEditReference} open={refOpen} onOpenChange={setRefOpen} /> : null}
             <Tooltip>
@@ -604,6 +612,9 @@ function GroupHeader({
           </div>
           <div className="ml-auto flex items-center gap-2">
             <KindSegmented compact label="Tipo de los vídeos que vas a añadir" value={group.kind} onChange={(kind) => onChange({ kind })} />
+            <span title={CLIP_MODEL_HINT[group.clipModel]}>
+              <ClipModelSelect compact label="Modelo de los vídeos del grupo" value={group.clipModel} onChange={(clipModel) => clipModel && onChange({ clipModel })} />
+            </span>
             {group.kind === "solo_gancho" ? <HookStepper value={group.hookSeconds} onChange={(hookSeconds) => onChange({ hookSeconds })} disabled={busy} /> : null}
             {removable ? (
               <Tooltip>
@@ -722,6 +733,7 @@ export function NewBatch() {
     note: "",
     editReference: "",
     song: null,
+    clipModel: "auto",
     open: false,
     error: null,
   });
@@ -807,7 +819,12 @@ export function NewBatch() {
         try {
           await api(`/api/lotes/${id}/productos/${group.productId}`, {
             method: "PUT",
-            body: JSON.stringify({ notes: group.notes.trim() || null, ...(editReference ? { editReferenceUrl: group.editReference.trim() || null } : {}) }),
+            body: JSON.stringify({
+              notes: group.notes.trim() || null,
+              ...(editReference ? { editReferenceUrl: group.editReference.trim() || null } : {}),
+              // El modelo del grupo (pasa a los vídeos del grupo sin uno propio).
+              clipModel: group.clipModel === "auto" ? null : group.clipModel,
+            }),
           });
         } catch (error) {
           toast.error(error instanceof Error ? error.message : "No se pudieron guardar las indicaciones.");
@@ -828,6 +845,8 @@ export function NewBatch() {
                 ...(row.kind === "solo_gancho" ? { hookSeconds: row.hookSeconds, bodyClipIds: row.bodies } : {}),
                 note: row.note.trim() || null,
                 songId: row.song?.id ?? null,
+                // El modelo del vídeo: el de la tarjeta o, en «Automático», el de su grupo.
+                clipModel: effectiveClipModel(group, row),
                 // La «Edición de referencia»: la de la tarjeta o, si no tiene, la de su grupo.
                 ...(editReference ? { editReferenceUrl: effectiveEditReference(group, row) || null } : {}),
                 // Con enlace, el vídeo nace esperando al Mac; con archivo, se sube después.
@@ -905,6 +924,7 @@ export function NewBatch() {
                     busy={busy}
                     editReference={editReference}
                     groupEditReference={group.editReference}
+                    groupClipModel={group.clipModel}
                     onChange={(changes) => updateRow(group.key, row.key, changes)}
                     onDuplicate={() => duplicate(group.key, row)}
                     onRemove={() => removeRow(group.key, row)}

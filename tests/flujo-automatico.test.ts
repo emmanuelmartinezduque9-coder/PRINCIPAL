@@ -49,9 +49,11 @@ const WITH_RISKS: Analysis = {
     { kind: "texto_en_pantalla", detail: "Quitar los textos del original." },
     { kind: "marca_ajena", detail: "Sin logos de otras marcas." },
   ],
-  frameUse: "start_image",
+  frameUse: "contextual_reference",
   imagePrompt: "Image 1 sets the composition and the framing. The woman is the person from image 2. She holds the machine from image 3 at chest height.",
-  videoPrompt: "@Video1 gives only the camera movement, the rhythm and the action. @Image1 is the first frame. The woman is @Image2. The machine is @Image3.",
+  // Sin elegir modelo, el clip sale con Genjutsu Motion Transfer (lo que hacía Codex): prompt con `image [N]`.
+  videoPrompt:
+    "Use the source video as the authority for every action, camera movement, cut and timing. Use image [1] as the human-approved clean opening frame. The woman is the person in image [2]. The machine is the exact product in image [3]. No text overlays, no captions.",
 };
 
 let dir: string;
@@ -310,8 +312,8 @@ describe("flujo automático del lote", () => {
     await advanceBatch(batchId, deps);
     const batch = await getBatchFor(ana, batchId);
     expect(batch.status).toBe("imagenes");
-    // 2 imágenes (1 por vídeo, 2 créditos) + 2 clips de 6 s (18).
-    expect(batch.budgetCredits).toBe(2 * (2 + 18));
+    // 2 imágenes (1 por vídeo, 2 créditos) + 2 clips de Genjutsu Motion Transfer (el simulado cuenta 10 s: 30).
+    expect(batch.budgetCredits).toBe(2 * (2 + 30));
     expect((await autoView(ana, batch)).readyToConfirm).toBe(false);
     await advanceBatch(batchId, deps);
     expect((await generations()).map((g) => [g.videoId, g.kind, g.count])).toEqual([

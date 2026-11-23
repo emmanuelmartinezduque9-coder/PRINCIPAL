@@ -33,7 +33,7 @@ import {
 } from "@/server/videos/pinterest";
 import { createVideo, getVideoFor, manifestRefsFor, updateVideoChoices, videoView, type Video } from "@/server/videos/videos";
 import { fakeMessages } from "./helpers/fake-llm";
-import { makeProduct, makeUser } from "./helpers/fixtures";
+import { makeProduct, makeUser, seedanceByDefault } from "./helpers/fixtures";
 import { truncateAll } from "./helpers/global-setup";
 
 /**
@@ -146,6 +146,9 @@ async function runOfVideo(videoId: number) {
 const pinterestMedias = (request: unknown) =>
   ((request as { medias: Array<{ value: string }> }).medias ?? []).filter((m) => m.value.length > 0);
 
+
+// Pruebas del flujo de Seedance (antes de poder elegir el modelo del clip).
+seedanceByDefault();
 beforeAll(() => {
   dir = fs.mkdtempSync(path.join(os.tmpdir(), "prueba-pinterest-"));
   jpeg = makeImage("foto.jpg", "orange");

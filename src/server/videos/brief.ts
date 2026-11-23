@@ -1,3 +1,4 @@
+import { resolveClipModel, type ClipModel } from "@/lib/clip-models";
 import { HttpError } from "@/server/http";
 
 /**
@@ -51,6 +52,13 @@ export interface BriefSource {
   productNotes: string | null;
   /** Las respuestas del dueño a las «Preguntas del lote» que llegan al desglose (`answersText`). */
   answers: string | null;
+  /**
+   * Cómo se genera el clip: en un vídeo, su elección (`auto` o un modelo); en un desglose, el modelo
+   * ya resuelto para el que se escribió. Sin él (un desglose de antes), Seedance.
+   */
+  clipModel?: string | null;
+  /** El tramo de la referencia (con «Automático», un tramo de menos de 3 s va con Seedance). */
+  segmentDurationMs?: number | null;
 }
 
 /**
@@ -70,6 +78,8 @@ export interface Brief {
   hookSeconds: number | null;
   productNotes: string | null;
   answers: string | null;
+  /** El modelo del clip, ya resuelto: el prompt del clip se escribe para él. */
+  clipModel: ClipModel;
 }
 
 export function briefOf(video: BriefSource): Brief {
@@ -84,6 +94,7 @@ export function briefOf(video: BriefSource): Brief {
     hookSeconds: video.kind === "solo_gancho" ? video.hookSeconds : null,
     productNotes: video.productNotes,
     answers: video.answers,
+    clipModel: resolveClipModel(video.clipModel, video.segmentDurationMs),
   };
 }
 
@@ -105,7 +116,7 @@ function sameAvatar(used: Brief, now: Brief, autoAvatarId: number | null): boole
 /**
  * Por qué un desglose ya no corresponde al vídeo: `reference` si cambió la referencia, `brief` si
  * cambiaron las indicaciones (tipo, adaptación, duración del gancho, cambios específicos, quién
- * sale, el avatar o la variante); `null` si vale.
+ * sale, el avatar, la variante o el modelo del clip); `null` si vale.
  */
 export function analysisStaleness(
   analysis: BriefSource & { referenceMediaId: string | null; autoAvatarId?: number | null },
@@ -122,7 +133,8 @@ export function analysisStaleness(
     used.adaptation === now.adaptation &&
     used.hookSeconds === now.hookSeconds &&
     used.productNotes === now.productNotes &&
-    used.answers === now.answers;
+    used.answers === now.answers &&
+    used.clipModel === now.clipModel;
   return same ? null : "brief";
 }
 

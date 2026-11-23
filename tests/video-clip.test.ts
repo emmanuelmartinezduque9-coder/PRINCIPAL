@@ -38,7 +38,10 @@ import {
   submitGeneration,
   type GenDeps,
 } from "@/server/videos/generations";
-import { createVideo, getVideoFor, updateVideoChoices, videoView, type Video } from "@/server/videos/videos";
+import { createVideo, getVideoFor, latestDoneAnalysis, updateVideoChoices, videoView, type Video } from "@/server/videos/videos";
+import { CLIP_MODEL_CHOICES, resolveClipModel, sourceProblem, wanDurationSeconds } from "@/lib/clip-models";
+import { videoParams } from "@/connectors/higgsfield/adapter";
+import type { HfVideoRequest } from "@/connectors/higgsfield";
 import { POST as presupuestoRoute } from "@/app/api/videos/[videoId]/clip/presupuesto/route";
 import { POST as generarRoute } from "@/app/api/videos/[videoId]/clip/generar/route";
 import { POST as aprobarRoute } from "@/app/api/videos/[videoId]/clip/aprobar/route";
@@ -126,7 +129,8 @@ beforeEach(async () => {
   ana = await makeUser("colaborador");
   luis = await makeUser("colaborador");
   producto = await makeProduct(ana, { name: "BrilloMax Ñandú" });
-  v = await createVideo(ana, producto.id);
+  // Estas pruebas son de Seedance; las de Genjutsu y Wan van en «modelo del clip».
+  v = await createVideo(ana, producto.id, { clipModel: "seedance_2_5" });
 });
 
 // ───────────────────────── Ayudas ─────────────────────────
@@ -204,6 +208,105 @@ const as = async (user: AuthUser) => {
 const params = (id: number | string) => ({ params: Promise.resolve({ videoId: String(id) }) });
 const post = (body: unknown) =>
   new Request("http://localhost/x", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+
+// ───────────────────────── Modelo del clip (Codex) ─────────────────────────
+
+/** El vídeo con ese modelo y un desglose escrito para él (como lo dejaría el desglose). */
+async function withModel(choice: string, resolved: string, prompt: string): Promise<void> {
+  await getPool().query("update videos set clip_model = $2 where id = $1", [v.id, choice]);
+  await getPool().query("update video_analyses set clip_model = $2 where video_id = $1", [v.id, resolved]);
+  await getPool().query("update videos set video_prompt = $2, frame_use = 'contextual_reference' where id = $1", [v.id, prompt]);
+}
+
+const GENJUTSU_PROMPT =
+  "Use the source video as the authority for every action, cut and timing. Use image [1] as the human-approved clean opening frame. " +
+  "Replace the woman with the person in image [2]. The bottle is the exact product in image [3]. No text overlays, no captions.";
+
+describe("modelo del clip: las opciones de Codex", () => {
+  it("«Automático» es Genjutsu Motion Transfer (lo de Codex); con un tramo de menos de 3 s, Seedance; sin elección (antes), Seedance", () => {
+    expect(resolveClipModel("auto", 6_000)).toBe("hf_mult_motion_control");
+    expect(resolveClipModel("auto", 2_500)).toBe("seedance_2_5");
+    expect(resolveClipModel("auto", null)).toBe("hf_mult_motion_control");
+    expect(resolveClipModel(null, 6_000)).toBe("seedance_2_5");
+    expect(resolveClipModel("hf_mult_replace_object", 2_000)).toBe("hf_mult_replace_object");
+    // Solo las que usó Emmanuel en sus últimos lotes de Codex.
+    expect([...CLIP_MODEL_CHOICES]).toEqual(["auto", "hf_mult_motion_control", "hf_mult_replace_object", "wan3_0_prime", "seedance_2_5"]);
+    expect(wanDurationSeconds(12_397)).toBe(13);
+    expect(wanDurationSeconds(13_000)).toBe(13);
+    expect(sourceProblem("hf_mult_replace_object", 3_500)).toMatch(/Object Swap necesita una referencia de 4 a 30 s/);
+    expect(sourceProblem("hf_mult_motion_control", 3_000)).toBeNull();
+  });
+
+  it("Motion Transfer: el vídeo fuente entero y las imágenes (la aprobada la primera), sin duración ni audio que fijar", async () => {
+    const approvedJobId = await readyForClip();
+    await withModel("auto", "hf_mult_motion_control", GENJUTSU_PROMPT);
+    const { request } = await buildClipRequest(ana, await fresh(), deps);
+    expect(request).toEqual({
+      model: "hf_mult_motion_control",
+      prompt: GENJUTSU_PROMPT,
+      resolution: "480p",
+      medias: [
+        { role: "video_references", value: "ref-media" },
+        { role: "image_references", value: approvedJobId },
+        { role: "image_references", value: "media-1" },
+        { role: "image_references", value: "media-2" },
+      ],
+    });
+    // Lo que llega a Higgsfield: los mismos parámetros que enviaba Codex (sin `mode`, `duration` ni audio).
+    expect(videoParams(request as HfVideoRequest)).toEqual({
+      model: "hf_mult_motion_control",
+      prompt: GENJUTSU_PROMPT,
+      resolution: "480p",
+      use_unlim: false,
+      medias: request.medias,
+    });
+  });
+
+  it("Object Swap: además, la sala del banco como entorno nuevo, con la frase de Codex al final del prompt", async () => {
+    const approvedJobId = await readyForClip();
+    await withModel("hf_mult_replace_object", "hf_mult_replace_object", GENJUTSU_PROMPT);
+    const room = await addProductPhoto(ana, producto.id, red, "entorno");
+    await updateVideoChoices(ana, v.id, { environmentPhotoId: room.id, clipModel: "hf_mult_replace_object" });
+    const { request } = await buildClipRequest(ana, await fresh(), deps);
+    expect(request.model).toBe("hf_mult_replace_object");
+    expect(request.medias[1]).toEqual({ role: "image_references", value: approvedJobId });
+    expect(request.medias).toHaveLength(5);
+    expect(request.prompt).toBe(
+      `${GENJUTSU_PROMPT} Replace every original location with the real environment in image [4]. Preserve the SOURCE camera angle, subject scale and action, adapting this environment rather than copying its photographic framing.`,
+    );
+  });
+
+  it("Wan 3.0 Prime: duración entera del tramo hacia arriba, aspect_ratio auto, con audio y sin thinking", async () => {
+    await readyForClip();
+    await getPool().query("update videos set segment_duration_ms = 12397, reference_duration_ms = 12397 where id = $1", [v.id]);
+    await withModel("wan3_0_prime", "wan3_0_prime", GENJUTSU_PROMPT);
+    const { request } = await buildClipRequest(ana, await fresh(), deps);
+    expect(request).toMatchObject({ model: "wan3_0_prime", resolution: "480p", duration: 13, aspectRatio: "auto", generateAudio: true, enableThinking: false });
+    expect(videoParams(request as HfVideoRequest)).toMatchObject({ model: "wan3_0_prime", duration: 13, aspect_ratio: "auto", generate_audio: true, enable_thinking: false, use_unlim: false });
+  });
+
+  it("un modelo elegido que no admite el tramo no se cambia solo: se pregunta antes de gastar", async () => {
+    await readyForClip();
+    await getPool().query("update videos set segment_duration_ms = 3000, reference_duration_ms = 3000 where id = $1", [v.id]);
+    await withModel("hf_mult_replace_object", "hf_mult_replace_object", GENJUTSU_PROMPT);
+    await expect(buildClipRequest(ana, await fresh(), deps)).rejects.toMatchObject({ status: 409, message: expect.stringMatching(/Object Swap necesita/) });
+  });
+
+  it("con Genjutsu, citar las imágenes con @ es un error (van como image [N])", async () => {
+    await readyForClip();
+    await withModel("auto", "hf_mult_motion_control", PROMPT);
+    await expect(buildClipRequest(ana, await fresh(), deps)).rejects.toMatchObject({ status: 400 });
+  });
+
+  it("cambiar el modelo deja el desglose por repetir (el prompt del clip se escribe para el modelo)", async () => {
+    await readyForClip();
+    await withModel("auto", "hf_mult_motion_control", GENJUTSU_PROMPT);
+    expect((await latestDoneAnalysis(await fresh()))?.staleReason).toBeNull();
+    await updateVideoChoices(ana, v.id, { clipModel: "wan3_0_prime" });
+    expect((await latestDoneAnalysis(await fresh()))?.staleReason).toBe("brief");
+    await expect(updateVideoChoices(ana, v.id, { clipModel: "hf_mult_motion_control_flash" })).rejects.toMatchObject({ status: 400 });
+  });
+});
 
 // ───────────────────────── Petición ─────────────────────────
 

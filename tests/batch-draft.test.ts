@@ -13,6 +13,7 @@ const row = (over: Partial<Row>): Row => ({
   note: "",
   editReference: "",
   song: null,
+  clipModel: "auto",
   open: false,
   error: null,
   ...over,

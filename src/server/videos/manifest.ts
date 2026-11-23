@@ -1,3 +1,4 @@
+import { isClipModel, resolveClipModel, SEEDANCE, type ClipModel } from "@/lib/clip-models";
 import type { PhotoInfo, PhotoRole } from "@/server/photos";
 import type { Video } from "@/server/videos/videos";
 
@@ -170,18 +171,32 @@ function codexOrder(video: Video, refs: ManifestRefs, bank: string[]): ManifestI
   ];
 }
 
+/** Etiqueta del vídeo fuente en el manifiesto de Genjutsu y Wan (los prompts de Codex dicen «the source video»). */
+export const SOURCE_VIDEO_TAG = "source video";
+
+/** Etiqueta de la imagen N en Genjutsu y Wan, como en los prompts de Codex: `image [N]`. */
+export const genjutsuImageTag = (index: number) => `image [${index}]`;
+
+/** ¿Es un manifiesto de Genjutsu o Wan (vídeo fuente + `image [N]`)? */
+export const isSourceVideoManifest = (manifest: ManifestItem[]) => manifest.some((item) => item.tag === SOURCE_VIDEO_TAG);
+
 /**
  * @Video1 = referencia; @Image1 = imagen aprobada; después avatar (si hay), artículo (≤ 4),
  * embalaje (≤ 2). El entorno no va aparte: ya está en la imagen aprobada. Si el primer fotograma
  * no cuenta al numerar (`startImageIsImage1 = false`, solo con `frameUse = "start_image"`), la
  * imagen aprobada va sin número y las fotos empiezan en `@Image1`.
+ *
+ * Con Genjutsu o Wan 3.0 Prime (`model`; por defecto el que resuelve el vídeo) va el manifiesto
+ * de Codex (`genjutsuClipManifest`).
  */
 export function clipManifest(
   video: Video,
   input: ManifestRefs | PhotoInfo[],
   startImageIsImage1: boolean = START_IMAGE_IS_IMAGE1,
+  model: ClipModel = resolveClipModel(video.clipModel, video.segmentDurationMs),
 ): ManifestItem[] {
   const refs = refsOf(input);
+  if (model !== SEEDANCE && isClipModel(model)) return genjutsuClipManifest(video, refs, model);
   const numbered = startImageIsImage1 || video.frameUse !== "start_image";
   const first = numbered ? 2 : 1;
   return [
@@ -191,4 +206,45 @@ export function clipManifest(
       : { index: 0, tag: START_IMAGE_TAG, source: { kind: "approved_frame" }, role: "imagen_aprobada" },
     ...productRefs(video, refs).map((ref, i): ManifestItem => ({ index: i + first, tag: `@Image${i + first}`, source: ref.source, role: ref.role })),
   ];
+}
+
+/** Máximo de imágenes de referencia que admite cada modelo (catálogo de Higgsfield, 23/11/2026). */
+const MAX_IMAGE_REFS: Record<Exclude<ClipModel, typeof SEEDANCE>, number> = {
+  hf_mult_motion_control: 49,
+  hf_mult_replace_object: 30,
+  wan3_0_prime: 10,
+};
+
+/**
+ * Genjutsu y Wan 3.0 Prime, como los enviaba Codex (`genjutsu.parametros`): el vídeo fuente entero
+ * y, como imágenes, `image [1]` = la imagen inicial aprobada (el frame de apertura es obligatorio,
+ * orden del 29/09/2026), después avatar, artículo (≤ 4) y embalaje (≤ 2), que se adjuntan aunque
+ * solo se vean más tarde (orden del 29/10/2026). En Object Swap y Wan, al final, el entorno nuevo:
+ * la foto de entorno puesta a mano o, si no hay, la sala del banco de referencias (la misma que
+ * llevó la imagen inicial); su papel lo añade la aplicación al prompt (`clipPromptFor`).
+ */
+function genjutsuClipManifest(video: Video, refs: ManifestRefs, model: Exclude<ClipModel, typeof SEEDANCE>): ManifestItem[] {
+  const environment = chosen(refs.photos, video.environmentPhotoId, "entorno");
+  const room: Ref[] =
+    model === "hf_mult_motion_control"
+      ? []
+      : environment.length > 0
+        ? environment
+        : (refs.pinterest ?? []).slice(0, 1).map((sha256): Ref => ({ source: { kind: "pinterest", sha256 }, role: "pinterest" }));
+  const frame: Ref = { source: { kind: "approved_frame" }, role: "imagen_aprobada" };
+  const images: Ref[] = [frame, ...productRefs(video, refs), ...room].slice(0, MAX_IMAGE_REFS[model]);
+  return [
+    { index: 1, tag: SOURCE_VIDEO_TAG, source: { kind: "reference_video" }, role: "video_referencia" },
+    ...images.map((ref, i): ManifestItem => ({ index: i + 1, tag: genjutsuImageTag(i + 1), source: ref.source, role: ref.role })),
+  ];
+}
+
+/**
+ * El prompt que se envía: el del vídeo y, en Object Swap y Wan, la frase de Codex que vincula la
+ * imagen del entorno nuevo (el desglose aún no la conoce: se elige después).
+ */
+export function clipPromptFor(prompt: string, manifest: ManifestItem[]): string {
+  const room = manifest.find((item) => item.tag !== SOURCE_VIDEO_TAG && (item.role === "pinterest" || item.role === "entorno") && isSourceVideoManifest(manifest));
+  if (!room || new RegExp(`image\\s*\\[${room.index}\\]`).test(prompt)) return prompt;
+  return `${prompt.trim()} Replace every original location with the real environment in ${room.tag}. Preserve the SOURCE camera angle, subject scale and action, adapting this environment rather than copying its photographic framing.`;
 }

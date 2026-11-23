@@ -151,19 +151,38 @@ function imageParams(request: HfImageRequest, count: number): Record<string, unk
 }
 
 /** Parámetros de `estimate_video_cost` / `generate_video_batch` (sin `count`: lo añade el envío). */
-function videoParams(request: HfVideoRequest): Record<string, unknown> {
-  return {
-    model: request.model,
-    mode: request.mode,
-    prompt: request.prompt,
-    aspect_ratio: request.aspectRatio,
-    duration: request.duration,
-    resolution: request.resolution,
-    generate_audio: request.generateAudio,
-    bitrate_mode: request.bitrateMode,
-    use_unlim: false,
-    medias: request.medias.map(({ role, value }) => ({ role, value })),
-  };
+export function videoParams(request: HfVideoRequest): Record<string, unknown> {
+  const medias = request.medias.map(({ role, value }) => ({ role, value }));
+  if (request.model === "seedance_2_5") {
+    return {
+      model: request.model,
+      mode: request.mode,
+      prompt: request.prompt,
+      aspect_ratio: request.aspectRatio,
+      duration: request.duration,
+      resolution: request.resolution,
+      generate_audio: request.generateAudio,
+      bitrate_mode: request.bitrateMode,
+      use_unlim: false,
+      medias,
+    };
+  }
+  if (request.model === "wan3_0_prime") {
+    // Los mismos parámetros que Codex (`genjutsu.parametros`, rama Wan).
+    return {
+      model: request.model,
+      prompt: request.prompt,
+      resolution: request.resolution,
+      duration: request.duration,
+      aspect_ratio: request.aspectRatio,
+      generate_audio: request.generateAudio,
+      enable_thinking: request.enableThinking,
+      use_unlim: false,
+      medias,
+    };
+  }
+  // Genjutsu: modelo, prompt, resolución y entradas; nada más (Codex).
+  return { model: request.model, prompt: request.prompt, resolution: request.resolution, use_unlim: false, medias };
 }
 
 /** `jobs_wait` admite como mucho 12 trabajos por llamada y 15 s de espera. */

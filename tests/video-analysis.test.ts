@@ -20,7 +20,7 @@ import { createVideo, getVideoFor, updateVideoChoices, videoView, type Video } f
 import { POST as desgloseRoute } from "@/app/api/videos/[videoId]/desglose/route";
 import { PUT as putVideo } from "@/app/api/videos/[videoId]/route";
 import { fakeMessages, type FakeCall } from "./helpers/fake-llm";
-import { makeProduct, makeUser, TEST_PASSWORD } from "./helpers/fixtures";
+import { makeProduct, makeUser, TEST_PASSWORD, seedanceByDefault } from "./helpers/fixtures";
 import { truncateAll } from "./helpers/global-setup";
 
 const cookie = vi.hoisted(() => ({ value: undefined as string | undefined }));
@@ -35,6 +35,9 @@ vi.mock("next/headers", () => ({
 let dir: string;
 let jpeg: Buffer;
 
+
+// Pruebas del flujo de Seedance (antes de poder elegir el modelo del clip).
+seedanceByDefault();
 beforeAll(() => {
   dir = fs.mkdtempSync(path.join(os.tmpdir(), "prueba-desglose-"));
   const file = path.join(dir, "foto.jpg");

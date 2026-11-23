@@ -58,7 +58,7 @@ import { GET as productsRoute } from "@/app/api/productos/route";
 import { POST as newVideoRoute } from "@/app/api/productos/[id]/videos/route";
 import { POST as linkRoute } from "@/app/api/videos/[videoId]/referencia/enlace/route";
 import { GET as videoRoute } from "@/app/api/videos/[videoId]/route";
-import { makeProduct, makeUser, TEST_PASSWORD } from "./helpers/fixtures";
+import { makeProduct, makeUser, TEST_PASSWORD, seedanceByDefault } from "./helpers/fixtures";
 import { truncateAll } from "./helpers/global-setup";
 import { makeSampleVideo } from "./helpers/sample-video";
 
@@ -192,6 +192,9 @@ let sampleDir: string;
 /** Dos vídeos de muestra de verdad (ffmpeg), para las pruebas que preparan la referencia. */
 const samples = { tres: Buffer.alloc(0), cuatro: Buffer.alloc(0) };
 
+
+// Pruebas del flujo de Seedance (antes de poder elegir el modelo del clip).
+seedanceByDefault();
 beforeAll(async () => {
   sampleDir = fs.mkdtempSync(path.join(os.tmpdir(), "prueba-agente-"));
   for (const [name, seconds] of [["tres", 3], ["cuatro", 4]] as const) {

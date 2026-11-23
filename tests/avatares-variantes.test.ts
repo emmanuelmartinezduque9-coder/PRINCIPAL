@@ -29,7 +29,7 @@ import { GET as listVariantsRoute, POST as createVariantRoute } from "@/app/api/
 import { POST as importVariantsRoute } from "@/app/api/productos/[id]/variantes/importar/route";
 import { PUT as putVideo } from "@/app/api/videos/[videoId]/route";
 import { fakeMessages, type FakeCall } from "./helpers/fake-llm";
-import { makeProduct, makeUser, TEST_PASSWORD } from "./helpers/fixtures";
+import { makeProduct, makeUser, TEST_PASSWORD, seedanceByDefault } from "./helpers/fixtures";
 import { truncateAll } from "./helpers/global-setup";
 import { instantPinterest } from "./helpers/pinterest";
 
@@ -55,6 +55,9 @@ function makeImage(name: string, color: string, ext = "jpg"): Buffer {
 }
 const sha = (bytes: Buffer) => createHash("sha256").update(bytes).digest("hex");
 
+
+// Pruebas del flujo de Seedance (antes de poder elegir el modelo del clip).
+seedanceByDefault();
 beforeAll(() => {
   dir = fs.mkdtempSync(path.join(os.tmpdir(), "prueba-avatares-"));
   for (const [name, color] of Object.entries({

@@ -22,6 +22,7 @@ import { activeAvatarSummaries, readAvatarImage } from "@/server/avatars";
 import { readProductPhoto } from "@/server/photos";
 import { getProductFor, type Product } from "@/server/products";
 import { listVariants, type VariantInfo } from "@/server/variants";
+import { CLIP_MODEL_LABEL, SEEDANCE, wanDurationSeconds, type ClipModel } from "@/lib/clip-models";
 import { loadRules, RULE_SLUGS, VIDEO_RULE_SLUGS } from "@/server/rules";
 import { analysisStaleness, answersText, briefOf, type AvatarMode, type Brief, type VideoKind } from "@/server/videos/brief";
 import { clipManifest, FRAME_USES, imageManifest, type FrameUse, type ManifestItem, type ManifestRefs } from "@/server/videos/manifest";
@@ -29,6 +30,7 @@ import { startPinterestAfterAnalysis } from "@/server/videos/pinterest";
 import { PROMPT_BLACKLIST, type PromptIssue } from "@/server/videos/prompt-check";
 import {
   clipDurationSeconds,
+  clipModelProblem,
   getVideoFor,
   hookTiming,
   manifestRefsFor,
@@ -169,7 +171,7 @@ export const analysisSchema: z.ZodType<Analysis> = z.object({
   ),
   frameUse: z.enum(["start_image", "contextual_reference"]),
   imagePrompt: filled.describe("Prompt de la imagen inicial, en inglés."),
-  videoPrompt: filled.describe("Prompt del clip, en inglés, con @Video1 y @ImageN."),
+  videoPrompt: filled.describe("Prompt del clip, en inglés, citando las referencias con las etiquetas del manifiesto del clip."),
   personaRef: z
     .object({
       present: z.boolean().describe("Si en los fotogramas de la referencia sale una persona principal."),
@@ -259,7 +261,9 @@ function secondsWords(ms: number): string {
  * es más largo que el gancho, la acción cabe en el gancho y el resto solo mantiene el final: el
  * montador lo recorta.
  */
-function hookOnlyKind({ hookMs, clipSeconds }: HookTiming): string {
+function hookOnlyKind({ hookMs, clipSeconds }: HookTiming, model: ClipModel = SEEDANCE): string {
+  // Genjutsu edita el tramo tal cual (dura lo mismo); Wan pide los segundos enteros del tramo.
+  if (model !== SEEDANCE) clipSeconds = model === "wan3_0_prime" ? wanDurationSeconds(hookMs) : hookMs / 1000;
   const hook = secondsWords(hookMs);
   const clip = secondsWords(clipSeconds * 1000);
   const longer = clipSeconds * 1000 > hookMs;
@@ -281,8 +285,13 @@ const ANSWERED = `Las respuestas del dueño van en <respuestas_del_dueno>: aplí
  */
 export function analysisInstructions(brief: Brief, hook: HookTiming | null = null, variantNames: string[] = []): string {
   const identity = IDENTITY[brief.avatarMode];
+  const model = brief.clipModel ?? SEEDANCE;
+  const seedance = model === SEEDANCE;
+  const videoRule = seedance ? "Vídeo con Seedance 2.5" : "Vídeo con Genjutsu y Wan 3.0 Prime";
   const sections = [
-    `Desglosa el vídeo de referencia y prepara su adaptación al producto del encargo, aplicando las tres reglas que se entregan arriba («Adaptación de conceptos», «Imágenes con Nano Banana» y «Vídeo con Seedance 2.5»).
+    `Desglosa el vídeo de referencia y prepara su adaptación al producto del encargo, aplicando las tres reglas que se entregan arriba («Adaptación de conceptos», «Imágenes con Nano Banana» y «${videoRule}»).
+
+El clip se genera con ${CLIP_MODEL_LABEL[model]}.
 
 Recibes la ficha del producto, la duración del tramo de la referencia y sus cortes de plano detectados, los manifiestos de referencias de la imagen inicial y del clip (con su número y su papel: el orden lo fija la aplicación y no se cambia), los fotogramas de la referencia con su segundo y las fotos del producto, cada una con su número en los dos manifiestos y su papel.
 
@@ -293,9 +302,9 @@ Devuelve, con la forma pedida:
 2. shots: la tabla de planos de la referencia, con su inicio y fin en segundos, qué se ve, qué pasa y el texto en pantalla literal (vacío si no hay).
 3. adaptation: el mapa de adaptación: por cada pieza del original, su equivalente con este producto, la acción física, el resultado visible, qué se conserva, qué cambia y por qué.
 4. risks: los riesgos de la adaptación. Revisa siempre: una función que el producto no tiene (funcion_inexistente), un reveal adelantado (reveal_adelantado), la falta de una foto con mano para la escala (escala), ${identity.risk}, texto en pantalla de la referencia (texto_en_pantalla) y marcas ajenas (marca_ajena); cualquier otro, otro.
-5. frameUse: según la regla de vídeo: si el clip es de un solo plano, start_image (la imagen aprobada es el primer fotograma); si tiene varios planos, contextual_reference.
+${seedance ? "5. frameUse: según la regla de vídeo: si el clip es de un solo plano, start_image (la imagen aprobada es el primer fotograma); si tiene varios planos, contextual_reference." : "5. frameUse: contextual_reference (con este modelo la imagen aprobada va siempre como referencia de imagen, la apertura)."}
 6. imagePrompt: el prompt de la imagen inicial según la regla de imagen y, por encima de todo, sus «Reglas fijas del frame», en prosa y en párrafos corridos, sin títulos en mayúsculas, de unos 4.900 caracteres. La imagen muestra la escena inicial del clip y es una réplica del primer fotograma de la referencia con cambios acotados, no una escena nueva. Sigue este orden: (a) el papel de cada referencia del manifiesto de imagen, citada como «image N» con su número real (${identity.image1}); (b) lo que se conserva exactamente de image 1: recorte, distancia, ángulo, postura, qué mano sujeta qué y por dónde, lado de cada objeto, proporciones dentro del encuadre y estado de la acción, mirando el fotograma y describiendo lo que de verdad se ve; (c) el producto: el aparato que se ve en el original se sustituye SIEMPRE por el artículo del encargo, aunque parezca el mismo, copiado exactamente de sus fotos de artículo (forma, piezas y su número, asa, color, estampado, orientación), en la misma posición, tamaño y agarre que en image 1; di qué variante se ve en el original y cuál es la del encargo; el embalaje solo si se ve en esta toma; y cuántas personas se ven en image 1 y dónde (también una segunda persona de la que solo asoman piernas o un brazo), que se conservan; (d) lo que cambia, cada cosa como «elemento original → elemento nuevo» (identidad, ropa, variante, decorado), conservando el ambiente que es estilo de la cuenta; (e) la luz del lugar; (f) la estética de móvil de la regla (cámara principal a 1x, fondo legible, sin distorsión, sin bordes curvados ni esquinas oscuras, sin ruido fuerte); (g) sin texto sobreimpreso: se quitan los rótulos del fotograma original y se conservan los textos físicos de la escena.
-7. videoPrompt: el prompt del clip según la plantilla de la regla de vídeo, con menos de 4.000 caracteres. Escríbelo con párrafos o con las etiquetas entre corchetes de la plantilla, nunca con títulos en mayúsculas. Cita cada referencia con @ del manifiesto del clip exactamente como @Video1 y @ImageN (mayúscula inicial, sin espacio) y ninguna otra. ${identity.video1} La imagen inicial aprobada (la que saldrá del prompt de imagen) es la que el manifiesto del clip marca así, y se describe según frameUse. La geometría del producto es fija: forma, proporciones y etiqueta no cambian. No pidas texto en pantalla, subtítulos ni rótulos.
+${seedance ? `7. videoPrompt: el prompt del clip según la plantilla de la regla de vídeo, con menos de 4.000 caracteres. Escríbelo con párrafos o con las etiquetas entre corchetes de la plantilla, nunca con títulos en mayúsculas. Cita cada referencia con @ del manifiesto del clip exactamente como @Video1 y @ImageN (mayúscula inicial, sin espacio) y ninguna otra. ${identity.video1} La imagen inicial aprobada (la que saldrá del prompt de imagen) es la que el manifiesto del clip marca así, y se describe según frameUse. La geometría del producto es fija: forma, proporciones y etiqueta no cambian. No pidas texto en pantalla, subtítulos ni rótulos.` : sourceVideoPromptItem(model)}
 
 8. personaRef: la persona principal que sale en los fotogramas de la referencia: si sale alguien (present), su sexo (mujer, hombre, otro o desconocido), su edad aproximada en años y sus rasgos visibles en una frase. Si no sale nadie, present false, gender desconocido y approxAge null.
 9. angleAudience: si el encargo (sus indicaciones, su adaptación o sus cambios) pide un público o un ángulo con una persona concreta (p. ej. «abuelas», «para mamás», «un niño»), su sexo, su edad aproximada y cómo lo nombra; si no pide ninguno, null.${variantNames.length > 0 ? `
@@ -309,7 +318,7 @@ Las explicaciones (conceptLogic, shots, adaptation, risks) van en español; los 
   ];
   if (brief.kind === "adaptacion_concepto") sections.push(ADAPTATION_KIND);
   if (brief.kind === "solo_gancho" && brief.hookSeconds !== null) {
-    sections.push(hookOnlyKind(hook ?? { hookMs: brief.hookSeconds * 1000, clipSeconds: clipDurationSeconds(brief.hookSeconds * 1000) }));
+    sections.push(hookOnlyKind(hook ?? { hookMs: brief.hookSeconds * 1000, clipSeconds: clipDurationSeconds(brief.hookSeconds * 1000) }, model));
   }
   if (ownerNotes(brief) !== null) sections.push(OWNER_NOTES);
   sections.push(brief.answers === null ? QUESTIONS : `${QUESTIONS} ${ANSWERED}`);
@@ -317,11 +326,28 @@ Las explicaciones (conceptLogic, shots, adaptation, risks) van en español; los 
 }
 
 /**
- * Reglas del desglose. La de adaptación de conceptos va siempre (también al replicar se adapta la
- * referencia al producto); con «Adaptación de concepto» es la que manda.
+ * El punto 7 con Genjutsu o Wan 3.0 Prime: el prompt de edición del vídeo fuente, como los de Codex
+ * (`image [N]`, el vídeo fuente como autoridad de acciones y cortes, sin textos).
  */
-export function analysisRuleSlugs(kind: VideoKind): string[] {
-  return kind === "adaptacion_concepto" ? [...new Set([RULE_SLUGS.adaptacion, ...VIDEO_RULE_SLUGS])] : [...VIDEO_RULE_SLUGS];
+function sourceVideoPromptItem(model: ClipModel): string {
+  const common = `7. videoPrompt: el prompt de edición del vídeo fuente según la regla «Vídeo con Genjutsu y Wan 3.0 Prime», en inglés, en un solo párrafo corrido o pocos, nunca con títulos en mayúsculas, con menos de 4.000 caracteres. El vídeo fuente (el tramo de la referencia, entero) es la autoridad de todas las acciones, movimientos de cámara, cortes y duración: dilo al principio y descríbelo como «the source video» (nunca con @). Cita cada imagen del manifiesto del clip exactamente como image [N] con su número real y di su papel: image [1] es la apertura limpia aprobada (la imagen inicial que saldrá del prompt de imagen); conserva su composición, personas o manos, ropa, fondo y luz. Las acciones que se conservan van con sus tiempos reales, siguiendo los cortes detectados. El producto es el del encargo en todas sus apariciones, con la geometría, los colores y la escala en mano de sus fotos, sin añadir zooms ni primeros planos. Quita todos los rótulos, subtítulos, emojis e interfaz de la fuente de principio a fin, conservando las letras físicas del producto, y termina con «No text overlays, no captions.». La imagen del entorno nuevo, si la hay, la añade la aplicación después: no la cites.`;
+  if (model === "hf_mult_motion_control") {
+    return `${common} Motion Transfer: el vídeo aporta el movimiento, la cámara, las acciones y los tiempos; la imagen aprobada fija la apertura y la adaptación visual. Escribe qué movimiento se conserva y qué cambia de fondo, identidad o producto, aplicado igual en todas las tomas, también después de cada corte. Pide conservar el audio completo generado para la edición.`;
+  }
+  if (model === "hf_mult_replace_object") {
+    return `${common} Object Swap: escribe el mapa de sustituciones por toma (qué objeto o persona cambia y qué referencia identifica el resultado), conservando función, contacto, acciones, ritmo y continuidad; adapta el entorno, la decoración y los textiles al producto y a la cuenta. Pide conservar el audio completo generado para la edición.`;
+  }
+  return `${common} Wan 3.0 Prime: prompt compacto, con frases breves y directas; acciones y cambios ordenados por toma con sus segundos, la correspondencia exacta de adjuntos y lo que se conserva. Varía el diseño de los mismos escenarios conservando los objetos que usa la acción. Si la fuente tiene habla, tradúcela al idioma del anuncio conservando sentido, tono y tiempos, sin añadir diálogo.`;
+}
+
+/**
+ * Reglas del desglose. La de adaptación de conceptos va siempre (también al replicar se adapta la
+ * referencia al producto); con «Adaptación de concepto» es la que manda. La regla de vídeo es la
+ * del modelo del clip: Seedance, o Genjutsu y Wan 3.0 Prime.
+ */
+export function analysisRuleSlugs(kind: VideoKind, model: ClipModel = SEEDANCE): string[] {
+  const video = model === SEEDANCE ? [...VIDEO_RULE_SLUGS] : VIDEO_RULE_SLUGS.map((slug) => (slug === RULE_SLUGS.video ? RULE_SLUGS.genjutsu : slug));
+  return kind === "adaptacion_concepto" ? [...new Set([RULE_SLUGS.adaptacion, ...video])] : video;
 }
 
 // ───────────────────────── Contenido de la petición ─────────────────────────
@@ -392,7 +418,7 @@ async function buildContent(
   variants: VariantInfo[],
 ): Promise<LlmContent> {
   const images = imageManifest(video, refs);
-  const clip = clipManifest(video, refs);
+  const clip = clipManifest(video, refs, undefined, brief.clipModel);
   const chosenVariant = variants.find((variant) => variant.id === video.variantId);
   const cuts = video.cutsMs ?? [];
   const notes = ownerNotes(brief);
@@ -546,7 +572,8 @@ export async function missingForAnalysis(user: AuthUser, video: Video, brief: Br
   if (needsAvatar && !manifest.some((item) => item.role === "avatar")) return NO_AVATAR;
   if (!manifest.some((item) => item.role === "articulo")) return NO_ARTICLE;
   if (brief.kind === "adaptacion_concepto" && brief.adaptation === null) return NO_ADAPTATION;
-  return null;
+  // El modelo elegido no admite el tramo: se pregunta antes de gastar en la imagen.
+  return clipModelProblem(video);
 }
 
 /**
@@ -787,7 +814,7 @@ export async function runAnalysis(analysisId: number, deps: { gateway?: LlmGatew
           stepKey: key,
           userId: ctx.userId,
           productId: ctx.productId,
-          rules: await loadRules(analysisRuleSlugs(brief.kind)),
+          rules: await loadRules(analysisRuleSlugs(brief.kind, brief.clipModel)),
           instructions: analysisInstructions(brief, hookTiming(video), variants.map((variant) => variant.name)),
           content,
           maxTokens: MAX_TOKENS,
@@ -830,6 +857,8 @@ export async function runAnalysis(analysisId: number, deps: { gateway?: LlmGatew
         note: schema.videos.note,
         adaptation: schema.videos.adaptation,
         hookSeconds: schema.videos.hookSeconds,
+        clipModel: schema.videos.clipModel,
+        segmentDurationMs: schema.videos.segmentDurationMs,
         batchId: schema.videos.batchId,
         productId: schema.videos.productId,
         ownerAnswers: schema.videos.ownerAnswers,

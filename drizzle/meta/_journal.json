@@ -260,6 +260,13 @@
       "when": 1795411290815,
       "tag": "0036_orden_metodo_aprobado",
       "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1795412712525,
+      "tag": "0037_modelo_del_clip",
+      "breakpoints": true
     }
   ]
 }

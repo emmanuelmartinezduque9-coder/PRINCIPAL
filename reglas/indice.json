@@ -82,6 +82,26 @@
     ]
   },
   {
+    "slug": "video-genjutsu",
+    "title": "Vídeo con Genjutsu y Wan 3.0 Prime",
+    "description": "Cómo escribir el prompt del clip cuando la réplica edita el vídeo original: Motion Transfer, Object Swap o Wan 3.0 Prime.",
+    "file": "video-genjutsu.md",
+    "source": "docs/reglas-origen/skills-codex/higgsfield-genjutsu/SKILL.md",
+    "sources": [
+      "docs/reglas-origen/skills-codex/higgsfield-genjutsu/SKILL.md",
+      "docs/reglas-origen/skills-codex/higgsfield-genjutsu/references/prompts.md",
+      "docs/reglas-origen/skills-codex/higgsfield-genjutsu/references/object-swap-producto.md",
+      "docs/reglas-origen/cerebro/reglas/genjutsu-frame-inicial-obligatorio.md",
+      "docs/reglas-origen/cerebro/reglas/controles-video-por-motor.md",
+      "docs/reglas-origen/memory-context/identidades-personas-animales-genjutsu-20261106.md",
+      "docs/reglas-origen/memory-context/referencias-identidad-y-lotes-mixtos-20261029.md",
+      "docs/reglas-origen/memory-context/edicion-opcional-y-wan-simple.md",
+      "docs/reglas-origen/memory-context/wan-prime-cambios-minimos.md",
+      "docs/reglas-origen/memory-context/wan-prime-solo-video.md",
+      "docs/reglas-motor-del-dueno.md"
+    ]
+  },
+  {
     "slug": "alta-de-producto",
     "title": "Alta de producto desde un enlace",
     "description": "Cómo se entiende un producto a partir de un reel, una cuenta o AliExpress, qué ficha se guarda y cómo es la foto «artículo» sobre gris.",

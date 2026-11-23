@@ -1,4 +1,4 @@
-import type { ManifestItem } from "@/server/videos/manifest";
+import { isSourceVideoManifest, type ManifestItem } from "@/server/videos/manifest";
 
 /**
  * Comprobación de los prompts antes de gastar: lo que las reglas de imagen y de vídeo dicen que
@@ -102,6 +102,7 @@ const UUID = /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/i
 export function checkVideoPrompt(prompt: string, manifest: ManifestItem[]): PromptIssue[] {
   const text = prompt.trim();
   if (!text) return [{ level: "error", message: EMPTY }];
+  if (isSourceVideoManifest(manifest)) return checkSourceVideoPrompt(text, manifest);
   const issues = commonIssues(text);
 
   const known = new Set(manifest.map((item) => item.tag));
@@ -130,6 +131,37 @@ export function checkVideoPrompt(prompt: string, manifest: ManifestItem[]): Prom
   // Solo se citan las etiquetas con `@` (la imagen aprobada sin numerar no se cita).
   for (const item of manifest) {
     if (item.tag.startsWith("@") && !used.has(item.tag)) issues.push({ level: "error", message: `Falta decir para qué sirve ${item.tag}.` });
+  }
+  if (URL.test(text) || UUID.test(text)) issues.push({ level: "error", message: ADDRESS });
+  if (text.length > VIDEO_MAX_CHARS) issues.push({ level: "aviso", message: VIDEO_TOO_LONG });
+  return issues;
+}
+
+const GENJUTSU_BAD_TAG = "Con Genjutsu y Wan, cita las imágenes como image [1], image [2]… (sin @).";
+/** «image [3]», «image 3», «Image [3]». */
+const IMAGE_CITE = /(?<![\p{L}\p{N}_])image\s*\[?\s*(\d+)\s*\]?/giu;
+
+/**
+ * Genjutsu y Wan 3.0 Prime (manifiesto con el vídeo fuente): las imágenes se citan como en Codex,
+ * `image [N]`, con el número que les da la aplicación. Cada imagen tiene que tener su papel en el
+ * prompt, salvo la del entorno nuevo, cuyo papel añade la aplicación (`clipPromptFor`).
+ */
+function checkSourceVideoPrompt(text: string, manifest: ManifestItem[]): PromptIssue[] {
+  const issues = commonIssues(text);
+  const images = manifest.filter((item) => item.tag.startsWith("image ["));
+  const cited = new Set<number>();
+  const missingReported = new Set<number>();
+  for (const match of text.matchAll(IMAGE_CITE)) {
+    const n = Number(match[1]);
+    cited.add(n);
+    if (images.some((item) => item.index === n) || missingReported.has(n)) continue;
+    missingReported.add(n);
+    issues.push({ level: "error", message: `image [${n}] no existe: este clip lleva ${images.length} ${images.length === 1 ? "imagen" : "imágenes"}.` });
+  }
+  if (new RegExp(TAG.source, "u").test(text)) issues.push({ level: "error", message: GENJUTSU_BAD_TAG });
+  for (const item of images) {
+    if (item.role === "pinterest" || item.role === "entorno") continue;
+    if (!cited.has(item.index)) issues.push({ level: "error", message: `Falta decir para qué sirve ${item.tag}.` });
   }
   if (URL.test(text) || UUID.test(text)) issues.push({ level: "error", message: ADDRESS });
   if (text.length > VIDEO_MAX_CHARS) issues.push({ level: "aviso", message: VIDEO_TOO_LONG });

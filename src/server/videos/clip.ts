@@ -11,10 +11,12 @@ import { ensureMedia } from "@/server/higgsfield";
 import { HttpError } from "@/server/http";
 import { readAvatarImage } from "@/server/avatars";
 import { readProductPhoto } from "@/server/photos";
+import { readPinterestImage } from "@/server/videos/pinterest";
+import { resolveClipModel, SEEDANCE, sourceProblem, wanDurationSeconds, type ClipModel } from "@/lib/clip-models";
 import { getProductFor } from "@/server/products";
 import { fileSlug } from "@/server/videos/filename";
 import { asHttp, registerRequestBuilder, type GenDeps, type RequestBuilder } from "@/server/videos/generations";
-import { clipManifest } from "@/server/videos/manifest";
+import { clipManifest, clipPromptFor, type ManifestItem } from "@/server/videos/manifest";
 import { checkVideoPrompt } from "@/server/videos/prompt-check";
 import {
   BRIEF_CHANGED,
@@ -23,6 +25,7 @@ import {
   latestDoneAnalysis,
   manifestRefsFor,
   NO_AUTO_AVATAR,
+  readVideoFrame,
   REFERENCE_OUTDATED,
   referenceOutdated,
   requireVideoOwner,
@@ -33,19 +36,27 @@ import {
 export { CLIP_RESOLUTIONS, clipDurationSeconds, DEFAULT_CLIP_RESOLUTION, type ClipResolution } from "@/server/videos/videos";
 
 /**
- * El clip: Seedance 2.5 en modo `omni_reference`. `@Video1` es la referencia (solo estructura:
- * cámara, ritmo y acción; lo dice el prompt), `@Image1` la imagen inicial aprobada (como primer
- * fotograma o como referencia de la escena, según `frameUse`) y después las fotos del producto
- * en el orden del manifiesto. Vertical, sin audio (`generate_audio: false` siempre explícito),
- * `bitrate_mode: "high"`, a la resolución del vídeo (480p por defecto) y con la duración del tramo
- * (con «Solo gancho», el tramo es el gancho; Seedance no baja de 4 s, así que un gancho de 2 o 3 s
- * sale de 4: el desglose le dice a Claude que la acción cabe en el gancho y que el resto solo
- * mantiene el final, y el paso «Clip» enseña «Gancho N s» para saber dónde recortar).
+ * El clip, con el modelo que resuelve el vídeo (`resolveClipModel`: el elegido en la tarjeta o en el
+ * grupo del lote, o «Automático» = Genjutsu Motion Transfer, como en Codex):
+ *
+ * - Seedance 2.5 en modo `omni_reference`. `@Video1` es la referencia (solo estructura: cámara,
+ *   ritmo y acción; lo dice el prompt), `@Image1` la imagen inicial aprobada (como primer fotograma
+ *   o como referencia de la escena, según `frameUse`) y después las fotos del producto en el orden
+ *   del manifiesto. Vertical, sin audio (`generate_audio: false` siempre explícito),
+ *   `bitrate_mode: "high"`, a la resolución del vídeo (480p por defecto) y con la duración del tramo
+ *   (con «Solo gancho», el tramo es el gancho; Seedance no baja de 4 s, así que un gancho de 2 o 3 s
+ *   sale de 4: el desglose le dice a Claude que la acción cabe en el gancho y que el resto solo
+ *   mantiene el final, y el paso «Clip» enseña «Gancho N s» para saber dónde recortar).
+ * - Genjutsu (Motion Transfer u Object Swap) y Wan 3.0 Prime, como los enviaba Codex
+ *   (`genjutsu.parametros`): el vídeo fuente entero y las imágenes (`image [1]` = la aprobada); Wan
+ *   con la duración entera del tramo, `aspect_ratio: auto` y su propio audio. Genjutsu conserva el
+ *   audio del original.
  *
  * Al importar este módulo se registra el constructor `"clip"` en las generaciones: lo importan las
  * rutas que piden precio o generan.
  */
 
+/** El modelo de Seedance (el de los vídeos de antes de poder elegir). */
 export const CLIP_MODEL = "seedance_2_5";
 
 const NO_FRAME = "Aprueba primero la imagen inicial.";
@@ -96,6 +107,8 @@ const CLIP_SNAPSHOT = [
   "adaptation",
   "hookSeconds",
   "note",
+  "clipModel",
+  "environmentPhotoId",
 ] as const satisfies ReadonlyArray<keyof Video>;
 
 /**
@@ -115,78 +128,91 @@ export const buildClipRequest: RequestBuilder = async (user, video, deps) => {
   const approvedJobId = await approvedFrameJobId(video);
   if (!approvedJobId) throw new HttpError(409, NO_FRAME);
 
-  const prompt = video.videoPrompt ?? "";
-  const manifest = clipManifest(video, await manifestRefsFor(user, video));
+  const model = resolveClipModel(video.clipModel, video.segmentDurationMs);
+  const problem = model === SEEDANCE ? null : sourceProblem(model, video.segmentDurationMs);
+  if (problem) throw new HttpError(409, problem);
+  const manifest = clipManifest(video, await manifestRefsFor(user, video), undefined, model);
   if (manifest.some((item) => item.source.kind === "avatar_pending")) throw new HttpError(409, NO_AUTO_AVATAR);
+  const prompt = clipPromptFor(video.videoPrompt ?? "", manifest);
   const error = checkVideoPrompt(prompt, manifest).find((issue) => issue.level === "error");
   if (error) throw new HttpError(400, error.message);
 
   const medias: HfMediaRef[] = [];
-  // Una a una y en orden: así la numeración de `@ImageN` es la del manifiesto.
-  for (const item of manifest) {
-    if (item.source.kind === "reference_video") {
-      medias.push({ role: "video_references", value: video.referenceMediaId });
-    } else if (item.source.kind === "approved_frame") {
-      medias.push({ role: video.frameUse === "start_image" ? "start_image" : "image_references", value: approvedJobId });
-    } else if (item.source.kind === "photo") {
-      const photo = await readProductPhoto(user, item.source.photoId);
-      const file = {
-        bytes: photo.data,
-        filename: `foto-${item.source.photoId}.${EXTENSIONS[photo.mime] ?? "jpg"}`,
-        contentType: photo.mime,
-        type: "image" as const,
-      };
-      const mediaId = await ensureMedia(video.createdBy, file, deps);
-      medias.push({ role: "image_references", value: mediaId });
-    } else if (item.source.kind === "avatar") {
-      const avatar = await readAvatarImage(item.source.avatarId);
-      const file = {
-        bytes: avatar.data,
-        filename: `avatar-${item.source.avatarId}.${EXTENSIONS[avatar.mime] ?? "jpg"}`,
-        contentType: avatar.mime,
-        type: "image" as const,
-      };
-      medias.push({ role: "image_references", value: await ensureMedia(video.createdBy, file, deps) });
-    }
-  }
+  // Una a una y en orden: así la numeración de `@ImageN` / `image [N]` es la del manifiesto.
+  for (const item of manifest) medias.push(await mediaRef(user, video, item, model, approvedJobId, deps));
 
-  const request: HfVideoRequest = {
+  return { request: clipRequest(model, video, prompt, medias), count: 1, snapshot: videoSnapshot(video, CLIP_SNAPSHOT) };
+};
+
+/** La entrada de una referencia del manifiesto del clip, subiendo la foto si hace falta (una vez por archivo). */
+async function mediaRef(user: AuthUser, video: Video, item: ManifestItem, model: ClipModel, approvedJobId: string, deps: GenDeps): Promise<HfMediaRef> {
+  const { source } = item;
+  if (source.kind === "reference_video") return { role: "video_references", value: video.referenceMediaId! };
+  if (source.kind === "approved_frame") {
+    // Genjutsu y Wan (con referencias) no admiten `start_image`: la aprobada va como referencia (Codex).
+    return { role: model === SEEDANCE && video.frameUse === "start_image" ? "start_image" : "image_references", value: approvedJobId };
+  }
+  if (source.kind === "photo") {
+    const photo = await readProductPhoto(user, source.photoId);
+    const file = { bytes: photo.data, filename: `foto-${source.photoId}.${EXTENSIONS[photo.mime] ?? "jpg"}`, contentType: photo.mime, type: "image" as const };
+    return { role: "image_references", value: await ensureMedia(video.createdBy, file, deps) };
+  }
+  if (source.kind === "avatar") {
+    const avatar = await readAvatarImage(source.avatarId);
+    const file = { bytes: avatar.data, filename: `avatar-${source.avatarId}.${EXTENSIONS[avatar.mime] ?? "jpg"}`, contentType: avatar.mime, type: "image" as const };
+    return { role: "image_references", value: await ensureMedia(video.createdBy, file, deps) };
+  }
+  if (source.kind === "pinterest") {
+    const image = await readPinterestImage(source.sha256);
+    const file = { bytes: image.data, filename: `pinterest-${source.sha256.slice(0, 16)}.jpg`, contentType: image.mime, type: "image" as const };
+    return { role: "image_references", value: await ensureMedia(video.createdBy, file, deps) };
+  }
+  throw new Error(`Referencia del clip no esperada: ${source.kind}.`);
+}
+
+/** La petición del modelo, con los parámetros que enviaba Codex para cada uno. */
+function clipRequest(model: ClipModel, video: Video, prompt: string, medias: HfMediaRef[]): HfVideoRequest {
+  const resolution = video.clipResolution as HfVideoRequest["resolution"];
+  if (model === "wan3_0_prime") {
+    return { model, prompt, resolution, duration: wanDurationSeconds(video.segmentDurationMs!), aspectRatio: "auto", generateAudio: true, enableThinking: false, medias };
+  }
+  if (model === "hf_mult_motion_control" || model === "hf_mult_replace_object") return { model, prompt, resolution, medias };
+  return {
     model: CLIP_MODEL,
     mode: "omni_reference",
     prompt,
     aspectRatio: "9:16",
-    duration: clipDurationSeconds(video.segmentDurationMs),
-    resolution: video.clipResolution as HfVideoRequest["resolution"],
+    duration: clipDurationSeconds(video.segmentDurationMs!),
+    resolution,
     generateAudio: false,
     bitrateMode: "high",
     medias,
   };
-  return { request, count: 1, snapshot: videoSnapshot(video, CLIP_SNAPSHOT) };
-};
+}
 
 registerRequestBuilder("clip", buildClipRequest);
 
 /**
  * Estimación del clip ANTES de tener la imagen aprobada (para el presupuesto de «Enviar lote»):
- * el presupuesto de Seedance (`estimate_video_cost`) con la duración y la resolución del vídeo, su
- * prompt y la referencia. Sin la imagen ni las fotos (aún no existe la imagen); el precio depende
- * del modelo, la duración y la resolución. No gasta nada. Cuando se pida de verdad, el clip se
+ * el presupuesto del modelo del vídeo (`estimate_video_cost`) con la duración y la resolución del
+ * vídeo, su prompt y la referencia. Sin la imagen ni las fotos (aún no existe la imagen); el precio
+ * depende del modelo, la duración y la resolución. Genjutsu y Wan exigen al menos una imagen: va el
+ * primer fotograma de la referencia en su lugar (subirlo no gasta). No gasta nada. Cuando se pida de verdad, el clip se
  * presupuesta otra vez con la petición completa (`requestGeneration`) y se compara con esto.
  */
 export async function estimateClipCredits(user: AuthUser, video: Video, deps: GenDeps = {}): Promise<number> {
   requireVideoOwner(user, video);
   if (video.referenceStatus !== "ready" || !video.referenceMediaId || !video.segmentDurationMs) throw new HttpError(409, NO_REFERENCE);
-  const request: HfVideoRequest = {
-    model: CLIP_MODEL,
-    mode: "omni_reference",
-    prompt: video.videoPrompt ?? "",
-    aspectRatio: "9:16",
-    duration: clipDurationSeconds(video.segmentDurationMs),
-    resolution: video.clipResolution as HfVideoRequest["resolution"],
-    generateAudio: false,
-    bitrateMode: "high",
-    medias: [{ role: "video_references", value: video.referenceMediaId }],
-  };
+  const model = resolveClipModel(video.clipModel, video.segmentDurationMs);
+  const problem = model === SEEDANCE ? null : sourceProblem(model, video.segmentDurationMs);
+  if (problem) throw new HttpError(409, problem);
+  const medias: HfMediaRef[] = [{ role: "video_references", value: video.referenceMediaId }];
+  if (model !== SEEDANCE) {
+    const frame = await readVideoFrame(user, video.id, 0);
+    const file = { bytes: frame.data, filename: `fotograma-${video.id}.jpg`, contentType: frame.mime, type: "image" as const };
+    medias.push({ role: "image_references", value: await ensureMedia(video.createdBy, file, deps) });
+  }
+  const request = clipRequest(model, video, video.videoPrompt ?? "", medias);
   const port = deps.higgsfield ?? getHiggsfield();
   const { credits } = await port.quoteVideo(video.createdBy, request).catch(asHttp);
   return credits;

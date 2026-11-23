@@ -16,6 +16,7 @@ import {
   duplicateBatchVideo,
   removeBatchVideo,
   setBatchAutoAnalyze,
+  setBatchProductClipModel,
   setBatchProductEditReference,
   setBatchProductNotes,
 } from "@/server/videos/batches";
@@ -26,7 +27,7 @@ import { PUT as notesRoute } from "@/app/api/lotes/[id]/productos/[productId]/ro
 import { DELETE as removeRoute } from "@/app/api/lotes/[id]/videos/[videoId]/route";
 import { POST as duplicateRoute } from "@/app/api/lotes/[id]/videos/[videoId]/duplicar/route";
 import { PATCH as patchProductRoute } from "@/app/api/productos/[id]/route";
-import { makeProduct, makeUser, TEST_PASSWORD } from "./helpers/fixtures";
+import { makeProduct, makeUser, TEST_PASSWORD, seedanceByDefault } from "./helpers/fixtures";
 import { truncateAll } from "./helpers/global-setup";
 
 const cookie = vi.hoisted(() => ({ value: undefined as string | undefined }));
@@ -96,6 +97,31 @@ async function batchVideo(batchId: number, over: Record<string, unknown> = {}): 
   return addVideoToBatch(ana, batchId, { productId: lampara.id, avatarPhotoId: avatar, avatarMode: "elegido", ...over });
 }
 
+
+// Pruebas del flujo de Seedance (antes de poder elegir el modelo del clip).
+seedanceByDefault();
+
+describe("modelo del vídeo del grupo del lote", () => {
+  it("pasa a los vídeos del grupo sin uno propio y sin clip; la tarjeta puede llevar el suyo", async () => {
+    const lote = await createBatch(ana, "Modelos");
+    const sinElegir = await batchVideo(lote.id, { clipModel: "auto" });
+    const propio = await batchVideo(lote.id, { clipModel: "wan3_0_prime" });
+    const conClip = await batchVideo(lote.id, { clipModel: "auto" });
+    await getPool().query(
+      "insert into generations (video_id, kind, round, status, user_id, request, count, quoted_credits) values ($1, 'clip', 1, 'done', $2, '{}', 1, 10)",
+      [conClip.id, ana.id],
+    );
+    expect(await setBatchProductClipModel(ana, lote.id, lampara.id, "hf_mult_replace_object")).toBe("hf_mult_replace_object");
+    const model = async (id: number) => (await getVideoFor(ana, id)).clipModel;
+    expect([await model(sinElegir.id), await model(propio.id), await model(conClip.id)]).toEqual(["hf_mult_replace_object", "wan3_0_prime", "auto"]);
+    expect((await batchView(ana, lote.id)).groups[0]).toMatchObject({ clipModel: "hf_mult_replace_object" });
+    // Volver a «sin elegir» devuelve a «Automático» los que heredaban.
+    expect(await setBatchProductClipModel(ana, lote.id, lampara.id, null)).toBeNull();
+    expect([await model(sinElegir.id), await model(propio.id)]).toEqual(["auto", "wan3_0_prime"]);
+    await expect(setBatchProductClipModel(ana, lote.id, lampara.id, "kling3_0")).rejects.toMatchObject({ status: 400 });
+    await expect(batchVideo(lote.id, { clipModel: "hf_mult_motion_control_flash" })).rejects.toMatchObject({ status: 400 });
+  });
+});
 describe("indicaciones por producto del lote", () => {
   it("se guardan por lote y producto, llegan al desglose y cambiarlas deja el desglose por repetir", async () => {
     const lote = await createBatch(ana, "A");
@@ -133,7 +159,7 @@ describe("indicaciones por producto del lote", () => {
     expect((await batchView(ana, lote.id)).rows[0].analysis).toMatchObject({ stale: true, staleReason: "brief" });
     // Quitarlas también cuenta.
     expect(await setBatchProductNotes(ana, lote.id, lampara.id, "   ")).toBeNull();
-    expect((await batchView(ana, lote.id)).groups).toEqual([{ productId: lampara.id, name: "Lámpara Luna", coverPhotoId: expect.any(Number), notes: null, editReferenceUrl: null, videos: 1 }]);
+    expect((await batchView(ana, lote.id)).groups).toEqual([{ productId: lampara.id, name: "Lámpara Luna", coverPhotoId: expect.any(Number), notes: null, editReferenceUrl: null, clipModel: null, videos: 1 }]);
     expect((await videoView(ana, v.id)).analysis).toMatchObject({ stale: true });
   });
 

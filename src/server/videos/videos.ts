@@ -1,3 +1,4 @@
+import { isClipModelChoice, resolveClipModel, SEEDANCE, sourceProblem, type ClipModel, type ClipModelChoice } from "@/lib/clip-models";
 import { and, asc, count, desc, eq, sql } from "drizzle-orm";
 import { getDb, schema } from "@/db/client";
 import { linkStateOf, type LinkState } from "@/server/agent-tasks";
@@ -45,6 +46,20 @@ const MAX_CLIP_SECONDS = 30;
 /** Segundos del clip: los del tramo redondeados, entre 4 y 30 (lo que admite Seedance). */
 export function clipDurationSeconds(segmentDurationMs: number): number {
   return Math.min(MAX_CLIP_SECONDS, Math.max(MIN_CLIP_SECONDS, Math.round(segmentDurationMs / 1000)));
+}
+
+const BAD_CLIP_MODEL = "Modelo de vídeo no disponible.";
+
+/** Una elección de modelo del clip válida (`auto` o un modelo), o 400. */
+export function checkClipModel(value: unknown): ClipModelChoice {
+  if (!isClipModelChoice(value)) throw new HttpError(400, BAD_CLIP_MODEL);
+  return value;
+}
+
+/** Por qué el tramo de la referencia no sirve para el modelo del clip (la pregunta para el dueño), o `null`. */
+export function clipModelProblem(video: Pick<Video, "clipModel" | "segmentDurationMs">): string | null {
+  const model = resolveClipModel(video.clipModel, video.segmentDurationMs);
+  return model === SEEDANCE || video.segmentDurationMs === null ? null : sourceProblem(model, video.segmentDurationMs);
 }
 
 export const isClipResolution = (value: unknown): value is ClipResolution =>
@@ -111,6 +126,8 @@ export interface NewVideoExtras {
   adaptation?: string | null;
   hookSeconds?: number;
   bodyClipIds?: number[];
+  /** Cómo se genera la réplica (ya comprobado con `checkClipModel`); sin él, «Automático». */
+  clipModel?: ClipModelChoice;
   /** Ya comprobada (`checkSongChoice`), con su modo (`audioColumns`). */
   songId?: number | null;
   audioMode?: "cancion" | "original";
@@ -324,6 +341,8 @@ export interface VideoChoicesInput {
   /** Una variante de este producto o `null` (las fotos de siempre). */
   variantId?: unknown;
   clipResolution?: string;
+  /** Cómo se genera la réplica: `auto` o un modelo (`CLIP_MODEL_CHOICES`). */
+  clipModel?: unknown;
   kind?: unknown;
   adaptation?: unknown;
   hookSeconds?: unknown;
@@ -356,6 +375,8 @@ export async function updateVideoChoices(user: AuthUser, videoId: number, input:
     if (!isClipResolution(input.clipResolution)) throw new HttpError(400, BAD_RESOLUTION);
     changes.clipResolution = input.clipResolution;
   }
+  // El modelo del clip llega al desglose: el prompt del clip se escribe para él.
+  if (input.clipModel !== undefined) changes.clipModel = checkClipModel(input.clipModel);
 
   if (input.title !== undefined) {
     const title = input.title.trim();
@@ -486,6 +507,10 @@ export interface VideoView {
    * es más largo, lo que sobra se recorta al montar. `null` con los otros tipos.
    */
   hook: HookTiming | null;
+  /** El modelo con el que sale el clip (`video.clipModel` resuelto: «Automático» = Motion Transfer). */
+  clipModel: ClipModel;
+  /** Por qué el tramo no sirve para ese modelo (una pregunta), o `null`. */
+  clipModelProblem: string | null;
   /**
    * El enlace pegado que el Mac está trayendo (`queued`, `downloading`) o el último que falló
    * (`failed`, con su motivo), o `null`. Mientras tanto la referencia que hubiera sigue valiendo.
@@ -671,6 +696,8 @@ export async function videoView(user: AuthUser, videoId: number): Promise<VideoV
     song: (await songSummaries([video.songId])).get(video.songId ?? 0) ?? null,
     songEditable: canChooseSong(user, video),
     hook: hookTiming(video),
+    clipModel: resolveClipModel(video.clipModel, video.segmentDurationMs),
+    clipModelProblem: clipModelProblem(video),
     link: await linkStateOf(video.linkTaskId),
     analysis: latest
       ? {

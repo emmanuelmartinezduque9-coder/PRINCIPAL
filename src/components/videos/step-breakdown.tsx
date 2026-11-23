@@ -409,7 +409,7 @@ function Prompts({ view, draft, setDraft }: { view: VideoViewJson; draft: Prompt
     <div className="flex flex-col gap-5">
       <FrameCountPicker view={view} readOnly={!mine} />
       <ClipResolutionField video={video} readOnly={!mine} />
-      <FrameUsePicker video={video} readOnly={!mine} />
+      {view.clipModel === "seedance_2_5" ? <FrameUsePicker video={video} readOnly={!mine} /> : null}
       <PromptEditor
         label="Imagen inicial"
         value={imagePrompt}

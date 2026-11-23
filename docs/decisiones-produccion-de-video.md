@@ -821,3 +821,46 @@ el punto 10 de `docs/reglas-motor-del-dueno.md`). Cómo quedó:
 - **Cada vídeo del lote sigue solo** (petición de Emmanuel, 23/11/2026, como en Codex): en cuanto se
   aprueba la imagen de un vídeo se pide su clip, y en cuanto su clip está hecho se monta en la nube y
   aparece en «Vídeos terminados», sin esperar a las demás imágenes ni a que el lote esté `listo`.
+
+## Modelo del vídeo en la tarjeta y en el grupo: copiado de Codex (23/11/2026)
+
+Regla 6 del motor. Se copió lo que hacía Codex (paquete activo `test-hook-selection-20261102`:
+`EDITOR/genjutsu.py` → `parametros`, `genjutsu_defaults.py`, `reference_hook_policy.py`, panel
+`local-lotes.js`), sin rediseñar.
+
+- **Opciones** (solo las que Emmanuel usó de verdad en sus últimos lotes de Codex, envíos aceptados
+  en `Motor/order-preparation/*/EDITOR/genjutsu_envios`, pedidos del 7 al 21/11: 46, 54, 81, 11, 8,
+  9, 31, 34, 37, 52, 62…): **Genjutsu Motion Transfer** (`hf_mult_motion_control`, casi todos),
+  **Genjutsu Object Swap** (`hf_mult_replace_object`, pedidos 54, 81, 46 y 8), **Wan 3.0 Prime**
+  (`wan3_0_prime`, pedidos 54, 66, 36, 11), **Seedance** (el clip desde la imagen) y **Automático**.
+  Fuera: Genjutsu Lite (último uso 25/10) y Wan 3.0 sin Prime (último uso 11/10). IDs comprobados en
+  el catálogo de Higgsfield el 23/11.
+- **Automático** = `DEFAULT_NEW_MODEL` de Codex: Motion Transfer normal (orden del 29/10). Si el tramo
+  dura menos de 3 s (lo mínimo de Genjutsu), Seedance. La regla de Codex del gancho hablado en otro
+  idioma (Seedance para esa toma) no se copia: Codex tampoco tenía detector y aquí hay un clip por
+  vídeo.
+- **Parámetros** (los de `genjutsu.parametros`): vídeo fuente entero (`video_references`) + imágenes
+  (`image_references`; la imagen inicial aprobada es `image [1]`, obligatoria desde el 29/09), 480p por
+  defecto, créditos normales (`use_unlim: false`). Genjutsu: nada más (sin duración ni audio: son los
+  del original). Wan 3.0 Prime: duración entera del tramo hacia arriba (12,4 s → 13), `aspect_ratio:
+  auto`, `generate_audio: true`, `enable_thinking: false`. Object Swap y Wan llevan además el entorno
+  nuevo (la foto de entorno puesta a mano o la sala del banco) con la frase de Codex al final del
+  prompt. Límites del tramo: Motion 3–30 s, Object Swap y Wan 4–30 s; si el elegido no cabe, no se
+  cambia solo: se pregunta (pregunta «modelo» del lote; en el vídeo suelto, la parada del flujo).
+- **Prompt**: lo escribe el desglose con la regla nueva «Vídeo con Genjutsu y Wan 3.0 Prime»
+  (`reglas/video-genjutsu.md`, copiada de la skill `higgsfield-genjutsu` y sus órdenes), citando
+  `image [N]` y «the source video», como los prompts de Codex. El desglose guarda el modelo para el
+  que escribió (`video_analyses.clip_model`): cambiar el modelo deja el desglose por repetir y el
+  flujo automático lo rehace solo.
+- **Dónde se elige**: en la tarjeta del vídeo (junto a la música), en cada tarjeta y en cada grupo
+  de «Nuevo lote», y en el tablero del lote (fila y cabecera del grupo). El del grupo pasa a los
+  vídeos del grupo sin uno propio y sin clip pedido, como la «Edición de referencia» del grupo.
+- **Vídeos de antes**: se quedan en Seedance (la migración los deja en `seedance_2_5`); los nuevos
+  nacen en «Automático». No se reinterpreta lo ya hecho (como en Codex).
+- **Audio en el montaje**: con Genjutsu el clip trae el mismo audio que el original, así que «Audio
+  original» (el audio de la referencia) cae igual, sin resincronizar; si el dueño eligió canción,
+  manda la canción. Pendiente (otra sesión, montaje): con Wan 3.0 Prime el habla viene traducida en el
+  audio del clip, y hoy el montaje pone el audio de la referencia.
+- Presupuesto y gasto, como siempre: presupuesto con `estimate_video_cost` del modelo (antes de tener
+  la imagen, Genjutsu y Wan llevan el primer fotograma de la referencia como imagen, porque la exigen),
+  envío único y reconciliación por historial.

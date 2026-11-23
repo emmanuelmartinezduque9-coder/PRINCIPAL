@@ -470,16 +470,25 @@ export const batchProducts = pgTable(
     notes: text("notes"),
     /** «Edición de referencia» del grupo: un enlace admitido (como `videos.edit_reference_url`) o `null`. */
     editReferenceUrl: text("edit_reference_url"),
+    /**
+     * Cómo se genera la réplica en los vídeos del grupo (`src/lib/clip-models.ts`); `null`: sin
+     * elección del grupo. Pasa a los vídeos del grupo que no tienen una propia.
+     */
+    clipModel: text("clip_model"),
     updatedAt: instant("updated_at").notNull().defaultNow(),
   },
   (t) => [
     primaryKey({ columns: [t.batchId, t.productId] }),
+    check(
+      "batch_products_clip_model_valid",
+      sql`${t.clipModel} is null or ${t.clipModel} in ('auto', 'seedance_2_5', 'hf_mult_motion_control', 'hf_mult_replace_object', 'wan3_0_prime')`,
+    ),
     check("batch_products_notes_length", sql`${t.notes} is null or char_length(${t.notes}) between 1 and 4000`),
     check(
       "batch_products_edit_reference_url_valid",
       sql`${t.editReferenceUrl} is null or (char_length(${t.editReferenceUrl}) <= 2000 and ${t.editReferenceUrl} like 'https://%')`,
     ),
-    check("batch_products_not_empty", sql`${t.notes} is not null or ${t.editReferenceUrl} is not null`),
+    check("batch_products_not_empty", sql`${t.notes} is not null or ${t.editReferenceUrl} is not null or ${t.clipModel} is not null`),
   ],
 );
 
@@ -601,6 +610,12 @@ export const videos = pgTable(
     frameUse: text("frame_use").notNull().default("start_image"),
     /** Resolución del clip: `480p` (por defecto), `720p` o `1080p`. */
     clipResolution: text("clip_resolution").notNull().default("480p"),
+    /**
+     * Cómo se genera la réplica en Higgsfield (`src/lib/clip-models.ts`): `auto` (lo que hacía
+     * Codex: Genjutsu Motion Transfer) o el ID real del modelo. Los vídeos de antes del 23/11/2026
+     * quedaron en `seedance_2_5`, el modelo con el que se hicieron.
+     */
+    clipModel: text("clip_model").notNull().default("auto"),
     /** La imagen inicial aprobada (un resultado de una generación `frame` de este vídeo). */
     approvedFrameResultId: bigint("approved_frame_result_id", { mode: "number" }).references(
       (): AnyPgColumn => generationResults.id,
@@ -707,6 +722,10 @@ export const videos = pgTable(
     check("videos_reference_source_valid", sql`${t.referenceSource} is null or ${t.referenceSource} in ('file', 'link')`),
     check("videos_frame_use_valid", sql`${t.frameUse} in ('start_image', 'contextual_reference')`),
     check("videos_clip_resolution_valid", sql`${t.clipResolution} in ('480p', '720p', '1080p')`),
+    check(
+      "videos_clip_model_valid",
+      sql`${t.clipModel} in ('auto', 'seedance_2_5', 'hf_mult_motion_control', 'hf_mult_replace_object', 'wan3_0_prime')`,
+    ),
   ],
 );
 
@@ -797,6 +816,11 @@ export const videoAnalyses = pgTable(
     productNotes: text("product_notes"),
     /** Las respuestas del dueño a las preguntas del lote que llevaba (texto, como se mandó). */
     answers: text("answers"),
+    /**
+     * El modelo del clip para el que se escribió el prompt (ya resuelto, nunca `auto`). `null`: un
+     * desglose de antes del 23/11/2026, escrito para Seedance.
+     */
+    clipModel: text("clip_model"),
     spendEntryId: bigint("spend_entry_id", { mode: "number" }),
     createdBy: bigint("created_by", { mode: "number" }).notNull(),
     createdAt: instant("created_at").notNull().defaultNow(),

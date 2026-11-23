@@ -1,4 +1,4 @@
-# Reglas del motor: qué está aplicado y qué falta (23/11/2026, actualizado con Pinterest)
+# Reglas del motor: qué está aplicado y qué falta (23/11/2026, actualizado con Pinterest y los modelos de vídeo)
 
 Contra `docs/reglas-motor-del-dueno.md`.
 
@@ -13,7 +13,7 @@ Contra `docs/reglas-motor-del-dueno.md`.
 | 5 | Fotograma original como ancla, qué cambia / qué se conserva, estética de iPhone 17 Pro Max | Hecho el 22/11 (`reglas/imagen-nano-banana.md`, `analysis.ts`) |
 | 5 | Revisar cada resultado antes de presentarlo (variante, caja, avatar, fondo, acción) | Falta (revisión automática con visión) |
 | 5 | Un frame por clip (aperturas de cada toma) | Falta (hoy: una imagen por vídeo) |
-| 6 | Elegir modelo en la tarjeta: Genjutsu Motion Transfer, Object Swap, Wan 3.0 Prime, Seedance, automático | Falta (hoy: solo Seedance 2.5) |
+| 6 | Elegir modelo en la tarjeta: Genjutsu Motion Transfer, Object Swap, Wan 3.0 Prime, Seedance, automático | **Hecho el 23/11, copiado de Codex** (`src/lib/clip-models.ts`, `clip.ts`, regla `video-genjutsu`): en la tarjeta, en cada tarjeta y grupo del lote. «Automático» = Motion Transfer (Seedance si el tramo < 3 s). Parámetros de `genjutsu.parametros`; vídeos de antes siguen en Seedance. Ver `decisiones-produccion-de-video.md` |
 | 7 | Canción de biblioteca con drop; «Audio original» = audio de la referencia | Hecho |
 | 7 | Elegir canción sola comparando el audio de la referencia con la biblioteca | Falta |
 | 7 | Textos solo en montaje, alemán, CTA | Hecho (montador v1) |
@@ -23,4 +23,4 @@ Contra `docs/reglas-motor-del-dueno.md`.
 | 8 | Métricas: tiempo a frames, créditos por vídeo, tasa de regeneración | Falta |
 | 10 | Flujo automático sin avisos ni botones de «¿generar?», 1 imagen por vídeo por defecto, solo preguntas obligatorias | Hecho el 23/11 (`autopilot.ts` para el vídeo suelto; el lote se autoriza solo; `tests/flujo-automatico.test.ts`) |
 
-Orden de trabajo: 1) modelos en la tarjeta (Genjutsu / Wan) con un frame por toma; 2) revisión automática de frames; 3) referencias múltiples por tarjeta (Pinterest ya hecho); 4) upscale y descripciones; 5) métricas.
+Orden de trabajo: 1) un frame por toma (los modelos en la tarjeta ya están); 2) revisión automática de frames; 3) referencias múltiples por tarjeta (Pinterest ya hecho); 4) upscale y descripciones; 5) métricas.

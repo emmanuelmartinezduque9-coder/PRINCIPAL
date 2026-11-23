@@ -1,3 +1,4 @@
+import { afterAll, beforeAll } from "vitest";
 import { acceptInvite, createInvite, type AuthUser, type Role } from "@/server/auth";
 import { createProduct, type Product } from "@/server/products";
 
@@ -26,5 +27,21 @@ export async function makeProduct(
     summary: over.summary ?? "Hace algo útil",
     language: over.language,
     countries: over.countries,
+  });
+}
+
+/**
+ * Para las pruebas escritas para el flujo de Seedance (antes de poder elegir el modelo del clip,
+ * 23/11/2026): mientras dura el archivo, los vídeos nuevos nacen con Seedance en vez de «Automático»
+ * (Genjutsu Motion Transfer), como los vídeos de antes. Al terminar vuelve el valor de verdad.
+ */
+export function seedanceByDefault(): void {
+  beforeAll(async () => {
+    const { getPool } = await import("@/db/client");
+    await getPool().query("alter table videos alter column clip_model set default 'seedance_2_5'");
+  });
+  afterAll(async () => {
+    const { getPool } = await import("@/db/client");
+    await getPool().query("alter table videos alter column clip_model set default 'auto'");
   });
 }

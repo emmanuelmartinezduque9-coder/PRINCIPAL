@@ -17,8 +17,10 @@ import { KIND_LABELS, KINDS, kindOf, MAX_ADAPTATION, MAX_NOTE } from "./brief-la
 import { appendDictation, DictateButton } from "./dictate-button";
 import type { VideoViewJson } from "./labels";
 import { Segmented } from "./segmented";
+import { ClipModelSelect, clipModelHint } from "./clip-model-picker";
+import { CLIP_MODEL_LABEL, type ClipModelChoice } from "@/lib/clip-models";
 
-type BriefChanges = { kind?: VideoKind; adaptation?: string | null; note?: string | null; hookSeconds?: number; bodyClipIds?: number[] };
+type BriefChanges = { kind?: VideoKind; adaptation?: string | null; note?: string | null; hookSeconds?: number; bodyClipIds?: number[]; clipModel?: ClipModelChoice };
 
 /** Guarda en el vídeo; se ve al instante y, si el servidor no lo acepta, vuelve a como estaba. */
 function useSaveBrief(videoId: number) {
@@ -185,6 +187,13 @@ export function BriefPanel({ view }: { view: VideoViewJson }) {
         />
         {hookOnly ? <SavedHookSeconds value={video.hookSeconds} onSave={(hookSeconds) => save({ hookSeconds })} disabled={!mine} /> : null}
         <MusicPicker value={view.song} onChange={(song) => void saveSong(song)} readOnly={!view.songEditable} className="max-w-64 shrink-0" />
+        <div className="shrink-0" title={clipModelHint(video.clipModel, view.clipModel)}>
+          {mine ? (
+            <ClipModelSelect compact value={video.clipModel} onChange={(clipModel) => clipModel && void save({ clipModel })} />
+          ) : (
+            <span className="text-sm text-muted-foreground">{CLIP_MODEL_LABEL[video.clipModel as ClipModelChoice] ?? video.clipModel}</span>
+          )}
+        </div>
         {productNotes ? (
           <p className="flex min-w-0 items-start gap-2 text-sm text-muted-foreground" title={productNotes}>
             <Layers className="mt-0.5 size-4 shrink-0" role="img" aria-label="Indicaciones del lote" />
@@ -192,6 +201,7 @@ export function BriefPanel({ view }: { view: VideoViewJson }) {
           </p>
         ) : null}
       </div>
+      {view.clipModelProblem ? <p className="text-sm text-destructive">{view.clipModelProblem}</p> : null}
       {hookOnly && (mine || view.bodies.length > 0) ? (
         <div className="flex flex-col gap-2">
           <span className="text-sm font-medium">Cuerpos</span>

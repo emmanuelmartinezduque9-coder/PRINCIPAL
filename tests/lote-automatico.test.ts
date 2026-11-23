@@ -31,7 +31,7 @@ import {
 import { getVideoFor, type Video } from "@/server/videos/videos";
 import { POST as enviarRoute } from "@/app/api/lotes/[id]/enviar/route";
 import { fakeMessages, type FakeCall } from "./helpers/fake-llm";
-import { makeProduct, makeUser, TEST_PASSWORD } from "./helpers/fixtures";
+import { makeProduct, makeUser, TEST_PASSWORD, seedanceByDefault } from "./helpers/fixtures";
 import { truncateAll } from "./helpers/global-setup";
 import { instantPinterest } from "./helpers/pinterest";
 
@@ -78,6 +78,9 @@ function ffmpeg(args: string[]): void {
   if (made.status !== 0) throw new Error(made.stderr.toString());
 }
 
+
+// Pruebas del flujo de Seedance (antes de poder elegir el modelo del clip).
+seedanceByDefault();
 beforeAll(() => {
   dir = fs.mkdtempSync(path.join(os.tmpdir(), "prueba-lote-auto-"));
   ffmpeg(["-f", "lavfi", "-i", "color=c=red:s=360x640", "-frames:v", "1", path.join(dir, "foto.jpg")]);

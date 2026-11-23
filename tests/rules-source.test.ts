@@ -14,10 +14,10 @@ const indice = JSON.parse(text("reglas/indice.json")) as Array<{
   sources?: string[];
 }>;
 const filesFromIndice = () => indice.map((entry) => `reglas/${entry.file}`);
-const NUEVAS = ["adaptacion-de-conceptos", "imagen-nano-banana", "video-seedance", "alta-de-producto", "nichos-con-datos", "referencias-pinterest"];
+const NUEVAS = ["adaptacion-de-conceptos", "imagen-nano-banana", "video-seedance", "video-genjutsu", "alta-de-producto", "nichos-con-datos", "referencias-pinterest"];
 
 describe("reglas sembradas: la copia limpia está limpia y conserva el criterio", () => {
-  it("el índice lista las diez reglas y todos sus originales existen", () => {
+  it("el índice lista las once reglas y todos sus originales existen", () => {
     expect(indice.map((e) => e.slug)).toEqual([
       "angulos-de-venta",
       "angulos-ejemplos",
@@ -25,6 +25,7 @@ describe("reglas sembradas: la copia limpia está limpia y conserva el criterio"
       "adaptacion-de-conceptos",
       "imagen-nano-banana",
       "video-seedance",
+      "video-genjutsu",
       "alta-de-producto",
       "nombres-de-marca",
       "nichos-con-datos",
@@ -63,6 +64,15 @@ describe("reglas sembradas: la copia limpia está limpia y conserva el criterio"
     expect(angulos).toContain(
       "característica comprobada → utilidad plausible → situación reconocible → motivo para pagar",
     );
+  });
+
+  it("la regla de Genjutsu y Wan conserva las órdenes de Codex", () => {
+    const genjutsu = text("reglas/video-genjutsu.md");
+    expect(genjutsu).toContain("Genjutsu normal Motion Transfer");
+    expect(genjutsu).toContain("«Los vídeos con Genjutsu no se hacen sin el frame inicial»");
+    expect(genjutsu).toContain("No text overlays, no captions.");
+    expect(genjutsu).toContain("agrupar por lugar real, no por nombre de clip");
+    expect(genjutsu).toContain("No aplicar los bloques estéticos de Genjutsu o Seedance");
   });
 
   it("conservan el criterio del dueño en producción de vídeo", () => {

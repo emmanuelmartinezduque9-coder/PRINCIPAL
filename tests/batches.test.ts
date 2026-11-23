@@ -10,7 +10,7 @@ import { createVideo, getVideoFor } from "@/server/videos/videos";
 import { GET as listRoute, POST as createRoute } from "@/app/api/lotes/route";
 import { GET as viewRoute } from "@/app/api/lotes/[id]/route";
 import { POST as addRoute } from "@/app/api/lotes/[id]/videos/route";
-import { makeProduct, makeUser, TEST_PASSWORD } from "./helpers/fixtures";
+import { makeProduct, makeUser, TEST_PASSWORD, seedanceByDefault } from "./helpers/fixtures";
 import { truncateAll } from "./helpers/global-setup";
 
 const cookie = vi.hoisted(() => ({ value: undefined as string | undefined }));
@@ -53,6 +53,9 @@ afterAll(async () => {
   await stopWorker();
 });
 
+
+// Pruebas del flujo de Seedance (antes de poder elegir el modelo del clip).
+seedanceByDefault();
 describe("lotes", () => {
   it("crear: nombre obligatorio y como mucho 100 caracteres", async () => {
     const lote = await createBatch(ana, "  Pedido 54 ");

@@ -35,6 +35,8 @@ const row = (over: Partial<BatchRowJson> = {}): BatchRowJson => ({
   productName: "P",
   note: null,
   editReferenceUrl: null,
+  clipModel: "auto",
+  clipModelResolved: "hf_mult_motion_control",
   kind: "replicar",
   hookSeconds: 4,
   bodies: 0,

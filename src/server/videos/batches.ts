@@ -1,4 +1,5 @@
 import { pinterestView, type PinterestView } from "@/server/videos/pinterest";
+import { resolveClipModel, type ClipModel } from "@/lib/clip-models";
 import { and, asc, count, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import { getDb, schema } from "@/db/client";
 import { createVideoFromLink } from "@/server/agent";
@@ -19,6 +20,7 @@ import { avatarSummaries, isChoosableAvatar } from "@/server/avatars";
 import {
   audioColumns,
   canChooseSong,
+  checkClipModel,
   checkEditReferenceUrl,
   checkSongChoice,
   checkVariantChoice,
@@ -118,7 +120,7 @@ export async function setBatchProductNotes(user: AuthUser, batchId: number, prod
   const where = and(eq(schema.batchProducts.batchId, batch.id), eq(schema.batchProducts.productId, productId));
   if (clean === null) {
     // Sin indicaciones: la fila sigue solo si guarda la «Edición de referencia» del grupo.
-    await db.delete(schema.batchProducts).where(and(where, isNull(schema.batchProducts.editReferenceUrl)));
+    await db.delete(schema.batchProducts).where(and(where, isNull(schema.batchProducts.editReferenceUrl), isNull(schema.batchProducts.clipModel)));
     await db.update(schema.batchProducts).set({ notes: null, updatedAt: new Date() }).where(where);
     return null;
   }
@@ -145,7 +147,7 @@ export async function setBatchProductEditReference(user: AuthUser, batchId: numb
     const [before] = await tx.select({ url: table.editReferenceUrl }).from(table).where(where).for("update");
     const previous = before?.url ?? null;
     if (clean === null) {
-      await tx.delete(table).where(and(where, isNull(table.notes)));
+      await tx.delete(table).where(and(where, isNull(table.notes), isNull(table.clipModel)));
       await tx.update(table).set({ editReferenceUrl: null, updatedAt: new Date() }).where(where);
     } else {
       await tx
@@ -158,6 +160,47 @@ export async function setBatchProductEditReference(user: AuthUser, batchId: numb
       .update(videos)
       .set({ editReferenceUrl: clean, updatedAt: new Date() })
       .where(and(eq(videos.batchId, batch.id), eq(videos.productId, productId), inherits));
+    return clean;
+  });
+}
+
+/**
+ * Guarda cómo se genera la réplica en un producto del lote (`auto`, un modelo o `null`: sin elección
+ * del grupo) y lo aplica, como la «Edición de referencia» del grupo, a los vídeos de ese producto en
+ * el lote que no tienen uno propio: los que están en «Automático» o en el que tenía el grupo hasta
+ * ahora. Un vídeo con su propio modelo no se toca, ni uno que ya tiene clip pedido (lo hecho no se
+ * reinterpreta). Solo quien creó el lote y con un producto que ve.
+ */
+export async function setBatchProductClipModel(user: AuthUser, batchId: number, productId: number, value: unknown): Promise<string | null> {
+  const batch = await ownBatch(user, batchId);
+  const clean = value === null || value === undefined ? null : checkClipModel(value);
+  await listProductPhotos(user, productId);
+  const table = schema.batchProducts;
+  const where = and(eq(table.batchId, batch.id), eq(table.productId, productId));
+  return getDb().transaction(async (tx) => {
+    const [before] = await tx.select({ clipModel: table.clipModel }).from(table).where(where).for("update");
+    const previous = before?.clipModel ?? "auto";
+    if (clean === null) {
+      await tx.delete(table).where(and(where, isNull(table.notes), isNull(table.editReferenceUrl)));
+      await tx.update(table).set({ clipModel: null, updatedAt: new Date() }).where(where);
+    } else {
+      await tx
+        .insert(table)
+        .values({ batchId: batch.id, productId, clipModel: clean })
+        .onConflictDoUpdate({ target: [table.batchId, table.productId], set: { clipModel: clean, updatedAt: new Date() } });
+    }
+    const inherits = previous === "auto" ? eq(videos.clipModel, "auto") : or(eq(videos.clipModel, "auto"), eq(videos.clipModel, previous));
+    await tx
+      .update(videos)
+      .set({ clipModel: clean ?? "auto", skipAutoAnalysis: false, updatedAt: new Date() })
+      .where(
+        and(
+          eq(videos.batchId, batch.id),
+          eq(videos.productId, productId),
+          inherits,
+          sql`not exists (select 1 from generations g where g.video_id = ${videos.id} and g.kind = 'clip')`,
+        ),
+      );
     return clean;
   });
 }
@@ -307,6 +350,8 @@ export async function addVideoToBatch(
     songId?: unknown;
     /** «Referencia de edición»: un enlace admitido, o `null` / sin enviar. */
     editReferenceUrl?: unknown;
+    /** Cómo se genera la réplica: `auto` (por defecto) o un modelo. */
+    clipModel?: unknown;
   },
 ): Promise<Video> {
   const batch = await ownBatch(user, batchId, NOT_CREATOR);
@@ -314,6 +359,7 @@ export async function addVideoToBatch(
 
   const note = cleanNote(input.note);
   const editReferenceUrl = checkEditReferenceUrl(input.editReferenceUrl) ?? null;
+  const clipModel = input.clipModel === undefined || input.clipModel === null ? undefined : checkClipModel(input.clipModel);
   const { kind, adaptation, hookSeconds } = checkKindInput(input);
   if (!isAvatarMode(input.avatarMode)) throw new HttpError(400, "Valor no válido.");
   const avatarMode = input.avatarMode;
@@ -349,6 +395,7 @@ export async function addVideoToBatch(
     ...(bodyClipIds === undefined ? {} : { bodyClipIds }),
     ...audioColumns(songId),
     editReferenceUrl,
+    ...(clipModel === undefined ? {} : { clipModel }),
   };
   return input.linkUrl == null ? createVideo(user, input.productId, extras) : createVideoFromLink(user, input.productId, input.linkUrl, extras);
 }
@@ -362,6 +409,9 @@ export interface BatchRow {
   note: string | null;
   /** «Referencia de edición»: el enlace cuyo montaje se quiere imitar, o `null`. */
   editReferenceUrl: string | null;
+  /** Cómo se genera la réplica: la elección (`auto` o un modelo) y el modelo con el que sale. */
+  clipModel: string;
+  clipModelResolved: ClipModel;
   kind: VideoKind;
   /** Duración del gancho (solo cuenta con «Solo gancho»). */
   hookSeconds: number;
@@ -420,6 +470,8 @@ export interface BatchGroup {
   coverPhotoId: number | null;
   notes: string | null;
   editReferenceUrl: string | null;
+  /** Cómo se genera la réplica en el grupo (pasa a sus vídeos sin una propia); `null`: sin elección. */
+  clipModel: string | null;
   videos: number;
 }
 
@@ -465,6 +517,7 @@ export async function batchView(user: AuthUser, batchId: number): Promise<BatchV
             hookSeconds: analyses.hookSeconds,
             productNotes: analyses.productNotes,
             answers: analyses.answers,
+            clipModel: analyses.clipModel,
             risks: sql<Analysis["risks"] | null>`${analyses.result}->'risks'`,
           })
           .from(analyses)
@@ -474,11 +527,17 @@ export async function batchView(user: AuthUser, batchId: number): Promise<BatchV
 
   const groupIds = [...new Set(list.map((video) => video.productId))];
   const notes = await db
-    .select({ productId: schema.batchProducts.productId, notes: schema.batchProducts.notes, editReferenceUrl: schema.batchProducts.editReferenceUrl })
+    .select({
+      productId: schema.batchProducts.productId,
+      notes: schema.batchProducts.notes,
+      editReferenceUrl: schema.batchProducts.editReferenceUrl,
+      clipModel: schema.batchProducts.clipModel,
+    })
     .from(schema.batchProducts)
     .where(eq(schema.batchProducts.batchId, batch.id));
   const notesOf = new Map(notes.map((row) => [row.productId, row.notes]));
   const editReferenceOf = new Map(notes.map((row) => [row.productId, row.editReferenceUrl]));
+  const clipModelOf = new Map(notes.map((row) => [row.productId, row.clipModel]));
   const covers = await coverPhotoIds(user, groupIds);
   const generated =
     list.length === 0
@@ -517,6 +576,8 @@ export async function batchView(user: AuthUser, batchId: number): Promise<BatchV
         productName: products.get(video.productId) ?? "",
         note: video.note,
         editReferenceUrl: video.editReferenceUrl,
+        clipModel: video.clipModel,
+        clipModelResolved: resolveClipModel(video.clipModel, video.segmentDurationMs),
         kind: video.kind as VideoKind,
         hookSeconds: video.hookSeconds,
         bodies: bodiesOf.get(video.id)?.length ?? 0,
@@ -556,6 +617,7 @@ export async function batchView(user: AuthUser, batchId: number): Promise<BatchV
       coverPhotoId: covers.get(productId) ?? null,
       notes: notesOf.get(productId) ?? null,
       editReferenceUrl: editReferenceOf.get(productId) ?? null,
+      clipModel: clipModelOf.get(productId) ?? null,
       videos: list.filter((video) => video.productId === productId).length,
     }),
   );
@@ -612,6 +674,7 @@ export async function duplicateBatchVideo(user: AuthUser, batchId: number, video
       bodyClipIds: video.bodyClipIds,
       environmentPhotoId: video.environmentPhotoId,
       clipResolution: video.clipResolution,
+      clipModel: video.clipModel,
       songId: video.songId,
       audioMode: video.audioMode,
       ownerAnswers: video.ownerAnswers,
@@ -656,6 +719,7 @@ export async function duplicateBatchVideo(user: AuthUser, batchId: number, video
         adaptation: valid.adaptation,
         hookSeconds: valid.hookSeconds,
         productNotes: valid.productNotes,
+        clipModel: valid.clipModel,
         answers: valid.answers,
         // Sin cargo: lo que costó ya cuenta en el original.
         spendEntryId: null,

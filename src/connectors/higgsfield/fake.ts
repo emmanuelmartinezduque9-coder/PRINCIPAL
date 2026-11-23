@@ -98,7 +98,8 @@ export function createFakeHiggsfield(
   }
 
   const imageCost = (count: number) => IMAGE_CREDITS * count;
-  const videoCost = (request: HfVideoRequest) => request.duration * VIDEO_CREDITS_PER_SECOND[request.resolution];
+  /** Genjutsu no lleva duración (es la del vídeo fuente): el simulado cuenta 10 s. */
+  const videoCost = (request: HfVideoRequest) => ("duration" in request ? request.duration : 10) * VIDEO_CREDITS_PER_SECOND[request.resolution];
 
   function submit(type: "image" | "video", request: HfImageRequest | HfVideoRequest, count: number, unitCost: number) {
     const accepted = Math.min(count, state.maxAccepted ?? count);

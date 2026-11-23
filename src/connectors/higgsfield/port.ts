@@ -34,7 +34,8 @@ export interface HfImageRequest {
   medias: HfMediaRef[];
 }
 
-export interface HfVideoRequest {
+/** Seedance 2.5 desde la imagen aprobada (sin audio). */
+export interface HfSeedanceRequest {
   model: "seedance_2_5";
   mode: "omni_reference";
   prompt: string;
@@ -45,6 +46,37 @@ export interface HfVideoRequest {
   bitrateMode: "high";
   medias: HfMediaRef[];
 }
+
+/**
+ * Genjutsu (Motion Transfer u Object Swap), como lo enviaba Codex (`genjutsu.parametros`): el
+ * vídeo fuente entero (`video_references`, exactamente uno) y las imágenes (`image_references`,
+ * la imagen aprobada entre ellas). Sin duración (es la del vídeo fuente) y sin relación de
+ * aspecto (la del vídeo fuente); el audio es el del vídeo fuente.
+ */
+export interface HfGenjutsuRequest {
+  model: "hf_mult_motion_control" | "hf_mult_replace_object";
+  prompt: string;
+  resolution: "480p" | "720p" | "1080p";
+  medias: HfMediaRef[];
+}
+
+/**
+ * Wan 3.0 Prime como lo enviaba Codex: vídeo fuente + imágenes (la aprobada entre ellas; con
+ * referencias no admite `start_image`), duración entera del tramo, `aspect_ratio: auto`, audio
+ * propio y sin «thinking».
+ */
+export interface HfWanRequest {
+  model: "wan3_0_prime";
+  prompt: string;
+  resolution: "480p" | "720p" | "1080p";
+  duration: number;
+  aspectRatio: "auto";
+  generateAudio: true;
+  enableThinking: false;
+  medias: HfMediaRef[];
+}
+
+export type HfVideoRequest = HfSeedanceRequest | HfGenjutsuRequest | HfWanRequest;
 
 export interface HfSubmitResult {
   /** Trabajos que Higgsfield aceptó (uno por candidata aceptada). */

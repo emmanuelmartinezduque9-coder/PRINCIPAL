@@ -17,7 +17,8 @@ import { PINTEREST_PENDING } from "@/server/videos/pinterest";
 // Registra el constructor de la imagen inicial (`frame`) en las generaciones.
 import "@/server/videos/frame";
 import { MAX_REGENERATIONS, quoteGeneration, requestGeneration, type GenDeps, type GenerationKind } from "@/server/videos/generations";
-import { getVideoFor, setVideoSong, referenceOutdated, REFERENCE_OUTDATED, staleness, updateVideoChoices, withProductNotes, type Video } from "@/server/videos/videos";
+import { clipModelProblem, getVideoFor, setVideoSong, referenceOutdated, REFERENCE_OUTDATED, staleness, updateVideoChoices, withProductNotes, type Video } from "@/server/videos/videos";
+import { CLIP_MODEL_LABEL, CLIP_MODELS, SEEDANCE, sourceProblem } from "@/lib/clip-models";
 
 /**
  * «Enviar lote»: el dueño envía el lote una vez y no se le molesta más.
@@ -183,7 +184,7 @@ export interface QuestionOption {
 export interface BatchQuestion {
   videoId: number;
   key: string;
-  kind: "claude" | "riesgo" | "cancion" | "avatar" | "biblioteca" | "variante" | "articulo" | "referencia" | "adaptacion" | "desglose";
+  kind: "claude" | "riesgo" | "cancion" | "avatar" | "biblioteca" | "variante" | "articulo" | "referencia" | "adaptacion" | "desglose" | "modelo";
   text: string;
   options: QuestionOption[];
   /** Se puede responder escribiendo. */
@@ -327,6 +328,20 @@ async function askRow(user: AuthUser, row: Row, photos: PhotoInfo[], linkFailed:
   if (video.kind === "adaptacion_concepto" && !video.adaptation?.trim()) {
     questions.push({ key: "sys:adaptacion", kind: "adaptacion", text: "¿Qué adaptación quieres?", options: [], freeText: true, href: null });
   }
+  // El modelo elegido no admite este tramo (p. ej. Object Swap con menos de 4 s): no se cambia solo
+  // (Codex: «no sustituirlo; dejar pendiente y consultar»), se pregunta con qué modelo se hace.
+  const modelProblem = clipModelProblem(video);
+  if (modelProblem) {
+    const fits = CLIP_MODELS.filter((model) => model === SEEDANCE || sourceProblem(model, video.segmentDurationMs ?? 0) === null);
+    questions.push({
+      key: "sys:modelo",
+      kind: "modelo",
+      text: modelProblem,
+      options: [...fits.map((model) => ({ value: model, label: CLIP_MODEL_LABEL[model] })), skipOption],
+      freeText: false,
+      href: null,
+    });
+  }
   if (questions.length > 0) return ask(questions);
 
   const [latest] = row.analyses;
@@ -440,6 +455,9 @@ export async function answerQuestion(user: AuthUser, batchId: number, input: { v
     await saveAnswer(video.id, { key: question.key, question: question.text, answer: label, inBrief: false });
   } else if (question.kind === "adaptacion") {
     await updateVideoChoices(user, video.id, { adaptation: value });
+  } else if (question.kind === "modelo") {
+    if (!question.options.some((o) => o.value === value)) throw new HttpError(400, BAD_ANSWER);
+    await updateVideoChoices(user, video.id, { clipModel: value });
   } else if (question.kind === "desglose") {
     if (value !== RETRY || !question.options.some((o) => o.value === RETRY)) throw new HttpError(400, BAD_ANSWER);
     await requestAnalysis(user, video.id);

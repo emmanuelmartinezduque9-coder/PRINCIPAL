@@ -54,6 +54,8 @@ import {
 } from "./labels";
 import { batchZipUrl, downloadInBackground, FinishedDownloads } from "./finished-downloads";
 import { RowThumb } from "./row-thumb";
+import { ClipModelSelect, clipModelHint } from "@/components/videos/clip-model-picker";
+import { CLIP_MODEL_LABEL, type ClipModelChoice } from "@/lib/clip-models";
 import { runPool } from "./run-pool";
 
 const TONE: Record<Tone, { chip: string; dot: string }> = {
@@ -181,6 +183,39 @@ function KindChip({ row }: { row: BatchRowJson }) {
     >
       <Icon className="size-3" aria-hidden />
       {hookOnly ? `Gancho + ${row.bodies}` : short}
+    </span>
+  );
+}
+
+/**
+ * El modelo del vídeo de una fila: quien lo creó lo cambia aquí (se guarda al elegir y rehace el
+ * desglose solo); los demás lo ven. Con «Automático», el título dice con qué modelo sale.
+ */
+function RowModel({ row, onDone }: { row: BatchRowJson; onDone: () => void }) {
+  const [saving, setSaving] = useState(false);
+  const title = clipModelHint(row.clipModel, row.clipModelResolved);
+  async function save(clipModel: ClipModelChoice | null) {
+    if (!clipModel) return;
+    setSaving(true);
+    try {
+      await api(`/api/videos/${row.id}`, { method: "PUT", body: JSON.stringify({ clipModel }) });
+      onDone();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "No se pudo guardar el modelo.");
+    } finally {
+      setSaving(false);
+    }
+  }
+  if (!row.mine) {
+    return (
+      <span title={title} className="inline-flex h-5 shrink-0 items-center rounded-md bg-muted px-1.5 text-[11px] font-medium text-muted-foreground">
+        {CLIP_MODEL_LABEL[row.clipModel as ClipModelChoice] ?? row.clipModel}
+      </span>
+    );
+  }
+  return (
+    <span title={title} className="inline-flex">
+      <ClipModelSelect compact label={`Modelo del vídeo de ${row.title}`} value={row.clipModel} disabled={saving} onChange={(next) => void save(next)} />
     </span>
   );
 }
@@ -757,6 +792,7 @@ export function BatchBoard({ batchId }: { batchId: number }) {
                               {row.title}
                             </Link>
                             <KindChip row={row} />
+                            <RowModel row={row} onDone={refresh} />
                           </div>
                           {row.link ? (
                             <div className="mt-0.5 flex min-w-0">

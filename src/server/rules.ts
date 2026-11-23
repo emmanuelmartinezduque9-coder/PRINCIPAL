@@ -19,6 +19,7 @@ export const RULE_SLUGS = {
   adaptacion: "adaptacion-de-conceptos",
   imagen: "imagen-nano-banana",
   video: "video-seedance",
+  genjutsu: "video-genjutsu",
 } as const;
 
 /** Reglas de producción de vídeo que se entregan juntas al desglose, a la imagen y al clip. */

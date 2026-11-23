@@ -27,7 +27,7 @@ import { POST as generarRoute } from "@/app/api/videos/[videoId]/imagen/generar/
 import { POST as presupuestoRoute } from "@/app/api/videos/[videoId]/imagen/presupuesto/route";
 import { POST as rechazarRoute } from "@/app/api/videos/[videoId]/imagen/rechazar/route";
 import { GET as getModelRoute, PUT as putModelRoute } from "@/app/api/ajustes/modelo-imagen/route";
-import { makeProduct, makeUser, TEST_PASSWORD } from "./helpers/fixtures";
+import { makeProduct, makeUser, TEST_PASSWORD, seedanceByDefault } from "./helpers/fixtures";
 import { truncateAll } from "./helpers/global-setup";
 
 const cookie = vi.hoisted(() => ({ value: undefined as string | undefined }));
@@ -67,6 +67,9 @@ function makeImage(name: string, color: string): Buffer {
   return fs.readFileSync(file);
 }
 
+
+// Pruebas del flujo de Seedance (antes de poder elegir el modelo del clip).
+seedanceByDefault();
 beforeAll(() => {
   dir = fs.mkdtempSync(path.join(os.tmpdir(), "prueba-imagen-inicial-"));
   jpeg = makeImage("foto.jpg", "red");

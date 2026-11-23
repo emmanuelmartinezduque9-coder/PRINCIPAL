@@ -21,7 +21,7 @@ import {
 import { listLibrary } from "@/server/videos/library";
 import { createVideo } from "@/server/videos/videos";
 import { GET as objectRoute } from "@/app/api/objetos/[...key]/route";
-import { makeProduct, makeUser } from "./helpers/fixtures";
+import { makeProduct, makeUser, seedanceByDefault } from "./helpers/fixtures";
 import { truncateAll } from "./helpers/global-setup";
 import { makeSampleVideo } from "./helpers/sample-video";
 
@@ -59,6 +59,9 @@ function makePng(target: string): Promise<void> {
   });
 }
 
+
+// Pruebas del flujo de Seedance (antes de poder elegir el modelo del clip).
+seedanceByDefault();
 beforeAll(async () => {
   dir = await fs.mkdtemp(path.join(os.tmpdir(), "almacen-prueba-"));
   videoBytes = await fs.readFile(await makeSampleVideo(dir, { seconds: 3 }));
