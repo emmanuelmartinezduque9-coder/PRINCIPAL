@@ -37,7 +37,7 @@ import { ffmpegLog, ffmpegOutput } from "@/server/media/ffmpeg-crudo";
 export const SAMPLES_PER_SECOND = 2;
 /** Lo más que se mira de la referencia (como el tramo de la réplica). */
 export const MAX_REFERENCE_S = 30;
-const SAMPLE_WIDTH = 288;
+const SAMPLE_WIDTH = 540;
 const REFINE_FPS = 24;
 const REFINE_WIDTH = 108;
 
@@ -82,11 +82,12 @@ type Answer = z.infer<typeof answerSchema>;
 export const REFERENCE_EDIT_INSTRUCTIONS = `Eres el editor de anuncios en vídeo del dueño (TikTok/Reels para Alemania). Te paso el vídeo de REFERENCIA en fotogramas a ${SAMPLES_PER_SECOND} por segundo, cada uno con su tiempo. El anuncio nuevo copia su edición: los mismos rótulos editoriales, en el mismo momento, adaptados a NUESTRO producto.
 
 1. Lee TODOS los rótulos editoriales superpuestos (textos puestos en edición encima del vídeo, normalmente blancos con contorno). NO cuentes subtítulos automáticos del habla, textos que forman parte de la escena (envases, carteles, pantallas), marcas de agua ni la interfaz de TikTok/Instagram. Si no hay ninguno, devuelve la lista vacía.
-2. Un rótulo nuevo empieza cuando cambia el texto. desde_s es el tiempo de la PRIMERA muestra en la que se lee el texto nuevo (el primero suele empezar en 0). Si un texto aparece palabra a palabra, cuenta como un solo rótulo desde que empieza.
-3. franja_superior / franja_inferior: entre qué alturas del fotograma (0 arriba, 1 abajo) está ese rótulo.
-4. texto_adaptado: la versión para nuestro anuncio en alemán natural de Alemania, fiel al original: mismo sentido, intención, tono, estructura y mayúsculas. Cambia SOLO la marca, el producto o la palabra clave ajenos por los nuestros (nombre del producto que te doy). Conserva la tienda que nombre la referencia si existe en Alemania; no inventes tiendas, ofertas, precios ni beneficios que no estén. Emojis: conserva los emocionales compatibles y cambia los que no encajan con nuestro producto por uno de su nicho (un emoji de uñas no vale para un producto de pelo). Marca con | los saltos de línea (como mucho 3 líneas de unos 30 caracteres).
-5. es_cta: true en el rótulo de llamada a la acción («Comment X…», «Kommentiere…», «Link in bio»…). Su texto_adaptado es la misma llamada con la palabra clave de nuestro producto, por defecto «Kommentiere „{PRODUCTO}“, wenn du auch eine willst!» con los emojis del original adaptados, salvo que el original diga otra cosa concreta que se pueda traducir fiel.
-6. traduccion_es: el texto_adaptado en español, para que el dueño lo revise (no se imprime).
+2. texto_original: cópialo EXACTO, carácter a carácter, con sus emojis tal cual (mira bien cada emoji: 🤭 no es 🤗, 😍 no es 🥰) y con | donde la referencia salta de línea, también cuando los emojis van solos en su propia línea.
+3. Un rótulo nuevo empieza cuando cambia el texto. desde_s es el tiempo de la PRIMERA muestra en la que se lee el texto nuevo (el primero suele empezar en 0). Si un texto aparece palabra a palabra, cuenta como un solo rótulo desde que empieza.
+4. franja_superior / franja_inferior: entre qué alturas del fotograma (0 arriba, 1 abajo) está ese rótulo.
+5. texto_adaptado: la versión para nuestro anuncio en alemán natural de Alemania, fiel al original: mismo sentido, intención, tono, estructura, mayúsculas y LOS MISMOS SALTOS DE LÍNEA (| en el mismo sitio; si los emojis van en su propia línea, también aquí). Si el original ya está en alemán, déjalo igual salvo la marca o la palabra clave. Cambia SOLO la marca, el producto o la palabra clave ajenos por los nuestros (nombre del producto que te doy). Conserva la tienda que nombre la referencia si existe en Alemania; no inventes tiendas, ofertas, precios ni beneficios que no estén. Emojis: los MISMOS de la referencia, en el mismo orden; cambia solo uno que no encaje con nuestro producto por uno de su nicho (un emoji de uñas no vale para un producto de pelo).
+6. es_cta: true en el rótulo de llamada a la acción («Comment X…», «Kommentiere…», «Link in bio»…). Su texto_adaptado es la misma llamada con la palabra clave de nuestro producto entre comillas alemanas (p. ej. «Kommentiere, wenn du auch eins willst!» → «Kommentiere „{PRODUCTO}“, wenn du auch eins willst!»), con los emojis y saltos de línea del original tal cual. Si el original no nombra nada, añade solo la palabra clave.
+7. traduccion_es: el texto_adaptado en español, para que el dueño lo revise (no se imprime).
 Responde solo con el JSON pedido.`;
 
 async function sha256File(file: string): Promise<string> {
@@ -163,7 +164,7 @@ export interface ReferenceEditContext {
 }
 
 const cacheKey = (videoId: number, sha: string, productName: string) =>
-  `ediciones/${videoId}/${crypto.createHash("sha256").update(`${sha}\n${productName}\nv1`).digest("hex").slice(0, 32)}.json`;
+  `ediciones/${videoId}/${crypto.createHash("sha256").update(`${sha}\n${productName}\nv2`).digest("hex").slice(0, 32)}.json`;
 
 /** La edición de la referencia (rótulos adaptados con sus tiempos y cortes). Lanza si Claude no puede. */
 export async function referenceEdit(ctx: ReferenceEditContext): Promise<ReferenceEdit> {

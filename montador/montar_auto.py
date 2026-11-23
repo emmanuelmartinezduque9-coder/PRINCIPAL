@@ -231,23 +231,86 @@ def lineas(texto):
     return partes if len(partes) > 1 else None
 
 
-def rotulos_replica(edicion, frames):
-    """Rótulos de una réplica copiados de la referencia (Codex, `render-local.py` con réplica completa): cada cambio
-    en el mismo punto proporcional del clip, `round(t × fotogramas / duración de la referencia)`, en la caja 06B."""
+MIN_PLANO_S = 0.28  # como el motor de Codex: cortes a menos de esto son el mismo cambio
+
+
+def planos_como_referencia(path, frames, edicion):
+    """Los tramos del clip para que dure y corte como la referencia (Codex: `cut-plan.json` con los tramos de cada
+    toma, `first_frame`/`end_frame_exclusive`, recortados a la referencia). Con los mismos planos que la referencia,
+    cada plano del clip dura lo que el suyo; si no coinciden, cada plano se recorta en proporción para que el total sea
+    la duración de la referencia. Siempre desde el principio de cada plano y sin acelerar ni ralentizar. Devuelve
+    (tramos [(in, out)], modo, cortes de la referencia en s); con un clip que no es más largo, el clip entero."""
+    ref = float(edicion.get('duracion_s') or 0)
+    ref_cuts = sorted(float(c) for c in edicion.get('cortes_s') or [] if 0 < float(c) < ref)
+    objetivo = round(ref * FPS)
+    if ref <= 0 or frames <= objetivo:
+        return [(0, frames)], 'entero', ref_cuts
+    cortes = []
+    for t in sorted(m.scene_cuts(path, 0.3)):
+        f = int(round(t * FPS))
+        if MIN_PLANO_S * FPS <= f <= frames - MIN_PLANO_S * FPS and (not cortes or f - cortes[-1] >= MIN_PLANO_S * FPS):
+            cortes.append(f)
+    bordes = [0] + cortes + [frames]
+    planos = list(zip(bordes, bordes[1:]))
+    ref_bordes = [0.0] + ref_cuts + [ref]
+    ref_lens = [b - a for a, b in zip(ref_bordes, ref_bordes[1:])]
+    if len(planos) == len(ref_lens):
+        modo, metas = 'plano a plano', [max(1, round(x * FPS)) for x in ref_lens]
+    else:
+        modo, metas = 'proporcional', [max(1, round((b - a) * objetivo / frames)) for a, b in planos]
+    return [(a, a + min(b - a, n)) for (a, b), n in zip(planos, metas)], modo, ref_cuts
+
+
+def tiempo_en_salida(t, tramos, modo, ref, ref_cuts):
+    """Dónde cae en el montaje el instante `t` de la referencia."""
+    total = sum(b - a for a, b in tramos)
+    if modo == 'plano a plano':
+        ref_bordes = [0.0] + list(ref_cuts) + [ref]
+        salida = 0
+        for k, (a, b) in enumerate(tramos):
+            if t < ref_bordes[k + 1] or k == len(tramos) - 1:
+                return round(min(salida + round((t - ref_bordes[k]) * FPS), salida + (b - a) - 1, total - 1))
+            salida += b - a
+    return min(total - 1, round(t * total / ref)) if ref > 0 else 0
+
+
+def cortes_del_montaje(tramos):
+    """Fotogramas de salida donde empieza cada tramo después del primero."""
+    out, t = [], 0
+    for a, b in tramos[:-1]:
+        t += b - a
+        out.append(t)
+    return out
+
+
+def rotulos_replica(edicion, frames, tramos=None, modo='entero'):
+    """Rótulos de una réplica copiados de la referencia, en la caja 06B: con el montaje al tiempo de la referencia,
+    en el mismo instante que en ella; con el clip entero, en el punto proporcional (Codex, `render-local.py`:
+    `round(t × fotogramas / duración de la referencia)`)."""
     ref = float(edicion.get('duracion_s') or 0)
     filas = [r for r in edicion.get('rotulos') or [] if str(r.get('texto') or '').strip()]
     if ref <= 0 or not filas:
         return []
-    inicios = []
+    tramos = tramos or [(0, frames)]
+    total = sum(b - a for a, b in tramos)
+    ref_cuts = sorted(float(c) for c in edicion.get('cortes_s') or [] if 0 < float(c) < ref)
+    cortes_salida = cortes_del_montaje(tramos)
+    inicios, usadas = [], []
     for i, r in enumerate(filas):
-        f = 0 if i == 0 else min(frames - 1, max(1, round(float(r['desde_s']) * frames / ref)))
+        f = 0 if i == 0 else max(1, tiempo_en_salida(float(r['desde_s']), tramos, modo, ref, ref_cuts))
+        if i and modo == 'proporcional' and cortes_salida:
+            # En la referencia el cambio cae en un corte: aquí, en el corte del montaje más cercano (≤ 0,4 s).
+            cerca = min(cortes_salida, key=lambda c: abs(c - f))
+            if abs(cerca - f) <= 0.4 * FPS:
+                f = cerca
         if inicios and f <= inicios[-1]:
             continue
         inicios.append(f)
+        usadas.append(r)
     out = []
     for i, f in enumerate(inicios):
-        fin = inicios[i + 1] if i + 1 < len(inicios) else frames
-        r = filas[i]
+        fin = inicios[i + 1] if i + 1 < len(inicios) else total
+        r = usadas[i]
         texto = ' '.join(x.strip() for x in str(r['texto']).split('|') if x.strip())
         out.append(dict(role='cta' if r.get('cta') else ('main' if i == 0 else 'extra'), text=texto, lines=lineas(r['texto']),
                         start=round(f / FPS, 4), end=round(fin / FPS, 4)))
@@ -283,12 +346,19 @@ def construir_plan(spec, clips, work, font, gancho=None, pistas=None, con_audio=
     copia = None  # réplica editada como su referencia (Codex): clip entero, rótulos y drop de la referencia
     if tipo == 'replica' and len(clips) == 1 and edicion and (edicion.get('rotulos') or []):
         frames = m.video_frames(clips[0][1])
-        rot = rotulos_replica(edicion, frames)
+        tramos, modo, ref_cuts = planos_como_referencia(clips[0][1], frames, edicion)
+        rot = rotulos_replica(edicion, frames, tramos, modo)
         if rot:
-            plan_clips = [dict(role='replica', path=clips[0][1])]  # sin `auto`: el clip entero, sin recortar
+            # Sin `auto`: los tramos fijos (o el clip entero), sin el patrón de los virales.
+            plan_clips = [dict(role='replica', path=clips[0][1], in_frame=a, out_frame=b) for a, b in tramos]
             ref = float(edicion['duracion_s'])
-            corte = next((c for c in edicion.get('cortes_s') or [] if 0 < float(c) < ref), None)
-            copia = dict(rotulos=rot, drop_t=round(round(float(corte) * frames / ref) / FPS, 4) if corte else 0.0)
+            if modo == 'proporcional' and len(tramos) > 1:
+                drop_f = cortes_del_montaje(tramos)[0]  # el primer cambio de plano del montaje, como en la referencia
+            else:
+                drop_f = tiempo_en_salida(ref_cuts[0], tramos, modo, ref, ref_cuts) if ref_cuts else 0
+            drop_t = round(drop_f / FPS, 4)
+            copia = dict(rotulos=rot, drop_t=drop_t, modo=modo, tramos=tramos)
+
     song = spec.get('song')
     if song:
         drop_ms = song.get('dropMs')
@@ -307,7 +377,7 @@ def construir_plan(spec, clips, work, font, gancho=None, pistas=None, con_audio=
     elif (spec.get('referenceAudio') or {}).get('path'):
         # Modo «referencia»: el montador lo hace con su audio externo, desde 0 y recortado a la duración.
         audio = dict(mode='externo', path=spec['referenceAudio']['path'], offset=0, nota=NOTA_REFERENCIA)
-    elif tipo == 'replica' and len(plan_clips) == 1 and con_audio:
+    elif tipo == 'replica' and (len(plan_clips) == 1 or copia) and con_audio:
         audio = dict(mode='original')
     else:
         audio = dict(mode='silencio')
@@ -320,8 +390,8 @@ def construir_plan(spec, clips, work, font, gancho=None, pistas=None, con_audio=
         ritmo['cta_min_s'] = round(float((ritmo.get('final') or m.PATRON['final'])[2]) + 0.1, 3)
     notas = [f"Montaje automático del vídeo {spec.get('videoId')} ({spec.get('kind')})."]
     if copia:
-        notas.append(f"Edición copiada de la referencia (Codex): clip entero, {len(copia['rotulos'])} rótulo(s) en sus tiempos "
-                     f"proporcionales, drop en {copia['drop_t']} s.")
+        notas.append(f"Edición copiada de la referencia (Codex): tramos {copia['modo']} {copia['tramos']}, "
+                     f"{len(copia['rotulos'])} rótulo(s) en el tiempo de la referencia, drop en {copia['drop_t']} s.")
     elif edicion and (main_ref or cta_ref):
         notas.append('Rótulos de la referencia adaptados; el CTA en el corte del último plano (gancho nuevo + cuerpos).')
     if pistas:

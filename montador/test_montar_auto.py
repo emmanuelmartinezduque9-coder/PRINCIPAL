@@ -159,11 +159,12 @@ class EdicionDeLaReferencia(unittest.TestCase):
     """Sin referencia de edición, la réplica se edita como su referencia (Codex, `render-local.py`)."""
 
     def setUp(self):
-        self._frames = ma.m.video_frames
+        self._frames, self._cuts = ma.m.video_frames, ma.m.scene_cuts
         ma.m.video_frames = lambda path: 240  # el clip dura 10 s a 24 fps
+        ma.m.scene_cuts = lambda path, threshold: [3.0, 6.0]  # y tiene 3 planos, como la referencia
 
     def tearDown(self):
-        ma.m.video_frames = self._frames
+        ma.m.video_frames, ma.m.scene_cuts = self._frames, self._cuts
 
     def test_rotulos_en_el_punto_proporcional_del_clip(self):
         rot = ma.rotulos_replica(EDICION, 240)
@@ -173,13 +174,29 @@ class EdicionDeLaReferencia(unittest.TestCase):
         self.assertEqual(rot[1]['text'], 'Kommentiere „EisWerk“, wenn du auch eins willst! 💕')
         self.assertEqual(ma.rotulos_replica(dict(EDICION, rotulos=[]), 240), [])
 
-    def test_replica_clip_entero_con_los_rotulos_y_el_drop_de_la_referencia(self):
+    def test_replica_con_los_planos_la_duracion_los_rotulos_y_el_drop_de_la_referencia(self):
         spec = dict(SPEC, kind='replicar', hookMs=None, edicionReferencia=EDICION)
         plan, _ = ma.construir_plan(spec, [('clip', '/w/0.mp4')], '/w', '/f.ttf')
-        self.assertEqual(plan['clips'], [dict(role='replica', path='/w/0.mp4')])  # sin `auto`: no se recorta
-        self.assertEqual([t['start'] for t in plan['texts']], [0.0, 7.5])
-        # El drop en el primer cambio de plano de la referencia (0,5 de 8 s → 15 de 240 fotogramas).
-        self.assertEqual(plan['audio']['product_shown'], {'t': 0.625})
+        # Plano a plano: 0,5 / 3,5 / 4,0 s de la referencia, cada uno desde el principio de su plano del clip (el 2º
+        # plano del clip dura 3 s, menos que los 3,5 de la referencia: entero, nunca ralentizado).
+        self.assertEqual([(c['in_frame'], c['out_frame']) for c in plan['clips']], [(0, 12), (72, 144), (144, 240)])
+        self.assertFalse(any(c.get('auto') for c in plan['clips']))
+        # El CTA 2 s después de empezar el último plano, como en la referencia; el drop en su primer cambio de plano.
+        self.assertEqual([(t['role'], t['start'], t['end']) for t in plan['texts']], [('main', 0.0, 5.5), ('cta', 5.5, 7.5)])
+        self.assertEqual(plan['audio']['product_shown'], {'t': 0.5})
+
+    def test_con_otros_planos_se_recorta_en_proporcion_y_los_cambios_van_al_corte(self):
+        ma.m.scene_cuts = lambda path, threshold: [4.0]  # 2 planos frente a 3
+        plan, _ = ma.construir_plan(dict(SPEC, kind='replicar', hookMs=None, edicionReferencia=EDICION), [('clip', '/w/0.mp4')], '/w', '/f.ttf')
+        self.assertEqual([(c['in_frame'], c['out_frame']) for c in plan['clips']], [(0, 77), (96, 211)])  # 192 = 8 s
+        self.assertEqual(plan['texts'][1]['start'], 6.0)  # 6 s de 8 → 144 de 192, sin corte a menos de 0,4 s
+        self.assertEqual(plan['audio']['product_shown'], {'t': round(77 / 24, 4)})  # el primer corte del montaje
+
+    def test_un_clip_que_no_es_mas_largo_va_entero_con_los_rotulos_proporcionales(self):
+        ma.m.video_frames = lambda path: 180  # 7,5 s, menos que los 8 de la referencia
+        plan, _ = ma.construir_plan(dict(SPEC, kind='replicar', hookMs=None, edicionReferencia=EDICION), [('clip', '/w/0.mp4')], '/w', '/f.ttf')
+        self.assertEqual([(c['in_frame'], c['out_frame']) for c in plan['clips']], [(0, 180)])
+        self.assertEqual(plan['texts'][1]['start'], round(135 / 24, 4))
 
     def test_sin_rotulos_en_la_referencia_el_patron_de_siempre(self):
         plan, _ = ma.construir_plan(dict(SPEC, kind='replicar', hookMs=None, edicionReferencia=dict(EDICION, rotulos=[])),

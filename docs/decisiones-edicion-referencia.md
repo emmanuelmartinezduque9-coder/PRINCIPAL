@@ -14,9 +14,11 @@ copiar la lógica de edición de Codex tal cual.
   visual), y adaptados a mano: mismo sentido y tono, marca ajena → la nuestra, emojis del nicho, `|` para el salto de
   línea, traducción española aparte. Siempre en la caja fija 06B (x112/y287/886×318), nunca en la posición de la
   referencia (`TEXTOS_FIJOS_PRODUCTOS_FISICOS_20261031.md`).
-- **Réplica completa** (`render-local.py`, `full`): un solo segmento, el clip ENTERO (sin recortar), y cada cambio de
-  rótulo en el punto proporcional `round(t × fotogramas / duración de la referencia)`. Las réplicas conservan
-  secuencia, tiempos y ritmo de la referencia (aclaración del 15/11).
+- **Réplica** (`render-local.py` + `cut-plan.json`): el clip generado se recorta a los tramos revisados de cada toma
+  (`first_frame`/`end_frame_exclusive`) para que conserve secuencia, tiempos y ritmo de la referencia (aclaración del
+  15/11). `full` solo quiere decir «un único clip de origen», NO el clip entero (corrección del 23/11, tras comparar la
+  primera prueba con la referencia). Con un solo clip, los rótulos en el punto proporcional
+  `round(t × fotogramas / duración de la referencia)`.
 - **Gancho nuevo + cuerpos**: el CTA no se hereda a ciegas del tiempo de la referencia; va al resultado/último plano.
 - **Música**: canción continua desde el primer fotograma, el drop en el revelado o cambio de escena de la referencia.
 - **Emojis**: CoreText en el Mac → Apple Color Emoji, en línea y al tamaño del texto.
@@ -34,9 +36,13 @@ copiar la lógica de edición de Codex tal cual.
   fotograma exacto buscando, en el medio segundo entre muestras, el fotograma donde más cambia esa franja (lo que
   Codex hacía con la búsqueda binaria). Cortes de la referencia con el filtro de escena de ffmpeg (umbral 0,3,
   ≥ 0,28 s, como el motor de Codex). El resultado se guarda en el almacén (`ediciones/…`): volver a montar no gasta.
-- `montador/montar_auto.py`: réplica con rótulos de la referencia → modo de Codex: clip entero (`montador.py` modo
-  v0), rótulos en sus tiempos proporcionales en la caja 06B y, con canción, el drop en el primer cambio de plano de la
-  referencia. Gancho + cuerpos: el rótulo principal y el CTA de la referencia adaptados; el CTA en el corte del último
+- `montador/montar_auto.py`: réplica con rótulos de la referencia → modo de Codex (`montador.py` modo v0, tramos
+  fijos): el montaje dura lo que la referencia. Si el clip tiene los mismos planos que la referencia (filtro de escena,
+  ≥ 0,28 s), cada plano dura lo que el suyo; si no, cada plano se recorta en proporción hasta la duración de la
+  referencia. Siempre desde el principio de cada plano, sin acelerar ni ralentizar; un clip que no es más largo que la
+  referencia va entero. Los rótulos caen en el instante de la referencia (con planos distintos, en el corte del montaje
+  más cercano si está a ≤ 0,4 s, porque en la referencia el CTA entra en un corte) y, con canción, el drop en el primer
+  cambio de plano. Gancho + cuerpos: el rótulo principal y el CTA de la referencia adaptados; el CTA en el corte del último
   plano (el ritmo de los cuerpos sigue siendo el automático). Si la referencia no tiene rótulos o no se pudo leer,
   el patrón de siempre y un aviso.
 - **Emojis del iPhone** (`montador/texto06b.py`): la fuente Apple Color Emoji del Mac está en el almacén
@@ -46,7 +52,15 @@ copiar la lógica de edición de Codex tal cual.
   tamaño y posición medidos contra CoreText (`EMOJI_SCALE_EM`, `EMOJI_CENTER_EM`). Sin la fuente en el almacén: Noto
   (Android) y un aviso en el montaje. La fuente es de Apple: solo se usa para dibujar los rótulos de sus anuncios.
 
-## Prueba real (23/11/2026)
+## Prueba real (23/11/2026, 2ª versión)
+
+Tras la revisión de PRINCIPAL LOCAL (rótulo más pequeño con los emojis pegados, 🤗 en vez de 🤭, 13 s frente a 8,8 s):
+Claude ve los fotogramas al doble de resolución y copia saltos de línea y emojis exactos («Setz das auf meine |
+Weihnachtswunschliste | 🍦🎄 🤭»); el montaje dura 8,83 s (referencia 8,85 s), el CTA entra en el corte del último plano
+(6,17 s; en la referencia 6,23 s) y el drop en el primer corte. El tamaño de letra es el de 06B (máximo 74 px, el
+`order43_text06b.swift` aprobado de Codex): algo menor que en esa referencia, que usa letra más grande.
+
+## Prueba real (23/11/2026, 1ª versión)
 
 Clip del vídeo del lote (`medios/4efce8e4…`, 13,04 s) con la referencia viral `09 - DdbTolZM_tC` de EisWerk y Claude
 de verdad: rótulos «Setz das auf meine Weihnachtswunschliste 🍦🎄🤗» desde 0 y «Kommentiere „EisWerk“, wenn du auch
