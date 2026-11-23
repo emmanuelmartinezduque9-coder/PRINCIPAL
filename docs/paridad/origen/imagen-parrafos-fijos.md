@@ -53,7 +53,7 @@ Origen: `/Users/emmanuelmartinezduque/Desktop/AUTOMATIZACION IA VIDEOS/EDITOR/or
 Origen: `/Volumes/T7/AUTOMATIZACION SEGA/Motor/order-preparation/app-8082c194d416445a9cd108923e243156-81/prepare-openings.py` (literal, Python).
 
 ```
-  raw=C.stable(path);h=hashlib.sha256(raw).hexdigest();dst=REF/(h+path.suffix)
+ # Ordered frame references: composition, extras, supporting portraits, primary, realism.
  identity=(f"The main subject is the person in image [{len(roles)-1}]. Use only this selected portrait for her facial identity; the supporting portrait immediately preceding the primary supplies the companion identity when present; the source controls the action. No identity from composition or style." if v['cast'] else "Only the source hand pose is compositional; use natural anonymous hands and no featured face in this opening.")
  txt='\n\n'.join([v['opening'],identity,"Use the exact product or package reference for geometry, materials, markings and scale. Action props and concealed products remain in their stated opening state.",v['environment'],v['lighting'],'The final image is realism reference only; it never supplies identity.',"One coherent vertical 9:16 casual phone photograph with natural perspective and contact shadows.",'No text overlays, captions, subtitles, emojis or interface. No watermark. Preserve physical product markings and shop signs.'])+'\n'
 ```
