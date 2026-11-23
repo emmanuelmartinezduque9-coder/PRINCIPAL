@@ -18,16 +18,14 @@ import { EditReferenceButton, EditReferenceField } from "./edit-reference";
 import { Indications } from "./indications";
 import type { BatchRowJson, BatchViewJson } from "./labels";
 import { Switch } from "@/components/ui/switch";
-import { ClipModelSelect } from "@/components/videos/clip-model-picker";
-import { CLIP_MODEL_LABEL, DEFAULT_CLIP_MODEL_CHOICE, type ClipModelChoice } from "@/lib/clip-models";
 
 type GroupJson = BatchViewJson["groups"][number];
 
 /**
  * Cabecera de un producto del lote: portada grande, nombre, cuántos vídeos, las variantes que
  * usan sus vídeos, sus «Indicaciones» plegadas (las cambia quien creó el lote; al guardarlas, los
- * desgloses de esos vídeos quedan por repetir), su «Edición de referencia» y su «Modelo» del vídeo
- * (al cambiarlos pasan a las filas del grupo que no tienen uno propio).
+ * desgloses de esos vídeos quedan por repetir) y su «Edición de referencia» (al cambiarla pasa a las
+ * filas del grupo que no tienen una propia). El modelo se elige en cada fila, no en el grupo.
  */
 export function GroupHeader({ batchId, group, editable, variants }: { batchId: number; group: GroupJson; editable: boolean; variants?: VariantJson[] }) {
   const client = useQueryClient();
@@ -43,15 +41,6 @@ export function GroupHeader({ batchId, group, editable, variants }: { batchId: n
       await client.invalidateQueries({ queryKey: ["batch", batchId] });
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "No se pudo guardar la edición de referencia.");
-    }
-  }
-
-  async function saveClipModel(clipModel: ClipModelChoice | null) {
-    try {
-      await api(`/api/lotes/${batchId}/productos/${group.productId}`, { method: "PUT", body: JSON.stringify({ clipModel }) });
-      await client.invalidateQueries({ queryKey: ["batch", batchId] });
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "No se pudo guardar el modelo.");
     }
   }
 
@@ -135,13 +124,6 @@ export function GroupHeader({ batchId, group, editable, variants }: { batchId: n
               <p className="text-sm whitespace-pre-line text-muted-foreground">{group.notes}</p>
             )}
           </Indications>
-          {editable ? (
-            <ClipModelSelect compact label={`Modelo del vídeo para ${group.name}`} value={group.clipModel ?? DEFAULT_CLIP_MODEL_CHOICE} onChange={(next) => void saveClipModel(next)} />
-          ) : (
-            <span className="inline-flex h-8 shrink-0 items-center rounded-lg border px-2.5 text-sm text-muted-foreground">
-              {CLIP_MODEL_LABEL[(group.clipModel ?? DEFAULT_CLIP_MODEL_CHOICE) as ClipModelChoice] ?? group.clipModel}
-            </span>
-          )}
           {editable ? (
             <EditReferenceButton value={group.editReferenceUrl ?? ""} open={refOpen} onOpenChange={setRefOpen} />
           ) : group.editReferenceUrl ? (

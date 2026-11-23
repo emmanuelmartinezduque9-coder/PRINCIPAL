@@ -1,6 +1,6 @@
 import { pinterestView, type PinterestView } from "@/server/videos/pinterest";
 import { checkReferences, writeReferences } from "@/server/videos/referencias";
-import { DEFAULT_CLIP_MODEL_CHOICE, resolveClipModel, type ClipModel } from "@/lib/clip-models";
+import { resolveClipModel, type ClipModel } from "@/lib/clip-models";
 import { and, asc, count, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import { getDb, schema } from "@/db/client";
 import { createVideoFromLink } from "@/server/agent";
@@ -179,8 +179,6 @@ export async function setBatchProductClipModel(user: AuthUser, batchId: number, 
   const table = schema.batchProducts;
   const where = and(eq(table.batchId, batch.id), eq(table.productId, productId));
   return getDb().transaction(async (tx) => {
-    const [before] = await tx.select({ clipModel: table.clipModel }).from(table).where(where).for("update");
-    const previous = before?.clipModel ?? DEFAULT_CLIP_MODEL_CHOICE;
     if (clean === null) {
       await tx.delete(table).where(and(where, isNull(table.notes), isNull(table.editReferenceUrl)));
       await tx.update(table).set({ clipModel: null, updatedAt: new Date() }).where(where);
@@ -190,19 +188,7 @@ export async function setBatchProductClipModel(user: AuthUser, batchId: number, 
         .values({ batchId: batch.id, productId, clipModel: clean })
         .onConflictDoUpdate({ target: [table.batchId, table.productId], set: { clipModel: clean, updatedAt: new Date() } });
     }
-    // Heredan los que están en el de por defecto (o `auto`, de antes) o en el que tenía el grupo.
-    const inherits = or(eq(videos.clipModel, "auto"), eq(videos.clipModel, DEFAULT_CLIP_MODEL_CHOICE), eq(videos.clipModel, previous));
-    await tx
-      .update(videos)
-      .set({ clipModel: clean ?? DEFAULT_CLIP_MODEL_CHOICE, skipAutoAnalysis: false, updatedAt: new Date() })
-      .where(
-        and(
-          eq(videos.batchId, batch.id),
-          eq(videos.productId, productId),
-          inherits,
-          sql`not exists (select 1 from generations g where g.video_id = ${videos.id} and g.kind = 'clip')`,
-        ),
-      );
+    // Ya no se hereda (orden de Emmanuel, 24/11/2026): cada vídeo elige su modelo.
     return clean;
   });
 }

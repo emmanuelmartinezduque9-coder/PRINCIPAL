@@ -13,7 +13,7 @@ const row = (over: Partial<Row>): Row => ({
   note: "",
   editReference: "",
   song: null,
-  clipModel: "auto",
+  clipModel: "hf_mult_motion_control",
   open: false,
   error: null,
   ...over,
@@ -99,5 +99,16 @@ describe("borrador de «Nuevo lote»", () => {
 
   it("un lote ya creado a medias se conserva para seguir con «Añadir y subir»", () => {
     expect(roundTrip({ ...emptyDraft(), batchId: 42 })?.batchId).toBe(42);
+  });
+});
+
+describe("modelo por tarjeta (orden de Emmanuel, 24/11/2026)", () => {
+  it("una tarjeta que heredaba del grupo («auto») vuelve a Motion Transfer; las elegidas una a una se quedan", () => {
+    const saved = serializeDraft({
+      ...emptyDraft(),
+      groups: [{ ...newGroup(1), clipModel: "hf_mult_replace_object", rows: [row({ key: "a", clipModel: "auto" }), row({ key: "b", clipModel: "wan3_0_prime" })] }],
+    });
+    const parsed = parseDraft(JSON.parse(JSON.stringify(saved)))!;
+    expect(parsed.groups[0].rows.map((r) => r.clipModel)).toEqual(["hf_mult_motion_control", "wan3_0_prime"]);
   });
 });

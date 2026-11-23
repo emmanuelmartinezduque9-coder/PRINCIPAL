@@ -101,27 +101,19 @@ async function batchVideo(batchId: number, over: Record<string, unknown> = {}): 
 // Pruebas del flujo de Seedance (antes de poder elegir el modelo del clip).
 seedanceByDefault();
 
-describe("modelo del vídeo del grupo del lote", () => {
-  it("pasa a los vídeos del grupo sin uno propio y sin clip; la tarjeta puede llevar el suyo", async () => {
+describe("modelo del vídeo: por vídeo, nunca del grupo", () => {
+  it("cambiar el modelo del grupo no toca los vídeos (orden de Emmanuel, 24/11/2026); cada vídeo lleva el suyo", async () => {
     const lote = await createBatch(ana, "Modelos");
-    const sinElegir = await batchVideo(lote.id, { clipModel: "hf_mult_motion_control" });
+    const porDefecto = await batchVideo(lote.id);
     const propio = await batchVideo(lote.id, { clipModel: "wan3_0_prime" });
-    const conClip = await batchVideo(lote.id, { clipModel: "hf_mult_motion_control" });
-    await getPool().query(
-      "insert into generations (video_id, kind, round, status, user_id, request, count, quoted_credits) values ($1, 'clip', 1, 'done', $2, '{}', 1, 10)",
-      [conClip.id, ana.id],
-    );
-    expect(await setBatchProductClipModel(ana, lote.id, lampara.id, "hf_mult_replace_object")).toBe("hf_mult_replace_object");
+    expect(porDefecto.clipModel).toBe("seedance_2_5"); // estas pruebas fijan Seedance por defecto (seedanceByDefault)
+    await setBatchProductClipModel(ana, lote.id, lampara.id, "hf_mult_replace_object");
     const model = async (id: number) => (await getVideoFor(ana, id)).clipModel;
-    expect([await model(sinElegir.id), await model(propio.id), await model(conClip.id)]).toEqual(["hf_mult_replace_object", "wan3_0_prime", "hf_mult_motion_control"]);
-    expect((await batchView(ana, lote.id)).groups[0]).toMatchObject({ clipModel: "hf_mult_replace_object" });
-    // Quitar la elección del grupo devuelve al de por defecto (Motion Transfer) los que heredaban.
-    expect(await setBatchProductClipModel(ana, lote.id, lampara.id, null)).toBeNull();
-    expect([await model(sinElegir.id), await model(propio.id)]).toEqual(["hf_mult_motion_control", "wan3_0_prime"]);
-    await expect(setBatchProductClipModel(ana, lote.id, lampara.id, "kling3_0")).rejects.toMatchObject({ status: 400 });
+    expect([await model(porDefecto.id), await model(propio.id)]).toEqual(["seedance_2_5", "wan3_0_prime"]);
     await expect(batchVideo(lote.id, { clipModel: "hf_mult_motion_control_flash" })).rejects.toMatchObject({ status: 400 });
   });
 });
+
 describe("indicaciones por producto del lote", () => {
   it("se guardan por lote y producto, llegan al desglose y cambiarlas deja el desglose por repetir", async () => {
     const lote = await createBatch(ana, "A");

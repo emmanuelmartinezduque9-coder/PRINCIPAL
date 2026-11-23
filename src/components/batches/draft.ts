@@ -193,7 +193,8 @@ function parseRow(value: unknown): Row | null {
     note: text(value.note),
     editReference: text(value.editReference).slice(0, 2000),
     song: parseSong(value.song),
-    clipModel: isClipModelChoice(value.clipModel) ? value.clipModel : "auto",
+    // «auto» era «del grupo»: el grupo ya no elige, así que vuelve al de por defecto (Motion Transfer).
+    clipModel: isClipModelChoice(value.clipModel) && value.clipModel !== "auto" ? value.clipModel : DEFAULT_CLIP_MODEL_CHOICE,
     ...(Array.isArray(value.refs) ? { refs: parseRefs(value.refs) } : {}),
     open: value.open === true,
     error: null,
@@ -221,9 +222,12 @@ export function effectiveEditReference(group: Pick<Group, "editReference">, row:
   return row.editReference.trim() || group.editReference.trim();
 }
 
-/** El modelo que vale para una tarjeta: el suyo o, si está en «Automático», el de su grupo. */
-export function effectiveClipModel(group: Pick<Group, "clipModel">, row: Pick<Row, "clipModel">): ClipModelChoice {
-  return row.clipModel !== "auto" ? row.clipModel : group.clipModel;
+/**
+ * El modelo de una tarjeta: el suyo. Las que guardaban «auto» (heredar del grupo, hasta el
+ * 24/11/2026) pasan al de por defecto, Motion Transfer: el grupo ya no elige modelo.
+ */
+export function ownClipModel(row: Pick<Row, "clipModel">): ClipModelChoice {
+  return row.clipModel === "auto" ? DEFAULT_CLIP_MODEL_CHOICE : row.clipModel;
 }
 
 /** Lee lo guardado por `serializeDraft`. Lo que no vale se descarta; sin nada útil, `null`. */

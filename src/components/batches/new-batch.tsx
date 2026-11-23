@@ -44,9 +44,9 @@ import {
 import { autoBatchName } from "./labels";
 import { ReferenceImagesButton, ReferenceImagesField } from "@/components/videos/reference-images";
 import type { ReferenceImage } from "@/lib/reference-images";
-import { effectiveClipModel, effectiveEditReference, effectiveRefs, newGroup, nextKey, type Group, type Row, type Source } from "./draft";
+import { ownClipModel, effectiveEditReference, effectiveRefs, newGroup, nextKey, type Group, type Row, type Source } from "./draft";
 import { ClipModelSelect } from "@/components/videos/clip-model-picker";
-import { CLIP_MODEL_HINT, CLIP_MODEL_LABEL, DEFAULT_CLIP_MODEL_CHOICE, type ClipModelChoice } from "@/lib/clip-models";
+import { CLIP_MODEL_HINT, DEFAULT_CLIP_MODEL_CHOICE } from "@/lib/clip-models";
 import { useNewBatchDraft } from "./draft-provider";
 import { checkLink, EditReferenceButton, EditReferenceField } from "./edit-reference";
 import { Indications } from "./indications";
@@ -423,7 +423,6 @@ function RowCard({
   busy,
   editReference,
   groupEditReference,
-  groupClipModel,
   groupRefs,
   onChange,
   onDuplicate,
@@ -444,8 +443,6 @@ function RowCard({
   editReference: boolean;
   /** La «Edición de referencia» del grupo, la que usa la tarjeta si no tiene la suya. */
   groupEditReference: string;
-  /** El modelo del grupo, el que usa la tarjeta en «Automático». */
-  groupClipModel: ClipModelChoice;
   /** Las imágenes de referencia del grupo, las que usa la tarjeta si no tiene las suyas. */
   groupRefs: ReferenceImage[];
   onChange: (changes: Partial<Row>) => void;
@@ -474,8 +471,8 @@ function RowCard({
               onChange={(choice) => onChange({ avatar: choice })}
             />
             <MusicPicker value={row.song} onChange={(song) => onChange({ song })} className="max-w-40" />
-            <span title={row.clipModel === "auto" && groupClipModel !== "auto" ? `Del grupo: ${CLIP_MODEL_LABEL[groupClipModel]}` : CLIP_MODEL_HINT[row.clipModel]}>
-              <ClipModelSelect compact label={`Modelo de ${name}`} value={row.clipModel} inherited={groupClipModel} onChange={(clipModel) => clipModel && onChange({ clipModel })} />
+            <span title={CLIP_MODEL_HINT[ownClipModel(row)]}>
+              <ClipModelSelect compact label={`Modelo de ${name}`} value={ownClipModel(row)} onChange={(clipModel) => clipModel && onChange({ clipModel })} />
             </span>
             <span className="mx-1 h-5 w-px bg-border" aria-hidden />
             <ReferenceImagesButton count={row.refs?.length ?? 0} inherited={groupRefs.length} open={imagesOpen} onOpenChange={setImagesOpen} />
@@ -633,10 +630,7 @@ function GroupHeader({
             ) : null}
           </div>
           <div className="ml-auto flex items-center gap-2">
-            <KindSegmented compact label="Tipo de los vídeos que vas a añadir" value={group.kind} onChange={(kind) => onChange({ kind })} />
-            <span title={CLIP_MODEL_HINT[group.clipModel]}>
-              <ClipModelSelect compact label="Modelo de los vídeos del grupo" value={group.clipModel} onChange={(clipModel) => clipModel && onChange({ clipModel })} />
-            </span>
+            {/* El tipo y el modelo se eligen en cada tarjeta, no en el grupo (orden de Emmanuel, 24/11/2026). */}
             {group.kind === "solo_gancho" ? <HookStepper value={group.hookSeconds} onChange={(hookSeconds) => onChange({ hookSeconds })} disabled={busy} /> : null}
             {removable ? (
               <Tooltip>
@@ -759,7 +753,7 @@ export function NewBatch() {
     note: "",
     editReference: "",
     song: null,
-    clipModel: "auto",
+    clipModel: DEFAULT_CLIP_MODEL_CHOICE,
     refs: [],
     open: false,
     error: null,
@@ -858,7 +852,8 @@ export function NewBatch() {
               notes: group.notes.trim() || null,
               ...(editReference ? { editReferenceUrl: group.editReference.trim() || null } : {}),
               // El modelo del grupo (pasa a los vídeos del grupo sin uno propio).
-              clipModel: group.clipModel === "auto" ? DEFAULT_CLIP_MODEL_CHOICE : group.clipModel,
+              // El grupo ya no elige modelo: cada tarjeta lleva el suyo.
+              clipModel: null,
             }),
           });
         } catch (error) {
@@ -881,7 +876,7 @@ export function NewBatch() {
                 note: row.note.trim() || null,
                 songId: row.song?.id ?? null,
                 // El modelo del vídeo: el de la tarjeta o, en «Automático», el de su grupo.
-                clipModel: effectiveClipModel(group, row),
+                clipModel: ownClipModel(row),
                 // Las imágenes de referencia subidas a mano: las de la tarjeta o, si no tiene, las de su grupo.
                 references: effectiveRefs(group, row),
                 // La «Edición de referencia»: la de la tarjeta o, si no tiene, la de su grupo.
@@ -973,7 +968,6 @@ export function NewBatch() {
                     busy={busy}
                     editReference={editReference}
                     groupEditReference={group.editReference}
-                    groupClipModel={group.clipModel}
                     groupRefs={group.refs ?? []}
                     onChange={(changes) => updateRow(group.key, row.key, changes)}
                     onDuplicate={() => duplicate(group.key, row)}
