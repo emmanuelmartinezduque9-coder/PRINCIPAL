@@ -32,6 +32,17 @@ startWorker().then(
   () => {
     console.log("[worker] en marcha");
     startEditLoop();
+    // Una vez (23/11/2026): la imagen de prueba del método aprobado que el dueño aprobó para el vídeo 2
+    // entra como candidata, sin gastar otra vez (ver `importar-imagen.ts`).
+    void import("@/server/videos/importar-imagen")
+      .then(({ importFrameCandidate }) =>
+        importFrameCandidate(
+          2,
+          "https://d8j0ntlcm91z4.cloudfront.net/user_3K2PXlowqZBlWpF8Twpyltbd8YU/hf_20261123_052010_3d2e4e67-2ac6-45ee-9147-cd9badaf63df.png",
+          "Prueba del método aprobado (orden de adjuntos de Codex, sala R33), aprobada por el dueño al verla",
+        ),
+      )
+      .catch((error) => console.error("[imagen] No se pudo importar la imagen aprobada del vídeo 2:", error));
   },
   (error) => {
     // Sin cola no hay nada que hacer: se sale con error para que el servicio se reinicie.
