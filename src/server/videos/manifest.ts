@@ -44,8 +44,10 @@ export interface ManifestItem {
     /** Un avatar de la biblioteca (`biblioteca`, o el que eligió el desglose con `automatico`). */
     | { kind: "avatar"; avatarId: number }
     /** Con `automatico`, el sitio del avatar que aún no está elegido (o no encontró ninguno). */
-    | { kind: "avatar_pending" };
-  role: "composicion" | "video_referencia" | "imagen_aprobada" | PhotoRole;
+    | { kind: "avatar_pending" }
+    /** Una foto de Pinterest guardada (por su huella), como referencia de entorno y realismo. */
+    | { kind: "pinterest"; sha256: string };
+  role: "composicion" | "video_referencia" | "imagen_aprobada" | "pinterest" | PhotoRole;
 }
 
 /**
@@ -57,6 +59,11 @@ export interface ManifestRefs {
   photos: PhotoInfo[];
   variant: { articlePhotoIds: number[]; packagingPhotoId: number | null } | null;
   avatar: { kind: "library"; avatarId: number } | { kind: "pending" } | null;
+  /**
+   * Las fotos de Pinterest listas para la imagen inicial (huellas, en orden). Regla fija del dueño:
+   * van siempre, salvo que el vídeo lleve una foto de entorno puesta a mano.
+   */
+  pinterest?: string[];
 }
 
 /** Solo fotos (sin variante ni avatar de la biblioteca) o todo. */
@@ -109,14 +116,27 @@ function productRefs(video: Video, refs: ManifestRefs): Ref[] {
   ];
 }
 
-/** 1 = primer fotograma de la referencia (composición); después avatar (si hay), artículo (≤ 4), embalaje (≤ 2), entorno (si hay). */
+/**
+ * 1 = primer fotograma de la referencia (composición); después avatar (si hay), artículo (≤ 4),
+ * embalaje (≤ 2), entorno puesto a mano (si hay) y, si no lo hay, las fotos de Pinterest (al final:
+ * así no cambian los números que ya cita el prompt del desglose).
+ */
 export function imageManifest(video: Video, input: ManifestRefs | PhotoInfo[]): ManifestItem[] {
   const refs = refsOf(input);
-  const all = [...productRefs(video, refs), ...chosen(refs.photos, video.environmentPhotoId, "entorno")];
-  return [
+  const environment = chosen(refs.photos, video.environmentPhotoId, "entorno");
+  const all = [...productRefs(video, refs), ...environment];
+  const items: ManifestItem[] = [
     { index: 1, tag: "image 1", source: { kind: "reference_frame" }, role: "composicion" },
     ...all.map((ref, i): ManifestItem => ({ index: i + 2, tag: `image ${i + 2}`, source: ref.source, role: ref.role })),
   ];
+  // Con una referencia de entorno puesta a mano no va Pinterest (excepción del dueño).
+  if (environment.length === 0) {
+    for (const sha256 of refs.pinterest ?? []) {
+      const index = items.length + 1;
+      items.push({ index, tag: `image ${index}`, source: { kind: "pinterest", sha256 }, role: "pinterest" });
+    }
+  }
+  return items;
 }
 
 /**

@@ -13,6 +13,7 @@ import { Button, buttonVariants } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
 import { frameUrl, thumbUrl, type GenerationResult } from "@/components/videos/labels";
+import { PinterestRefs } from "@/components/videos/pinterest-refs";
 import { RejectDialog } from "@/components/videos/reject-dialog";
 import { ResultImage } from "@/components/videos/result-image";
 import { api, ApiError } from "@/lib/api";
@@ -78,6 +79,7 @@ function ReviewItem({
           <p className="truncate text-sm text-muted-foreground">{row.productName}</p>
           {row.note ? <p className="mt-1 text-sm text-pretty">{row.note}</p> : null}
         </div>
+        <PinterestRefs pinterest={row.pinterest} compact />
         <div>
           {approved !== null ? (
             <Badge className="gap-1 bg-success text-white">

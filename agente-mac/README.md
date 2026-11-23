@@ -124,3 +124,11 @@ carpeta temporal, nunca tu perfil de Brave) y tu sesión de Instagram guardada e
     bash agente-mac/exportar-sesion.sh
 
 (hace falta haber entrado en instagram.com con Brave). TikTok se lee con yt-dlp.
+
+## 1.6.0: buscar referencias en Pinterest (23/11/2026)
+
+Cada imagen inicial lleva fotos reales de Pinterest como referencia (regla fija del dueño). La web
+busca primero desde la nube; si Pinterest no la deja, pide la búsqueda a este Mac: el agente hace la
+misma petición al buscador de pines de Pinterest desde tu conexión (sin sesión, sin abrir Brave) y
+entrega la respuesta. Solo pide direcciones de `www.pinterest.com/resource/BaseSearchResource/get/`.
+Para tenerlo, vuelve a lanzar `bash agente-mac/instalar.sh`.

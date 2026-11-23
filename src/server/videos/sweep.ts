@@ -6,6 +6,7 @@ import { settleEditedBatches } from "@/server/videos/edits";
 import { sweepGenerations, type GenDeps } from "@/server/videos/generations";
 import { advanceRunningBatches } from "@/server/videos/lote";
 import { advanceSoloVideos } from "@/server/videos/autopilot";
+import { sweepPinterest } from "@/server/videos/pinterest";
 import { cleanStaleUploads, PREPARE_FAILED } from "@/server/videos/upload";
 
 /**
@@ -78,6 +79,11 @@ export async function videoSweep(now: Date = new Date(), deps: GenDeps = {}): Pr
     await autoAnalyzePending();
   } catch (error) {
     console.error("[videos] No se pudieron pedir los desgloses automáticos:", error);
+  }
+  try {
+    await sweepPinterest(now);
+  } catch (error) {
+    console.error("[videos] No se pudieron revisar las búsquedas de Pinterest:", error);
   }
   try {
     await advanceRunningBatches(deps);

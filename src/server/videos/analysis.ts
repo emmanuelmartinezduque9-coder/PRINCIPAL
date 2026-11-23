@@ -25,6 +25,7 @@ import { listVariants, type VariantInfo } from "@/server/variants";
 import { loadRules, RULE_SLUGS, VIDEO_RULE_SLUGS } from "@/server/rules";
 import { analysisStaleness, answersText, briefOf, type AvatarMode, type Brief, type VideoKind } from "@/server/videos/brief";
 import { clipManifest, FRAME_USES, imageManifest, type FrameUse, type ManifestItem, type ManifestRefs } from "@/server/videos/manifest";
+import { startPinterestAfterAnalysis } from "@/server/videos/pinterest";
 import { PROMPT_BLACKLIST, type PromptIssue } from "@/server/videos/prompt-check";
 import {
   clipDurationSeconds,
@@ -337,6 +338,7 @@ const ROLE_LABEL: Record<ManifestItem["role"], string> = {
   embalaje: "embalaje",
   entorno: "entorno",
   otro: "otro",
+  pinterest: "foto real de Pinterest (entorno y realismo; la añade la aplicación después)",
 };
 
 const PENDING_AVATAR = "avatar (lo elige la aplicación después de este desglose: no lo describas, cítalo solo por su número)";
@@ -816,7 +818,7 @@ export async function runAnalysis(analysisId: number, deps: { gateway?: LlmGatew
     ? await analysisExtras(step.result, step.brief, product, variants)
     : { extras: {}, autoAvatarId: null };
 
-  await getDb().transaction(async (tx) => {
+  const finished = await getDb().transaction(async (tx) => {
     const [video] = await tx
       .select({
         referenceMediaId: schema.videos.referenceMediaId,
@@ -874,7 +876,17 @@ export async function runAnalysis(analysisId: number, deps: { gateway?: LlmGatew
         .set({ editMainText: sql`coalesce(${schema.videos.editMainText}, ${texts.main})`, editCtaText: sql`coalesce(${schema.videos.editCtaText}, ${texts.cta})` })
         .where(eq(schema.videos.id, saved.videoId));
     }
+    return true;
   });
+  // Regla fija del dueño: con el desglose hecho se buscan ya las referencias de Pinterest de la
+  // imagen (salvo entorno puesto a mano). Si no se puede encolar, lo hará el seguimiento o la imagen.
+  if (finished === true) {
+    try {
+      await startPinterestAfterAnalysis(row.videoId, analysisId);
+    } catch (error) {
+      console.error(`[videos] No se pudo poner en marcha la búsqueda de Pinterest del vídeo ${row.videoId}:`, error);
+    }
+  }
 }
 
 /**

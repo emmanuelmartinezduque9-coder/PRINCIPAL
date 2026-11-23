@@ -28,6 +28,7 @@ import type { VideoViewJson } from "@/components/videos/labels";
 import { fakeMessages } from "./helpers/fake-llm";
 import { makeProduct, makeUser } from "./helpers/fixtures";
 import { truncateAll } from "./helpers/global-setup";
+import { instantPinterest } from "./helpers/pinterest";
 
 /**
  * Regla fija del dueño (23/11/2026): el vídeo va solo de principio a fin. Sin avisos de riesgos, sin
@@ -82,6 +83,8 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await truncateAll();
+  // Regla fija: la imagen lleva siempre Pinterest; aquí se resuelve al momento con una foto.
+  instantPinterest(() => jpeg);
   resetLoginAttempts();
   await seedRules();
   fake = createFakeHiggsfield();

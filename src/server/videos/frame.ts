@@ -15,6 +15,7 @@ import {
   type RequestBuilder,
 } from "@/server/videos/generations";
 import { imageManifest, type ManifestItem } from "@/server/videos/manifest";
+import { hasManualEnvironment, readPinterestImage, requirePinterestRefs, withPinterestRoles } from "@/server/videos/pinterest";
 import { checkImagePrompt } from "@/server/videos/prompt-check";
 import {
   BRIEF_CHANGED,
@@ -121,12 +122,17 @@ async function mediaOf(user: AuthUser, video: Video, item: ManifestItem, deps: G
     const filename = `avatar-${source.avatarId}.${EXTENSIONS[avatar.mime] ?? "jpg"}`;
     return ensureMedia(user.id, { bytes: avatar.data, filename, contentType: avatar.mime, type: "image" }, deps);
   }
+  if (source.kind === "pinterest") {
+    const image = await readPinterestImage(source.sha256);
+    return ensureMedia(user.id, { bytes: image.data, filename: `pinterest-${source.sha256.slice(0, 16)}.jpg`, contentType: image.mime, type: "image" }, deps);
+  }
   throw new Error(`Referencia de la imagen inicial no esperada: ${source.kind}.`);
 }
 
 /**
  * La petición de la imagen inicial: el modelo del ajuste, el prompt del vídeo tal cual, 2K vertical
- * y las referencias en el orden del manifiesto (composición, avatar, artículo, embalaje, entorno).
+ * y las referencias en el orden del manifiesto (composición, avatar, artículo, embalaje, entorno
+ * puesto a mano o, si no hay, las fotos de Pinterest con su papel añadido al prompt).
  * Sin desglose hecho de la referencia actual, o con errores en el prompt, 400 antes de subir nada.
  * Cada archivo se sube una sola vez por persona (`ensureMedia`), aunque se regenere.
  */
@@ -153,8 +159,12 @@ const FRAME_SNAPSHOT = [
 
 export const buildFrameRequest: RequestBuilder = async (user, video, deps) => {
   await requireAnalysisDone(video);
-  const prompt = video.imagePrompt!;
+  const refs = await manifestRefsFor(user, video);
+  // Regla fija del dueño: sin referencia de entorno puesta a mano, siempre con fotos de Pinterest
+  // (también al regenerar). Si aún no están, se buscan y esto espera (409).
+  if (!hasManualEnvironment(imageManifest(video, { ...refs, pinterest: [] }))) await requirePinterestRefs(video.id);
   const manifest = imageManifest(video, await manifestRefsFor(user, video));
+  const prompt = withPinterestRoles(video.imagePrompt!, manifest);
   if (manifest.some((item) => item.source.kind === "avatar_pending")) throw new HttpError(400, NO_AUTO_AVATAR);
   const errors = checkImagePrompt(prompt, manifest).filter((issue) => issue.level === "error");
   if (errors.length > 0) throw new HttpError(400, errors.map((issue) => issue.message).join(" "));

@@ -1,3 +1,4 @@
+import "@/jobs/video-jobs"; // define `video.pinterest`, que pone en marcha la búsqueda de referencias
 import "@/server/videos/frame"; // registra cómo se construye la petición de la imagen
 import { handle } from "@/server/http";
 import { quoteGeneration } from "@/server/videos/generations";

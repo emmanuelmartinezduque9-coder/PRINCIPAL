@@ -225,6 +225,13 @@
       "when": 1795402324532,
       "tag": "0031_flujo_automatico",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1795404058635,
+      "tag": "0032_referencias_pinterest",
+      "breakpoints": true
     }
   ]
 }

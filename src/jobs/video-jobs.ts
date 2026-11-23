@@ -7,6 +7,7 @@ import { startBatchEdits } from "@/server/videos/edits";
 import { ADVANCE_JOB, advanceBatch, onBatchReady } from "@/server/videos/lote";
 import { advanceVideo, AUTO_JOB, kickVideo, kickVideoOfAnalysis, kickVideoOfGeneration } from "@/server/videos/autopilot";
 import { processReference } from "@/server/videos/intake";
+import { PINTEREST_JOB, runPinterest } from "@/server/videos/pinterest";
 import { archiveSweep } from "@/server/videos/archive";
 import { videoSweep } from "@/server/videos/sweep";
 import { REFERENCE_JOB } from "@/server/videos/upload";
@@ -105,3 +106,16 @@ defineSchedule("video.seguimiento", "* * * * *", () => videoSweep());
  * imágenes, con miniatura y vista ligera; `archive.ts`). Sin bucket configurado no hace nada.
  */
 defineSchedule("medios.copia", "* * * * *", () => archiveSweep());
+
+/**
+ * Busca en Pinterest las referencias de la imagen inicial de un vídeo (regla fija del dueño: siempre,
+ * salvo entorno puesto a mano): consultas, búsqueda (nube o Mac), elección con visión y guardado.
+ */
+defineJob<{ runId: number }>(
+  PINTEREST_JOB,
+  async ({ runId }) => {
+    if (typeof runId !== "number") throw new StepFailedError("Datos del trabajo no válidos.");
+    await runPinterest(runId);
+  },
+  "Buscar referencias en Pinterest",
+);

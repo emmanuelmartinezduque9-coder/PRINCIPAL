@@ -1,4 +1,4 @@
-# Reglas del motor: qué está aplicado y qué falta (23/11/2026)
+# Reglas del motor: qué está aplicado y qué falta (23/11/2026, actualizado con Pinterest)
 
 Contra `docs/reglas-motor-del-dueno.md`.
 
@@ -9,7 +9,7 @@ Contra `docs/reglas-motor-del-dueno.md`.
 | 3 | Variante de destino por ID de catálogo, artículo y embalaje de esa variante, orden de adjuntos = números del prompt | Hecho (manifiesto). Regla de prompt «original → destino» añadida el 22/11 |
 | 3 | Bloquear la tarjeta si falta el archivo de la variante | Parcial: sin foto de artículo no se desglosa; falta comprobar el embalaje cuando la toma lo enseña |
 | 4 | Varias referencias por tarjeta con papel (fondo, composición, realismo…) | Falta (hoy: una foto de entorno) |
-| 4 | Fondos de Pinterest por toma | Falta |
+| 4 | Fondos de Pinterest por toma | **Hecho el 23/11 (regla fija: siempre).** Al terminar el desglose se buscan solas (consultas según la escena, búsqueda en la nube o desde el Mac, elección con visión), se guardan en el almacén y van adjuntas a la imagen inicial y a cada regeneración, con su papel en el prompt. Se ven en la tarjeta como «Referencias de Pinterest». Con referencia de entorno puesta a mano no se busca. Hoy son las de la imagen del vídeo (una por vídeo); por toma, cuando haya un frame por toma |
 | 5 | Fotograma original como ancla, qué cambia / qué se conserva, estética de iPhone 17 Pro Max | Hecho el 22/11 (`reglas/imagen-nano-banana.md`, `analysis.ts`) |
 | 5 | Revisar cada resultado antes de presentarlo (variante, caja, avatar, fondo, acción) | Falta (revisión automática con visión) |
 | 5 | Un frame por clip (aperturas de cada toma) | Falta (hoy: una imagen por vídeo) |
@@ -23,4 +23,4 @@ Contra `docs/reglas-motor-del-dueno.md`.
 | 8 | Métricas: tiempo a frames, créditos por vídeo, tasa de regeneración | Falta |
 | 10 | Flujo automático sin avisos ni botones de «¿generar?», 1 imagen por vídeo por defecto, solo preguntas obligatorias | Hecho el 23/11 (`autopilot.ts` para el vídeo suelto; el lote se autoriza solo; `tests/flujo-automatico.test.ts`) |
 
-Orden de trabajo: 1) modelos en la tarjeta (Genjutsu / Wan) con un frame por toma; 2) revisión automática de frames; 3) referencias múltiples y Pinterest; 4) upscale y descripciones; 5) métricas.
+Orden de trabajo: 1) modelos en la tarjeta (Genjutsu / Wan) con un frame por toma; 2) revisión automática de frames; 3) referencias múltiples por tarjeta (Pinterest ya hecho); 4) upscale y descripciones; 5) métricas.

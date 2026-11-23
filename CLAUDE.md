@@ -28,3 +28,13 @@ Emmanuel no lee análisis ni avisos: para eso están las reglas del motor (`regl
    clips y ediciones sin otra ronda»); un rechazo se regenera solo dentro de sus rondas.
 
 Las pruebas `tests/flujo-automatico.test.ts` fijan estas reglas: si una cambia, falla.
+
+## Regla fija del dueño: referencias de Pinterest (no olvidar)
+
+- **Toda imagen inicial (Nano Banana) lleva SIEMPRE fotos reales de Pinterest como referencia**, también
+  al regenerar una imagen rechazada. Solo si el dueño pone una referencia de entorno a mano en el vídeo o
+  la tarjeta, no se busca. Lo pidió tres veces (22 y 23/11/2026).
+- Está en código, no solo en texto: `src/server/videos/pinterest.ts` (búsqueda, elección con visión,
+  almacén), `frame.ts` (la imagen no se pide sin ellas) y `reglas/referencias-pinterest.md` (qué buscar
+  según la escena). No lo quites ni lo hagas opcional sin una orden expresa del dueño.
+

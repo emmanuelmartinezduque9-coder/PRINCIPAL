@@ -15,6 +15,7 @@ import { analysisStaleness, answersText, checkKindInput, cleanNote, isAvatarMode
 import { bodiesOfVideo, checkVideoBodies, type VideoBody } from "@/server/videos/bodies";
 import { analysisCostMicros, costsOfVideo, type VideoCosts } from "@/server/videos/costs";
 import { clipManifest, imageManifest, type ManifestItem, type ManifestRefs } from "@/server/videos/manifest";
+import { pinterestView, readyPinterestRefs, withPinterestRoles, type PinterestView } from "@/server/videos/pinterest";
 import { getVariantFor } from "@/server/variants";
 import { checkImagePrompt, checkVideoPrompt, type PromptIssue } from "@/server/videos/prompt-check";
 import { generationView, type GenerationView } from "@/server/videos/generations";
@@ -518,6 +519,8 @@ export interface VideoView {
   videoIssues: PromptIssue[];
   imageManifest: ManifestItem[];
   clipManifest: ManifestItem[];
+  /** «Referencias de Pinterest» de la imagen inicial (`null`: aún sin desglose, o con entorno puesto a mano). */
+  pinterest: PinterestView | null;
   /** La imagen inicial: ronda, regeneraciones que quedan, resultado aprobado y la generación más reciente. */
   frame: GenerationView;
   /** El clip, igual que `frame`. */
@@ -558,7 +561,8 @@ export async function latestDoneAnalysis(
 /**
  * Lo que necesitan los manifiestos del vídeo (`ManifestRefs`): las fotos del producto, las fotos
  * de su variante y el avatar de la biblioteca. Con «Automático», el que eligió el último desglose
- * hecho si sigue valiendo; si no (o durante el propio desglose, `forAnalysis`), su sitio vacío.
+ * hecho si sigue valiendo; si no (o durante el propio desglose, `forAnalysis`), su sitio vacío. Y
+ * las fotos de Pinterest listas del último desglose hecho (`pinterest.ts`).
  */
 export async function manifestRefsFor(user: AuthUser, video: Video, options: { forAnalysis?: boolean } = {}): Promise<ManifestRefs> {
   const photos = await listProductPhotos(user, video.productId);
@@ -580,7 +584,9 @@ export async function manifestRefsFor(user: AuthUser, video: Video, options: { f
       if (done && done.staleReason === null && done.autoAvatarId !== null) avatar = { kind: "library", avatarId: done.autoAvatarId };
     }
   }
-  return { photos, variant, avatar };
+  // Las fotos de Pinterest del último desglose (no en el propio desglose: aún no existen).
+  const pinterest = options.forAnalysis ? [] : await readyPinterestRefs(video.id);
+  return { photos, variant, avatar, pinterest };
 }
 
 /** Las «Indicaciones» del lote del vídeo para su producto, o `null` (sin lote o sin indicaciones). */
@@ -623,7 +629,8 @@ export function staleness(analysis: Parameters<typeof analysisStaleness>[0], vid
 /** Avisos de los prompts guardados del vídeo frente a sus manifiestos; un prompt que aún no existe no da avisos. */
 export function promptIssues(video: Video, refs: ManifestRefs): { imageIssues: PromptIssue[]; videoIssues: PromptIssue[] } {
   return {
-    imageIssues: video.imagePrompt === null ? [] : checkImagePrompt(video.imagePrompt, imageManifest(video, refs)),
+    // El papel de las fotos de Pinterest se añade al pedir la imagen (`withPinterestRoles`): se comprueba igual.
+    imageIssues: video.imagePrompt === null ? [] : checkImagePrompt(withPinterestRoles(video.imagePrompt, imageManifest(video, refs)), imageManifest(video, refs)),
     videoIssues: video.videoPrompt === null ? [] : checkVideoPrompt(video.videoPrompt, clipManifest(video, refs)),
   };
 }
@@ -684,6 +691,7 @@ export async function videoView(user: AuthUser, videoId: number): Promise<VideoV
     ...promptIssues(video, refs),
     imageManifest: imageManifest(video, refs),
     clipManifest: clipManifest(video, refs),
+    pinterest: video.environmentPhotoId === null ? await pinterestView(video.id) : null,
     frame: await generationView(video, "frame", user.id),
     clip: await generationView(video, "clip", user.id),
     costs: await costsOfVideo(video),
