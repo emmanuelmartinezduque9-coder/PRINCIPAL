@@ -15,6 +15,7 @@ import {
   isPrivateAddress,
   latestIntake,
   MAC_WAIT_MS,
+  MOCKUP_FALLBACK_PROMPT,
   PROFILE_RETRY_MS,
   WAITING_FOR_MAC,
   requestMockup,
@@ -176,6 +177,26 @@ describe("alta desde un enlace", () => {
     const photos = await listProductPhotos(dueno, product.id);
     expect(photos.map((p) => p.role).sort()).toEqual(["articulo", "otro"]);
     expect(view?.mockupPhotoId).toBe(photos.find((p) => p.role === "articulo")!.id);
+  });
+
+  it("si el filtro de Higgsfield bloquea el mockup, se reintenta una vez solo con el otro modelo y un prompt neutro", async () => {
+    const { product, intake } = await createProductFromLink(dueno, { url: "https://www.aliexpress.com/item/1.html", country: "DE" });
+    const { d } = deps([claudeReply()]);
+    await advanceIntake(intake.id, d);
+    const first = Object.keys(hf.state.jobs)[0];
+    hf.state.jobs[first] = { ...hf.state.jobs[first], status: "failed", failure: "ip_detected" };
+    await advanceIntake(intake.id, d);
+    const submits = hf.calls.filter((c) => c.method === "submitImages").map((c) => c.args as { request: { model: string; prompt: string } });
+    expect(submits).toHaveLength(2);
+    expect(submits[1].request.model).not.toBe(submits[0].request.model);
+    expect(submits[1].request.prompt).toBe(MOCKUP_FALLBACK_PROMPT);
+    expect((await intakeViewFor(dueno, product.id))?.mockupStatus).toBe("enviado");
+    // Un segundo bloqueo ya no se reintenta: se dice y queda el botón.
+    const second = Object.keys(hf.state.jobs)[1];
+    hf.state.jobs[second] = { ...hf.state.jobs[second], status: "failed", failure: "ip_detected" };
+    await advanceIntake(intake.id, d);
+    expect(await intakeViewFor(dueno, product.id)).toMatchObject({ status: "listo", mockupStatus: "fallido" });
+    expect(hf.calls.filter((c) => c.method === "submitImages")).toHaveLength(2);
   });
 
   it("si Claude no lo identifica, lo dice claro y no gasta en Higgsfield", async () => {

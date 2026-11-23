@@ -175,3 +175,13 @@ abre ni se toca el perfil real de ningún navegador. Comprobado con @frozenglow.
 que no es Shopify: se lee su página) y 12 reels con vistas y miniatura. Los reels con la cuenta en la
 ruta (`/frozenglow.us/reel/…`) se dejan como `/reel/…` para yt-dlp, y el nombre de la cuenta ya no
 se toma por un enlace aunque parezca un dominio.
+
+### Primer alta real de una cuenta: @frozenglow.us → SchneeSchimmer (23/11/2026)
+Con la sesión de Chrome, el Mac leyó el perfil, trajo los 2 reels más vistos (496 y 444 vistas) y
+Claude identificó «pijama de franela de dos piezas con estampado de invierno que brilla en azul en la
+oscuridad»; marca **SchneeSchimmer** (alternativas SchlummerSchnee, FrostLicht). Dos fallos vistos y
+corregidos: (1) Claude añadió un aviso de derechos en la nota → las instrucciones prohíben ahora
+avisos de marca en cualquier campo; (2) Higgsfield bloqueó el mockup por su filtro de marcas (el
+prompt nombraba personajes) → el prompt describe por formas y colores, sin franquicias ni
+personajes, y un mockup bloqueado se reintenta **una vez solo** con el otro Nano Banana y el prompt
+neutro.

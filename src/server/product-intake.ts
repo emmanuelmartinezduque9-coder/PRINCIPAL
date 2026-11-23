@@ -30,7 +30,7 @@ import { addProductPhoto, listProductPhotos, readProductPhoto } from "@/server/p
 import { allProductNames, createProduct, getProductFor, setProductFacts, type Product } from "@/server/products";
 import { loadRules } from "@/server/rules";
 import { JobPausedError, runStep, StepFailedError } from "@/jobs/steps";
-import { getImageModel } from "@/server/videos/frame";
+import { getImageModel, IMAGE_MODELS, type ImageModel } from "@/server/videos/frame";
 
 /**
  * Alta de un producto pegando solo un enlace y eligiendo el país («Nuevo producto»).
@@ -473,6 +473,8 @@ export interface IntakeResult extends Omit<IntakeAnswer, "fuentes"> {
   fuentes: Array<{ url: string; que: string; comprobada: boolean }>;
   referenciaFotoId: number | null;
   sinVideo: boolean;
+  /** El mockup ya se reintentó tras un bloqueo del filtro de Higgsfield. */
+  mockupReintento?: boolean;
   costeMicros: number;
 }
 
@@ -618,6 +620,7 @@ function intakeInstructions(row: Intake, language: string, brands: string[]): st
     "Aplica las reglas «Alta de producto desde un enlace» y «Nombres de marca». Usa la búsqueda en internet para identificar el artículo concreto y comprobar datos; mira primero el propio enlace con web_fetch.",
     `Marcas que Emmanuel ya usa (no repitas sus raíces salvo que sea la misma familia): ${brands.join(", ") || "ninguna"}.`,
     "Campos: `producto` (qué es, en español, corto), `queHace` (una frase sencilla en español), `mecanismo`, `nicho`, `audiencia` (quién compra y quién usa), `anguloActual` (con qué motivo se vende en la fuente), `emoji` (uno), `marca` (la mejor opción y dos alternativas, en el idioma del mercado, con el porqué en español), `referencia` (la imagen numerada donde mejor se ve el producto entero y limpio para el mockup: `fotograma`, `foto_tienda`, `foto_subida` o `miniatura` con su número empezando en 1, o `ninguna`; mejor una foto limpia de la tienda que un fotograma), `promptMockup` (en inglés, según la regla), `fuentes` (direcciones que de verdad consultaste y qué sacaste de cada una).",
+    "Sin avisos de marcas registradas, derechos, licencias ni propiedad intelectual en ningún campo (indicación de Emmanuel: la decisión es suya). En `promptMockup` no nombres marcas, franquicias, películas ni personajes: describe el producto y su estampado por formas, colores y dibujos (p. ej. «cartoon snowman», «ice castle line art»), para que el filtro de Higgsfield no lo bloquee.",
     "Si no puedes identificar el producto con seguridad, `identificado: false` y en `motivo` explica en una frase sencilla por qué y qué haría falta; deja el resto vacío. Si lo identificas, `motivo` puede quedar vacío o avisar de una duda.",
   ].join("\n");
 }
@@ -773,6 +776,13 @@ async function stepMockup(row: Intake, owner: AuthUser, deps: IntakeDeps): Promi
       return finish({ mockupStatus: "hecho", mockupPhotoId: photo.id, mockupNote: null });
     }
     if (job?.status === "failed") {
+      // Bloqueado por el filtro de Higgsfield: un reintento solo, con el otro modelo y un prompt neutro.
+      const blocked = job.failure === "nsfw" || job.failure === "ip_detected";
+      if (blocked && result && !result.mockupReintento) {
+        const retried = { ...result, mockupReintento: true };
+        await save(row.id, { result: retried }, now);
+        return stepMockup({ ...row, result: retried, mockupStatus: "pendiente", mockupJobId: null }, owner, deps);
+      }
       const why = job.failure === "nsfw" || job.failure === "ip_detected" ? "Higgsfield lo bloqueó por su filtro de contenido o de marcas" : "Higgsfield no pudo generarlo";
       return finish({ mockupStatus: "fallido", mockupNote: `${why}. Puedes pulsar «Generar mockup» otra vez.` });
     }
@@ -787,8 +797,8 @@ async function stepMockup(row: Intake, owner: AuthUser, deps: IntakeDeps): Promi
     const photo = await readProductPhoto(owner, photoId);
     const mediaId = await ensureMedia(owner.id, { bytes: photo.data, filename: `referencia-${photoId}.jpg`, contentType: photo.mime, type: "image" }, { higgsfield: hf });
     const request: HfImageRequest = {
-      model: await getImageModel(),
-      prompt: (result?.promptMockup?.trim() || MOCKUP_FALLBACK_PROMPT).slice(0, 3000),
+      model: result?.mockupReintento ? otherImageModel(await getImageModel()) : await getImageModel(),
+      prompt: (result?.mockupReintento ? MOCKUP_FALLBACK_PROMPT : result?.promptMockup?.trim() || MOCKUP_FALLBACK_PROMPT).slice(0, 3000),
       aspectRatio: "1:1",
       resolution: "2k",
       medias: [{ role: "image_references", value: mediaId }],
@@ -811,6 +821,9 @@ async function stepMockup(row: Intake, owner: AuthUser, deps: IntakeDeps): Promi
     throw error;
   }
 }
+
+/** El otro Nano Banana (para reintentar un mockup que el filtro bloqueó). */
+const otherImageModel = (model: ImageModel): ImageModel => IMAGE_MODELS.find((m) => m !== model) ?? model;
 
 async function firstArticlePhoto(productId: number): Promise<number | null> {
   const [photo] = await getDb()
@@ -839,7 +852,8 @@ export async function requestMockup(user: AuthUser, productId: number, acceptCre
       .values({ productId: product.id, url: product.sourceUrl ?? "https://principal.local/manual", kind: "web", country: product.countries[0] ?? "DE", createdBy: user.id, status: "mockup" })
       .returning();
   }
-  return save(intake.id, { status: "mockup", mockupStatus: "pendiente", mockupJobId: null, mockupOkCredits: ok ?? intake.mockupOkCredits, mockupNote: "Preparando el mockup…", message: "Generando el mockup sobre fondo gris…", createdBy: user.id }, new Date());
+  const fresh = intake.result ? { ...(intake.result as IntakeResult), mockupReintento: false } : intake.result;
+  return save(intake.id, { result: fresh, status: "mockup", mockupStatus: "pendiente", mockupJobId: null, mockupOkCredits: ok ?? intake.mockupOkCredits, mockupNote: "Preparando el mockup…", message: "Generando el mockup sobre fondo gris…", createdBy: user.id }, new Date());
 }
 
 // ───────────────────────── Para la pantalla ─────────────────────────
