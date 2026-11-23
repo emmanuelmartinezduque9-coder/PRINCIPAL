@@ -22,6 +22,10 @@ El prompt va en ocho párrafos separados por una línea en blanco, en este orden
 7. **Negativos** propios de la toma: «NEGATIVE: no source captions, watermarks, interface, extra fingers, fused hands, floating objects, pasted edges, redesigned products, mixed identities, isolated portrait light or artificial background blur.»
 8. **Formato**: «Vertical 9:16 mobile frame. No captions, subtitles, emojis, overlays, play controls or interface. Only authentic physical package or storefront print belongs in the scene.»
 
+**Orden de los adjuntos (el del método aprobado, también copiado):** 1 fotograma original (composición), después el artículo y su caja **solo si se ven en esa toma** (si aún está envuelto o fuera de plano, no se adjuntan), la sala, el avatar y, al final, la foto de realismo. Con el fotograma seguido del avatar y del producto, Nano Banana conservaba los píxeles y la luz de las manos y el objeto del original y salían «pegados»; con este orden se vuelven a iluminar con la luz de la sala (prueba del 23/11/2026).
+
+**Lo que se conserva del fotograma:** los objetos que sostiene o toca la persona (envoltorio, papel, colores, forma y pliegues) se quedan como están salvo que el dueño pida cambiarlos. **La luz del sujeto:** el párrafo 5 dice cómo se vuelven a iluminar manos, brazos, persona y objeto con la luz de la sala (dirección, exposición, color, contraste, lado en sombra, sombras de contacto, rebote) y que no conservan la luz de image 1.
+
 En la aplicación, los párrafos 5 (frase fija), 6, 7 y 8 los pone el código literalmente; Claude escribe los párrafos 1 a 5 mirando de verdad la foto de la sala, el fotograma original y el prompt del desglose (acción, identidad y producto se conservan de este).
 
 ### Ejemplo aprobado A · salón navideño, manos con un regalo (EisWerk)

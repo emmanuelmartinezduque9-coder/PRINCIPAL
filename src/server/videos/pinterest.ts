@@ -247,11 +247,19 @@ export async function startPinterestAfterAnalysis(videoId: number, analysisId: n
  * hecho), en orden. Vacío si aún no hay desglose o no están listas.
  */
 export async function readyPinterestRefs(videoId: number): Promise<string[]> {
+  return (await readyPinterest(videoId)).refs;
+}
+
+/** Las fotos listas y si el producto no se ve en la toma (entonces no se adjuntan sus fotos). */
+export async function readyPinterest(videoId: number): Promise<{ refs: string[]; productHidden: boolean; approvedMethod: boolean }> {
+  const none = { refs: [], productHidden: false, approvedMethod: false };
   const analysisId = await latestDoneAnalysisId(videoId);
-  if (analysisId === null) return [];
+  if (analysisId === null) return none;
   const run = await runOf(videoId, analysisId);
-  if (run?.status !== "ready") return [];
-  return ((run.refs as PinterestRef[] | null) ?? []).map((ref) => ref.sha256);
+  if (run?.status !== "ready") return none;
+  const refs = ((run.refs as PinterestRef[] | null) ?? []).map((ref) => ref.sha256);
+  const approvedMethod = run.framePrompt !== null;
+  return { refs, approvedMethod, productHidden: approvedMethod && (run.scene as { productHidden?: boolean } | null)?.productHidden === true };
 }
 
 /**
@@ -536,7 +544,15 @@ async function pickFromBank(
   });
   const composed = await composeFramePrompt(run, ctx, gateway, rules, refs, frameJpeg);
   if (!composed) return;
-  await setRun(run.id, { status: "ready", refs, error: null, framePrompt: composed.prompt, basePromptSha: composed.baseSha });
+  const [current] = await getDb().select({ scene: runs.scene }).from(runs).where(eq(runs.id, run.id));
+  await setRun(run.id, {
+    status: "ready",
+    refs,
+    error: null,
+    framePrompt: composed.prompt,
+    basePromptSha: composed.baseSha,
+    scene: { ...((current?.scene as object | null) ?? {}), productHidden: composed.productHidden },
+  });
   console.log(`[pinterest] Prompt con la sala del vídeo ${run.videoId}:\n${composed.prompt}`);
   console.log(
     `[pinterest] Vídeo ${run.videoId} (${product.name}): ${refs.length} referencia(s) del banco de aprobadas para «${scene.place}»: ${refs.map((r) => r.pinId).join(", ")} (${refs.map((r) => r.sha256).join(", ")})`,
@@ -568,6 +584,7 @@ const oneParagraph = z
   .min(40)
   .refine((text) => !/\n\s*\n/.test(text), "Un solo párrafo");
 const composedSchema = z.object({
+  productVisible: z.boolean().describe("Si el artículo o su caja se ven en esta toma (false si aún está envuelto, tapado o fuera de plano)."),
   composition: oneParagraph.describe("Párrafo 1, en inglés."),
   identity: oneParagraph.describe("Párrafo 2, en inglés."),
   product: oneParagraph.describe("Párrafo 3, en inglés."),
@@ -584,7 +601,15 @@ Escribe en inglés, en prosa corrida, cinco párrafos (cada uno de un solo bloqu
 4. environment: «Reference image {ROOM} is the EXACT requested background, not an inspiration. Preserve its …» y entre 6 y 12 elementos que VES en esa foto, cada uno con su posición (LEFT, RIGHT, centre, foreground, background). Mete la cámara dentro de esa sala desde el punto de vista del fotograma original («Camera is … looking into this same room»), «Preserve recognizable architecture, furniture, ornaments and natural spatial depth.», «Do not add …» con lo que no debe aparecer, y «Never raise the camera just to fit the whole room.». Mantén la acción, las manos y el momento intactos.
 5. lighting: «Match the actual … light in reference image {ROOM}» con las fuentes, direcciones y temperatura que se ven en esa foto, y cómo comparten esa luz las manos, la persona y el objeto (sombras de contacto). Sin la frase fija de luz: la añade la aplicación.
 
-Cita la sala siempre como image {ROOM} (literal, con las llaves). Conserva exactamente los demás números de imagen del prompt del desglose. No uses palabras de la lista negra de la regla. Nada de títulos en mayúsculas.`;
+Primero decide productVisible: si el artículo o su caja se ven en esta toma. Si no se ven (envuelto, tapado, fuera de plano), como en el método aprobado NO se adjuntan sus fotos: no las cites.
+
+Cita cada imagen por su papel, literal y con llaves, nunca con un número: el fotograma original es image 1; la sala, image {ROOM}; el avatar, image {AVATAR}; la primera foto del artículo, image {ARTICLE} (la segunda, image {ARTICLE2}…); la caja, image {PACKAGING}. La aplicación pone los números reales.
+
+Conserva tal cual los objetos del fotograma que sostiene o toca la persona (envoltorio, papel, colores, forma, pliegues) salvo que el dueño haya pedido cambiarlos en sus indicaciones: aunque el prompt del desglose proponga cambiar el papel o el envoltorio, no lo cambies.
+
+En lighting, además de la luz de la sala, di cómo se vuelve a iluminar el sujeto (manos, brazos, persona, objeto) con esa misma luz: dirección, exposición, color, contraste, el lado en sombra, sombras de contacto y rebote de color, y que no conserva la luz de image 1. Nada de aspecto de recorte pegado.
+
+No uses palabras de la lista negra de la regla. Nada de títulos en mayúsculas.`;
 
 /**
  * Escribe el prompt de la imagen con la sala elegida (método aprobado): Claude mira la sala y el
@@ -598,7 +623,7 @@ async function composeFramePrompt(
   rules: Awaited<ReturnType<typeof loadRules>>,
   refs: PinterestRef[],
   frameJpeg: Buffer | null,
-): Promise<{ prompt: string; baseSha: string } | null> {
+): Promise<{ prompt: string; baseSha: string; productHidden: boolean } | null> {
   const [video] = await getDb().select({ imagePrompt: schema.videos.imagePrompt }).from(schema.videos).where(eq(schema.videos.id, run.videoId));
   const base = video?.imagePrompt ?? null;
   if (!base) {
@@ -637,7 +662,11 @@ async function composeFramePrompt(
     NEGATIVE_PARAGRAPH,
     FORMAT_PARAGRAPH,
   ];
-  return { prompt: paragraphs.join("\n\n"), baseSha: crypto.createHash("sha256").update(base).digest("hex") };
+  return {
+    prompt: paragraphs.join("\n\n"),
+    baseSha: crypto.createHash("sha256").update(base).digest("hex"),
+    productHidden: !written.productVisible,
+  };
 }
 
 /**
@@ -652,8 +681,16 @@ export async function framePromptFor(videoId: number, imagePrompt: string, manif
   const run = analysisId === null ? null : await runOf(videoId, analysisId);
   const sha = crypto.createHash("sha256").update(imagePrompt).digest("hex");
   if (!run?.framePrompt || run.basePromptSha !== sha) return withPinterestRoles(imagePrompt, manifest);
-  const number = (tag: string) => tag.replace(/^image /, "");
-  return run.framePrompt.replaceAll(ROOM_TAG, number(tags[0])).replaceAll(REALISM_TAG, number(tags[1] ?? tags[0]));
+  const number = (item: ManifestItem | undefined) => (item ? String(item.index) : "?");
+  const byRole = (role: ManifestItem["role"]) => manifest.filter((item) => item.role === role);
+  const pins = byRole("pinterest");
+  const articles = byRole("articulo");
+  return run.framePrompt
+    .replaceAll(ROOM_TAG, number(pins[0]))
+    .replaceAll(REALISM_TAG, number(pins[1] ?? pins[0]))
+    .replaceAll("{AVATAR}", number(byRole("avatar")[0]))
+    .replaceAll("{PACKAGING}", number(byRole("embalaje")[0]))
+    .replace(/\{ARTICLE(\d?)\}/g, (_, n: string) => number(articles[(n ? Number(n) : 1) - 1]));
 }
 
 // ───────────────────────── El trabajo ─────────────────────────

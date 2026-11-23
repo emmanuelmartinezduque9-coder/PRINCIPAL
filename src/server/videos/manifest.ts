@@ -64,12 +64,19 @@ export interface ManifestRefs {
    * van siempre, salvo que el vídeo lleve una foto de entorno puesta a mano.
    */
   pinterest?: string[];
+  /**
+   * Con sala del banco: el producto no se ve en esta toma (aún envuelto, fuera de plano). Como en
+   * el método aprobado, entonces no se adjuntan sus fotos ni su caja.
+   */
+  productHidden?: boolean;
+  /** El prompt con la sala está escrito con el método aprobado: entonces va su orden de adjuntos. */
+  approvedMethod?: boolean;
 }
 
 /** Solo fotos (sin variante ni avatar de la biblioteca) o todo. */
 const refsOf = (refs: ManifestRefs | PhotoInfo[]): ManifestRefs => (Array.isArray(refs) ? { photos: refs, variant: null, avatar: null } : refs);
 
-type Ref = { source: ManifestItem["source"]; role: PhotoRole };
+type Ref = { source: ManifestItem["source"]; role: ManifestItem["role"] };
 
 function chosen(photos: PhotoInfo[], photoId: number | null, role: PhotoRole): Ref[] {
   const photo = photoId === null ? undefined : photos.find((p) => p.id === photoId && p.role === role);
@@ -124,6 +131,8 @@ function productRefs(video: Video, refs: ManifestRefs): Ref[] {
 export function imageManifest(video: Video, input: ManifestRefs | PhotoInfo[]): ManifestItem[] {
   const refs = refsOf(input);
   const environment = chosen(refs.photos, video.environmentPhotoId, "entorno");
+  const bank = environment.length === 0 ? (refs.pinterest ?? []) : [];
+  if (bank.length > 0 && refs.approvedMethod) return codexOrder(video, refs, bank);
   const all = [...productRefs(video, refs), ...environment];
   const items: ManifestItem[] = [
     { index: 1, tag: "image 1", source: { kind: "reference_frame" }, role: "composicion" },
@@ -137,6 +146,28 @@ export function imageManifest(video: Video, input: ManifestRefs | PhotoInfo[]): 
     }
   }
   return items;
+}
+
+/**
+ * Con sala del banco, el orden del método aprobado del sistema anterior: 1 composición, después
+ * el producto y su caja solo si se ven en la toma, la sala, el avatar y, al final, la foto de
+ * realismo (la segunda del banco).
+ */
+function codexOrder(video: Video, refs: ManifestRefs, bank: string[]): ManifestItem[] {
+  const product = refs.productHidden
+    ? []
+    : [
+        ...(refs.variant ? ofVariant(refs.photos, refs.variant.articlePhotoIds, "articulo", MAX_ARTICLE_REFS) : firstOf(refs.photos, "articulo", MAX_ARTICLE_REFS)),
+        ...(refs.variant
+          ? ofVariant(refs.photos, refs.variant.packagingPhotoId === null ? [] : [refs.variant.packagingPhotoId], "embalaje", MAX_PACKAGING_REFS)
+          : firstOf(refs.photos, "embalaje", MAX_PACKAGING_REFS)),
+      ];
+  const pin = (sha256: string): Ref => ({ source: { kind: "pinterest", sha256 }, role: "pinterest" });
+  const ordered: Ref[] = [...product, pin(bank[0]), ...avatarRefs(video, refs), ...bank.slice(1).map(pin)];
+  return [
+    { index: 1, tag: "image 1", source: { kind: "reference_frame" }, role: "composicion" },
+    ...ordered.map((ref, i): ManifestItem => ({ index: i + 2, tag: `image ${i + 2}`, source: ref.source, role: ref.role })),
+  ];
 }
 
 /**

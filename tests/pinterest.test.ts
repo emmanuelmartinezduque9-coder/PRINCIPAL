@@ -31,7 +31,7 @@ import {
   withPinterestRoles,
   type PinterestDeps,
 } from "@/server/videos/pinterest";
-import { createVideo, getVideoFor, manifestRefsFor, updateVideoChoices, type Video } from "@/server/videos/videos";
+import { createVideo, getVideoFor, manifestRefsFor, updateVideoChoices, videoView, type Video } from "@/server/videos/videos";
 import { fakeMessages } from "./helpers/fake-llm";
 import { makeProduct, makeUser } from "./helpers/fixtures";
 import { truncateAll } from "./helpers/global-setup";
@@ -98,9 +98,10 @@ const SCENE = {
 };
 
 const COMPOSED = {
+  productVisible: false,
   composition:
     "Use image 1 ONLY for the exact opening action and foreground arrangement: first-person view, two hands holding the round wrapped gift at 45 percent of frame width. Replace all original living room scenery with the exact living room in image {ROOM}. Do not copy the source shelves and mantel.",
-  identity: "The hands and forearms are those of the woman in image 2 and only her, with fine creases and short natural nails.",
+  identity: "The hands and forearms are those of the woman in image {AVATAR} and only her, with fine creases and short natural nails.",
   product: "Do not show the ice cream maker at this opening; the gift stays wrapped and nothing is revealed.",
   environment:
     "Reference image {ROOM} is the EXACT requested background, not an inspiration. Preserve its fireplace with red stockings in the centre, lit tree on the LEFT and television above the fireplace. Camera is lying on the foreground bed looking into this same room. Never raise the camera just to fit the whole room.",
@@ -243,13 +244,16 @@ describe("la imagen inicial lleva siempre referencias de Pinterest", () => {
 
     const { request } = await buildFrameRequest(ana, await getVideoFor(ana, v.id), deps);
     const image = request as { prompt: string; medias: Array<{ value: string }> };
-    // Composición, avatar, artículo y las dos del banco.
-    expect(image.medias).toHaveLength(5);
-    // El prompt reescrito con el método aprobado: la sala es image 4 y el realismo image 5.
-    expect(image.prompt).toContain("Replace all original living room scenery with the exact living room in image 4.");
-    expect(image.prompt).toContain("Reference image 4 is the EXACT requested background, not an inspiration.");
+    // Orden del método aprobado: composición, sala, avatar, realismo; el artículo no se ve en esta toma y no va.
+    expect(image.medias).toHaveLength(4);
+    const view = await videoView(ana, v.id);
+    expect(view.imageManifest.map((m) => m.role)).toEqual(["composicion", "pinterest", "avatar", "pinterest"]);
+    // El prompt reescrito con el método aprobado, con los números reales: sala 2, avatar 3, realismo 4.
+    expect(image.prompt).toContain("Replace all original living room scenery with the exact living room in image 2.");
+    expect(image.prompt).toContain("Reference image 2 is the EXACT requested background, not an inspiration.");
+    expect(image.prompt).toContain("the woman in image 3 and only her");
     expect(image.prompt).toContain("When a room, space or environment reference is supplied, its observed lighting is the primary authority");
-    expect(image.prompt).toContain("Image 5 is realism reference only for texture.");
+    expect(image.prompt).toContain("Image 4 is realism reference only for texture.");
     expect(image.prompt).toContain("NEGATIVE: no source captions");
     expect(image.prompt).not.toContain("{ROOM}");
     expect(image.prompt.split("\n\n")).toHaveLength(8);
@@ -302,7 +306,7 @@ describe("la imagen inicial lleva siempre referencias de Pinterest", () => {
     const [row] = await getDb().select().from(schema.generations).where(eq(schema.generations.id, second.generationId));
     const request = row.request as { prompt: string; medias: unknown[] };
     expect(row.round).toBe(2);
-    expect(request.medias).toHaveLength(5);
+    expect(request.medias).toHaveLength(4);
     expect(request.prompt).toContain("EXACT requested background");
   });
 

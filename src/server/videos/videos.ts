@@ -15,7 +15,7 @@ import { analysisStaleness, answersText, checkKindInput, cleanNote, isAvatarMode
 import { bodiesOfVideo, checkVideoBodies, type VideoBody } from "@/server/videos/bodies";
 import { analysisCostMicros, costsOfVideo, type VideoCosts } from "@/server/videos/costs";
 import { clipManifest, imageManifest, type ManifestItem, type ManifestRefs } from "@/server/videos/manifest";
-import { pinterestView, readyPinterestRefs, withPinterestRoles, type PinterestView } from "@/server/videos/pinterest";
+import { pinterestView, readyPinterest, withPinterestRoles, type PinterestView } from "@/server/videos/pinterest";
 import { getVariantFor } from "@/server/variants";
 import { checkImagePrompt, checkVideoPrompt, type PromptIssue } from "@/server/videos/prompt-check";
 import { generationView, type GenerationView } from "@/server/videos/generations";
@@ -585,8 +585,8 @@ export async function manifestRefsFor(user: AuthUser, video: Video, options: { f
     }
   }
   // Las fotos de Pinterest del último desglose (no en el propio desglose: aún no existen).
-  const pinterest = options.forAnalysis ? [] : await readyPinterestRefs(video.id);
-  return { photos, variant, avatar, pinterest };
+  const ready = options.forAnalysis ? { refs: [], productHidden: false, approvedMethod: false } : await readyPinterest(video.id);
+  return { photos, variant, avatar, pinterest: ready.refs, productHidden: ready.productHidden, approvedMethod: ready.approvedMethod };
 }
 
 /** Las «Indicaciones» del lote del vídeo para su producto, o `null` (sin lote o sin indicaciones). */
