@@ -25,3 +25,14 @@ export function startingAvatar(
   if (photo !== null) return { avatarMode: "elegido", avatarPhotoId: photo };
   return { avatarMode: withoutAvatars === "automatico" ? "automatico" : "elegido", avatarPhotoId: null };
 }
+
+/**
+ * El avatar con el que empieza una tarjeta de «Nuevo lote» (regla del dueño, 24/11/2026, como Codex:
+ * `avatar_selection_mode = reference_match`): «Automático», que elige de la biblioteca a alguien
+ * parecido a la persona de la referencia. Solo si el producto dice que no se sustituye a nadie
+ * («Sin sustitución» o «No aparece nadie»), ese modo. Un avatar concreto, solo si él lo elige.
+ */
+export function batchCardAvatar(product: { defaultAvatarMode: string }): "automatico" | "sin_sustitucion" | "nadie" {
+  if (product.defaultAvatarMode === "sin_sustitucion" || product.defaultAvatarMode === "nadie") return product.defaultAvatarMode;
+  return "automatico";
+}

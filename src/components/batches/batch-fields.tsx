@@ -11,7 +11,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { AVATAR_MODE_LABELS, KIND_LABELS, KINDS } from "@/components/videos/brief-labels";
 import type { ProductPhoto } from "@/components/videos/labels";
 import { AVATAR_GROUPS, fold, type AvatarGroup } from "@/lib/avatar-groups";
-import { startingAvatar } from "@/lib/default-avatar";
+import { batchCardAvatar } from "@/lib/default-avatar";
 import { cn } from "@/lib/utils";
 import type { VideoKind } from "@/server/videos/brief";
 
@@ -38,11 +38,10 @@ export function avatarBody(choice: AvatarChoice): { avatarMode: string; avatarPh
   return { avatarMode: choice, avatarPhotoId: null, avatarLibraryId: null };
 }
 
-/** El avatar con el que empieza una fila: el habitual del producto (`startingAvatar`). */
-export function defaultAvatarChoice(product: ProductView | undefined, avatars: ProductPhoto[]): AvatarChoice | null {
+/** El avatar con el que empieza una fila: «Automático» (`batchCardAvatar`); uno concreto solo si se elige. */
+export function defaultAvatarChoice(product: ProductView | undefined): AvatarChoice | null {
   if (!product) return null;
-  const start = startingAvatar(product, avatars.map((photo) => photo.id));
-  return start.avatarMode === "elegido" ? start.avatarPhotoId! : start.avatarMode;
+  return batchCardAvatar(product);
 }
 
 const photoUrl = (photoId: number) => `/api/fotos/${photoId}`;

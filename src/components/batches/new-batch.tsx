@@ -23,6 +23,8 @@ import { useReferenceUploads } from "@/components/videos/upload-provider";
 import { useMac } from "@/components/videos/use-mac";
 import { api, ApiError } from "@/lib/api";
 import { LinkThumb } from "@/components/videos/link-thumb";
+import { frameUrl } from "@/components/videos/labels";
+import { RegeneratePicker, type RegenerateChoice } from "./regenerate-picker";
 import { linkLabel, parsePastedLinks } from "@/lib/links";
 import { cn } from "@/lib/utils";
 import { useAvatars } from "@/components/avatars/avatars-screen";
@@ -68,6 +70,7 @@ const isMissing = (row: Row) => row.source.type === "missing";
 const rowName = (row: Row) => {
   if (row.source.type === "file") return row.source.file.name;
   if (row.source.type === "missing") return row.source.name;
+  if (row.source.type === "video") return `Regenerar · ${row.source.title}`;
   const { host, code } = linkLabel(row.source.url);
   return code ? `${host} ${code}` : host;
 };
@@ -80,6 +83,9 @@ function RowPreview({ row }: { row: Row }) {
         <video src={`${row.source.preview}#t=0.1`} muted playsInline preload="metadata" className="absolute inset-0 size-full object-cover" />
       ) : row.source.type === "missing" ? (
         <FileVideo className="size-5" aria-hidden />
+      ) : row.source.type === "video" ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={frameUrl(row.source.videoId, 0, row.source.version)} alt="" loading="lazy" className="absolute inset-0 size-full object-cover" />
       ) : (
         <LinkThumb url={row.source.url} />
       )}
@@ -151,9 +157,12 @@ function SourceZone({
   disabled,
   links,
   offline,
+  extra,
 }: {
   onFiles: (files: File[]) => void;
   onLinks: (links: string[]) => void;
+  /** Otra forma de añadir tarjetas (p. ej. «Regenerar un vídeo»), junto a «Añadir vídeos». */
+  extra?: React.ReactNode;
   big: boolean;
   disabled: boolean;
   /** Quien mira puede pegar enlaces (tiene Mac). */
@@ -280,6 +289,7 @@ function SourceZone({
                 <Upload data-icon="inline-start" />
                 Elegir vídeos
               </Button>
+              {extra}
               {linkField}
             </div>
           </>
@@ -289,6 +299,7 @@ function SourceZone({
               <Upload data-icon="inline-start" />
               {over ? "Suelta para añadir" : "Añadir vídeos"}
             </Button>
+            {extra}
             {linkField}
           </>
         )}
@@ -366,7 +377,7 @@ function SourceName({ row, index, disabled, onLink }: { row: Row; index: number;
       <span className="min-w-0 truncate text-sm font-medium" title={row.source.type === "link" ? row.source.url : name}>
         {link ? link.host : name}
         {link?.code ? <span className="font-normal text-muted-foreground"> · {link.code}</span> : null}
-        {row.source.type !== "link" ? (
+        {row.source.type === "file" || row.source.type === "missing" ? (
           <span className="font-normal text-muted-foreground tabular-nums"> · {sizeLabel(row.source.type === "file" ? row.source.file.size : row.source.size)}</span>
         ) : null}
       </span>
@@ -729,11 +740,10 @@ export function NewBatch() {
     const query = index >= 0 ? photoQueries[index] : undefined;
     return { loading: !query?.data, avatars: (query?.data?.photos ?? []).filter((photo) => photo.role === "avatar") };
   };
-  /** El avatar que se mandará: el elegido o el habitual del producto. */
+  /** El avatar que se mandará: el elegido o, si no, «Automático» (`defaultAvatarChoice`). */
   const avatarOf = (group: Group, row: Row): AvatarChoice | null => {
     if (row.avatar !== null) return row.avatar;
-    const { loading, avatars } = avatarsOf(group.productId);
-    return loading ? null : defaultAvatarChoice(productOf(group.productId), avatars);
+    return defaultAvatarChoice(productOf(group.productId));
   };
 
   /** Una tarjeta nueva, con el tipo, la duración del gancho y la variante que tenga elegidos su grupo. */
@@ -776,6 +786,14 @@ export function NewBatch() {
       const present = new Set(group.rows.flatMap((row) => (row.source.type === "link" ? [row.source.url] : [])));
       const fresh = links.filter((url) => !present.has(url));
       return { ...group, rows: [...group.rows, ...fresh.map((url) => newRow({ type: "link", url }, group))] };
+    });
+  }
+
+  /** «Regenerar un vídeo»: una tarjeta con la referencia de ese vídeo y su tipo (y su gancho). */
+  function addRegeneration(groupKey: string, choice: RegenerateChoice) {
+    updateGroup(groupKey, (group) => {
+      const row = newRow({ type: "video", videoId: choice.videoId, title: choice.title, version: choice.version }, group);
+      return { ...group, rows: [...group.rows, { ...row, kind: choice.kind, hookSeconds: choice.hookSeconds }] };
     });
   }
 
@@ -870,6 +888,8 @@ export function NewBatch() {
                 ...(editReference ? { editReferenceUrl: effectiveEditReference(group, row) || null } : {}),
                 // Con enlace, el vídeo nace esperando al Mac; con archivo, se sube después.
                 ...(row.source.type === "link" ? { linkUrl: row.source.url } : {}),
+                // «Regenerar un vídeo»: reutiliza la referencia preparada (y el desglose) de ese vídeo.
+                ...(row.source.type === "video" ? { regenerateFrom: row.source.videoId } : {}),
               }),
             });
             if (row.source.type === "file") enqueue(video.id, row.source.file);
@@ -971,6 +991,7 @@ export function NewBatch() {
                 offline={!mac.online}
                 onFiles={(files) => addFiles(group.key, files)}
                 onLinks={(links) => addLinks(group.key, links)}
+                extra={<RegeneratePicker productId={group.productId} disabled={busy} onPick={(choice) => addRegeneration(group.key, choice)} />}
               />
             </div>
           </section>

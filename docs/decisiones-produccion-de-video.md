@@ -890,3 +890,12 @@ hasta 2 reintentos con el prompt sin marcas y, si sigue, una pausa clara.
   hay, el primer fotograma del vídeo del enlace, traído por yt-dlp en la nube o por el Mac
   (`link-media.ts`), que queda en el almacén. JPEG de 360 px en `link_media.thumb` y copia en
   `portadas/<id>.jpg`. Mientras no hay, «Cargando portada…»; si no se puede, el icono del enlace.
+- **«Regenerar un vídeo»** en cada grupo de «Nuevo lote» (24/11/2026, como el «Regenerar concepto» de
+  Codex): elige un vídeo anterior del producto (de un lote o suelto) con la referencia preparada; la
+  tarjeta reutiliza su referencia (mismo recorte en Higgsfield, fotogramas y audio) y su tipo, y su
+  desglose si sigue valiendo con lo que pide la tarjeta (sin cargo); si no, el lote lo rehace. Imagen,
+  clip y montaje salen nuevos (`regenerateFrom` en `addVideoToBatch`). La Biblioteca (cuerpos sueltos)
+  no entra: no tiene referencia de la que partir.
+- **Avatar «Automático» por defecto** en las tarjetas de «Nuevo lote» (`batchCardAvatar`, como el
+  `reference_match` de Codex); un avatar concreto solo si se elige. Si el producto dice «Sin
+  sustitución» o «No aparece nadie», ese modo.

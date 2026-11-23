@@ -356,10 +356,17 @@ export async function addVideoToBatch(
     clipModel?: unknown;
     /** Referencias de imagen subidas a mano (`{ sha256, role }[]`, ya subidas con `/api/referencias`). */
     references?: unknown;
+    /**
+     * «Regenerar un vídeo»: un vídeo anterior de este producto (que quien pide ve) cuya referencia ya
+     * preparada, fotogramas, audio y desglose se reutilizan. Se generan imagen, clip y montaje nuevos.
+     */
+    regenerateFrom?: unknown;
   },
 ): Promise<Video> {
   const batch = await ownBatch(user, batchId, NOT_CREATOR);
   requireOpen(batch);
+  const source = input.regenerateFrom === undefined || input.regenerateFrom === null ? null : await regenerationSource(user, input.productId, input.regenerateFrom);
+  if (source && input.linkUrl != null) throw new HttpError(400, "Un vídeo que se regenera no lleva enlace.");
 
   const note = cleanNote(input.note);
   const editReferenceUrl = checkEditReferenceUrl(input.editReferenceUrl) ?? null;
@@ -402,9 +409,94 @@ export async function addVideoToBatch(
     editReferenceUrl,
     ...(clipModel === undefined ? {} : { clipModel }),
   };
-  const video = input.linkUrl == null ? await createVideo(user, input.productId, extras) : await createVideoFromLink(user, input.productId, input.linkUrl, extras);
+  let video = input.linkUrl == null ? await createVideo(user, input.productId, extras) : await createVideoFromLink(user, input.productId, input.linkUrl, extras);
   if (references.length > 0) await getDb().transaction((tx) => writeReferences(tx, video.id, references));
+  if (source) video = await reuseReference(user, source, video);
   return video;
+}
+
+const NOT_REGENERABLE = "Ese vídeo no se puede regenerar: su referencia no está preparada.";
+
+/** El vídeo que se regenera: de este producto, visible para quien pide y con la referencia preparada. */
+async function regenerationSource(user: AuthUser, productId: number, value: unknown): Promise<Video> {
+  if (!Number.isSafeInteger(value) || (value as number) <= 0) throw new HttpError(400, "Elige el vídeo que quieres regenerar.");
+  const source = await getVideoFor(user, value as number);
+  if (source.productId !== productId) throw new HttpError(400, "Ese vídeo es de otro producto.");
+  if (source.referenceStatus !== "ready" || !source.referenceMediaId) throw new HttpError(400, NOT_REGENERABLE);
+  return source;
+}
+
+/**
+ * «Regenerar»: el vídeo nuevo reutiliza la referencia ya preparada del anterior (el mismo recorte en
+ * Higgsfield, sus fotogramas y su audio), sin volver a subirla ni a traerla. Si el desglose del
+ * anterior sigue valiendo con lo que pide la tarjeta (mismo tipo, cambios, quién sale…), se copia
+ * con sus prompts, sin cargo; si no, el lote lo vuelve a hacer. Nunca copia generaciones: imagen,
+ * clip y montaje son nuevos.
+ */
+async function reuseReference(user: AuthUser, source: Video, video: Video): Promise<Video> {
+  const db = getDb();
+  const copied = await db.transaction(async (tx) => {
+    const [updated] = await tx
+      .update(schema.videos)
+      .set({
+        referenceStatus: "ready",
+        referenceSource: source.referenceSource,
+        referenceUrl: source.referenceUrl,
+        referenceDurationMs: source.referenceDurationMs,
+        referenceWidth: source.referenceWidth,
+        referenceHeight: source.referenceHeight,
+        referenceMediaId: source.referenceMediaId,
+        segmentDurationMs: source.segmentDurationMs,
+        cutsMs: source.cutsMs,
+        updatedAt: new Date(),
+      })
+      .where(eq(schema.videos.id, video.id))
+      .returning();
+    await tx.execute(sql`insert into video_frames (video_id, index, time_ms, mime, size, data)
+      select ${video.id}, index, time_ms, mime, size, data from video_frames where video_id = ${source.id}`);
+    await tx.execute(sql`insert into video_reference_audio (video_id, mime, size, duration_ms, data)
+      select ${video.id}, mime, size, duration_ms, data from video_reference_audio where video_id = ${source.id}`);
+    return updated;
+  });
+  const [done] = await db
+    .select()
+    .from(schema.videoAnalyses)
+    .where(and(eq(schema.videoAnalyses.videoId, source.id), eq(schema.videoAnalyses.status, "done")))
+    .orderBy(desc(schema.videoAnalyses.version))
+    .limit(1);
+  if (!done || done.referenceMediaId !== source.referenceMediaId) return copied;
+  if (staleness(done, { ...copied, productNotes: await productNotesOf(copied) }).staleReason !== null) return copied;
+  return db.transaction(async (tx) => {
+    await tx.insert(schema.videoAnalyses).values({
+      videoId: copied.id,
+      version: 1,
+      status: "done",
+      result: done.result,
+      referenceMediaId: done.referenceMediaId,
+      ruleVersions: done.ruleVersions,
+      kind: done.kind,
+      avatarMode: done.avatarMode,
+      avatarPhotoId: done.avatarPhotoId,
+      avatarLibraryId: done.avatarLibraryId,
+      variantId: done.variantId,
+      autoAvatarId: done.autoAvatarId,
+      note: done.note,
+      adaptation: done.adaptation,
+      hookSeconds: done.hookSeconds,
+      productNotes: done.productNotes,
+      clipModel: done.clipModel,
+      answers: done.answers,
+      // Sin cargo: lo que costó ya cuenta en el original.
+      spendEntryId: null,
+      createdBy: user.id,
+    });
+    const [withPrompts] = await tx
+      .update(schema.videos)
+      .set({ imagePrompt: source.imagePrompt, videoPrompt: source.videoPrompt, frameUse: source.frameUse })
+      .where(eq(schema.videos.id, copied.id))
+      .returning();
+    return withPrompts;
+  });
 }
 
 export interface BatchRow {

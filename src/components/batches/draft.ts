@@ -23,7 +23,9 @@ export type DraftAvatar = number | "nadie" | "sin_sustitucion" | "automatico" | 
 export type Source =
   | { type: "file"; file: File; preview: string }
   | { type: "link"; url: string }
-  | { type: "missing"; name: string; size: number };
+  | { type: "missing"; name: string; size: number }
+  /** «Regenerar un vídeo»: un vídeo anterior del producto cuya referencia preparada se reutiliza. */
+  | { type: "video"; videoId: number; title: string; version: string };
 
 export interface Row {
   key: string;
@@ -151,6 +153,9 @@ function parseSource(value: unknown): Source | null {
   if (value.type === "link" && typeof value.url === "string" && value.url) return { type: "link", url: value.url };
   if (value.type === "missing" && typeof value.name === "string" && Number.isSafeInteger(value.size)) {
     return { type: "missing", name: value.name, size: value.size as number };
+  }
+  if (value.type === "video" && isId(value.videoId) && typeof value.title === "string") {
+    return { type: "video", videoId: value.videoId, title: value.title, version: typeof value.version === "string" ? value.version : "" };
   }
   return null;
 }

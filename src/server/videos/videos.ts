@@ -208,7 +208,19 @@ export async function listVideosFor(
   user: AuthUser,
   productId: number,
 ): Promise<
-  Array<{ id: number; title: string; createdBy: number; creatorName: string | null; referenceStatus: string; createdAt: Date; mine: boolean }>
+  Array<{
+    id: number;
+    title: string;
+    createdBy: number;
+    creatorName: string | null;
+    referenceStatus: string;
+    kind: string;
+    hookSeconds: number;
+    editStatus: string | null;
+    createdAt: Date;
+    updatedAt: Date;
+    mine: boolean;
+  }>
 > {
   const product = await getProductFor(user, productId);
   const rows = await getDb()
@@ -218,7 +230,11 @@ export async function listVideosFor(
       createdBy: schema.videos.createdBy,
       creatorName: schema.users.name,
       referenceStatus: schema.videos.referenceStatus,
+      kind: schema.videos.kind,
+      hookSeconds: schema.videos.hookSeconds,
+      editStatus: schema.videos.editStatus,
       createdAt: schema.videos.createdAt,
+      updatedAt: schema.videos.updatedAt,
     })
     .from(schema.videos)
     .leftJoin(schema.users, eq(schema.users.id, schema.videos.createdBy))
