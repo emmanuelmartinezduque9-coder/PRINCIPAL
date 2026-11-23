@@ -797,6 +797,7 @@ export async function finalizeGeneration(generationId: number, deps: GenDeps = {
         if (savedOk.has(index)) return null;
         const ok = job.status === "done";
         const thumb = ok ? await thumbnailOf(job.urls[0], row.kind, deps) : null;
+        if (ok && row.kind === "frame") console.log(`[generaciones] Imagen del vídeo ${row.videoId} (ronda ${row.round}) lista: ${job.urls[0]}`);
         return { generationId: row.id, index, jobId: job.jobId, ok, url: job.urls[0] ?? null, error: jobError(job), thumbMime: thumb ? "image/jpeg" : null, thumb };
       }),
     );
