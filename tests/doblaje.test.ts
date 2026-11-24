@@ -91,6 +91,8 @@ elif args[0] == 'comprobar':
     n.write_text(str(veces + 1))
     fuga = (Path(args[1]).parent / 'referencia-audio.m4a').read_bytes().startswith(b'FUGA') if (Path(args[1]).parent / 'referencia-audio.m4a').exists() else False
     quedan = [{'desde': 11.5, 'hasta': 13.2, 'texto': 'Look at her wings!', 'idioma': 'en'}] if fuga and veces == 0 else []
+    if Path(args[1]).read_bytes().startswith(b'DOBLAJE-VIEJO-EN'):
+        quedan = [{'desde': 0.0, 'hasta': 3.4, 'texto': "3, 2, 1, let's see this guy!", 'idioma': 'en'}]
     r = {'ok': True, 'comprobado': True, 'quedan': quedan}
 elif args[0] == 'tramo':
     shutil.copy(Path(args[1]) / 'dialogue-only.mp4', args[4])
@@ -429,6 +431,19 @@ describe("una canción no se traduce nunca (orden del 24/11/2026)", () => {
     const { row } = await mount(video.id);
     expect(row.notes).toContain("No se pudo decidir si la voz es habla o una canción: no se dobla");
     expect(hf.calls).toEqual([]);
+  });
+
+  it("un doblaje viejo de habla que sigue en el idioma original no se reutiliza: se vuelve a doblar (vídeo 22)", async () => {
+    const video = await withAudio(Buffer.from("VOZ-INGLES"));
+    const sha = (await import("node:crypto")).createHash("sha256").update("VOZ-INGLES").digest("hex");
+    const key = `doblajes/${video.id}/viejo.m4a`;
+    await store.putBuffer(key, Buffer.from("DOBLAJE-VIEJO-EN"), { contentType: "audio/mp4" });
+    await getDb().insert(schema.dubs).values({ videoId: video.id, userId: dueno.id, sourceSha256: sha, language: "deu", status: "done", quotedCredits: 39, storageKey: key, raw: { comprobado: true, origen: "en" } });
+    const { row } = await mount(video.id);
+    expect(row.notes).toContain("El doblaje anterior seguía en el idioma original («3, 2, 1, let's see this guy!»): se vuelve a doblar");
+    expect(row.notes).toContain("audio:MEZCLA-ALEMANA");
+    expect(dubCalls()).toHaveLength(1);
+    expect((await dubRows()).map((r) => r.status)).toEqual(["failed", "done"]);
   });
 
   it("una vez al arrancar, los vídeos con un doblaje sin decidir habla o canto vuelven a montarse", async () => {

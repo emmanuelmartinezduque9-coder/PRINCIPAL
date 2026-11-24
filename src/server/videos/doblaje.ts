@@ -321,9 +321,28 @@ export async function dubbedAudio(ctx: DubContext): Promise<DubOutcome> {
         } else if (again.note) ctx.notes.push(again.note);
         return { kind: "skip" };
       }
-      const raw = { ...((row.raw as object | null) ?? {}), ...again.raw };
-      await update(row.id, { raw });
-      row = { ...row, raw };
+      // Era habla: antes de reutilizar el doblaje viejo, se comprueba con las ventanas nuevas que no quede nada en el
+      // idioma original (el del vídeo 22 salió en inglés: se hizo con la versión anterior).
+      await ctx.store.download(row.storageKey, output);
+      const windows = (again.raw.ventanas as Array<[number, number]> | undefined) ?? [];
+      const check = await ctx.doblar([
+        "comprobar",
+        output,
+        ...(again.origin ? ["--origen", again.origin] : []),
+        "--destino",
+        ctx.language,
+        ...(windows.length ? ["--ventanas", ...windows.map(([a, b]) => `${a}:${b}`)] : []),
+      ]);
+      if (!check.ok || check.comprobado !== true || (check.quedan ?? []).length > 0) {
+        const why = (check.quedan ?? []).map((f) => f.texto).join(" · ") || "no se pudo comprobar";
+        await update(row.id, { status: "failed", error: `Doblaje viejo con restos del idioma original (${why.slice(0, 200)}): se rehace` });
+        ctx.notes.push(`El doblaje anterior seguía en el idioma original («${why.slice(0, 120)}»): se vuelve a doblar`);
+        row = undefined;
+      } else {
+        const raw = { ...((row.raw as object | null) ?? {}), ...again.raw };
+        await update(row.id, { raw });
+        row = { ...row, raw };
+      }
     }
     // Ya doblado: del almacén, sin pagar otra vez.
     // Los de antes de la comprobación con Whisper (24/11/2026) se rehacen: uno dejó una frase en inglés.

@@ -321,7 +321,10 @@ def comprobar(audio, origen, destino, ventanas=None):
     quedan = []
     for f in frases(w, leer(audio)):
         dentro = ventanas is None or any(f['desde'] < b + RELLENO_S and f['hasta'] > a - RELLENO_S for a, b in ventanas)
-        if dentro and f['idioma'] and f['idioma'] != destino and f['prob'] >= 0.6 and f['no_habla'] <= MAX_NO_HABLA and (origen is None or f['idioma'] == origen):
+        # En el idioma original del diálogo cuenta aunque Whisper dude (el vídeo 22 pasó con «en» al 58 %); sin saber
+        # el idioma original, solo si está seguro.
+        if (dentro and f['idioma'] and f['idioma'] != destino and f['no_habla'] <= MAX_NO_HABLA
+                and (f['idioma'] == origen or (origen is None and f['prob'] >= 0.6))):
             quedan.append(dict(desde=f['desde'], hasta=f['hasta'], texto=f['texto'][:120], idioma=f['idioma'], probabilidad=f['prob']))
     return quedan
 
