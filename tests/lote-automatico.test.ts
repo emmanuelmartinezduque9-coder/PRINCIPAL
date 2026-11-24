@@ -15,7 +15,7 @@ import { seedRules } from "@/server/rules";
 import { runAnalysis, type Analysis } from "@/server/videos/analysis";
 import { addVideoToBatch, createBatch, getBatchFor } from "@/server/videos/batches";
 import { approveFrame, rejectFrame } from "@/server/videos/frame";
-import { finalizeGeneration, requestGeneration, submitGeneration, type GenDeps } from "@/server/videos/generations";
+import { finalizeGeneration, requestGeneration, submitGeneration, TIMED_OUT, type GenDeps } from "@/server/videos/generations";
 import {
   advanceBatch,
   advanceRunningBatches,
@@ -368,6 +368,26 @@ describe("preguntas del lote", () => {
     expect(await batchQuestions(ana, batchId)).toEqual([]);
     // Quién sale se resolvió solo.
     expect(["automatico", "sin_sustitucion"]).toContain((await getVideoFor(ana, videos[0].id)).avatarMode);
+  });
+
+  it("un clip vencido por tiempo que Higgsfield aún puede entregar se espera: ni se regenera (pagar dos veces) ni saca el vídeo", async () => {
+    const { batchId, videos } = await batchWith(1, { automatic: true });
+    await getPool().query("update batches set budget_credits = 1000 where id = $1", [batchId]);
+    await sendBatch(ana, batchId);
+    await runQueuedAnalyses();
+    await advanceBatch(batchId, deps);
+    await cycle(batchId, 2);
+    await approveFrame(ana, videos[0].id, await firstCandidate(videos[0].id));
+    await advanceBatch(batchId, deps);
+    const clip = (await generations()).find((g) => g.kind.startsWith("clip"))!;
+    await getPool().query(
+      "update generations set status = 'failed', error = $2, finished_at = now(), recheck_until = now() + interval '6 hours' where id = $1",
+      [clip.id, TIMED_OUT],
+    );
+    await advanceBatch(batchId, deps);
+    expect((await generations()).filter((g) => g.kind.startsWith("clip"))).toHaveLength(1);
+    expect((await getVideoFor(ana, videos[0].id)).autoSkipped).toBe(false);
+    expect((await getBatchFor(ana, batchId)).pause).toBeNull();
   });
 
   it("un vídeo cuya referencia aún no ha llegado espera (no sale del lote); al llegar, sigue", async () => {

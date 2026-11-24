@@ -18,7 +18,7 @@ import { expectsEffectPass } from "@/server/videos/efecto";
 // Registra el constructor de la imagen inicial (`frame`) en las generaciones.
 import { approveFrame, rejectFrame } from "@/server/videos/frame";
 import { sourceMsFor, tramoKind, tramosOf, tramoVideo } from "@/server/videos/tramos";
-import { baseKindOf, type BaseGenerationKind, BLOCKED, MAX_REGENERATIONS, upscaleEstimate, quoteGeneration, SYSTEM_REJECT_PREFIX, requestGeneration, type GenDeps, type GenerationKind } from "@/server/videos/generations";
+import { baseKindOf, type BaseGenerationKind, BLOCKED, JOB_NOT_FOUND, MAX_REGENERATIONS, TIMED_OUT, upscaleEstimate, quoteGeneration, SYSTEM_REJECT_PREFIX, requestGeneration, type GenDeps, type GenerationKind } from "@/server/videos/generations";
 import { clipModelProblem, getVideoFor, setVideoSong, referenceOutdated, REFERENCE_OUTDATED, staleness, updateVideoChoices, withProductNotes, type Video } from "@/server/videos/videos";
 import { CLIP_MODEL_LABEL, CLIP_MODELS, resolveClipModel, SEEDANCE, sourceProblem } from "@/lib/clip-models";
 import { isPromptProblem, PROMPT_ERROR } from "@/server/videos/prompt-check";
@@ -216,9 +216,16 @@ function retryAfterOf(batch: Batch): Date {
  * Una ronda que falló se puede repetir sola: quedan rondas y no es el bloqueo del filtro de Higgsfield
  * (ese lo repite `sanitizeAfterBlock` con el prompt reescrito).
  */
+/** Vencido por tiempo o sin encontrar en Higgsfield, pero aún dentro del rato en que se sigue mirando. */
+function stillMayArrive(gen: Generation, now: Date = new Date()): boolean {
+  return (gen.error === TIMED_OUT || gen.error === JOB_NOT_FOUND) && gen.recheckUntil !== null && gen.recheckUntil > now;
+}
+
 function retryable(list: readonly Generation[]): boolean {
   const last = list.at(-1);
   if (!last || (last.status !== "failed" && last.status !== "not_sent") || last.rejectReason) return false;
+  // Vencido o «no encontrado» todavía puede llegar (se sigue mirando): regenerarlo sería pagarlo dos veces.
+  if (stillMayArrive(last)) return false;
   if (last.error === BLOCKED) {
     // Una imagen bloqueada por el filtro se repite sola (sin coste) hasta `MAX_BLOCKED_RETRIES`
     // veces: su prompt con sala se rehace sin nombres de marca (24/11/2026, Sephora). El clip lo
@@ -1289,6 +1296,8 @@ async function advanceGenerations(user: AuthUser, start: Batch, deps: GenDeps): 
   // fuera con su motivo y los demás siguen.
   const skipFor = async (row: Row, kind: BaseGenerationKind, s: Stage) => {
     const list = kind === "frame" ? row.frames : row.clips;
+    // Un trabajo vencido que Higgsfield aún puede entregar se espera (ni se repite ni se saca el vídeo).
+    if (s === "failed" && list.at(-1) && stillMayArrive(list.at(-1)!)) return false;
     if (s === "failed" && !retryable(list)) {
       const blockedAgain = kind === "clip" && list.at(-1)?.error === BLOCKED;
       await skipVideo(

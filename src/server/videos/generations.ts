@@ -53,7 +53,12 @@ export const MAX_REGENERATIONS = 2;
 export const SYSTEM_REJECT_PREFIX = "Corrección automática: ";
 export const SUBMIT_STALE_MS = 2 * 60 * 1000;
 export const RECONCILE_GIVE_UP_MS = 10 * 60 * 1000;
-export const GENERATION_TIMEOUT_MS = 60 * 60 * 1000;
+/**
+ * Cuánto se espera a un trabajo enviado antes de darlo por vencido: 4 horas (24/11/2026: Genjutsu con colas largas
+ * tarda más de una hora; el lote 8 seguía «pending» en Higgsfield a la hora). Aun vencido, se sigue mirando
+ * `LATE_RECHECK_MS` y se recoge si termina; el lote no lo regenera mientras tanto.
+ */
+export const GENERATION_TIMEOUT_MS = 4 * 60 * 60 * 1000;
 export const POLL_MIN_INTERVAL_MS = 8_000;
 /** Plazo de todo el envío (comprobaciones incluidas) desde que se hace con la fila: menor que `SUBMIT_STALE_MS`. */
 export const SUBMIT_DEADLINE_MS = 100 * 1000;
@@ -173,7 +178,7 @@ export const NEVER_ARRIVED = "Higgsfield no llegó a recibir la petición. Puede
 export const BLOCKED = "Higgsfield ha bloqueado el resultado por su filtro de contenido o de marcas. Cambia la referencia o el prompt.";
 export const JOB_FAILED = "Higgsfield no ha podido generar el resultado.";
 export const JOB_NOT_FOUND = "Higgsfield no encuentra este trabajo. Lo seguiremos mirando unas horas; también puedes verlo en tu cuenta de Higgsfield.";
-export const TIMED_OUT = "Higgsfield no ha terminado este trabajo en una hora. Míralo en tu cuenta de Higgsfield.";
+export const TIMED_OUT = "Higgsfield no ha terminado este trabajo en cuatro horas; se sigue mirando por si llega.";
 
 const notEnough = (need: number, have: number) => `No tienes créditos suficientes en Higgsfield: hacen falta ${need} y tienes ${have}.`;
 const priceChanged = (credits: number) => `El precio ha cambiado: ahora son ${credits} créditos. Revísalo y confirma de nuevo.`;

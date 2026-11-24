@@ -1087,9 +1087,9 @@ describe("seguimiento", () => {
     expect(jobCalls()).toHaveLength(2);
   });
 
-  it("una generación enviada que no termina en una hora queda en error sin reenviarse, y si termina tarde se recoge", async () => {
+  it("una generación enviada que no termina en cuatro horas queda en error sin reenviarse, y si termina tarde se recoge", async () => {
     const id = await sendFrame();
-    await setAgo(id, "submitted_at", 61 * 60_000);
+    await setAgo(id, "submitted_at", 241 * 60_000);
     await setAgo(id, "last_polled_at", 60_000);
     await sweepGenerations(deps);
     expect(await rowOf(id)).toMatchObject({ status: "failed", error: TIMED_OUT });
