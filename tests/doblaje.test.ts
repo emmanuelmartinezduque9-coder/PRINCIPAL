@@ -13,7 +13,7 @@ import type { AuthUser } from "@/server/auth";
 import { uploadSong } from "@/server/songs";
 
 import { DUB_UNKNOWN } from "@/server/videos/doblaje";
-import { recheckDubbedEdits, redubTodaysEdits, startEdit, type EditSpec } from "@/server/videos/edits";
+import { recheckDubbedEdits, redubTodaysEdits, remountDubbedWithoutEdit, startEdit, type EditSpec } from "@/server/videos/edits";
 import { createBatch } from "@/server/videos/batches";
 import { claimRun, runEdit, type MontajeDeps } from "@/server/videos/montaje-nube";
 import { createVideo, getVideoFor, updateVideoChoices, videoView, type Video } from "@/server/videos/videos";
@@ -308,6 +308,18 @@ describe("que no quede nada en el idioma original", () => {
     await getDb().update(schema.dubs).set({ raw: { origen: "en" } }).where(eq(schema.dubs.id, first.id));
     expect(await recheckDubbedEdits()).toBe(1);
     expect(await recheckDubbedEdits()).toBe(0);
+  });
+
+  it("al arrancar, un vídeo con el doblaje hecho y comprobado pero sin montar vuelve a montarse (sin gastar)", async () => {
+    const video = await videoWithAudio({ dubDialogue: true });
+    await mount(video.id);
+    expect(await remountDubbedWithoutEdit()).toBe(0); // ya montado con ese doblaje
+    // El montaje se cortó: el doblaje es más nuevo que el último montaje.
+    await getDb().update(schema.dubs).set({ updatedAt: new Date(Date.now() + 60_000) });
+    expect(await remountDubbedWithoutEdit()).toBe(1);
+    expect(await remountDubbedWithoutEdit()).toBe(0); // ya en cola
+    expect(await runEdit((await claimRun(new Date()))!, deps())).toBe("done");
+    expect(dubCalls()).toHaveLength(1);
   });
 
   it("un doblaje hecho antes de la comprobación (sin `comprobado`) se rehace al volver a montar", async () => {

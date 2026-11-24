@@ -28,7 +28,7 @@ import { batchOfVideo, cleanSelfCheck, failEdit, MAX_EDIT_BYTES, readReferenceAu
  *   (8 por defecto); el resto espera en la cola, por orden de llegada. Reservar es `for update
  *   skip locked`: dos procesos nunca montan el mismo.
  * - **Latido** cada 30 s. Un montaje sin latido en 3 minutos (el proceso se reinició, una
- *   publicación nueva) vuelve a la cola; a los 3 intentos falla y el vídeo lo dice.
+ *   publicación nueva) vuelve a la cola; a los 5 intentos falla y el vídeo lo dice.
  * - **Entradas**: los clips del almacén propio (o de Higgsfield si aún no se copiaron), la canción
  *   de la biblioteca, el audio de la referencia y la referencia de edición (`link-media.ts`: la
  *   nube con yt-dlp y, si no puede, el Mac). Mientras el Mac trae un enlace y da señales, el
@@ -42,7 +42,8 @@ import { batchOfVideo, cleanSelfCheck, failEdit, MAX_EDIT_BYTES, readReferenceAu
 export const MONTAJE_CONCURRENCY = Math.max(1, Math.min(8, Number(process.env.MONTAJE_CONCURRENCIA) || 8));
 export const RUN_HEARTBEAT_MS = 30_000;
 export const RUN_STALE_MS = 3 * 60_000;
-export const MAX_RUN_ATTEMPTS = 3;
+/** Intentos de un montaje cortado sin latido (cada publicación reinicia el proceso; varias seguidas no deben agotarlos). */
+export const MAX_RUN_ATTEMPTS = 5;
 export const MONTADOR_TIMEOUT_MS = 25 * 60_000;
 export const REA_VIDEO_TIMEOUT_MS = 10 * 60_000;
 /** Separar la voz o mezclar el doblaje (`doblar.py`). */

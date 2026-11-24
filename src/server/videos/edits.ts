@@ -365,6 +365,33 @@ export async function recheckDubbedEdits(now: Date = new Date()): Promise<number
 }
 
 /**
+ * En cada arranque: un vídeo con un doblaje ya hecho y comprobado más nuevo que su último montaje (el montaje se cortó,
+ * p. ej. por varias publicaciones seguidas) se vuelve a montar. No gasta: el doblaje se reutiliza del almacén. Si ya
+ * hay un montaje en marcha o en cola, no hace nada.
+ */
+export async function remountDubbedWithoutEdit(now: Date = new Date()): Promise<number> {
+  const rows = await getDb().execute<{ video_id: string }>(sql`
+    select distinct d.video_id from dubs d
+    where d.status = 'done' and coalesce((d.raw->>'comprobado')::boolean, false)
+      and not exists (select 1 from edits e where e.video_id = d.video_id and e.created_at > d.updated_at)
+      and not exists (select 1 from edit_runs r where r.video_id = d.video_id and r.status in ('queued', 'running'))`);
+  let queued = 0;
+  for (const { video_id } of rows.rows) {
+    const [video] = await getDb().select().from(videos).where(eq(videos.id, Number(video_id)));
+    const creator = video ? await getActiveUser(video.createdBy) : null;
+    if (!video || !creator || video.dubDialogue === false) continue;
+    try {
+      await queueEdit(video, await getProductFor(creator, video.productId), creator.id, now);
+      queued += 1;
+    } catch (error) {
+      console.warn(`[montaje] No se pudo volver a montar el vídeo ${video_id} con su doblaje: ${error instanceof Error ? error.message : error}`);
+    }
+  }
+  if (queued) console.log(`[montaje] ${queued} vídeo(s) con el doblaje hecho y sin montar vuelven a montarse.`);
+  return queued;
+}
+
+/**
  * Un lote `listo` cuyos vídeos han terminado todos su montaje (hecho o fallido con su motivo)
  * pasa a `montado`. Se llama al cerrar cada montaje y en el seguimiento.
  */
