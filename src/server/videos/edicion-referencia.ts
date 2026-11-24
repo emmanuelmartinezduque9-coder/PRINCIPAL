@@ -129,7 +129,8 @@ const FOREIGN_NAMES = [
 ];
 
 /** Ciudades de los mercados del dueño, como se escriben en las indicaciones (es/de/en) → en el idioma del anuncio. */
-const CITIES: Array<{ match: RegExp; de: string; it: string }> = [
+type AdLanguage = "de" | "it" | "en";
+const CITIES: Array<{ match: RegExp; de: string; it: string; en?: string }> = [
   { match: /\bberl[ií]n\b/i, de: "Berlin", it: "Berlino" },
   { match: /\b(m[uú]nich|m[üu]nchen)\b/i, de: "München", it: "Monaco di Baviera" },
   { match: /\b(hamburgo|hamburg)\b/i, de: "Hamburg", it: "Amburgo" },
@@ -152,21 +153,25 @@ const CITIES: Array<{ match: RegExp; de: string; it: string }> = [
   { match: /\b(tur[ií]n|torino|turin)\b/i, de: "Turin", it: "Torino" },
   { match: /\b(florencia|firenze|florenz)\b/i, de: "Florenz", it: "Firenze" },
 ];
-const COUNTRIES: Record<string, { de: string; it: string }> = {
-  DE: { de: "Deutschland", it: "Germania" },
-  AT: { de: "Österreich", it: "Austria" },
-  CH: { de: "der Schweiz", it: "Svizzera" },
-  IT: { de: "Italien", it: "Italia" },
+const COUNTRIES: Record<string, Record<AdLanguage, string>> = {
+  DE: { de: "Deutschland", it: "Germania", en: "Germany" },
+  AT: { de: "Österreich", it: "Austria", en: "Austria" },
+  CH: { de: "der Schweiz", it: "Svizzera", en: "Switzerland" },
+  IT: { de: "Italien", it: "Italia", en: "Italy" },
+  US: { de: "den USA", it: "Stati Uniti", en: "the US" },
 };
+const DEFAULT_COUNTRY: Record<AdLanguage, string> = { de: "DE", it: "IT", en: "US" };
+/** Nombres de Estados Unidos: para un anuncio que pasa allí no son de otro mercado. */
+const US_NAMES = new Set(FOREIGN_NAMES.slice(0, FOREIGN_NAMES.indexOf("Kanada")));
 
 /**
  * Dónde pasa nuestro anuncio (regla 6c): la ciudad que nombren las indicaciones del dueño (tarjeta, adaptación o
  * lote: «las calles de Berlín, Alemania» → «Berlin»); si no nombran ninguna, el primer país del producto.
  */
 export function targetPlace(indications: string, countries: string[], language: string): string {
-  const lang = language === "it" ? "it" : "de";
-  for (const city of CITIES) if (city.match.test(indications)) return city[lang];
-  const country = COUNTRIES[(countries[0] ?? (lang === "it" ? "IT" : "DE")).toUpperCase()] ?? COUNTRIES[lang === "it" ? "IT" : "DE"];
+  const lang: AdLanguage = language === "it" || language === "en" ? language : "de";
+  for (const city of CITIES) if (city.match.test(indications)) return city[lang] ?? city.de;
+  const country = COUNTRIES[(countries[0] ?? DEFAULT_COUNTRY[lang]).toUpperCase()] ?? COUNTRIES[DEFAULT_COUNTRY[lang]];
   return country[lang];
 }
 
@@ -178,12 +183,14 @@ export function targetPlace(indications: string, countries: string[], language: 
 export function withLocalPlaces(text: string, lugares: string[], target: string): string {
   const art = "(?:(?:den|die|der|dem|the)\\s+)?";
   const t = target.toLowerCase();
-  const names = [...new Set([...FOREIGN_NAMES, ...lugares.map((l) => l.trim())])].filter((n) => n.length >= 3 && !t.includes(n.toLowerCase()) && !n.toLowerCase().includes(t));
+  const local = target === COUNTRIES.US.en || target === COUNTRIES.US.de || target === COUNTRIES.US.it ? US_NAMES : new Set<string>();
+  const names = [...new Set([...FOREIGN_NAMES.filter((n) => !local.has(n)), ...lugares.map((l) => l.trim())])].filter((n) => n.length >= 3 && !t.includes(n.toLowerCase()) && !n.toLowerCase().includes(t));
   let out = text;
   for (const name of names.sort((a, b) => b.length - a.length)) {
     out = out.replace(new RegExp(`(?<![\\p{L}])${art}${escapeRe(name)}(?![\\p{L}])`, "giu"), target);
   }
-  for (const acronym of [...FOREIGN_ACRONYMS, ...lugares.filter((l) => l.trim().length < 3)].sort((a, b) => b.length - a.length)) {
+  const localAcronyms = local.size > 0 ? new Set(["USA", "US", "U.S.A.", "U.S.", "NYC", "EE. UU.", "EE.UU.", "EEUU"]) : new Set<string>();
+  for (const acronym of [...FOREIGN_ACRONYMS.filter((a) => !localAcronyms.has(a)), ...lugares.filter((l) => l.trim().length < 3)].sort((a, b) => b.length - a.length)) {
     out = out.replace(new RegExp(`(?<![\\p{L}])${art}${escapeRe(acronym)}(?![\\p{L}])`, "gu"), target);
   }
   return out;
@@ -274,10 +281,14 @@ const cacheKey = (videoId: number, sha: string, productName: string, learned = "
 export async function referenceEdit(ctx: ReferenceEditContext): Promise<ReferenceEdit> {
   const sha = await sha256File(ctx.file);
   const place = ctx.place ?? targetPlace("", [], ctx.product.language);
-  // Correcciones aprendidas de los reportes sobre rótulos («Mejoras»): van al final de las instrucciones.
+  // Correcciones aprendidas de los reportes sobre rótulos («Mejoras»): van al final de las instrucciones. Sin ninguna, la
+  // clave es la de siempre. Una lectura ya guardada sin ellas (p. ej. la del vídeo 24) se reutiliza tal cual al volver a
+  // montar, para que sus rótulos no cambien: las correcciones valen para las lecturas nuevas y solo entonces se apuntan.
   const learned = await learnedFor("montaje", ctx.product.id || null);
-  ctx.learned?.push(...learned.ids);
-  const key = cacheKey(ctx.videoId, sha, ctx.product.name, learned.text);
+  const plainKey = cacheKey(ctx.videoId, sha, ctx.product.name);
+  const plainSaved = learned.text !== "" && ctx.store !== null && (await ctx.store.head(plainKey).catch(() => null)) !== null;
+  const key = plainSaved ? plainKey : cacheKey(ctx.videoId, sha, ctx.product.name, learned.text);
+  if (!plainSaved) ctx.learned?.push(...learned.ids);
   if (ctx.store && (await ctx.store.head(key).catch(() => null)) !== null) {
     const cached = path.join(ctx.dir, "edicion-referencia.json");
     await ctx.store.download(key, cached);
@@ -296,7 +307,7 @@ export async function referenceEdit(ctx: ReferenceEditContext): Promise<Referenc
     rules: [],
     instructions: REFERENCE_EDIT_INSTRUCTIONS.replaceAll("{PRODUCTO}", ctx.product.name).replaceAll("{LUGAR}", place) + learned.text,
     content: [
-      textPart(`Nuestro producto: ${ctx.product.name}. Idioma del anuncio: ${ctx.product.language === "it" ? "italiano" : "alemán"}. Nuestro anuncio pasa en: ${place}. La referencia dura ${durationS.toFixed(2)} s.`),
+      textPart(`Nuestro producto: ${ctx.product.name}. Idioma del anuncio: ${ctx.product.language === "it" ? "italiano" : ctx.product.language === "en" ? "inglés americano" : "alemán"}. Nuestro anuncio pasa en: ${place}. La referencia dura ${durationS.toFixed(2)} s.`),
       ...shots.flatMap((s) => [textPart(`t = ${s.t.toFixed(2)} s`), imagePart(s.jpeg, "image/jpeg")]),
     ],
     maxTokens: 4_000,

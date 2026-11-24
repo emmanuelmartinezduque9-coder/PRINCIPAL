@@ -81,8 +81,10 @@ reportes con su recorrido: Recibido → Causa → Cambio aplicado → Comprobado
   problemas reportados» al final de esas instrucciones (`instructionsBlock`), como mucho 4 por paso.
 - **La traducción hablada no admite correcciones:** la hace el modelo `dubbing` de Higgsfield solo con el idioma de
   destino, sin texto nuestro. Haiku clasifica un fallo de esa traducción como «código».
-- La edición de la referencia se guarda en caché en el almacén; las correcciones van en su clave, así que al cambiar
-  se vuelve a leer (un Claude mediano más por vídeo, solo esa vez).
+- La edición de la referencia se guarda en caché en el almacén. Sin correcciones, la clave es la de siempre. Una
+  lectura ya guardada sin correcciones se reutiliza tal cual al volver a montar (sus rótulos no cambian; lo pidió la
+  sesión del Mac para el remontaje del vídeo 24) y entonces no se apuntan. Las lecturas nuevas llevan las
+  correcciones en la clave: si cambian, se vuelve a leer una vez.
 - El montaje apunta qué correcciones usó (`edit_runs.learned_corrections`). Se mide **por montaje**: cada vídeo con
   montaje hecho es un caso; «después» = su primer montaje usó la corrección; rehacer el montaje cuenta como
   regeneración; el problema son los reportes del montaje de ese tipo. Mismo veredicto que en imagen y clip.

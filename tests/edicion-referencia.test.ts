@@ -192,6 +192,18 @@ describe("editar como la referencia", () => {
     expect([...second.row.learnedCorrections].sort()).toEqual([lugar.id, marcas.id].sort());
   });
 
+  it("una lectura guardada antes de las correcciones se reutiliza al volver a montar (sus rótulos no cambian) y no se apuntan", async () => {
+    await store.putBuffer("referencias/x/ref.mp4", mp4, { contentType: "video/mp4" });
+    const video = await videoWithClip({ referenceStorageKey: "referencias/x/ref.mp4" });
+    const first = await mount(video.id);
+    expect(first.row.learnedCorrections).toEqual([]);
+    await getDb().insert(schema.learnedCorrections).values({ key: "marcas", version: 1, stage: "montaje", problemType: "rotulos", directive: "Ninguna marca de terceros.", note: "x" });
+    const second = await mount(video.id);
+    expect(second.outcome).toBe("done");
+    expect(calls).toHaveLength(1);
+    expect(second.row.learnedCorrections).toEqual([]);
+  });
+
   it("con referencia de edición se usa esa, no la de la réplica", async () => {
     const video = await videoWithClip({ referenceStorageKey: "referencias/x/ref.mp4", editReferenceUrl: "https://www.instagram.com/reel/abc/" });
     const { spec } = await mount(video.id);
@@ -270,6 +282,8 @@ describe("lugares de la referencia en los rótulos (regla 6c, vídeo 24)", () =>
     expect(targetPlace("", ["DE", "AT", "CH"], "de")).toBe("Deutschland");
     expect(targetPlace("", ["IT"], "it")).toBe("Italia");
     expect(targetPlace("calles de Milán", ["IT"], "it")).toBe("Milano");
+    expect(targetPlace("", ["US"], "en")).toBe("the US");
+    expect(targetPlace("", [], "en")).toBe("the US");
   });
 
   it("si un lugar de otro mercado se cuela, se cambia por el nuestro con su artículo fuera", () => {
@@ -279,6 +293,9 @@ describe("lugares de la referencia en los rótulos (regla 6c, vídeo 24)", () =>
     expect(withLocalPlaces("Fremde in Amerika|Teil 2", [], "Deutschland")).toBe("Fremde in Deutschland|Teil 2");
     expect(withLocalPlaces("in the US", [], "Berlin")).toBe("in Berlin");
     expect(withLocalPlaces("Straßen von New York", [], "Berlin")).toBe("Straßen von Berlin");
+    // Un anuncio que pasa en EE. UU. (TargetAlarm) conserva sus lugares de allí; Londres sí se cambia.
+    expect(withLocalPlaces("Streets of New York, USA", [], "the US")).toBe("Streets of New York, USA");
+    expect(withLocalPlaces("Straight from London", [], "the US")).toBe("Straight from the US");
     // Lo que Claude vio en el original también.
     expect(withLocalPlaces("Mitten in Brooklyn", ["Brooklyn"], "Berlin")).toBe("Mitten in Berlin");
     // Nada que tocar: palabras que contienen las siglas, el propio destino y la tienda.
