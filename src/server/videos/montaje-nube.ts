@@ -131,6 +131,7 @@ export async function requeueStaleRuns(now: Date): Promise<void> {
 }
 
 async function finishFailed(run: Run, shown: string, detail: string, now: Date, notes: string[] = []): Promise<void> {
+  console.warn(`[montaje] Vídeo ${run.videoId}: el montaje ${run.id} falló: ${shown} (${detail.slice(0, 300)})`);
   await getDb().transaction(async (tx) => {
     const [row] = await tx
       .update(runs)
