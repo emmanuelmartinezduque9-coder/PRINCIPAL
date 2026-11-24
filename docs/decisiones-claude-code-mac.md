@@ -112,6 +112,22 @@ el Claude Code de su Mac (su suscripción) para todo lo que hace Claude; la web 
 - Una vez: el 15 se vuelve a montar (`remountEditsOnce`). El 22 lo monta la sesión del doblaje cuando
   su doblaje y esto estén listos (un solo montaje final).
 
+## Lugares de la referencia en los rótulos (24/11/2026, vídeo 24)
+
+- El 24 (lote 7, KreuzKapuze, montaje 67) decía «…an Fremde in den USA…» en un anuncio grabado en Berlín: la
+  referencia era de EE. UU. y la adaptación dejó su lugar. Regla 6c de `REFERENCE_EDIT_INSTRUCTIONS`: todo lugar
+  o país del original se cambia por el de nuestro anuncio (`{LUGAR}`), con la gramática correcta; Claude devuelve
+  además los que vio (`lugares`).
+- El lugar (`targetPlace`): la ciudad que nombren las indicaciones del dueño (nota del vídeo, adaptación,
+  indicaciones del lote: «las calles de Berlín» → «Berlin»); si no nombran ninguna, el primer país del producto
+  (Deutschland, Österreich, der Schweiz, Italia).
+- Red de seguridad (`withLocalPlaces`), como la de las marcas: los lugares de siempre de otros mercados (USA, US,
+  Amerika, New York, UK, London…) y los que vio Claude se cambian por el nuestro, quitando el artículo
+  («in den USA» → «in Berlin»). Se aplica también a las lecturas ya guardadas (sin volver a leer: los demás
+  rótulos quedan igual) y a los rótulos de la tarjeta o del desglose.
+- Una vez: reporte en Mejoras ligado al montaje 67, de tipo rótulos, con el arreglo de código aplicado
+  (`recordAppliedFixOnce`), y el 24 se vuelve a montar.
+
 ## 1.8.2 (24/11/2026): «no tiene sesión» y el disco de datos del SSD
 
 - A las 13:31 la imagen de datos del SSD (`/Volumes/PRINCIPAL-DATOS`, ver `docs/datos-en-ssd.md`) se

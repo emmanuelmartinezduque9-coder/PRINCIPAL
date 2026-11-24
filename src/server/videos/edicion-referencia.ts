@@ -79,6 +79,8 @@ const answerSchema = z.object({
     .max(12),
   /** Marcas, personajes, películas, licencias y colaboraciones de terceros que se leen en los rótulos originales. */
   ajenos: z.array(z.string().min(1).max(80)).max(30).default([]),
+  /** Lugares y países que nombran los rótulos originales (se cambian por el de nuestro anuncio, regla 6c). */
+  lugares: z.array(z.string().min(1).max(80)).max(30).default([]),
 });
 type Answer = z.infer<typeof answerSchema>;
 
@@ -92,7 +94,9 @@ export const REFERENCE_EDIT_INSTRUCTIONS = `Eres el editor de anuncios en vídeo
 6. es_cta: true en el rótulo de llamada a la acción («Comment X…», «Kommentiere…», «Link in bio»…). Su texto_adaptado es la misma llamada con la palabra clave de nuestro producto entre comillas alemanas (p. ej. «Kommentiere, wenn du auch eins willst!» → «Kommentiere „{PRODUCTO}“, wenn du auch eins willst!»), con los emojis y saltos de línea del original tal cual. Si el original no nombra nada, añade solo la palabra clave.
 6b. NUNCA nombres marcas, personajes, películas, series, licencias, famosos ni colaboraciones de terceros que vengan de la referencia (Harry Potter, Disney, Marvel, Pokémon, Barbie, Stanley, Dyson…), aunque el original los nombre: el anuncio es solo de {PRODUCTO}. Una colaboración («X × Harry Potter», «X meets Disney») queda solo con {PRODUCTO}; un personaje o licencia se cambia por una descripción genérica del estilo o el tema (p. ej. «Zauberer-Edition», «magisch»), nunca por el nombre. La tienda que nombre la referencia sí se conserva (regla 5).
 7. traduccion_es: el texto_adaptado en español, para que el dueño lo revise (no se imprime).
+6c. Lugares: el anuncio pasa en {LUGAR}. Cualquier lugar o país que nombre la referencia (USA, Amerika, die Staaten, New York, Texas, London…) se cambia por {LUGAR} con la gramática correcta («in den USA» → «in {LUGAR}»), nunca se deja ni se traduce tal cual. Si la referencia no nombra ningún lugar, no añadas ninguno.
 8. ajenos: la lista de esas marcas, personajes, licencias y colaboraciones de terceros que aparecen en los rótulos originales (vacía si no hay). No incluyas {PRODUCTO} ni la tienda.
+9. lugares: la lista de lugares y países que nombran los rótulos originales, tal cual (vacía si no hay). No incluyas la tienda.
 Responde solo con el JSON pedido.`;
 
 const escapeRe = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -110,6 +114,79 @@ export function withoutThirdParties(text: string, ajenos: string[], product: str
   // «P X P», «P × P», «P x P», «P meets P», también con salto de línea (|) entre medias.
   out = out.replace(new RegExp(`${p}(\\s*\\|?\\s*(?:[xX×+&]|meets|feat\\.?)\\s*\\|?\\s*${p})+`, "g"), product);
   return out.replace(/[ \t]{2,}/g, " ").trim();
+}
+
+/**
+ * Lugares de otros mercados que se cuelan al adaptar rótulos de referencias de EE. UU. o del Reino Unido
+ * (vídeo 24, 24/11/2026: «…an Fremde in den USA…» en un anuncio grabado en Berlín). Siglas con mayúsculas
+ * exactas; nombres sin distinguir mayúsculas.
+ */
+const FOREIGN_ACRONYMS = ["USA", "US", "U.S.A.", "U.S.", "NYC", "UK", "EE. UU.", "EE.UU.", "EEUU"];
+const FOREIGN_NAMES = [
+  "Vereinigten Staaten", "Vereinigte Staaten", "United States", "Estados Unidos", "Stati Uniti", "Amerika", "America", "the States",
+  "New York", "Los Angeles", "Hollywood", "Las Vegas", "Miami", "Chicago", "San Francisco", "Texas", "Florida", "Kalifornien",
+  "California", "Kanada", "Canada", "England", "London", "Australien", "Australia",
+];
+
+/** Ciudades de los mercados del dueño, como se escriben en las indicaciones (es/de/en) → en el idioma del anuncio. */
+const CITIES: Array<{ match: RegExp; de: string; it: string }> = [
+  { match: /\bberl[ií]n\b/i, de: "Berlin", it: "Berlino" },
+  { match: /\b(m[uú]nich|m[üu]nchen)\b/i, de: "München", it: "Monaco di Baviera" },
+  { match: /\b(hamburgo|hamburg)\b/i, de: "Hamburg", it: "Amburgo" },
+  { match: /\b(colonia|k[öo]ln|cologne)\b/i, de: "Köln", it: "Colonia" },
+  { match: /\b(fr[aá]ncfort|frankfurt)\b/i, de: "Frankfurt", it: "Francoforte" },
+  { match: /\bstuttgart\b/i, de: "Stuttgart", it: "Stoccarda" },
+  { match: /\bd[üu]sseldorf\b/i, de: "Düsseldorf", it: "Düsseldorf" },
+  { match: /\b(dresde|dresden)\b/i, de: "Dresden", it: "Dresda" },
+  { match: /\b(leipzig|lipsia)\b/i, de: "Leipzig", it: "Lipsia" },
+  { match: /\b(n[uú]remberg|n[üu]rnberg)\b/i, de: "Nürnberg", it: "Norimberga" },
+  { match: /\b(hannover|han[oó]ver)\b/i, de: "Hannover", it: "Hannover" },
+  { match: /\bbremen\b/i, de: "Bremen", it: "Brema" },
+  { match: /\b(viena|wien|vienna)\b/i, de: "Wien", it: "Vienna" },
+  { match: /\b(salzburgo|salzburg)\b/i, de: "Salzburg", it: "Salisburgo" },
+  { match: /\b(z[uú]rich|z[üu]rich)\b/i, de: "Zürich", it: "Zurigo" },
+  { match: /\b(basilea|basel)\b/i, de: "Basel", it: "Basilea" },
+  { match: /\b(roma|rome|rom)\b/i, de: "Rom", it: "Roma" },
+  { match: /\b(mil[aá]n|milano|mailand)\b/i, de: "Mailand", it: "Milano" },
+  { match: /\b(n[aá]poles|napoli|neapel)\b/i, de: "Neapel", it: "Napoli" },
+  { match: /\b(tur[ií]n|torino|turin)\b/i, de: "Turin", it: "Torino" },
+  { match: /\b(florencia|firenze|florenz)\b/i, de: "Florenz", it: "Firenze" },
+];
+const COUNTRIES: Record<string, { de: string; it: string }> = {
+  DE: { de: "Deutschland", it: "Germania" },
+  AT: { de: "Österreich", it: "Austria" },
+  CH: { de: "der Schweiz", it: "Svizzera" },
+  IT: { de: "Italien", it: "Italia" },
+};
+
+/**
+ * Dónde pasa nuestro anuncio (regla 6c): la ciudad que nombren las indicaciones del dueño (tarjeta, adaptación o
+ * lote: «las calles de Berlín, Alemania» → «Berlin»); si no nombran ninguna, el primer país del producto.
+ */
+export function targetPlace(indications: string, countries: string[], language: string): string {
+  const lang = language === "it" ? "it" : "de";
+  for (const city of CITIES) if (city.match.test(indications)) return city[lang];
+  const country = COUNTRIES[(countries[0] ?? (lang === "it" ? "IT" : "DE")).toUpperCase()] ?? COUNTRIES[lang === "it" ? "IT" : "DE"];
+  return country[lang];
+}
+
+/**
+ * Red de seguridad de la regla 6c: un lugar o país de otro mercado que se colara en el rótulo adaptado (los de
+ * siempre y los que Claude vio, `lugares`) se cambia por el de nuestro anuncio, con el artículo que llevaba fuera
+ * («in den USA» → «in Berlin»). No toca el propio lugar de destino.
+ */
+export function withLocalPlaces(text: string, lugares: string[], target: string): string {
+  const art = "(?:(?:den|die|der|dem|the)\\s+)?";
+  const t = target.toLowerCase();
+  const names = [...new Set([...FOREIGN_NAMES, ...lugares.map((l) => l.trim())])].filter((n) => n.length >= 3 && !t.includes(n.toLowerCase()) && !n.toLowerCase().includes(t));
+  let out = text;
+  for (const name of names.sort((a, b) => b.length - a.length)) {
+    out = out.replace(new RegExp(`(?<![\\p{L}])${art}${escapeRe(name)}(?![\\p{L}])`, "giu"), target);
+  }
+  for (const acronym of [...FOREIGN_ACRONYMS, ...lugares.filter((l) => l.trim().length < 3)].sort((a, b) => b.length - a.length)) {
+    out = out.replace(new RegExp(`(?<![\\p{L}])${art}${escapeRe(acronym)}(?![\\p{L}])`, "gu"), target);
+  }
+  return out;
 }
 
 async function sha256File(file: string): Promise<string> {
@@ -183,6 +260,8 @@ export interface ReferenceEditContext {
   /** Para la caché del almacén: de qué vídeo es. */
   videoId: number;
   gateway?: LlmGateway;
+  /** Dónde pasa nuestro anuncio (`targetPlace`): los lugares de la referencia se cambian por este (regla 6c). */
+  place?: string;
   /** Aquí se apuntan las correcciones aprendidas («Mejoras», paso `montaje`) que se usaron. */
   learned?: number[];
 }
@@ -194,6 +273,7 @@ const cacheKey = (videoId: number, sha: string, productName: string, learned = "
 /** La edición de la referencia (rótulos adaptados con sus tiempos y cortes). Lanza si Claude no puede. */
 export async function referenceEdit(ctx: ReferenceEditContext): Promise<ReferenceEdit> {
   const sha = await sha256File(ctx.file);
+  const place = ctx.place ?? targetPlace("", [], ctx.product.language);
   // Correcciones aprendidas de los reportes sobre rótulos («Mejoras»): van al final de las instrucciones.
   const learned = await learnedFor("montaje", ctx.product.id || null);
   ctx.learned?.push(...learned.ids);
@@ -201,7 +281,9 @@ export async function referenceEdit(ctx: ReferenceEditContext): Promise<Referenc
   if (ctx.store && (await ctx.store.head(key).catch(() => null)) !== null) {
     const cached = path.join(ctx.dir, "edicion-referencia.json");
     await ctx.store.download(key, cached);
-    return JSON.parse(await fs.readFile(cached, "utf8")) as ReferenceEdit;
+    const saved = JSON.parse(await fs.readFile(cached, "utf8")) as ReferenceEdit;
+    // Leídas antes de la regla 6c: el lugar se arregla aquí sin volver a leer (los demás rótulos quedan igual).
+    return ctx.place ? { ...saved, cues: saved.cues.map((cue) => ({ ...cue, text: withLocalPlaces(cue.text, [], ctx.place!) })) } : saved;
   }
   const { durationMs } = await probeVideo(ctx.file);
   const durationS = durationMs / 1000;
@@ -212,9 +294,9 @@ export async function referenceEdit(ctx: ReferenceEditContext): Promise<Referenc
     userId: ctx.userId,
     productId: ctx.product.id,
     rules: [],
-    instructions: REFERENCE_EDIT_INSTRUCTIONS.replaceAll("{PRODUCTO}", ctx.product.name) + learned.text,
+    instructions: REFERENCE_EDIT_INSTRUCTIONS.replaceAll("{PRODUCTO}", ctx.product.name).replaceAll("{LUGAR}", place) + learned.text,
     content: [
-      textPart(`Nuestro producto: ${ctx.product.name}. Idioma del anuncio: ${ctx.product.language === "it" ? "italiano" : "alemán"}. La referencia dura ${durationS.toFixed(2)} s.`),
+      textPart(`Nuestro producto: ${ctx.product.name}. Idioma del anuncio: ${ctx.product.language === "it" ? "italiano" : "alemán"}. Nuestro anuncio pasa en: ${place}. La referencia dura ${durationS.toFixed(2)} s.`),
       ...shots.flatMap((s) => [textPart(`t = ${s.t.toFixed(2)} s`), imagePart(s.jpeg, "image/jpeg")]),
     ],
     maxTokens: 4_000,
@@ -226,7 +308,7 @@ export async function referenceEdit(ctx: ReferenceEditContext): Promise<Referenc
     let startS = i === 0 && row.desde_s <= 1 / SAMPLES_PER_SECOND ? 0 : Math.min(row.desde_s, durationS);
     if (i > 0 && startS > 0) startS = await refineSwitch(ctx.file, startS - 1 / SAMPLES_PER_SECOND, startS, row.franja_superior, row.franja_inferior);
     if (cues.length > 0 && startS <= cues[cues.length - 1].startS) continue;
-    cues.push({ startS, source: row.texto_original.trim(), text: withoutThirdParties(row.texto_adaptado.trim(), answer.data?.ajenos ?? [], ctx.product.name), es: row.traduccion_es.trim(), cta: row.es_cta });
+    cues.push({ startS, source: row.texto_original.trim(), text: withLocalPlaces(withoutThirdParties(row.texto_adaptado.trim(), answer.data?.ajenos ?? [], ctx.product.name), answer.data?.lugares ?? [], place), es: row.traduccion_es.trim(), cta: row.es_cta });
   }
   const result: ReferenceEdit = { version: 1, durationS, cues, cutsS: await sceneCuts(ctx.file, durationS) };
   if (ctx.store) {

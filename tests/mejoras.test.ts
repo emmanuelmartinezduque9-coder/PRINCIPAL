@@ -7,7 +7,7 @@ import { classifyRejections, classifyReport, mejorasSweep } from "@/server/video
 import { cleanDirective, directivesSuffix, learnedSuffix } from "@/server/videos/mejoras/corrections";
 import { buildEditRecords, buildStageRecords } from "@/server/videos/mejoras/evidence";
 import { evaluateCodeFix, evaluateCorrection, MIN_AFTER, type StageRecord } from "@/server/videos/mejoras/metrics";
-import { codeQueueMarkdown, createReport, mejorasView, updateReport } from "@/server/videos/mejoras/reports";
+import { codeQueueMarkdown, createReport, mejorasView, recordAppliedFixOnce, updateReport } from "@/server/videos/mejoras/reports";
 import type { Product } from "@/server/products";
 import { BLOCKED, SYSTEM_REJECT_PREFIX } from "@/server/videos/generations";
 import { createVideo } from "@/server/videos/videos";
@@ -221,6 +221,33 @@ describe("reportar, clasificar y aplicar (con base de datos)", () => {
     const shown = again.reports.find((r) => r.id === report.id)!;
     expect(shown.status).toBe("aplicado");
     expect(shown.codeEvaluation?.verdict).toBe("midiendo");
+  });
+
+  it("un arreglo pedido por otra vía queda como reporte del dueño ligado al montaje, aplicado y midiendo (una sola vez)", async () => {
+    const video = await createVideo(dueno, producto.id, { avatarMode: "nadie", avatarPhotoId: null });
+    const pool = getPool();
+    const { rows: edit } = await pool.query<{ id: number }>(
+      "insert into edits (video_id, version, size, storage_key, duration_ms) values ($1, 3, 100, $2, 9000) returning id",
+      [video.id, `montajes/${video.id}/67.mp4`],
+    );
+    const input = {
+      videoId: video.id,
+      editStorageKey: `montajes/${video.id}/67.mp4`,
+      problemType: "rotulos" as const,
+      body: "El rótulo dice «in den USA» y el vídeo está en Berlín.",
+      cause: "Se dejó el lugar del original.",
+      note: "Regla 6c.",
+    };
+    const id = await recordAppliedFixOnce("prueba.reporte-lugar", input);
+    expect(id).not.toBeNull();
+    expect(await recordAppliedFixOnce("prueba.reporte-lugar", input)).toBeNull();
+    const { rows } = await pool.query("select created_by, edit_id, status, fix_kind, problem_type, code_commit, version_label from problem_reports");
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ created_by: dueno.id, edit_id: edit[0].id, status: "aplicado", fix_kind: "codigo", problem_type: "rotulos", code_commit: "local" });
+    expect(rows[0].version_label).toContain("montaje v3");
+    const view = await mejorasView(dueno);
+    expect(view.codeQueue).toEqual([]);
+    expect(view.reports.find((r) => r.id === id)?.codeEvaluation?.verdict).toBe("midiendo");
   });
 
   it("cada persona ve solo sus reportes; el dueño los ve todos", async () => {

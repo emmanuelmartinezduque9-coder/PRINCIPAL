@@ -1,5 +1,5 @@
 import { and, desc, eq } from "drizzle-orm";
-import { getDb, schema } from "@/db/client";
+import { getDb, getSetting, schema, setSetting } from "@/db/client";
 import {
   FIX_KINDS,
   isProblemType,
@@ -432,4 +432,57 @@ export async function codeQueueMarkdown(owner: AuthUser): Promise<string> {
     );
   }
   return lines.filter((line, i, all) => line !== "" || all[i - 1] !== "").join("\n");
+}
+
+/**
+ * Una vez por `key` (reparaciones al arrancar el worker): deja en Mejoras el reporte de un problema que el dueño
+ * pidió arreglar por otra vía (el coordinador), ligado al montaje que lo tenía, ya clasificado y con la corrección
+ * de código aplicada (`codeCommit` = la versión desplegada). Así queda la prueba de que se aprendió y entra en la
+ * medición como cualquier arreglo de código.
+ */
+export async function recordAppliedFixOnce(
+  key: string,
+  input: { videoId: number; editStorageKey: string; problemType: ProblemType; body: string; cause: string; note: string },
+  now: Date = new Date(),
+): Promise<number | null> {
+  if (await getSetting<string>(key)) return null;
+  await setSetting(key, now.toISOString());
+  const db = getDb();
+  const [video] = await db
+    .select({ createdBy: schema.videos.createdBy, productId: schema.videos.productId, batchId: schema.videos.batchId })
+    .from(schema.videos)
+    .where(eq(schema.videos.id, input.videoId));
+  if (!video) return null;
+  const [edit] = await db
+    .select({ id: schema.edits.id, version: schema.edits.version })
+    .from(schema.edits)
+    .where(and(eq(schema.edits.videoId, input.videoId), eq(schema.edits.storageKey, input.editStorageKey)))
+    .limit(1);
+  const version = appVersion();
+  const [row] = await db
+    .insert(schema.problemReports)
+    .values({
+      createdBy: video.createdBy,
+      stage: "montaje",
+      body: input.body.slice(0, MAX_REPORT_CHARS),
+      videoId: input.videoId,
+      editId: edit?.id ?? null,
+      batchId: video.batchId,
+      productId: video.productId,
+      page: `/videos/${input.videoId}`,
+      versionLabel: edit ? `montaje v${edit.version} (${input.editStorageKey})` : input.editStorageKey,
+      appVersion: version,
+      status: "aplicado",
+      problemType: input.problemType,
+      fixKind: "codigo",
+      cause: input.cause,
+      classifiedAt: now,
+      codeCommit: version,
+      codeFixedAt: now,
+      codeNote: input.note,
+      updatedAt: now,
+    })
+    .returning({ id: schema.problemReports.id });
+  console.log(`[mejoras] Reporte ${row.id} (${key}): vídeo ${input.videoId}, ${input.editStorageKey}, arreglo de código ${version}.`);
+  return row.id;
 }
