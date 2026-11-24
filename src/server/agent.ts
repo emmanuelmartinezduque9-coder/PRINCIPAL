@@ -240,11 +240,26 @@ export async function agentHeartbeat(
   agentId: number,
   info: { version: string; ytDlp: string | null; claude?: string | null },
   now: Date = new Date(),
-): Promise<void> {
+): Promise<{ claudeReady: boolean }> {
+  const claude = clip(info.claude, MAX_INFO) || null;
+  const [before] = await getDb().select({ info: agents.info }).from(agents).where(eq(agents.id, agentId));
   await getDb()
     .update(agents)
-    .set({ lastSeenAt: now, info: { version: clip(info.version, MAX_INFO), ytDlp: clip(info.ytDlp, MAX_INFO) || null, claude: clip(info.claude, MAX_INFO) || null } })
+    .set({ lastSeenAt: now, info: { version: clip(info.version, MAX_INFO), ytDlp: clip(info.ytDlp, MAX_INFO) || null, claude } })
     .where(eq(agents.id, agentId));
+  // Claude Code acaba de tener sesión en el Mac (primera vez, o tras volver a conectarlo): los
+  // trabajos en pausa (sin saldo en la API, «Solo Mac»…) se reanudan ya y van al Mac, sin esperar a
+  // la pasada de cada hora.
+  const claudeReady = claude !== null && !before?.info?.claude;
+  if (claudeReady) {
+    try {
+      const { resumePausedJobs } = await import("@/jobs/boss");
+      await resumePausedJobs(now);
+    } catch (error) {
+      console.error(`[agente] No se pudieron reanudar los trabajos en pausa: ${error instanceof Error ? error.message : error}`);
+    }
+  }
+  return { claudeReady };
 }
 
 /** Si `user` tiene un Mac conectado: uno suyo, con ficha en vigor y una señal en los últimos 90 segundos. */

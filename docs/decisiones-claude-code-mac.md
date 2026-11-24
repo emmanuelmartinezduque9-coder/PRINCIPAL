@@ -59,6 +59,10 @@ el Claude Code de su Mac (su suscripción) para todo lo que hace Claude; la web 
   Mac de un dueño activo entran, y la entrega exige la sesión de esa reserva (`uploadId`): un intento
   viejo o la tarea ya retirada dan 409. Los prompts son reglas, instrucciones y datos del producto:
   ningún secreto. `claude` corre sin herramientas que toquen el disco o ejecuten nada.
+- **Trabajos en pausa**: los que quedaron en pausa sin saldo en la API (o con «Solo Mac» y el Mac
+  apagado) se reanudan solos en la pasada de cada hora; además, en cuanto el latido del Mac pasa a
+  decir que Claude Code tiene sesión (`agentHeartbeat` → `claudeReady`), se reanudan en el momento y
+  van al Mac.
 - **Agente antiguo**: un agente < 1.8.0 no manda `claude` en el latido, así que la pasarela ni lo
   intenta (va directa a la API). Si aun así una llamada queda 3 min en cola sin que el Mac recoja
   ninguna, se retira.

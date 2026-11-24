@@ -139,6 +139,13 @@ describe("por dónde va una llamada", () => {
     expect(await macRoute(dueno.id)).toBeNull();
   });
 
+  it("el latido avisa (y reanuda los trabajos en pausa) solo cuando Claude Code pasa a tener sesión", async () => {
+    // beforeEach ya latió con Claude Code: no es nuevo.
+    expect(await agentHeartbeat(agentId, { version: "1.8.0", ytDlp: null, claude: "2.1.330" })).toEqual({ claudeReady: false });
+    expect(await agentHeartbeat(agentId, { version: "1.8.0", ytDlp: null, claude: null })).toEqual({ claudeReady: false });
+    expect(await agentHeartbeat(agentId, { version: "1.8.0", ytDlp: null, claude: "2.1.330" })).toEqual({ claudeReady: true });
+  });
+
   it("solo el dueño cambia el modo, y solo a uno válido", async () => {
     await expect(setMacMode(ana, "solo_mac")).rejects.toMatchObject({ status: 403 });
     await expect(setMacMode(dueno, "gratis")).rejects.toMatchObject({ status: 400 });
