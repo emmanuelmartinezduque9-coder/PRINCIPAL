@@ -191,7 +191,13 @@ function retryAfterOf(batch: Batch): Date {
 function retryable(list: readonly Generation[]): boolean {
   const last = list.at(-1);
   if (!last || (last.status !== "failed" && last.status !== "not_sent") || last.rejectReason) return false;
-  if (last.error === BLOCKED) return false;
+  if (last.error === BLOCKED) {
+    // Una imagen bloqueada por el filtro se repite sola (sin coste) hasta `MAX_BLOCKED_RETRIES`
+    // veces: su prompt con sala se rehace sin nombres de marca (24/11/2026, Sephora). El clip lo
+    // repite `sanitizeAfterBlock` con el prompt reescrito.
+    if (last.kind !== "frame") return false;
+    return list.filter((g) => g.status === "failed" && g.error === BLOCKED).length <= MAX_BLOCKED_RETRIES;
+  }
   return list.filter((g) => SPENT.includes(g.status)).length < 1 + MAX_REGENERATIONS;
 }
 
