@@ -44,8 +44,10 @@ startWorker().then(
       .catch((error) => console.error("[imagen] No se pudo devolver el vídeo 16 al lote:", error));
     // Una vez (24/11/2026): los vídeos de los lotes de hoy ya montados se vuelven a montar con el doblaje por defecto.
     void import("@/server/videos/edits")
-      .then(async ({ redubTodaysEdits, recheckDubbedEdits, remountDubbedWithoutEdit }) => {
+      .then(async ({ redubTodaysEdits, recheckDubbedEdits, remountDubbedWithoutEdit, relaunchEditsWithoutClaude }) => {
         await redubTodaysEdits();
+        // Una vez (24/11/2026): los montajes que fallaron o salieron sin leer la referencia por la API sin saldo.
+        await relaunchEditsWithoutClaude();
         // Y los doblados antes de la comprobación con Whisper (el vídeo 6 dejó una frase en inglés).
         await recheckDubbedEdits();
         // En cada arranque: los que tienen el doblaje hecho pero se quedaron sin montar (montaje cortado).

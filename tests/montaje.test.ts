@@ -14,9 +14,11 @@ import { archiveSweep } from "@/server/videos/archive";
 import { CHUNK_BYTES } from "@/server/videos/upload";
 import { createVideo, getVideoFor, videoView, type Video } from "@/server/videos/videos";
 import { batchView, createBatch } from "@/server/videos/batches";
-import { editTextsFor, editVideoResponse, setEditTexts, standardCta, startBatchEdits, startEdit, type EditSpec } from "@/server/videos/edits";
+import { editTextsFor, editVideoResponse, relaunchEditsWithoutClaude, setEditTexts, standardCta, startBatchEdits, startEdit, type EditSpec } from "@/server/videos/edits";
+import { LlmCapReachedError, type LlmGateway } from "@/llm/gateway";
 import {
   claimRun,
+  CLAUDE_WAIT_MS,
   editLoopTick,
   INTERRUPTED,
   MAX_RUN_ATTEMPTS,
@@ -26,6 +28,8 @@ import {
   runEdit,
   waitForActiveEdits,
   type MontajeDeps,
+  wakeRunsWaitingForClaude,
+  WAITING_CLAUDE,
 } from "@/server/videos/montaje-nube";
 import { POST as startRoute } from "@/app/api/videos/[videoId]/montaje/route";
 import { PUT as textsRoute } from "@/app/api/videos/[videoId]/montaje/textos/route";
@@ -416,6 +420,58 @@ describe("enlaces para el montaje", () => {
     expect(await runEdit((await claimRun(new Date()))!, deps())).toBe("done");
     const [edit] = await editRows(video.id);
     expect(edit.selfCheck).toMatchObject({ referencia: false, avisos: expect.arrayContaining([expect.stringContaining("El Mac no responde")]) });
+  });
+
+  it("sin Claude (API sin saldo y sin Mac) el montaje espera en vez de montar peor; al estar el Mac listo, sigue", async () => {
+    const noCredit: LlmGateway = { call: async () => { throw new LlmCapReachedError("saldo", "Sin saldo en la API de Claude."); } };
+    const video = await videoWithClip(dueno, { editReferenceUrl: REEL });
+    const { runId } = await startEdit(dueno, video.id);
+    expect(await runEdit((await claimRun(new Date()))!, deps({ runYtDlp: ytDlp(true), gateway: noCredit }))).toBe("deferred");
+    expect(await runRow(runId)).toMatchObject({ status: "queued", attempts: 0, error: WAITING_CLAUDE });
+    expect((await getVideoFor(dueno, video.id)).editStatus).toBe("en_marcha");
+    expect(await claimRun(new Date())).toBeNull();
+    // El Mac del dueño pasa a tener Claude Code: los que esperaban se adelantan a ahora.
+    const { agentId } = await createAgentToken(dueno, "Mac");
+    await agentHeartbeat(agentId, { version: "1.8.1", ytDlp: null, claude: null });
+    expect(await claimRun(new Date())).toBeNull();
+    expect(await agentHeartbeat(agentId, { version: "1.8.1", ytDlp: null, claude: "2.1.330" })).toEqual({ claudeReady: true });
+    const again = (await claimRun(new Date()))!;
+    expect(again.id).toBe(runId);
+    expect(await wakeRunsWaitingForClaude()).toBe(0);
+    // Otro fallo cualquiera de Claude no bloquea: monta con el patrón de siempre y lo apunta.
+    const broken: LlmGateway = { call: async () => { throw new Error("roto"); } };
+    expect(await runEdit(again, deps({ runYtDlp: ytDlp(true), gateway: broken }))).toBe("done");
+    expect((await runRow(runId)).notes).toEqual(expect.arrayContaining([expect.stringContaining("No se pudo leer la edición de la referencia")]));
+  });
+
+  it("si Claude sigue sin poder pasadas 3 horas, se monta con el patrón de siempre", async () => {
+    const noCredit: LlmGateway = { call: async () => { throw new LlmCapReachedError("saldo", "Sin saldo."); } };
+    const video = await videoWithClip(dueno, { editReferenceUrl: REEL });
+    const { runId } = await startEdit(dueno, video.id, T0);
+    const run = (await claimRun(later(CLAUDE_WAIT_MS + 60_000)))!;
+    expect(run.id).toBe(runId);
+    expect(await runEdit(run, deps({ runYtDlp: ytDlp(true), gateway: noCredit, now: () => later(CLAUDE_WAIT_MS + 60_000) }))).toBe("done");
+  });
+
+  it("una vez: los montajes de lote fallidos o hechos sin leer la referencia se vuelven a montar", async () => {
+    const batch = await createBatch(dueno, "Lote");
+    const product = await makeProduct(dueno, { name: "EisWerk" });
+    const fallido = await videoWithClip(dueno, { batchId: batch.id }, product);
+    const sinReferencia = await videoWithClip(dueno, { batchId: batch.id }, product);
+    const bien = await videoWithClip(dueno, { batchId: batch.id }, product);
+    const suelto = await videoWithClip(dueno, {}, product);
+    for (const v of [sinReferencia, bien]) {
+      const { runId } = await startEdit(dueno, v.id);
+      const notes = v.id === sinReferencia.id ? ["No se pudo leer la edición de la referencia: se monta con el patrón de siempre"] : ["otra cosa"];
+      await getDb().update(schema.editRuns).set({ status: "done", notes }).where(eq(schema.editRuns.id, runId));
+      await getDb().update(schema.videos).set({ editStatus: "hecho" }).where(eq(schema.videos.id, v.id));
+    }
+    await getDb().update(schema.videos).set({ editStatus: "fallido", editError: "x" }).where(eq(schema.videos.id, fallido.id));
+    await getDb().update(schema.videos).set({ editStatus: "fallido", editError: "x" }).where(eq(schema.videos.id, suelto.id));
+    expect(await relaunchEditsWithoutClaude()).toBe(2);
+    expect(await relaunchEditsWithoutClaude()).toBe(0);
+    const status = async (id: number) => (await getVideoFor(dueno, id)).editStatus;
+    expect([await status(fallido.id), await status(sinReferencia.id), await status(bien.id), await status(suelto.id)]).toEqual(["en_marcha", "en_marcha", "hecho", "fallido"]);
   });
 
   it("«Audio original» de un enlace: se saca su audio para el montador", async () => {

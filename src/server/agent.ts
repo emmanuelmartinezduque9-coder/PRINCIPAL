@@ -258,6 +258,9 @@ export async function agentHeartbeat(
     try {
       const { resumePausedJobs } = await import("@/jobs/boss");
       await resumePausedJobs(now);
+      // Y los montajes que esperaban a Claude para leer la edición de su referencia.
+      const { wakeRunsWaitingForClaude } = await import("@/server/videos/montaje-nube");
+      await wakeRunsWaitingForClaude(now);
     } catch (error) {
       console.error(`[agente] No se pudieron reanudar los trabajos en pausa: ${error instanceof Error ? error.message : error}`);
     }

@@ -8,6 +8,7 @@ import { and, eq, inArray, lt, sql } from "drizzle-orm";
 import { getDb, schema } from "@/db/client";
 import type { HiggsfieldPort } from "@/connectors/higgsfield";
 import { getObjectStore, type ObjectStore } from "@/lib/object-store";
+import { LlmCapReachedError } from "@/llm/gateway";
 import { macOnline } from "@/server/agent-tasks";
 import { downloadLinkMedia, ensureLinkMedia, fetchInCloud, macTaskStatus, requestFromMac, saveBreakdown, type FetchDeps } from "@/server/link-media";
 import { extractAudio, MediaError, probeVideo } from "@/server/media/ffmpeg";
@@ -140,6 +141,30 @@ async function finishFailed(run: Run, shown: string, detail: string, now: Date, 
   });
   await settleBatch(await batchOfVideo(run.videoId));
 }
+
+/**
+ * Lo más que espera un montaje a que Claude pueda leer la edición de su referencia (la API sin saldo y
+ * el Mac del dueño apagado o sin sesión). Pasado este tiempo se monta con el patrón de siempre.
+ */
+export const CLAUDE_WAIT_MS = 3 * 60 * 60_000;
+/** Cada cuánto vuelve a probar un montaje que espera a Claude (y al momento cuando el Mac está listo). */
+export const CLAUDE_RETRY_MS = 5 * 60_000;
+
+/**
+ * El Mac del dueño acaba de tener Claude Code listo: los montajes que esperaban a Claude (en cola con la
+ * hora más adelante) se adelantan a ahora. Devuelve cuántos.
+ */
+export async function wakeRunsWaitingForClaude(now: Date = new Date()): Promise<number> {
+  const woken = await getDb()
+    .update(runs)
+    .set({ availableAt: now })
+    .where(and(eq(runs.status, "queued"), sql`${runs.availableAt} > ${now.toISOString()}::timestamptz`, sql`${runs.error} = ${WAITING_CLAUDE}`))
+    .returning({ id: runs.id });
+  return woken.length;
+}
+
+/** Marca (en `edit_runs.error` mientras espera en cola) de un montaje que espera a Claude. */
+export const WAITING_CLAUDE = "Esperando a Claude (sin saldo en la API y sin el Mac).";
 
 /** Devuelve el montaje a la cola para dentro de `delayMs` sin gastar un intento (espera a un enlace). */
 async function defer(run: Run, delayMs: number, now: Date): Promise<void> {
@@ -396,6 +421,14 @@ export async function runEdit(run: Run, deps: MontajeDeps = {}): Promise<"done" 
           gateway: deps.gateway,
         });
       } catch (error) {
+        // Sin Claude por ahora (API sin saldo, Mac apagado o sin sesión): se espera a que lo haya en vez de
+        // montar peor. Al tener el Mac listo se adelanta (`wakeRunsWaitingForClaude`).
+        if (error instanceof LlmCapReachedError && nowOf(deps).getTime() - run.createdAt.getTime() < CLAUDE_WAIT_MS) {
+          console.warn(`[montaje] Vídeo ${spec.videoId}: Claude no está disponible (${error.message}); el montaje espera.`);
+          await getDb().update(runs).set({ error: WAITING_CLAUDE }).where(eq(runs.id, run.id));
+          await defer(run, CLAUDE_RETRY_MS, nowOf(deps));
+          return "deferred";
+        }
         notes.push("No se pudo leer la edición de la referencia: se monta con el patrón de siempre");
         console.warn(`[montaje] Edición de la referencia del vídeo ${spec.videoId}: ${messageOf(error)}`);
       }
@@ -536,7 +569,7 @@ export async function runEdit(run: Run, deps: MontajeDeps = {}): Promise<"done" 
     const finished = await getDb().transaction(async (tx) => {
       const [row] = await tx
         .update(runs)
-        .set({ status: "done", finishedAt: nowOf(deps), error: null, notes: avisos })
+        .set({ status: "done", finishedAt: nowOf(deps), error: null, notes: [...new Set([...notes, ...avisos])] })
         .where(and(eq(runs.id, run.id), eq(runs.status, "running")))
         .returning({ id: runs.id });
       if (!row) return false;

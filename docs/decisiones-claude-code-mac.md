@@ -81,6 +81,21 @@ el Claude Code de su Mac (su suscripción) para todo lo que hace Claude; la web 
 - yt-dlp «onefile» tarda 9-10 s en arrancar en frío y la comprobación daba 15 s: «No se puede lanzar
   yt-dlp» a ratos. `PROBE_TIMEOUT_MS` pasa a 60 s.
 
+## Montajes sin Claude (24/11/2026)
+
+- Leer la edición de la referencia (rótulos y cortes) es una llamada a Claude dentro del montaje. Antes,
+  si fallaba, el montaje seguía «con el patrón de siempre» y quedaba hecho pero peor: eso pasó con la
+  API sin saldo antes de conectar el Mac. Ahora, si el fallo es por falta de Claude
+  (`LlmCapReachedError`: API sin saldo, «Solo Mac» con el Mac apagado, tope), el montaje vuelve a la
+  cola cada 5 min sin gastar intento (`edit_runs.error = WAITING_CLAUDE`) durante 3 h como mucho;
+  después monta con el patrón de siempre. Otro fallo de Claude sigue sin bloquear.
+- En cuanto el latido del Mac pasa a «Claude Code listo», además de reanudar los trabajos en pausa,
+  los montajes que esperaban a Claude se adelantan a ahora (`wakeRunsWaitingForClaude`).
+- Una vez (`montaje.relanzado-sin-claude-20261124`, al arrancar el worker): los vídeos de lote desde
+  el 23/11 con el montaje fallido, o hecho con la nota «No se pudo leer la edición de la referencia»,
+  se vuelven a montar (`relaunchEditsWithoutClaude`). El doblaje ya hecho se reutiliza.
+- Las notas del montaje terminado guardan también las de la nube (antes solo los avisos del montador).
+
 ## Pruebas
 
 - `tests/claude-mac.test.ts`: ruta (dueño/colaboradora/modos/apagado/sin sesión), llamada completa

@@ -391,6 +391,45 @@ export async function remountDubbedWithoutEdit(now: Date = new Date()): Promise<
   return queued;
 }
 
+export const RELAUNCH_SETTING = "montaje.relanzado-sin-claude-20261124";
+/** Nota que deja un montaje hecho sin poder leer la edición de la referencia (Claude no respondió). */
+export const NO_REFERENCE_EDIT_NOTE = "No se pudo leer la edición de la referencia";
+
+/**
+ * Una vez (24/11/2026, cuando la API de Claude se quedó sin saldo antes de que el Mac del dueño tuviera
+ * Claude Code): los vídeos de los lotes desde el 23/11 cuyo montaje falló, o salió con el patrón de
+ * siempre porque Claude no pudo leer la edición de la referencia, se vuelven a montar. No gasta: el
+ * doblaje se reutiliza del almacén y Claude va por el Mac. Devuelve cuántos puso en cola.
+ */
+export async function relaunchEditsWithoutClaude(now: Date = new Date()): Promise<number> {
+  if (await getSetting<string>(RELAUNCH_SETTING)) return 0;
+  await setSetting(RELAUNCH_SETTING, now.toISOString());
+  const rows = await getDb().execute<{ id: string }>(sql`
+    select v.id from videos v
+    join batches b on b.id = v.batch_id
+    left join edit_runs r on r.id = v.edit_run_id
+    where b.created_at >= ${REDUB_SINCE.toISOString()}::timestamptz
+      and v.auto_skipped = false
+      and (v.edit_status = 'fallido'
+        or (v.edit_status = 'hecho' and r.status = 'done' and exists (
+          select 1 from jsonb_array_elements_text(coalesce(r.notes, '[]'::jsonb)) n where n like ${NO_REFERENCE_EDIT_NOTE + "%"})))
+    order by v.id`);
+  let queued = 0;
+  for (const { id } of rows.rows) {
+    const [video] = await getDb().select().from(videos).where(eq(videos.id, Number(id)));
+    const creator = video ? await getActiveUser(video.createdBy) : null;
+    if (!video || !creator) continue;
+    try {
+      await queueEdit(video, await getProductFor(creator, video.productId), creator.id, now);
+      queued += 1;
+    } catch (error) {
+      console.warn(`[montaje] No se pudo volver a montar el vídeo ${id}: ${error instanceof Error ? error.message : error}`);
+    }
+  }
+  console.log(`[montaje] Montajes fallidos o sin la edición de la referencia (sin Claude): ${queued} vídeo(s) vuelven a montarse.`);
+  return queued;
+}
+
 /**
  * Un lote `listo` cuyos vídeos han terminado todos su montaje (hecho o fallido con su motivo)
  * pasa a `montado`. Se llama al cerrar cada montaje y en el seguimiento.
