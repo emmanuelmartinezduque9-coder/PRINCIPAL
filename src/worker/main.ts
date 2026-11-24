@@ -61,6 +61,10 @@ startWorker().then(
         await relaunchEditsWithoutClaude();
         // Una vez (24/11/2026): los montajes fallidos del lote 6 (vídeos 15, 16 y 22), para ver su motivo en el registro.
         await relaunchFailedEditsOnce("montaje.relanzado-lote6-15-16-22-20261124", [15, 16, 22]);
+        // Y otra vez el 16 (falló sin dejar resultado), ahora con cómo terminó el montador en el registro.
+        await relaunchFailedEditsOnce("montaje.relanzado-lote6-16-salida-20261124", [16]);
+        // TEMPORAL: enlaces para comprobar a mano el sonido y los rótulos de los ya montados.
+        await (await import("@/server/videos/montaje-nube")).logVerifyLinks([15, 22]);
         // Y los doblados antes de la comprobación con Whisper (el vídeo 6 dejó una frase en inglés).
         await recheckDubbedEdits();
         // En cada arranque: los que tienen el doblaje hecho pero se quedaron sin montar (montaje cortado).

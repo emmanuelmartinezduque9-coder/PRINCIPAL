@@ -131,7 +131,7 @@ export async function requeueStaleRuns(now: Date): Promise<void> {
 }
 
 async function finishFailed(run: Run, shown: string, detail: string, now: Date, notes: string[] = []): Promise<void> {
-  console.warn(`[montaje] Vídeo ${run.videoId}: el montaje ${run.id} falló: ${shown} (${detail.slice(0, 300)})`);
+  console.warn(`[montaje] Vídeo ${run.videoId}: el montaje ${run.id} falló: ${shown} (${detail.slice(0, 1500)})`);
   await getDb().transaction(async (tx) => {
     const [row] = await tx
       .update(runs)
@@ -148,6 +148,18 @@ async function finishFailed(run: Run, shown: string, detail: string, now: Date, 
  * el Mac del dueño apagado o sin sesión). Pasado este tiempo se monta con el patrón de siempre.
  */
 export const CLAUDE_WAIT_MS = 3 * 60 * 60_000;
+/** TEMPORAL (hasta el 25/11/2026): enlaces firmados (2 h) del último montaje de esos vídeos, en el registro. */
+export async function logVerifyLinks(videoIds: number[], now: Date = new Date()): Promise<void> {
+  const store = getObjectStore();
+  if (!store || now >= VERIFY_UNTIL) return;
+  for (const id of videoIds) {
+    const [edit] = await getDb().select().from(schema.edits).where(eq(schema.edits.videoId, id)).orderBy(sql`${schema.edits.version} desc`).limit(1);
+    if (!edit?.storageKey) continue;
+    const link = await store.signedUrl(edit.storageKey, { expiresIn: 2 * 3600 }).catch(() => null);
+    console.log(`[montaje] Vídeo ${id} (versión ${edit.version}); comprobación: ${link ?? "sin enlace"}`);
+  }
+}
+
 /** TEMPORAL: vídeos del lote 6 cuyo montaje final se comprueba a mano (enlace firmado en el registro). */
 const VERIFY_VIDEOS = new Set([11, 15, 16, 19, 20, 21, 22]);
 const VERIFY_UNTIL = new Date("2026-11-25T12:00:00Z");
@@ -553,7 +565,10 @@ export async function runEdit(run: Run, deps: MontajeDeps = {}): Promise<"done" 
     }
     if (!result || result.ok !== true) {
       const detail = ran.timedOut ? "el montador tardó más de 25 minutos" : (result?.error ?? (lastLine(ran.stderr) ?? "el montador no dejó resultado"));
-      await finishFailed(run, montajeFailure(String(detail).slice(0, 250)), String(detail), nowOf(deps), notes);
+      // Para el registro (no para la persona): cómo terminó y lo último que dijo.
+      const exit = ran.signal ? `señal ${ran.signal}` : `código ${ran.code}`;
+      const tail = ran.stderr.trim().split("\n").slice(-6).join(" | ").slice(-1200);
+      await finishFailed(run, montajeFailure(String(detail).slice(0, 250)), `${detail} [${exit}]${tail ? ` ${tail}` : ""}`, nowOf(deps), notes);
       return "failed";
     }
 

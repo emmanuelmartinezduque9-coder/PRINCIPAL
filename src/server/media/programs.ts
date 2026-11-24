@@ -11,6 +11,8 @@ const children = new Set<ChildProcess>();
 export interface ProgramResult {
   /** Código de salida; -1 si no se pudo lanzar (no está, sin permiso). */
   code: number | null;
+  /** La señal que lo paró (p. ej. `SIGKILL` si el sistema lo mató por memoria), o `null`. */
+  signal?: NodeJS.Signals | null;
   timedOut: boolean;
   /** Lo que escribió por error (los últimos 50.000 caracteres como mucho), o el motivo de no lanzarse. */
   stderr: string;
@@ -34,10 +36,10 @@ export function runProgram(cmd: string, args: string[], options: { cwd?: string;
       children.delete(child);
       resolve({ code: -1, timedOut, stderr: error.message });
     });
-    child.on("close", (code) => {
+    child.on("close", (code, signal) => {
       clearTimeout(timer);
       children.delete(child);
-      resolve({ code, timedOut, stderr });
+      resolve({ code, signal, timedOut, stderr });
     });
   });
 }
