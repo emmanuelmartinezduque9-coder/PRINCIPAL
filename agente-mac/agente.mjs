@@ -28,7 +28,7 @@ import {
   TOOLS_RETRY_MS,
   VERSION,
 } from "./lib.mjs";
-import { CLAUDE_CHECK_MS, CLAUDE_SLOTS, checkClaude, runClaudeOnce } from "./claude.mjs";
+import { CLAUDE_CHECK_MS, CLAUDE_CONFIG_DIR, CLAUDE_SLOTS, checkClaude, runClaudeOnce } from "./claude.mjs";
 
 const CONFIG_RETRY_MS = 30_000;
 const LOCK_FILE = path.join(os.tmpdir(), "principal-agente.lock");
@@ -135,7 +135,10 @@ async function refreshClaude() {
   // Ya listo: no se baja por una comprobación lenta (`auth status` a veces tarda más de la cuenta y daba
   // «no tiene sesión» en falso). Solo se mira que el programa siga ahí; un rechazo de verdad en una
   // llamada ya lo baja (`auth`). Si no estaba listo, se comprueba con una llamada mínima de verdad.
-  if (before && (await fs.stat(before).then(() => true, () => false))) return;
+  const exists = (file) => fs.stat(file).then(() => true, () => false);
+  // …y que sigan las carpetas que usa (temporales y configuración de Claude Code: en el Mac del dueño están en
+  // la imagen del SSD; si se desmonta, faltan y no hay que recoger llamadas que fallarían).
+  if (before && (await exists(before)) && (await exists(os.tmpdir())) && (!claude.token || (await exists(CLAUDE_CONFIG_DIR)))) return;
   claude = await checkClaude(deps, process.env, { verify: true });
   if (claude.bin && !before) log(`Claude Code ${claude.version} listo: las llamadas a Claude del dueño se hacen en este Mac.`);
   if (!claude.bin) log(claude.reason);

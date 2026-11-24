@@ -112,13 +112,18 @@ el Claude Code de su Mac (su suscripción) para todo lo que hace Claude; la web 
 - Una vez: el 15 se vuelve a montar (`remountEditsOnce`). El 22 lo monta la sesión del doblaje cuando
   su doblaje y esto estén listos (un solo montaje final).
 
-## 1.8.2 (24/11/2026): «no tiene sesión» en falso
+## 1.8.2 (24/11/2026): «no tiene sesión» y el disco de datos del SSD
 
-- Con la ficha buena, el agente pasaba a ratos a «no tiene sesión» (12:41, 13:06, 13:35): la
-  comprobación de cada 5 min (`claude --version` y `auth status`) tenía 20 s y en frío a veces tardaba
-  más. Ahora, con el Mac ya listo, la comprobación periódica solo mira que el programa siga ahí; un
-  rechazo de verdad en una llamada lo baja igualmente. Si no estaba listo, se comprueba con una llamada
-  mínima de verdad. Las comprobaciones cortas tienen 60 s.
+- A las 13:31 la imagen de datos del SSD (`/Volumes/PRINCIPAL-DATOS`, ver `docs/datos-en-ssd.md`) se
+  quedó conectada pero desmontada (probablemente el T7 se desconectó un momento): `~/.principal-tools`,
+  `~/.principal`, `yt-dlp` (uv) y el `TMPDIR` del agente apuntaban a la nada y el agente daba «Claude
+  Code no tiene sesión» y «No se puede lanzar yt-dlp». `montar-disco.sh` no lo arregla en ese caso
+  (`hdiutil attach` de una imagen ya conectada no monta): se arregló soltándola (`hdiutil detach`) y
+  volviéndola a conectar.
+- El agente: con Claude Code listo, la comprobación de cada 5 min ya no se fía solo de `auth status`
+  (lento en frío; las comprobaciones cortas pasan de 20 s a 60 s): mira que sigan el programa, la carpeta
+  temporal y la de configuración de Claude Code. Si falta una, deja de recoger llamadas y el motivo
+  («¿el disco de datos del SSD está desmontado?») llega a Ajustes; mientras, van por la API.
 
 ## Pruebas
 

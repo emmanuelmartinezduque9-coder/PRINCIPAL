@@ -327,7 +327,12 @@ export async function checkClaude(deps, env = process.env, { verify = false } = 
     if (!exists(bin)) continue;
     const version = await quick(deps, bin, ["--version"], claudeEnv(env, token));
     if (version.code !== 0) continue;
-    if (token) await deps.fs.mkdir(CLAUDE_CONFIG_DIR, { recursive: true, mode: 0o700 }).catch(() => {});
+    // Sin la carpeta de configuración ni la temporal (en el Mac del dueño, en la imagen del SSD) no se puede trabajar.
+    const folders = [os.tmpdir(), ...(token ? [CLAUDE_CONFIG_DIR] : [])];
+    for (const dir of folders) {
+      const ok = await deps.fs.mkdir(dir, { recursive: true, mode: 0o700 }).then(() => true, () => false);
+      if (!ok) return { bin: null, reason: `Falta la carpeta ${dir} (¿el disco de datos del SSD está desmontado?): las llamadas a Claude van por la API hasta que vuelva.` };
+    }
     const status = await quick(deps, bin, ["auth", "status"], claudeEnv(env, token));
     let loggedIn = false;
     try {

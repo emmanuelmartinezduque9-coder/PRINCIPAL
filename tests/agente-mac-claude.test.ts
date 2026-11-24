@@ -12,6 +12,7 @@ import {
   claudeCandidates,
   claudeEnv,
   claudeInput,
+  checkClaude,
   cleanClaudeToken,
   parseClaudeOutput,
   readClaudeToken,
@@ -141,6 +142,23 @@ describe("cómo se lanza claude", () => {
     const one = "sk-ant-oat01-" + "C".repeat(95);
     fsSync.writeFileSync(file, JSON.stringify({ token: one.repeat(5) }), { mode: 0o600 });
     expect(await readClaudeToken(fs, file)).toBe(one);
+  });
+
+  it("sin la carpeta temporal (disco de datos del SSD desmontado) no se da por listo y dice por qué", async () => {
+    const fakeFs = { ...fs, readFile: async () => { throw new Error("no"); }, mkdir: async () => { throw Object.assign(new Error("ENOENT"), { code: "ENOENT" }); } };
+    const okSpawn = () => {
+      const child = new EventEmitter() as EventEmitter & { stdout: PassThrough; kill: () => void };
+      child.stdout = new PassThrough();
+      child.kill = () => {};
+      setTimeout(() => {
+        child.stdout.end('{"loggedIn": true}');
+        child.emit("close", 0);
+      }, 0);
+      return child;
+    };
+    const r = await checkClaude({ fs: fakeFs, spawn: okSpawn, exists: () => true, home: "/h", listDir: () => [] }, { PRINCIPAL_CLAUDE_BIN: "/x/claude" } as unknown as NodeJS.ProcessEnv);
+    expect(r.bin).toBeNull();
+    expect(r.reason).toMatch(/SSD está desmontado/);
   });
 
   it("yt-dlp tiene un minuto para arrancar al comprobarlo (el «onefile» tarda ~10 s en frío)", () => {
