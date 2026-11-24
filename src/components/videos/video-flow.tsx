@@ -16,7 +16,7 @@ import { CostSummary } from "./cost-summary";
 import { RUNNING_STATUSES, type FlowStep, type ProductPhoto, type VideoViewJson } from "./labels";
 import { StepBreakdown, type PromptDraft } from "./step-breakdown";
 import { StepClip } from "./step-clip";
-import { StepEdit } from "./step-edit";
+import { StepVideo } from "./step-video";
 import { StepFrame } from "./step-frame";
 import { StepReference } from "./step-reference";
 import { TechnicalDetails } from "./technical-details";
@@ -61,16 +61,17 @@ function reachableSteps(view: VideoViewJson): FlowStep[] {
   // El desglose va por dentro (24/11/2026): con la referencia lista, lo siguiente que se ve es la imagen.
   if (view.analysis !== null || view.video.referenceStatus === "ready" || view.frame.current !== null) steps.push("imagen");
   if (view.frame.approvedResultId !== null || view.clip.current !== null) steps.push("clip");
-  // Montaje: con el clip hecho (se puede montar) o si ya se pidió alguno.
-  if (view.edit.canStart || view.edit.latest !== null || view.edit.status !== "none") steps.push("montaje");
+  // «Vídeo listo»: en cuanto la imagen está aprobada (se va preparando solo) o ya hay clip o montaje.
+  if (view.frame.approvedResultId !== null || view.clip.current !== null || view.edit.canStart || view.edit.latest !== null || view.edit.status !== "none") {
+    steps.push("montaje");
+  }
   return steps;
 }
 
 /** El paso con el que se abre el vídeo: el más avanzado en el que ya hay algo hecho. */
 function firstStep(view: VideoViewJson, referenceDone: boolean): FlowStep {
   const reachable = reachableSteps(view);
-  if (reachable.includes("montaje") && (view.edit.latest !== null || view.edit.status !== "none")) return "montaje";
-  if (reachable.includes("clip")) return "clip";
+  if (reachable.includes("montaje")) return "montaje";
   if (reachable.includes("imagen") && view.frame.current !== null) return "imagen";
   return view.analysis || referenceDone ? "imagen" : "referencia";
 }
@@ -192,10 +193,14 @@ function FlowBody({
     { key: "desglose", label: "Desglose", icon: ScanSearch, done: breakdownDone },
     { key: "imagen", label: "Imagen", icon: ImageIcon, done: data.frame.approvedResultId !== null },
     { key: "clip", label: "Clip", icon: Clapperboard, done: data.clip.approvedResultId !== null },
-    { key: "montaje", label: "Montaje", icon: Scissors, done: data.edit.latest !== null },
+    { key: "montaje", label: "Vídeo listo", icon: Scissors, done: data.edit.latest !== null },
   ];
-  // «Desglose» no se enseña (se hace por dentro); solo se abre a propósito con `?paso=desglose`.
-  const steps = allSteps.filter((step) => reachable.includes(step.key) && (step.key !== "desglose" || current === "desglose"));
+  // Solo dos pasos a la vista (regla del dueño, 24/11/2026): «Imagen» y «Vídeo listo». «Referencia»
+  // solo mientras falta poner la referencia; «Desglose» y «Clip» van por dentro y solo se abren a
+  // propósito con `?paso=` (el clip en bruto está en «Detalles» de «Vídeo listo»).
+  const visible = (key: FlowStep) =>
+    key === "imagen" || key === "montaje" || key === current || (key === "referencia" && !referenceDone);
+  const steps = allSteps.filter((step) => reachable.includes(step.key) && visible(step.key));
   const spent = data.costs.higgsfieldCredits > 0 || data.costs.claudeMicros > 0;
 
   return (
@@ -212,18 +217,18 @@ function FlowBody({
       <Stepper steps={steps} current={current} onSelect={select} />
 
       {/* La única pregunta obligatoria con la que se paró (en Imagen y Clip va junto al resultado). */}
-      {current !== "imagen" && current !== "clip" ? <AutoQuestion view={data} /> : null}
+      {current !== "imagen" && current !== "clip" && current !== "montaje" ? <AutoQuestion view={data} /> : null}
 
       {current === "referencia" ? (
         <StepReference view={data} photos={photos} upload={upload.state} onUpload={upload.start} />
       ) : current === "desglose" ? (
         <StepBreakdown view={data} draft={draft} setDraft={setDraft} onGoToReference={() => select("referencia")} />
       ) : current === "imagen" ? (
-        <StepFrame view={data} onGoToClip={() => select("clip")} />
+        <StepFrame view={data} onGoToClip={() => select("montaje")} />
       ) : current === "clip" ? (
         <StepClip view={data} onGoToFrame={() => select("imagen")} />
       ) : (
-        <StepEdit view={data} />
+        <StepVideo view={data} onGoToFrame={() => select("imagen")} />
       )}
 
       {spent || isOwner ? (

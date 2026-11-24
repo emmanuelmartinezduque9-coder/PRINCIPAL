@@ -24,6 +24,7 @@ import { advanceBatch, answerQuestion, autoView, batchQuestions, sendBatch } fro
 import { createVideo, getVideoFor, updateVideoChoices, videoView } from "@/server/videos/videos";
 import { StepBreakdown } from "@/components/videos/step-breakdown";
 import { StepFrame } from "@/components/videos/step-frame";
+import { StepVideo } from "@/components/videos/step-video";
 import type { VideoViewJson } from "@/components/videos/labels";
 import { fakeMessages } from "./helpers/fake-llm";
 import { makeProduct, makeUser } from "./helpers/fixtures";
@@ -240,6 +241,11 @@ describe("vídeo suelto: va solo", () => {
 
     await approveFrame(ana, id, await firstCandidate(id));
     await advanceVideo(id, deps);
+    // «Vídeo listo»: mientras se hace, «Preparando tu vídeo…» con el avance, sin botones; el clip, plegado.
+    const preparing = render(createElement(StepVideo, { view: await viewJson(id), onGoToFrame: () => {} }));
+    expect(preparing).toContain("Preparando tu vídeo");
+    expect(preparing).toContain("Detalles");
+    expect(visible(preparing)).not.toMatch(/Generar|Montar|Esto cuesta/);
     expect((await generations()).map((g) => [g.kind, g.status])).toEqual([
       ["frame", "done"],
       ["clip", "intent"],

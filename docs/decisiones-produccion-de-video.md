@@ -920,3 +920,8 @@ doblaje, que va en el montaje).
 - **Sin «Desglose» ni «Preguntas» a la vista** (24/11/2026): el lote resuelve solo lo que preguntaba
   y deja fuera, con su motivo, el vídeo que no tiene arreglo, en vez de parar. Inventario completo
   en `docs/lote-pausas-y-preguntas.md`.
+- **Pantalla del vídeo con dos pasos** (24/11/2026): «Imagen» (aprobar o rechazar) y «Vídeo listo»
+  (el montaje final para ver y descargar; mientras tanto, «Preparando tu vídeo…» con el avance, sin
+  botones). «Referencia» solo mientras falta ponerla; desglose y clip van por dentro (el clip en
+  bruto, en «Detalles» plegado). En el tablero del lote, columnas «Imagen» y «Vídeo»; «Descargar»
+  baja el vídeo editado.

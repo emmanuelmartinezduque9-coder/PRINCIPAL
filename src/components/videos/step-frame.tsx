@@ -221,7 +221,7 @@ export function StepFrame({ view, onGoToClip }: { view: VideoViewJson; onGoToCli
 
         {reviewing && frame.approvedResultId !== null ? (
           <Button className="h-11 gap-2" onClick={onGoToClip}>
-            Siguiente: clip
+            Ver el vídeo
             <ArrowRight data-icon="inline-end" />
           </Button>
         ) : null}

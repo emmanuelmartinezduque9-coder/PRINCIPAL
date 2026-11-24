@@ -732,9 +732,8 @@ export function BatchBoard({ batchId }: { batchId: number }) {
                     <TableHead>Vídeo</TableHead>
                     <TableHead className="w-24">Quién</TableHead>
                     <TableHead className="w-24">Música</TableHead>
-                    <TableHead className="w-36">Referencia</TableHead>
                     <TableHead className="w-26">Imagen</TableHead>
-                    <TableHead className="w-36">Clip</TableHead>
+                    <TableHead className="w-36">Vídeo</TableHead>
                     <TableHead className="w-20 text-right">Coste</TableHead>
                     <TableHead className="w-36 pr-5" />
                   </TableRow>
@@ -742,16 +741,16 @@ export function BatchBoard({ batchId }: { batchId: number }) {
                 <TableBody>
                   {groupRows.map((row) => {
                     const upload = uploadOf(row);
+                    // Solo dos columnas (regla del dueño, 24/11/2026): Imagen y Vídeo (el listo para subir).
+                    // Referencia, desglose, clip y montaje van por dentro; sus fallos salen en la fila.
                     const states = [
-                      referenceState(row, upload),
-                      // Sin columna «Desglose»: se hace por dentro (regla fija del dueño, 24/11/2026).
                       generationState(row.frame, "frame"),
-                      // Con el clip hecho, la columna enseña su montaje.
+                      // Mientras se hace el clip, «Vídeo» enseña su avance; después, el montaje.
                       row.edit.status === "none" ? generationState(row.clip, "clip") : editState(row.edit),
                     ];
                     // El error de la última acción en bloque y, si no hay, el del enlace o el del paso que falló.
                     const notice = notices[row.id];
-                    const failure = rowProblem(row, states);
+                    const failure = rowProblem(row, [referenceState(row, upload), ...states]);
                     const problem = (notice && notice.at === rowState(row) ? notice.message : null) ?? failure?.message ?? null;
                     const retryUrl = problem !== null && problem === failure?.message ? failure.link : null;
                     // «Enlace no disponible»: un estado neutro, con «Reintentar» y «Cambiar enlace» al lado.
@@ -826,18 +825,18 @@ export function BatchBoard({ batchId }: { batchId: number }) {
                         </TableCell>
                         <TableCell className="pr-5">
                           <div className="flex items-center justify-end gap-0.5">
-                            {row.clipReady ? (
+                            {/* Descargar: el vídeo listo para subir (con la edición); el clip en bruto, en el vídeo. */}
+                            {row.edit.latest ? (
                               <Tooltip>
                                 <TooltipTrigger asChild>
-                                  <Button
-                                    variant="ghost"
-                                    size="icon"
-                                    className="size-8 text-muted-foreground"
+                                  <a
+                                    href={editDownloadUrl(row.id, row.edit.latest.version)}
+                                    download
                                     aria-label={`Descargar ${row.title}`}
-                                    onClick={() => void downloadClip(row.id).catch((error: unknown) => toast.error(message(error, "No se pudo descargar el clip.")))}
+                                    className={cn(buttonVariants({ variant: "ghost", size: "icon" }), "size-8 text-muted-foreground")}
                                   >
                                     <Download aria-hidden />
-                                  </Button>
+                                  </a>
                                 </TooltipTrigger>
                                 <TooltipContent>Descargar</TooltipContent>
                               </Tooltip>
