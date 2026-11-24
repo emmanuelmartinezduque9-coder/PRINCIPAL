@@ -8,12 +8,13 @@ import { createFakeHiggsfield, DUB_CREDITS, type FakeHiggsfield } from "@/connec
 import { HiggsfieldUnknownOutcomeError } from "@/connectors/higgsfield";
 import { getDb, schema } from "@/db/client";
 import { stopWorker } from "@/jobs/boss";
+import type { LlmCall, LlmGateway, LlmResult } from "@/llm/gateway";
 import { LocalStore, setObjectStoreForTests } from "@/lib/object-store";
 import type { AuthUser } from "@/server/auth";
 import { uploadSong } from "@/server/songs";
 
 import { DUB_UNKNOWN } from "@/server/videos/doblaje";
-import { recheckDubbedEdits, redubTodaysEdits, remountDubbedWithoutEdit, startEdit, type EditSpec } from "@/server/videos/edits";
+import { recheckDubbedEdits, reclassifyDubbedEdits, redubTodaysEdits, remountDubbedWithoutEdit, startEdit, type EditSpec } from "@/server/videos/edits";
 import { createBatch } from "@/server/videos/batches";
 import { claimRun, runEdit, type MontajeDeps } from "@/server/videos/montaje-nube";
 import { createVideo, getVideoFor, updateVideoChoices, videoView, type Video } from "@/server/videos/videos";
@@ -62,9 +63,16 @@ if args[0] == 'separar':
         voz = {'hay': False, 'idioma': None, 'probabilidad': None, 'texto': '', 'motivo': 'sin palabras'}
     elif audio.startswith(b'AUDIO-ALEMAN'):
         voz = {'hay': True, 'idioma': 'de', 'probabilidad': 0.97, 'texto': 'Drei, zwei, eins', 'motivo': None}
+    elif audio.startswith(b'CANCION'):
+        texto = 'CANTO: I love her wings, I love her wings'
+        voz = {'hay': True, 'idioma': 'en', 'probabilidad': 0.9, 'texto': texto, 'motivo': None,
+               'frases': [{'desde': 0.0, 'hasta': 2.0, 'texto': texto, 'idioma': 'en', 'prob': 0.9, 'no_habla': 0.1, 'confianza': -0.9}]}
     else:
-        voz = {'hay': True, 'idioma': 'en', 'probabilidad': 0.98, 'texto': 'Three, two, one', 'motivo': None}
-    r = {'ok': True, 'voz': voz}
+        voz = {'hay': True, 'idioma': 'en', 'probabilidad': 0.98, 'texto': 'Three, two, one', 'motivo': None,
+               'frases': [{'desde': 0.5, 'hasta': 1.8, 'texto': 'Three, two, one', 'idioma': 'en', 'prob': 0.98, 'no_habla': 0.05, 'confianza': -0.3}]}
+    r = {'ok': True, 'voz': voz, 'candidatas': []}
+elif args[0] == 'rescatar':
+    r = {'ok': True}
 elif args[0] == 'comprobar':
     # Con una referencia «FUGA», la primera comprobación encuentra una frase en inglés; después, nada.
     n = Path(args[1]).with_name('comprobaciones')
@@ -119,8 +127,22 @@ beforeEach(async () => {
   store = new LocalStore(path.join(sampleDir, `objetos-${Math.random().toString(36).slice(2)}`), Buffer.alloc(32, 3));
   setObjectStoreForTests(store);
   hf = createFakeHiggsfield({}, { autoComplete: true });
+  speech.calls = 0;
+  speech.down = false;
   dueno = await makeUser("dueno");
 });
+
+/** Claude simulado para «¿habla o canto?»: lo que empieza por «CANTO» es canto; el resto, habla. Con `down`, no responde. */
+const speech = { calls: 0, down: false };
+const gateway: LlmGateway = {
+  async call<T>(request: LlmCall<T>): Promise<LlmResult<T>> {
+    speech.calls += 1;
+    if (speech.down) throw new Error("Claude sin saldo");
+    const lines = String((request.content as Array<{ text?: string }>)[0]?.text ?? "").split("\n");
+    const data = { frases: lines.map((line, i) => ({ n: i + 1, tipo: line.includes("CANTO") ? "canto" : "habla", motivo: "prueba" })) };
+    return { text: "", data: data as T, model: "prueba", usage: {} as never, costMicros: 0, spendEntryId: 0, ruleVersions: {}, webSources: [] };
+  },
+};
 
 const deps = (over: Partial<MontajeDeps> = {}): MontajeDeps => ({
   fetch: fakeFetch,
@@ -130,6 +152,7 @@ const deps = (over: Partial<MontajeDeps> = {}): MontajeDeps => ({
   montadorDir,
   higgsfield: hf.port,
   dubPollSeconds: 0,
+  gateway,
   ...over,
 });
 
@@ -330,6 +353,61 @@ describe("que no quede nada en el idioma original", () => {
     await mount(video.id);
     expect(dubCalls()).toHaveLength(2);
     expect((await dubRows()).map((r) => r.status)).toEqual(["failed", "done"]);
+  });
+});
+
+describe("una canción no se traduce nunca (orden del 24/11/2026)", () => {
+  async function withAudio(bytes: Buffer, over: Partial<typeof schema.videos.$inferInsert> = {}) {
+    const video = await videoWithAudio(over);
+    await getDb().update(schema.videoReferenceAudio).set({ data: bytes, size: bytes.length }).where(eq(schema.videoReferenceAudio.videoId, video.id));
+    return video;
+  }
+
+  it("si la voz es una canción, no se dobla ni se gasta: el audio original tal cual", async () => {
+    const video = await withAudio(Buffer.from("CANCION-EN-INGLES"));
+    const { outcome, row } = await mount(video.id);
+    expect(outcome).toBe("done");
+    expect(row.notes).toContain("audio:CANCION-EN-INGLES");
+    expect(row.notes).toContain("La voz de la referencia es una canción (o no está claro que alguien hable): no se dobla; la canción no se traduce");
+    expect(hf.calls).toEqual([]);
+    expect((await dubRows()).map((r) => [r.status, r.error])).toEqual([["skipped", "solo canto o duda"]]);
+  });
+
+  it("si Claude no puede decidir, en caso de duda no se dobla", async () => {
+    speech.down = true;
+    const video = await withAudio(Buffer.from("VOZ-INGLES"));
+    const { row } = await mount(video.id);
+    expect(row.notes).toContain("No se pudo decidir si la voz es habla o una canción: no se dobla");
+    expect(hf.calls).toEqual([]);
+  });
+
+  it("una vez al arrancar, los vídeos con un doblaje sin decidir habla o canto vuelven a montarse", async () => {
+    const video = await withAudio(Buffer.from("CANCION-EN-INGLES"));
+    await getDb().insert(schema.dubs).values({ videoId: video.id, userId: dueno.id, sourceSha256: "x".repeat(64), language: "deu", status: "done", quotedCredits: 44, storageKey: "doblajes/x.m4a", raw: { comprobado: true } });
+    expect(await reclassifyDubbedEdits()).toBe(1);
+    expect((await getDb().select().from(schema.editRuns)).map((r) => [r.videoId, r.status])).toEqual([[video.id, "queued"]]);
+    expect(await reclassifyDubbedEdits()).toBe(0);
+  });
+
+  it("un doblaje ya hecho de una canción se retira y vuelve el audio original; uno de habla se reutiliza sin pagar", async () => {
+    const song = await withAudio(Buffer.from("CANCION-EN-INGLES"));
+    const talk = await withAudio(Buffer.from("VOZ-INGLES"));
+    // Doblajes de antes de decidir habla o canto (sin `clasificado`), ya comprobados.
+    for (const video of [song, talk]) {
+      const sha = (await import("node:crypto")).createHash("sha256").update(video.id === song.id ? "CANCION-EN-INGLES" : "VOZ-INGLES").digest("hex");
+      const key = `doblajes/${video.id}/viejo.m4a`;
+      await store.putBuffer(key, Buffer.from("DOBLAJE-VIEJO"), { contentType: "audio/mp4" });
+      await getDb().insert(schema.dubs).values({ videoId: video.id, userId: dueno.id, sourceSha256: sha, language: "deu", status: "done", quotedCredits: 44, creditsSpent: 44, storageKey: key, raw: { comprobado: true, origen: "en" } });
+    }
+    const a = await mount(song.id);
+    expect(a.row.notes).toContain("audio:CANCION-EN-INGLES");
+    expect(a.row.notes).toContain("El doblaje anterior era de una canción: se quita y vuelve el audio original");
+    const b = await mount(talk.id);
+    expect(b.row.notes).toContain("audio:DOBLAJE-VIEJO");
+    expect(dubCalls()).toEqual([]);
+    const rows = await dubRows();
+    expect(rows.map((r) => [r.videoId, r.status])).toEqual([[song.id, "skipped"], [talk.id, "done"]]);
+    expect(rows[1].raw).toMatchObject({ clasificado: true, ventanas: [[0.5, 1.8]] });
   });
 });
 

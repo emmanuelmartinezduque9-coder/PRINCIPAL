@@ -60,6 +60,24 @@ al mezclar sobre la música original. Es el mismo fallo que Codex vio en el V6 d
 3. Los doblajes hechos antes (sin `comprobado` en `dubs.raw`) se rehacen al volver a montar; al publicar, los vídeos con
    uno de esos se vuelven a montar solos una vez (`recheckDubbedEdits`, marca `doblaje.comprobado-20261124`).
 
+## Una canción no se traduce nunca (24/11/2026)
+
+En el lote 6 se doblaron canciones (vídeos 8, 11, 13, 14, 20, 21 y 22): su pista de voz estaba casi vacía y la «voz»
+salió de la MÚSICA (Whisper oía la letra en inglés y el rescate la trataba como diálogo). Orden del dueño: se dobla solo
+cuando una persona habla; una canción no se traduce nunca; en caso de duda, no. Ahora:
+
+1. Solo se buscan frases en la música si la pista de VOZ ya tiene palabras, y del mismo idioma (`doblar.py separar`:
+   salen como `candidatas`, sin mover nada). Sin voz con palabras no hay doblaje (los del lote 6 caen aquí).
+2. Antes de gastar, Claude (Haiku, `classifySpeech`) dice frase a frase si es HABLA, CANTO o DUDA con el texto y los
+   datos de Whisper (`no_speech_prob`, `avg_logprob`, duración, de qué pista sale). Solo se dobla si alguna frase de la
+   voz es habla; las candidatas de habla se pasan a la voz (`rescatar`). Si Claude no responde: no se dobla.
+3. La comprobación final solo mira dentro de las ventanas del diálogo (fuera suena la canción).
+4. Los doblajes ya hechos sin `clasificado` se vuelven a mirar: si eran canción, se retiran (`skipped`) y vuelve el audio
+   original; si eran habla, se reutilizan sin pagar. Al publicar, sus vídeos se vuelven a montar una vez
+   (`reclassifyDubbedEdits`, marca `doblaje.habla-o-canto-20261124`).
+
+No hay nada parecido en Codex: allí el doblaje se pedía a mano por vídeo y su V6 tradujo letras de la canción.
+
 ## Ningún montaje mudo (24/11/2026)
 
 Sin canción y sin el audio de la referencia guardado, el montaje usa el audio del vídeo de referencia (el de la réplica

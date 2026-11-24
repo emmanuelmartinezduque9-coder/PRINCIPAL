@@ -483,6 +483,7 @@ export async function runEdit(run: Run, deps: MontajeDeps = {}): Promise<"done" 
           fetch: deps.fetch,
           now: deps.now,
           pollSeconds: deps.dubPollSeconds,
+          gateway: deps.gateway,
           doblar: async (args) => {
             const out = path.join(dir, `doblar-${args[0]}.json`);
             await fs.rm(out, { force: true });

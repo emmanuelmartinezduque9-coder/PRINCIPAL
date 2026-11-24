@@ -335,6 +335,36 @@ export async function redubTodaysEdits(now: Date = new Date()): Promise<number> 
   return queued;
 }
 
+export const RECLASSIFY_SETTING = "doblaje.habla-o-canto-20261124";
+
+/**
+ * Una vez (24/11/2026, orden del dueño: «una canción no se traduce nunca»): los vídeos con un doblaje hecho antes de
+ * decidir si la voz era habla o canto (sin `clasificado`) se vuelven a montar. Si era una canción, el doblaje se retira
+ * y vuelve el audio original; si era habla, se reutiliza sin pagar otra vez.
+ */
+export async function reclassifyDubbedEdits(now: Date = new Date()): Promise<number> {
+  if (await getSetting<string>(RECLASSIFY_SETTING)) return 0;
+  await setSetting(RECLASSIFY_SETTING, now.toISOString());
+  const rows = await getDb()
+    .selectDistinct({ id: schema.dubs.videoId })
+    .from(schema.dubs)
+    .where(and(eq(schema.dubs.status, "done"), sql`coalesce((${schema.dubs.raw}->>'clasificado')::boolean, false) = false`));
+  let queued = 0;
+  for (const { id } of rows) {
+    const [video] = await getDb().select().from(videos).where(eq(videos.id, id));
+    const creator = video ? await getActiveUser(video.createdBy) : null;
+    if (!video || !creator) continue;
+    try {
+      await queueEdit(video, await getProductFor(creator, video.productId), creator.id, now);
+      queued += 1;
+    } catch (error) {
+      console.warn(`[montaje] No se pudo volver a montar el vídeo ${id} para revisar su doblaje: ${error instanceof Error ? error.message : error}`);
+    }
+  }
+  console.log(`[montaje] Doblajes sin decidir habla o canto: ${queued} vídeo(s) vuelven a montarse.`);
+  return queued;
+}
+
 export const RECHECK_SETTING = "doblaje.comprobado-20261124";
 
 /**

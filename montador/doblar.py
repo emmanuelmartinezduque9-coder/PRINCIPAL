@@ -16,8 +16,10 @@ Railway) en vez de PyTorch, para no meter PyTorch en la imagen. `test_doblar.py`
 Uso (`--resultado <archivo.json>` antes de la orden deja también el resultado en ese archivo):
   python doblar.py separar <audio_o_video> <carpeta> [--video <referencia.mp4>]
       → carpeta/{mix,speech,music,sfx}.wav y carpeta/dialogue-only.mp4 (la voz sobre la imagen de la referencia
-        si se da; si no, sobre negro). Imprime un JSON con niveles por pista y `voz`: si hay diálogo y su idioma
-        (Whisper), para no doblar lo que no tiene diálogo o ya está en el idioma del anuncio.
+        si se da; si no, sobre negro). Imprime un JSON con niveles por pista, `voz` (si hay palabras, su idioma y sus
+        frases con los datos de Whisper) y `candidatas` (frases del mismo idioma que quedaron en la música).
+  python doblar.py rescatar <carpeta> [desde:hasta …] [--video ref.mp4]
+      → pasa a la voz las frases de la música que son habla y rehace dialogue-only.mp4.
   python doblar.py mezclar <carpeta> <doblaje.mp4|wav> <salida.m4a>
       → salida.m4a = música + efectos originales + voz doblada, con la duración del original.
   python doblar.py comprobar <montaje.m4a> [--origen en] [--destino de]
@@ -123,8 +125,13 @@ def mono16k(x):
     return np.interp(np.linspace(0, len(m) - 1, n), np.arange(len(m)), m).astype(np.float32)
 
 
+MAX_NO_HABLA = 0.6  # `no_speech_prob` de Whisper por encima de esto: no es habla
+
+
 def frases(modelo, x, vad=True):
-    """Frases de `x` ([n, 2] a 48 kHz) con su idioma, detectado frase a frase: [(desde, hasta, texto, idioma, prob)]."""
+    """Frases de `x` ([n, 2] a 48 kHz) con su idioma (frase a frase) y lo seguro que está Whisper de que es habla:
+    [{desde, hasta, texto, idioma, prob, no_habla, confianza}] (`no_habla` = `no_speech_prob`, `confianza` =
+    `avg_logprob`). Sirven para decidir si es diálogo o letra cantada (`doblaje.ts` lo pregunta a Claude)."""
     audio = mono16k(x)
     trozos, _ = modelo.transcribe(audio, vad_filter=vad, beam_size=1)
     out = []
@@ -135,22 +142,26 @@ def frases(modelo, x, vad=True):
         a, b = int(t.start * WHISPER_RATE), int(t.end * WHISPER_RATE)
         trozo = audio[a:max(b, a + WHISPER_RATE // 2)]
         idioma, prob, _ = modelo.detect_language(trozo) if len(trozo) >= WHISPER_RATE // 4 else (None, 0.0, None)
-        out.append((round(t.start, 2), round(t.end, 2), texto, idioma, round(float(prob), 2)))
+        out.append(dict(desde=round(t.start, 2), hasta=round(t.end, 2), texto=texto[:200], idioma=idioma,
+                        prob=round(float(prob), 2), no_habla=round(float(t.no_speech_prob), 2),
+                        confianza=round(float(t.avg_logprob), 2)))
     return out
 
 
 def detectar_dialogo(modelo, voz_wav, voz_db):
-    """¿Hay diálogo en la voz separada y en qué idioma? Sin palabras, con una voz casi muda o con un idioma dudoso
-    (< 0,5; suele ser la letra de la canción colándose) no hay diálogo. `None` si falta Whisper: entonces no se dobla."""
+    """¿Hay voz con palabras en la pista de voz y en qué idioma? Sin palabras, con una voz casi muda o con un idioma
+    dudoso (< 0,5) no hay. Devuelve también sus `frases`; si es HABLA o CANTO lo decide después `doblaje.ts` (Claude con
+    el texto y los datos de Whisper). `None` si falta Whisper: entonces no se dobla."""
     if voz_db < UMBRAL_VOZ_DB:
-        return dict(hay=False, idioma=None, probabilidad=None, texto='', motivo='voz casi muda')
+        return dict(hay=False, idioma=None, probabilidad=None, texto='', motivo='voz casi muda', frases=[])
     if modelo is None:
         return None
     trozos, info = modelo.transcribe(str(voz_wav), vad_filter=True, beam_size=1, without_timestamps=True)
     texto = ' '.join(t.text for t in trozos).strip()
     prob = round(float(info.language_probability), 2)
     hay = bool(texto) and prob >= UMBRAL_IDIOMA
-    return dict(hay=hay, idioma=info.language, probabilidad=prob, texto=texto[:300],
+    lista = [f for f in frases(modelo, leer(voz_wav)) if f['no_habla'] <= MAX_NO_HABLA] if hay else []
+    return dict(hay=hay, idioma=info.language, probabilidad=prob, texto=texto[:300], frases=lista,
                 motivo=None if hay else ('sin palabras' if not texto else 'idioma dudoso'))
 
 
@@ -244,8 +255,9 @@ def video_dialogo(carpeta, video, salida, desde=None, hasta=None):
 
 def separar(fuente, carpeta, video=None, destino=None):
     """Voz, música y efectos de `fuente` en `carpeta` (WAV estéreo de 48 kHz en coma flotante) y `dialogue-only.mp4`.
-    Si en la música o los efectos quedan frases habladas en otro idioma que `destino` (BandIt mete a veces un grito o una
-    voz procesada en la música), esa voz pasa a la pista de voz para que también se doble (`rescatadas`)."""
+    Solo si la pista de voz ya tiene palabras, se buscan en la música y los efectos frases en ESE idioma (BandIt mete a
+    veces un grito o una voz procesada en la música): salen como `candidatas`, sin mover nada; `doblaje.ts` decide con
+    Claude si son habla o letra cantada y mueve solo las de habla (`rescatar`). Una canción no se traduce nunca."""
     carpeta = Path(carpeta)
     carpeta.mkdir(parents=True, exist_ok=True)
     if not tiene_audio(fuente):
@@ -263,36 +275,42 @@ def separar(fuente, carpeta, video=None, destino=None):
              **{f'{n}_db': rms_db(pistas[i]) for i, n in enumerate(STEMS)})
     w = whisper()
     voz = detectar_dialogo(w, carpeta / 'speech.wav', r['speech_db'])
-    rescatadas = []
-    if w is not None:
-        origen = voz['idioma'] if voz and voz['hay'] else None
+    candidatas = []
+    if w is not None and voz and voz['hay']:
         for i, nombre in ((1, 'music'), (2, 'sfx')):
             voces, _ = voces_mdx(pistas[i])  # Whisper oye mejor las voces aisladas que la música entera
-            for a, b, texto, idioma, prob in frases(w, voces):
-                if idioma and idioma != destino and prob >= UMBRAL_IDIOMA and (origen is None or idioma == origen):
-                    a, b = ampliar(voces, a, b)
-                    rescatadas.append(dict(pista=nombre, desde=a, hasta=b, texto=texto[:120], idioma=idioma))
-        if rescatadas:
-            mover_voz_de_la_musica(carpeta, [(f['desde'], f['hasta']) for f in rescatadas])
-            if not (voz and voz['hay']):
-                voz = dict(hay=True, idioma=rescatadas[0]['idioma'], probabilidad=None,
-                           texto=' '.join(f['texto'] for f in rescatadas)[:300], motivo=None)
+            for f in frases(w, voces):
+                if f['idioma'] == voz['idioma'] and f['idioma'] != destino and f['prob'] >= UMBRAL_IDIOMA and f['no_habla'] <= MAX_NO_HABLA:
+                    a, b = ampliar(voces, f['desde'], f['hasta'])
+                    candidatas.append(dict(f, pista=nombre, desde=a, hasta=b))
     dialogo = carpeta / 'dialogue-only.mp4'
     video_dialogo(carpeta, video, dialogo)
-    r.update(dialogo=str(dialogo), voz=voz, rescatadas=rescatadas)
+    r.update(dialogo=str(dialogo), voz=voz, candidatas=candidatas)
     return r
 
 
-def comprobar(audio, origen, destino):
-    """Frases del montaje doblado que siguen en el idioma ORIGINAL (`origen`, o cualquiera distinto de `destino`):
-    [{desde, hasta, texto, idioma}]. Whisper detecta el idioma frase a frase."""
+def rescatar(carpeta, tramos, video=None):
+    """Pasa a la pista de voz la voz de la música en `tramos` [(desde, hasta)] (las frases que Claude dio por HABLA) y
+    rehace `dialogue-only.mp4`."""
+    carpeta = Path(carpeta)
+    if tramos:
+        mover_voz_de_la_musica(carpeta, tramos)
+    video_dialogo(carpeta, video, carpeta / 'dialogue-only.mp4')
+    return dict(ok=True, tramos=[[a, b] for a, b in tramos])
+
+
+def comprobar(audio, origen, destino, ventanas=None):
+    """Frases del montaje doblado que siguen en el idioma ORIGINAL del diálogo (`origen`) DENTRO de las ventanas del
+    diálogo (`ventanas` [(desde, hasta)]; fuera está la canción, que no se traduce nunca): [{desde, hasta, texto, idioma}].
+    Whisper detecta el idioma frase a frase."""
     w = whisper()
     if w is None:
         return None
     quedan = []
-    for a, b, texto, idioma, prob in frases(w, leer(audio)):
-        if idioma and idioma != destino and prob >= 0.6 and (origen is None or idioma == origen):
-            quedan.append(dict(desde=a, hasta=b, texto=texto[:120], idioma=idioma, probabilidad=prob))
+    for f in frases(w, leer(audio)):
+        dentro = ventanas is None or any(f['desde'] < b + RELLENO_S and f['hasta'] > a - RELLENO_S for a, b in ventanas)
+        if dentro and f['idioma'] and f['idioma'] != destino and f['prob'] >= 0.6 and f['no_habla'] <= MAX_NO_HABLA and (origen is None or f['idioma'] == origen):
+            quedan.append(dict(desde=f['desde'], hasta=f['hasta'], texto=f['texto'][:120], idioma=f['idioma'], probabilidad=f['prob']))
     return quedan
 
 
@@ -347,6 +365,11 @@ def main(argv=None):
     c.add_argument('audio', type=Path)
     c.add_argument('--origen')
     c.add_argument('--destino')
+    c.add_argument('--ventanas', nargs='*', help='desde:hasta del diálogo (fuera no se mira: es la canción)')
+    rs = cmds.add_parser('rescatar')
+    rs.add_argument('carpeta', type=Path)
+    rs.add_argument('tramos', nargs='*', help='desde:hasta en segundos')
+    rs.add_argument('--video', type=Path)
     t = cmds.add_parser('tramo')
     t.add_argument('carpeta', type=Path)
     t.add_argument('desde', type=float)
@@ -367,8 +390,11 @@ def main(argv=None):
         if a.orden == 'separar':
             r = separar(a.fuente, a.carpeta, a.video, a.destino)
         elif a.orden == 'comprobar':
-            quedan = comprobar(a.audio, a.origen, a.destino)
+            ventanas = [tuple(float(v) for v in x.split(':')) for x in a.ventanas] if a.ventanas is not None else None
+            quedan = comprobar(a.audio, a.origen, a.destino, ventanas)
             r = dict(ok=True, comprobado=quedan is not None, quedan=quedan or [])
+        elif a.orden == 'rescatar':
+            r = rescatar(a.carpeta, [tuple(float(v) for v in x.split(':')) for x in a.tramos], a.video)
         elif a.orden == 'tramo':
             r = tramo(a.carpeta, a.desde, a.hasta, a.salida, a.video)
         elif a.orden == 'injertar':

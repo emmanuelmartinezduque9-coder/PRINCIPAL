@@ -7,6 +7,9 @@ import { pipeline } from "node:stream/promises";
 import { and, desc, eq } from "drizzle-orm";
 import { getDb, schema } from "@/db/client";
 import { getHiggsfield, HiggsfieldRejectedError, HiggsfieldUnknownOutcomeError, isHiggsfieldError, type HiggsfieldPort } from "@/connectors/higgsfield";
+import { z } from "zod";
+import { textPart } from "@/llm/content";
+import { getGateway, type LlmGateway } from "@/llm/gateway";
 import type { ObjectStore } from "@/lib/object-store";
 
 /**
@@ -85,15 +88,17 @@ export interface DubContext {
   now?: () => Date;
   /** Lo que `jobs_wait` espera en cada pregunta a Higgsfield (0–15 s; por defecto 15). */
   pollSeconds?: number;
+  /** Claude (pruebas: uno simulado) para decidir si la voz es habla o una canción. */
+  gateway?: LlmGateway;
 }
 
 /** Lo que responde `doblar.py`; `voz` (al separar): si hay diálogo y en qué idioma (Whisper), `null` si no se sabe. */
 export interface DoblarResult {
   ok: boolean;
   error?: string;
-  voz?: { hay: boolean; idioma: string | null; probabilidad: number | null; texto: string; motivo: string | null } | null;
-  /** Frases habladas que BandIt dejó en la música y se pasaron a la voz para doblarlas también. */
-  rescatadas?: Array<{ pista: string; desde: number; hasta: number; texto: string; idioma: string }>;
+  voz?: { hay: boolean; idioma: string | null; probabilidad: number | null; texto: string; motivo: string | null; frases?: Phrase[] } | null;
+  /** Frases en el idioma del diálogo que BandIt dejó en la música (sin mover): Claude decide si son habla. */
+  candidatas?: Array<Phrase & { pista: string }>;
   /** `comprobar`: si se pudo comprobar y las frases que siguen en el idioma original. */
   comprobado?: boolean;
   quedan?: Array<{ desde: number; hasta: number; texto: string; idioma: string }>;
@@ -104,6 +109,108 @@ export interface DoblarResult {
 
 /** Cuántas veces se vuelve a doblar un trozo que quedó en el idioma original. */
 export const MAX_REPAIRS = 2;
+
+/** Una frase que oyó Whisper, con lo seguro que está de que es habla (`no_habla` = `no_speech_prob`). */
+export interface Phrase {
+  desde: number;
+  hasta: number;
+  texto: string;
+  idioma: string | null;
+  prob: number;
+  no_habla: number;
+  confianza: number;
+}
+
+export const SPEECH_INSTRUCTIONS = [
+  "Decides si cada frase que oyó Whisper en el audio de un vídeo corto de redes es HABLA (una persona hablando: diálogo, exclamación, narración a cámara) o CANTO (la letra de una canción, aunque la cante alguien del vídeo o sea un audio de moda).",
+  "Regla fija del dueño: se dobla solo el diálogo; una canción no se traduce nunca.",
+  "Por frase te doy la pista de la que sale («voz», o «music»/«sfx»: lo que quedó en la música), el texto, cuánto dura y dos datos de Whisper: no_habla (probabilidad de que no sea habla, 0–1) y confianza (logprob medio; muy bajo suele ser canto o música).",
+  "Señales de canto: rima, versos o estribillo repetidos, palabras alargadas, frase que suena a letra de canción, texto poco natural para una conversación, no_habla alto, confianza muy baja.",
+  "Señales de habla: pregunta o respuesta natural, exclamación espontánea, explicación, habla dirigida a alguien.",
+  "Responde por cada frase (n desde 1) tipo «habla», «canto» o «duda» y un motivo corto. Si no lo tienes claro, «duda»: en caso de duda no se dobla.",
+].join("\n");
+
+const speechSchema = z.object({
+  frases: z.array(z.object({ n: z.number().int().min(1), tipo: z.enum(["habla", "canto", "duda"]), motivo: z.string().max(200) })).max(40),
+});
+
+/**
+ * Habla o canto, frase a frase (Claude con el texto y los datos de Whisper). `null` si Claude no puede (entonces no se
+ * dobla: en caso de duda, no). Lo que no conteste queda en «duda».
+ */
+export async function classifySpeech(
+  ctx: Pick<DubContext, "videoId" | "gateway">,
+  userId: number,
+  productId: number | null,
+  phrases: Array<Phrase & { pista: string }>,
+): Promise<Array<"habla" | "canto" | "duda"> | null> {
+  if (phrases.length === 0) return [];
+  const listing = phrases
+    .map((f, i) => `${i + 1}. [${f.pista}] ${f.desde.toFixed(1)}–${f.hasta.toFixed(1)} s (${(f.hasta - f.desde).toFixed(1)} s) no_habla=${f.no_habla} confianza=${f.confianza}: «${f.texto}»`)
+    .join("\n");
+  try {
+    const answer = await (ctx.gateway ?? getGateway()).call({
+      tier: "small",
+      stepKey: `montaje:${ctx.videoId}:habla-o-canto:${crypto.createHash("sha256").update(listing).digest("hex").slice(0, 16)}`,
+      userId,
+      productId,
+      rules: [],
+      instructions: SPEECH_INSTRUCTIONS,
+      content: [textPart(listing)],
+      maxTokens: 1_500,
+      schema: speechSchema,
+    });
+    const byN = new Map((answer.data?.frases ?? []).map((f) => [f.n, f.tipo]));
+    return phrases.map((_, i) => byN.get(i + 1) ?? "duda");
+  } catch (error) {
+    console.warn(`[doblaje] Claude no pudo decir si el vídeo ${ctx.videoId} tiene habla o canto: ${messageOf(error)}`);
+    return null;
+  }
+}
+
+type Analysis =
+  | { kind: "skip"; record: boolean; why: string; note: string | null; raw: unknown }
+  | { kind: "speech"; origin: string | null; raw: Record<string, unknown> };
+
+/**
+ * Separa la voz y decide si hay que doblar: hay palabras, no están ya en el idioma del anuncio y Claude dice que son
+ * HABLA (no la letra de una canción). Las frases de habla que BandIt dejó en la música pasan a la voz (`rescatar`).
+ */
+async function analyse(ctx: DubContext, stems: string, userId: number, target: { code: string; name: string }): Promise<Analysis> {
+  const separated = await ctx.doblar(["separar", ctx.audio, stems, "--destino", ctx.language, ...(ctx.referenceVideo ? ["--video", ctx.referenceVideo] : [])]);
+  if (!separated.ok) {
+    // Aún no se ha gastado nada: se monta con el audio original y se avisa (el doblaje va por defecto).
+    return { kind: "skip", record: false, why: "separar", note: `No se pudo separar la voz de la referencia (${(separated.error ?? "sin detalle").slice(0, 120)}): el diálogo va sin doblar`, raw: null };
+  }
+  const voz = separated.voz;
+  if (voz === undefined || voz === null) return { kind: "skip", record: false, why: "sin Whisper", note: "No se pudo saber si la referencia tiene diálogo: no se dobla", raw: null };
+  if (!voz.hay) return { kind: "skip", record: true, why: `sin diálogo (${voz.motivo ?? "sin palabras"})`, note: null, raw: voz };
+  if (voz.idioma === ctx.language) {
+    return { kind: "skip", record: true, why: `el diálogo ya está en ${target.name}`, note: `El diálogo de la referencia ya está en ${target.name}: no se dobla`, raw: voz };
+  }
+  const phrases = [...(voz.frases ?? []).map((f) => ({ ...f, pista: "voz" })), ...(separated.candidatas ?? [])];
+  const [owner] = await getDb().select({ productId: schema.videos.productId }).from(schema.videos).where(eq(schema.videos.id, ctx.videoId));
+  const kinds = await classifySpeech(ctx, userId, owner?.productId ?? null, phrases);
+  if (kinds === null) return { kind: "skip", record: false, why: "sin Claude", note: "No se pudo decidir si la voz es habla o una canción: no se dobla", raw: null };
+  const classified = phrases.map((f, i) => ({ ...f, tipo: kinds[i] }));
+  const speech = classified.filter((f) => f.tipo === "habla");
+  if (!speech.some((f) => f.pista === "voz")) {
+    return {
+      kind: "skip",
+      record: true,
+      why: "solo canto o duda",
+      note: "La voz de la referencia es una canción (o no está claro que alguien hable): no se dobla; la canción no se traduce",
+      raw: { voz, frases: classified },
+    };
+  }
+  const rescue = speech.filter((f) => f.pista !== "voz");
+  if (rescue.length) {
+    const moved = await ctx.doblar(["rescatar", stems, ...rescue.map((f) => `${f.desde}:${f.hasta}`), ...(ctx.referenceVideo ? ["--video", ctx.referenceVideo] : [])]);
+    if (moved.ok) ctx.notes.push(`Voz que estaba en la música, también doblada: ${rescue.map((f) => `«${f.texto}» (${f.desde}–${f.hasta} s)`).join(", ")}`);
+  }
+  const windows = speech.map((f) => [f.desde, f.hasta]);
+  return { kind: "speech", origin: voz.idioma, raw: { origen: voz.idioma, ventanas: windows, frases: classified, clasificado: true } };
+}
 
 export type DubOutcome =
   | { kind: "ready"; path: string }
@@ -176,6 +283,21 @@ export async function dubbedAudio(ctx: DubContext): Promise<DubOutcome> {
 
     // Ya se vio que no hace falta doblar este audio: nada.
     if (row?.status === "skipped") return { kind: "skip" };
+    // Doblajes de antes de decidir habla o canto (24/11/2026): se vuelve a mirar. Si era una canción, fuera el doblaje
+    // y el audio original (una canción no se traduce); si era habla, se reutiliza sin pagar otra vez.
+    if (row?.status === "done" && row.storageKey && !(row.raw as { clasificado?: boolean } | null)?.clasificado) {
+      const again = await analyse(ctx, stems, userId, target);
+      if (again.kind === "skip") {
+        if (again.record) {
+          await update(row.id, { status: "skipped", error: `Doblaje retirado: ${again.why}`, raw: { ...((row.raw as object | null) ?? {}), retirado: again.raw } });
+          ctx.notes.push("El doblaje anterior era de una canción: se quita y vuelve el audio original");
+        } else if (again.note) ctx.notes.push(again.note);
+        return { kind: "skip" };
+      }
+      const raw = { ...((row.raw as object | null) ?? {}), ...again.raw };
+      await update(row.id, { raw });
+      row = { ...row, raw };
+    }
     // Ya doblado: del almacén, sin pagar otra vez.
     // Los de antes de la comprobación con Whisper (24/11/2026) se rehacen: uno dejó una frase en inglés.
     if (row?.status === "done" && row.storageKey && !(row.raw as { comprobado?: boolean } | null)?.comprobado) {
@@ -195,31 +317,19 @@ export async function dubbedAudio(ctx: DubContext): Promise<DubOutcome> {
     }
 
     if (!row || row.status === "failed") {
-      const separated = await ctx.doblar(["separar", ctx.audio, stems, "--destino", ctx.language, ...(ctx.referenceVideo ? ["--video", ctx.referenceVideo] : [])]);
-      if (!separated.ok) {
-        // Aún no se ha gastado nada: se monta con el audio original y se avisa (el doblaje va por defecto).
-        ctx.notes.push(`No se pudo separar la voz de la referencia (${(separated.error ?? "sin detalle").slice(0, 120)}): el diálogo va sin doblar`);
+      // ¿Hace falta? Sin habla (o solo una canción), o ya en el idioma del anuncio, no se envía nada (no se gasta).
+      const decided = await analyse(ctx, stems, userId, target);
+      if (decided.kind === "skip") {
+        if (decided.record) {
+          await getDb()
+            .insert(dubs)
+            .values({ videoId: ctx.videoId, userId, sourceSha256: sha, language: target.code, status: "skipped", quotedCredits: 0, error: decided.why, raw: decided.raw })
+            .onConflictDoNothing();
+        }
+        if (decided.note) ctx.notes.push(decided.note);
         return { kind: "skip" };
       }
-      // ¿Hace falta? Sin diálogo, o con el diálogo ya en el idioma del anuncio, no se envía nada (no se gasta).
-      const voz = separated.voz;
-      if (voz === undefined || voz === null) {
-        ctx.notes.push("No se pudo saber si la referencia tiene diálogo: no se dobla");
-        return { kind: "skip" };
-      }
-      if (!voz.hay || voz.idioma === ctx.language) {
-        const why = !voz.hay ? `sin diálogo (${voz.motivo ?? "sin palabras"})` : `el diálogo ya está en ${target.name}`;
-        await getDb()
-          .insert(dubs)
-          .values({ videoId: ctx.videoId, userId, sourceSha256: sha, language: target.code, status: "skipped", quotedCredits: 0, error: why, raw: voz })
-          .onConflictDoNothing();
-        if (voz.hay) ctx.notes.push(`El diálogo de la referencia ya está en ${target.name}: no se dobla`);
-        return { kind: "skip" };
-      }
-      ctx.notes.push(`Diálogo de la referencia en «${voz.idioma}»: se dobla al ${target.name}`);
-      if (separated.rescatadas?.length) {
-        ctx.notes.push(`Voz que estaba en la música, también doblada: ${separated.rescatadas.map((f) => `«${f.texto}» (${f.desde}–${f.hasta} s)`).join(", ")}`);
-      }
+      ctx.notes.push(`Diálogo de la referencia en «${decided.origin}»: se dobla al ${target.name}`);
       const bytes = await fs.readFile(path.join(stems, "dialogue-only.mp4"));
       const { mediaId } = await higgsfield.uploadMedia(userId, { bytes, filename: "dialogue-only.mp4", contentType: "video/mp4", type: "video" });
       const request = { mediaId, targetLanguage: target.code };
@@ -239,9 +349,9 @@ export async function dubbedAudio(ctx: DubContext): Promise<DubOutcome> {
       row = created;
       try {
         const sent = await higgsfield.submitDubbing(userId, request);
-        await update(row.id, { status: "submitted", jobId: sent.jobIds[0], raw: { envio: sent.raw ?? null, origen: voz.idioma } });
-        row = { ...row, status: "submitted", jobId: sent.jobIds[0] };
-        ctx.notes.push(`Diálogo en alemán: doblaje enviado a Higgsfield (${quote.credits} créditos)`);
+        await update(row.id, { status: "submitted", jobId: sent.jobIds[0], raw: { envio: sent.raw ?? null, ...decided.raw } });
+        row = { ...row, status: "submitted", jobId: sent.jobIds[0], raw: { envio: sent.raw ?? null, ...decided.raw } };
+        ctx.notes.push(`Diálogo en ${target.name}: doblaje enviado a Higgsfield (${quote.credits} créditos)`);
       } catch (error) {
         if (error instanceof HiggsfieldUnknownOutcomeError) {
           await update(row.id, { status: "unknown", error: "No se sabe si el envío llegó" });
@@ -296,13 +406,22 @@ export async function dubbedAudio(ctx: DubContext): Promise<DubOutcome> {
 
     // Comprobación con Whisper: que no quede nada en el idioma original; si queda, se vuelve a doblar ese trozo.
     const origen = (row.raw as { origen?: string | null } | null)?.origen ?? null;
+    const windows = (row.raw as { ventanas?: Array<[number, number]> } | null)?.ventanas ?? null;
     let voice = dub;
     let extra = 0;
     const repairs: Array<{ desde: number; hasta: number; texto: string; creditos: number }> = [];
     let left: NonNullable<DoblarResult["quedan"]> = [];
     let checked = false;
     for (let attempt = 0; ; attempt++) {
-      const check = await ctx.doblar(["comprobar", output, ...(origen ? ["--origen", origen] : []), "--destino", ctx.language]);
+      const check = await ctx.doblar([
+        "comprobar",
+        output,
+        ...(origen ? ["--origen", origen] : []),
+        "--destino",
+        ctx.language,
+        // Solo dentro del diálogo: fuera suena la canción, que no se traduce nunca.
+        ...(windows ? ["--ventanas", ...windows.map(([a, b]) => `${a}:${b}`)] : []),
+      ]);
       checked = check.ok && check.comprobado === true;
       left = check.quedan ?? [];
       if (!checked || left.length === 0 || attempt >= MAX_REPAIRS) break;
