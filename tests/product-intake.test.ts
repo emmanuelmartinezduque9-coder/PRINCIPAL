@@ -16,6 +16,7 @@ import {
   latestIntake,
   MAC_WAIT_MS,
   MOCKUP_BLOCKED_PROMPTS,
+  printedTextClause,
   MOCKUP_FALLBACK_PROMPT,
   PROFILE_RETRY_MS,
   WAITING_FOR_MAC,
@@ -49,6 +50,7 @@ const ANSWER: IntakeAnswer = {
   marca: { nombre: "EisZauber", porQue: "Helado + magia, fácil de recordar en alemán.", alternativas: ["EisFreude", "KühlWerk"] },
   referencia: { tipo: "foto_tienda", numero: 1 },
   promptMockup: "Photorealistic product photo of the exact pink mini ice cream maker on medium gray #929396.",
+  textoImpreso: [],
   fuentes: [
     { url: "https://www.aliexpress.com/item/1.html", que: "Ficha del producto" },
     { url: "https://inventada.example/x", que: "Algo que no se vio" },
@@ -204,6 +206,23 @@ describe("alta desde un enlace", () => {
     await advanceIntake(intake.id, d);
     expect(await intakeViewFor(dueno, product.id)).toMatchObject({ status: "listo", mockupStatus: "fallido" });
     expect(hf.calls.filter((c) => c.method === "submitImages")).toHaveLength(3);
+  });
+
+  it("el texto impreso en otro idioma se adapta solo al del país, también en los reintentos del mockup", async () => {
+    const { product, intake } = await createProductFromLink(dueno, { url: "https://www.aliexpress.com/item/1.html", country: "DE" });
+    const texto = [{ original: "Child of God / John 1:12", adaptado: "Kind Gottes / Johannes 1,12" }];
+    const { d, calls } = deps([claudeReply({ ...ANSWER, textoImpreso: texto })]);
+    await advanceIntake(intake.id, d);
+    expect(JSON.stringify(calls[0].system)).toContain("adáptalo SIEMPRE, sin preguntar");
+    const prompts = () => hf.calls.filter((c) => c.method === "submitImages").map((c) => (c.args as { request: { prompt: string } }).request.prompt);
+    expect(prompts()[0]).toContain('"Child of God / John 1:12" → "Kind Gottes / Johannes 1,12"');
+    // Bloqueado por el filtro: el reintento neutro también lleva el texto en alemán.
+    const first = Object.keys(hf.state.jobs)[0];
+    hf.state.jobs[first] = { ...hf.state.jobs[first], status: "failed", failure: "ip_detected" };
+    await advanceIntake(intake.id, d);
+    expect(prompts()[1]).toContain("Kind Gottes / Johannes 1,12");
+    expect((await intakeViewFor(dueno, product.id))?.result?.textoImpreso).toEqual(texto);
+    expect(printedTextClause({ ...ANSWER, textoImpreso: [{ original: "Hallo", adaptado: "Hallo" }] } as never)).toBe("");
   });
 
   it("si Claude no lo identifica, lo dice claro y no gasta en Higgsfield", async () => {

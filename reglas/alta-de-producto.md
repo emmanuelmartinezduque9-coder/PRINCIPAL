@@ -15,6 +15,9 @@ La entrada habitual es un enlace (reel o cuenta de Instagram/TikTok, o producto 
 - Emoji que represente el producto.
 - Fuentes con su dirección: de dónde sale cada dato.
 
+## Texto impreso en el idioma del país (orden de Emmanuel del 24/11/2026)
+Si el producto lleva texto impreso, bordado o grabado en otro idioma (porque la cuenta donde se vio es de otro país), se adapta SIEMPRE y sin preguntar al idioma del mercado: alemán natural y del estilo de la prenda, no palabra por palabra (ejemplo: «Child of God / John 1:12» → «Kind Gottes / Johannes 1,12», con las citas como se escriben en Alemania). El mockup sale ya con el texto adaptado, con la misma tipografía, tamaño, color y colocación. Los logotipos y nombres de marca no se traducen. Las fotos originales se conservan.
+
 ## Foto «artículo» sobre gris (el mockup)
 Para los vídeos se genera una foto de catálogo propia del producto exacto, con Nano Banana a 2K y formato 1:1, usando como referencia la imagen real del artículo (el fotograma donde mejor se ve o la foto de la tienda).
 - Solo el producto, entero y montado, sobre fondo y mesa gris neutro medio sin costuras (aprox. #929396), luz de estudio suave y uniforme, ángulo 3/4 frontal, sombra de contacto suave, todo enfocado, márgenes amplios.

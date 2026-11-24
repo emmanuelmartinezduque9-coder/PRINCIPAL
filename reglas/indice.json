@@ -120,7 +120,11 @@
       "docs/reglas-origen/skills-proyecto/nuevo-producto/SKILL.md",
       "docs/reglas-origen/disenos/mockup-gris-eiswerk.json",
       "docs/reglas-origen/skills-codex/nombres-marca-emmanuel/SKILL.md"
-    ]
+    ],
+    "replacesSha256": [
+      "5b4066e92558d4db311d0a1027e9a50bd4444a228b148ebec0db9a4d29f1a9fd"
+    ],
+    "updateNote": "Orden de Emmanuel (24/11/2026): el texto impreso en el producto se adapta solo al idioma del país."
   },
   {
     "slug": "nombres-de-marca",

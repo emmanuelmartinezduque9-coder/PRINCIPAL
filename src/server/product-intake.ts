@@ -464,6 +464,11 @@ const intakeSchema = z.object({
   marca: z.object({ nombre: z.string(), porQue: z.string(), alternativas: z.array(z.string()) }),
   referencia: z.object({ tipo: z.enum(["fotograma", "foto_tienda", "foto_subida", "miniatura", "ninguna"]), numero: z.number().int() }),
   promptMockup: z.string(),
+  /**
+   * Texto impreso o bordado en el producto (no la marca del fabricante): tal como viene y adaptado al
+   * idioma del mercado. Vacío si no lleva texto o ya está en ese idioma.
+   */
+  textoImpreso: z.array(z.object({ original: z.string(), adaptado: z.string() })),
   fuentes: z.array(z.object({ url: z.string(), que: z.string() })),
 });
 export type IntakeAnswer = z.infer<typeof intakeSchema>;
@@ -622,6 +627,7 @@ function intakeInstructions(row: Intake, language: string, brands: string[]): st
     "Aplica las reglas «Alta de producto desde un enlace» y «Nombres de marca». Usa la búsqueda en internet para identificar el artículo concreto y comprobar datos; mira primero el propio enlace con web_fetch.",
     `Marcas que Emmanuel ya usa (no repitas sus raíces salvo que sea la misma familia): ${brands.join(", ") || "ninguna"}.`,
     "Campos: `producto` (qué es, en español, corto), `queHace` (una frase sencilla en español), `mecanismo`, `nicho`, `audiencia` (quién compra y quién usa), `anguloActual` (con qué motivo se vende en la fuente), `emoji` (uno), `marca` (la mejor opción y dos alternativas, en el idioma del mercado, con el porqué en español), `referencia` (la imagen numerada donde mejor se ve el producto entero y limpio para el mockup: `fotograma`, `foto_tienda`, `foto_subida` o `miniatura` con su número empezando en 1, o `ninguna`; mejor una foto limpia de la tienda que un fotograma), `promptMockup` (en inglés, según la regla), `fuentes` (direcciones que de verdad consultaste y qué sacaste de cada una).",
+    `Texto impreso en el producto (regla de Emmanuel del 24/11/2026): si el producto lleva texto impreso, bordado o grabado en un idioma que no es el del mercado (${LANGUAGE_NAME[language] ?? language}), adáptalo SIEMPRE, sin preguntar: tradúcelo a un ${LANGUAGE_NAME[language] ?? language} natural y del estilo de la prenda, no palabra por palabra (p. ej. «Child of God / John 1:12» → «Kind Gottes / Johannes 1,12», con las citas como se escriben en ese país). Ponlo en \`textoImpreso\` (original → adaptado) y en \`promptMockup\` pide ese texto ya adaptado, escrito exactamente, con la misma tipografía, tamaño, color y colocación. Los logotipos y nombres de marca no se traducen. Sin texto, \`textoImpreso\` vacío.`,
     "Sin avisos de marcas registradas, derechos, licencias ni propiedad intelectual en ningún campo (indicación de Emmanuel: la decisión es suya). En `promptMockup` no nombres marcas, franquicias, películas ni personajes: describe el producto y su estampado por formas, colores y dibujos (p. ej. «cartoon snowman», «ice castle line art»), para que el filtro de Higgsfield no lo bloquee.",
     "Si no puedes identificar el producto con seguridad, `identificado: false` y en `motivo` explica en una frase sencilla por qué y qué haría falta; deja el resto vacío. Si lo identificas, `motivo` puede quedar vacío o avisar de una duda.",
   ].join("\n");
@@ -801,7 +807,7 @@ async function stepMockup(row: Intake, owner: AuthUser, deps: IntakeDeps): Promi
     const mediaId = await ensureMedia(owner.id, { bytes: photo.data, filename: `referencia-${photoId}.jpg`, contentType: photo.mime, type: "image" }, { higgsfield: hf });
     const request: HfImageRequest = {
       model: mockupTry(result) === 1 ? otherImageModel(await getImageModel()) : await getImageModel(),
-      prompt: (mockupTry(result) > 0 ? MOCKUP_BLOCKED_PROMPTS[mockupTry(result) - 1] : result?.promptMockup?.trim() || MOCKUP_FALLBACK_PROMPT).slice(0, 3000),
+      prompt: ((mockupTry(result) > 0 ? MOCKUP_BLOCKED_PROMPTS[mockupTry(result) - 1] : result?.promptMockup?.trim() || MOCKUP_FALLBACK_PROMPT) + printedTextClause(result)).slice(0, 3000),
       aspectRatio: "1:1",
       resolution: "2k",
       medias: [{ role: "image_references", value: mediaId }],
@@ -837,6 +843,17 @@ export const MOCKUP_BLOCKED_PROMPTS = [
 
 /** Qué intento de mockup toca (0: el prompt de Claude; 1 y 2: los de `MOCKUP_BLOCKED_PROMPTS`). */
 const mockupTry = (result: IntakeResult | null): number => result?.mockupIntentos ?? (result?.mockupReintento ? 1 : 0);
+
+/**
+ * Con texto impreso adaptado al idioma del mercado, cada mockup (también los reintentos con prompt
+ * neutro) lo pide escrito exactamente así. Vacío si no hay texto que cambiar.
+ */
+export function printedTextClause(result: IntakeResult | null): string {
+  const texts = (result?.textoImpreso ?? []).filter((t) => t.adaptado.trim() && t.adaptado.trim() !== t.original.trim());
+  if (texts.length === 0) return "";
+  const pairs = texts.map((t) => `"${t.original.trim()}" → "${t.adaptado.trim()}"`).join("; ");
+  return ` The printed/embroidered text on the product must read in the market language, spelled exactly: ${pairs}. Same typeface, size, color, thread or print look and placement as the original text; no other text.`;
+}
 
 /** El otro Nano Banana (para reintentar un mockup que el filtro bloqueó). */
 const otherImageModel = (model: ImageModel): ImageModel => IMAGE_MODELS.find((m) => m !== model) ?? model;

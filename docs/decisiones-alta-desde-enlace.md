@@ -218,3 +218,20 @@ solo cuenta si su título corresponde al candidato.
 
 Sin coste extra: no se ha contratado ninguna API de pago. Si hiciera falta TikTok sin sesión o más
 volumen, opciones de pago (pedir OK antes): Apify (actores de TikTok/Meta/Amazon, pago por resultado).
+
+## Texto impreso en el idioma del país (24/11/2026)
+
+Encargo de Emmanuel: KreuzKapuze (producto 57, sudadera vista en una cuenta de EE. UU.) llevaba
+«Child of God / John 1:12» bordado. Se adaptó a **«Kind Gottes / Johannes 1,12»** (así se cita el
+versículo en alemán) editando las fotos con Nano Banana 2.1 (modo edición: la foto como referencia y
+«cambia solo el texto»; 2 créditos por imagen): el mockup (foto 175 → 176, y una segunda pasada
+178 para quitar dos capuchas fantasma que ya traía el mockup) y la foto de referencia (174 → 177).
+La 178 es ahora la única con papel «Artículo» (la que usa la imagen inicial); las originales en
+inglés y la intermedia se conservan con papel «Otra». No había en Codex una receta propia para
+cambiar textos de assets (solo la regla de que el embalaje va en el idioma del país).
+
+**Regla para el futuro (en código):** el alta devuelve `textoImpreso` (original → adaptado) y el
+prompt del mockup pide el texto ya adaptado al idioma del mercado, también en los reintentos tras
+un bloqueo del filtro (`printedTextClause`). Así el «Artículo» que usa la imagen inicial ya sale en
+el idioma del país, sin preguntar. Las marcas y logotipos no se traducen. Regla `alta-de-producto`
+actualizada (versión nueva automática).

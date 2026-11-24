@@ -129,6 +129,12 @@ export function IntakePanel({ productId }: { productId: number }) {
           <p>
             <span className="font-medium">Qué es:</span> {result.producto}. {result.mecanismo}
           </p>
+          {(result.textoImpreso ?? []).some((t) => t.adaptado.trim() && t.adaptado.trim() !== t.original.trim()) ? (
+            <p>
+              <span className="font-medium">Texto del producto adaptado al idioma del país:</span>{" "}
+              {(result.textoImpreso ?? []).map((t) => `«${t.original}» → «${t.adaptado}»`).join(" · ")}
+            </p>
+          ) : null}
           {result.sinVideo ? <p className="text-muted-foreground">Se analizó sin ver el vídeo (no se pudo traer).</p> : null}
           {result.motivo ? <p className="text-muted-foreground">Nota: {result.motivo}</p> : null}
           {result.fuentes.length ? (
