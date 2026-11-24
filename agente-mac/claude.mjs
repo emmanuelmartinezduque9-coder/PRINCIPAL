@@ -286,7 +286,8 @@ export async function workDir(fs, tmpDir = os.tmpdir()) {
 // ───────────────────────── Con la web ─────────────────────────
 
 /** Lanza un programa corto y devuelve `{ code, out }` (o `code: null` si no se pudo lanzar). */
-function quick(deps, bin, args, env, timeoutMs = 20_000) {
+// 60 s: en frío, `claude --version` / `auth status` pueden tardar más de 20 s (daba «no tiene sesión» en falso).
+function quick(deps, bin, args, env, timeoutMs = 60_000) {
   return new Promise((resolve) => {
     let child;
     try {

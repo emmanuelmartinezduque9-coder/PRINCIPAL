@@ -132,8 +132,11 @@ log("Listo para traer enlaces (también los que pide el montaje en la nube).");
 let claude = { bin: null, reason: "Comprobando Claude Code…" };
 async function refreshClaude() {
   const before = claude.bin;
-  // Si no estaba listo, se comprueba con una llamada mínima de verdad (`auth status` no valida la ficha).
-  claude = await checkClaude(deps, process.env, { verify: !before });
+  // Ya listo: no se baja por una comprobación lenta (`auth status` a veces tarda más de la cuenta y daba
+  // «no tiene sesión» en falso). Solo se mira que el programa siga ahí; un rechazo de verdad en una
+  // llamada ya lo baja (`auth`). Si no estaba listo, se comprueba con una llamada mínima de verdad.
+  if (before && (await fs.stat(before).then(() => true, () => false))) return;
+  claude = await checkClaude(deps, process.env, { verify: true });
   if (claude.bin && !before) log(`Claude Code ${claude.version} listo: las llamadas a Claude del dueño se hacen en este Mac.`);
   if (!claude.bin) log(claude.reason);
 }

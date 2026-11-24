@@ -112,6 +112,14 @@ el Claude Code de su Mac (su suscripción) para todo lo que hace Claude; la web 
 - Una vez: el 15 se vuelve a montar (`remountEditsOnce`). El 22 lo monta la sesión del doblaje cuando
   su doblaje y esto estén listos (un solo montaje final).
 
+## 1.8.2 (24/11/2026): «no tiene sesión» en falso
+
+- Con la ficha buena, el agente pasaba a ratos a «no tiene sesión» (12:41, 13:06, 13:35): la
+  comprobación de cada 5 min (`claude --version` y `auth status`) tenía 20 s y en frío a veces tardaba
+  más. Ahora, con el Mac ya listo, la comprobación periódica solo mira que el programa siga ahí; un
+  rechazo de verdad en una llamada lo baja igualmente. Si no estaba listo, se comprueba con una llamada
+  mínima de verdad. Las comprobaciones cortas tienen 60 s.
+
 ## Pruebas
 
 - `tests/claude-mac.test.ts`: ruta (dueño/colaboradora/modos/apagado/sin sesión), llamada completa
