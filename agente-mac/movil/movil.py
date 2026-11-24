@@ -31,6 +31,13 @@ class Movil:
         matches=[]
         nodes=self.nodes()
         if any(n.attrib.get('type')=='XCUIElementTypeAlert' and n.attrib.get('visible')=='true' for n in nodes):
+            # Único aviso que se resuelve solo: un borrador de reel que quedó a medias. Se guarda como
+            # borrador (no se borra ni se continúa) o se empieza uno nuevo. Cualquier otro aviso se para.
+            safe=['Salva come bozza','Guardar como borrador','Save as draft','Avvia nuovo video','Iniciar nuevo vídeo','Start new video']
+            btn=[n.attrib for n in nodes if n.attrib.get('type')=='XCUIElementTypeButton' and n.attrib.get('label') in safe and n.attrib.get('visible')=='true']
+            if btn:
+                b=btn[0]; self.call('POST','/wda/tap',{'x':float(b['x'])+float(b['width'])/2,'y':float(b['y'])+float(b['height'])/2})
+                time.sleep(2); return self.find(labels,types)
             raise PantallaInesperada('Aviso del sistema: requiere revisión humana')
         for n in nodes:
             a=n.attrib
@@ -113,13 +120,63 @@ class Movil:
         if len(es)!=1: raise PantallaInesperada('Cierre del teclado de Facebook no inequívoco')
         e=es[0].get('ELEMENT') or es[0].get('element-6066-11e4-a52e-4f735466cecf')
         self.call('POST',f'/element/{e}/click',{})
-    def instant_control(self, identifier):
-        """For Quick Look controls that hide after 3 s, after verifying the player."""
+    def instant_control(self, identifier, attempts=5):
+        """Recover hidden Quick Look chrome and tap fresh, stable bounds.
+
+        Retrying is restricted to the verified Files video preview. Never retry
+        after the share sheet/another screen has replaced that preview.
+        """
         self.paso='control Quick Look '+identifier
-        es=self.call('POST','/elements',{'using':'predicate string','value':'name == '+json.dumps(identifier)+' AND visible == true AND enabled == true'})
-        if len(es)!=1: raise PantallaInesperada('Control transitorio no inequívoco: '+identifier)
-        e=es[0].get('ELEMENT') or es[0].get('element-6066-11e4-a52e-4f735466cecf')
-        self.call('POST',f'/element/{e}/click',{})
+        last='control oculto'
+        def preview():
+            if not self.find(['QLPreviewControllerView']):
+                raise PantallaInesperada('No está la vista previa de Quick Look')
+        def touch(a):
+            self.call('POST','/wda/tap',{'x':float(a['x'])+float(a['width'])/2,
+                                       'y':float(a['y'])+float(a['height'])/2})
+        for attempt in range(attempts):
+            preview()
+            # Pausing prevents playback from auto-hiding the overlay. Do not
+            # toggle an already paused player back into playback.
+            pause=self.find(['Pausa','Pause','Pausar'],types=['XCUIElementTypeButton'])
+            if len(pause)==1:
+                touch(pause[0])
+            target=self.find([identifier],types=['XCUIElementTypeButton'])
+            if not target:
+                video=self.wait(['Video'],timeout=2,types=['XCUIElementTypeOther'])
+                self.call('POST','/wda/tap',{'x':float(video['x'])+float(video['width'])/4,
+                                           'y':float(video['y'])+float(video['height'])/4})
+                pause=self.find(['Pausa','Pause','Pausar'],types=['XCUIElementTypeButton'])
+                if len(pause)==1: touch(pause[0])
+            deadline=time.monotonic()+15
+            previous=None
+            while time.monotonic()<deadline:
+                current=self.find([identifier],types=['XCUIElementTypeButton'])
+                if len(current)>1:
+                    raise PantallaInesperada('Control Quick Look ambiguo: '+identifier)
+                if current:
+                    a=current[0]
+                    bounds=tuple(a[k] for k in ('x','y','width','height'))
+                    if bounds==previous:
+                        # Use the bounds just observed, avoiding WDA's stale
+                        # cached element lookup/click race on fading controls.
+                        touch(a)
+                        time.sleep(.25)
+                        if identifier=='QLOverlayDefaultActionButtonAccessibilityIdentifier':
+                            if self.find(['Salva video','Guardar vídeo','Save Video'],types=['XCUIElementTypeCell']):
+                                return
+                        elif not self.find(['QLPreviewControllerView']):
+                            return
+                        preview()
+                        last='el toque no abrió el control'
+                        break
+                    previous=bounds
+                else:
+                    previous=None
+                    last='el control desapareció'
+                time.sleep(.15)
+            print(f'Quick Look: reintento {attempt+1}/{attempts}: {last}',flush=True)
+        raise PantallaInesperada(f'Quick Look: {identifier}: {last} tras {attempts} intentos')
     def shot(self,name='pantalla'):
         p=self.salida/(name+'.png'); p.write_bytes(base64.b64decode(self.req('GET','/screenshot')['value'])); return p
     def hold(self,x,y):
@@ -198,16 +255,42 @@ def importar(m,path,video=False):
             time.sleep(3)
             m.session('com.apple.DocumentsApp')
             if m.find(['Video'],types=['XCUIElementTypeOther']):
-                m.tap(['Video'],types=['XCUIElementTypeOther'])
                 m.instant_control('QLOverlayDoneButtonAccessibilityIdentifier')
             file_labels=[name[:-4]+', mp4',name[:-4],name]
-            if not m.find(file_labels,types=['XCUIElementTypeCell']):
+            in_downloads=m.find(['Download, Menu Azioni','Downloads, Actions Menu','Descargas, Menú de acciones'])
+            if not in_downloads and not m.find(file_labels,types=['XCUIElementTypeCell']):
                 if not m.find(['Download','Descargas','Downloads'],types=['XCUIElementTypeCell']):
-                    m.tap(['Sfoglia','Explorar','Browse'])
+                    if not m.find(['DOC.sidebar.item.iCloud Drive']):
+                        m.tap(['Sfoglia','Explorar','Browse'])
+                    if m.find(['DOC.sidebar.item.iCloud Drive']):
+                        m.tap(['DOC.sidebar.item.iCloud Drive'],types=['XCUIElementTypeCell'])
                 m.tap(['Download','Descargas','Downloads'],types=['XCUIElementTypeCell'])
-            m.tap(file_labels,timeout=60,types=['XCUIElementTypeCell'])
-            m.tap(['Video'],types=['XCUIElementTypeOther'])
-            m.instant_control('QLOverlayDefaultActionButtonAccessibilityIdentifier')
+            # Files' context menu keeps Share visible, unlike video playback.
+            asset=None
+            for _ in range(8):
+                found=m.find(file_labels,types=['XCUIElementTypeCell'])
+                if len(found)==1:
+                    asset=found[0]; break
+                if len(found)>1: raise PantallaInesperada('Archivo importado ambiguo')
+                print('Archivos: desplazar para localizar '+name,flush=True)
+                view=m.wait(['File View'],types=['XCUIElementTypeCollectionView'])
+                tabs=m.wait(['DOC.browsingModeTabBar'])
+                x=float(view['x'])+float(view['width'])/2
+                bottom=min(float(view['y'])+float(view['height']),float(tabs['y']))
+                top=float(view['y'])
+                m.call('POST','/actions',{'actions':[{'type':'pointer','id':'finger',
+                    'parameters':{'pointerType':'touch'},'actions':[
+                    {'type':'pointerMove','duration':0,'x':int(x),'y':int(bottom-60)},
+                    {'type':'pointerDown','button':0},
+                    {'type':'pointerMove','duration':500,'x':int(x),'y':int(top+(bottom-top)/3)},
+                    {'type':'pointerUp','button':0}]}]})
+            if asset is None: raise PantallaInesperada('No aparece el MP4 descargado en Archivos')
+            # A cell may extend under the tab bar while WDA reports visible.
+            tabs=m.wait(['DOC.browsingModeTabBar'])
+            top=float(asset['y']); bottom=min(top+float(asset['height']),float(tabs['y']))
+            if bottom<=top: raise PantallaInesperada('Archivo fuera del área visible')
+            m.hold(float(asset['x'])+float(asset['width'])/2,(top+bottom)/2)
+            m.tap(['Condividi','Compartir','Share'],types=['XCUIElementTypeButton'])
             m.tap(['Salva video','Guardar vídeo','Save Video'],types=['XCUIElementTypeCell'])
 
         else:

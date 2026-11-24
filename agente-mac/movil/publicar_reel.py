@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import sys
+import sys, re
 sys.dont_write_bytecode = True
 from movil import *
 def flujo(m,a):
@@ -10,7 +10,16 @@ def flujo(m,a):
     m.home(a.app)
     if a.app=='instagram':
         m.tap(['create','Crea un post, una storia o un video in diretta','Crear','Create'])
-        m.tap(['Reel','REEL'])
+        # Borrador anterior (p. ej. de una simulación): se empieza un vídeo nuevo, nunca se continúa el borrador.
+        import time as _t
+        for _ in range(2):
+            _t.sleep(1.5)
+            if m.find(['Avvia nuovo video','Iniciar nuevo vídeo','Start new video']):
+                m.tap(['Avvia nuovo video','Iniciar nuevo vídeo','Start new video'])
+        if m.find(['Reel','REEL']): m.tap(['Reel','REEL'])
+        _t.sleep(1.5)
+        if m.find(['Avvia nuovo video','Iniciar nuevo vídeo','Start new video']):
+            m.tap(['Avvia nuovo video','Iniciar nuevo vídeo','Start new video'])
     else: m.facebook_reel()
     # Deliberately require an explicit asset selection before proceeding.
     m.wait(['Recenti','Recientes','Recents'] if a.app=='instagram' else ['Galleria','Galería','Gallery'])
@@ -28,7 +37,22 @@ def flujo(m,a):
     m.tap(['sharesheet-description-text-view','caption-cell-text-view','Aggiungi una didascalia...','Scrivi una didascalia...','Escribe un pie de foto...','Write a caption...','Descrivi il tuo reel...','Descrivi il tuo reel','Aggiungi una descrizione...','Escribe una descripción...','Add a description...','Describe tu reel...','Describe your reel...'])
     m.type(texto)
     fields=[n.attrib for n in m.nodes() if n.attrib.get('type') in ('XCUIElementTypeTextView','XCUIElementTypeTextField') and n.attrib.get('visible')=='true']
-    if not any(n.get('value','').strip()==texto.strip() for n in fields): raise PantallaInesperada('La descripción escrita no coincide con el archivo')
+    if not any(n.get('value','').strip()==texto.strip() for n in fields):
+        # This Instagram build strips '#' after the fifth hashtag. Permit that
+        # exact observed transformation only in a dry run; publishing still
+        # requires the original text to match exactly.
+        count=0
+        def hashtag(match):
+            nonlocal count
+            count+=1
+            return match[0] if count<=5 else match[0][1:]
+        normalized=re.sub(r'#\w+',hashtag,texto).strip()
+        if not (a.simular and a.app=='instagram' and count>5 and
+                any(n.get('value','').strip()==normalized for n in fields)):
+            raise PantallaInesperada('La descripción escrita no coincide con el archivo')
+        print('Simulación: Instagram ha quitado # a las etiquetas posteriores a la quinta; se comprueba esa transformación exacta. Publicar con texto distinto sigue bloqueado.',flush=True)
+        (m.salida/'instagram-reel-descripcion.json').write_text(json.dumps(
+            {'simular':True,'original':texto,'mostrado':normalized},ensure_ascii=False,indent=2))
     if a.app=='instagram':
         m.wait(['Didascalia','Pie de foto','Caption'])
         m.tap(['OK','Fine','Listo','Done'])
@@ -56,6 +80,9 @@ def finalizar(m,a):
     while time.monotonic()<deadline:
         if m.find(success):
             m.shot(a.app+'-reel-risultato'); return
+        # Aviso único «Informazioni su Reels» (el reel será público): se confirma con su botón «Condividi».
+        if m.find(['Informazioni su Reels','Información sobre Reels','About Reels']) and m.find(['Condividi','Compartir','Share']):
+            m.tap(['Condividi','Compartir','Share']); time.sleep(2); continue
         # Some Instagram versions have a second explicit sharing confirmation.
         # Never press Avanti twice or retry a submission.
         if next_boundary and m.find(['Nuovo reel','Nuevo reel','New reel']) and m.find(['caption-cell-text-view']) and m.find(publish):
