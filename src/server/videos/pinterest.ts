@@ -77,6 +77,13 @@ export interface PinterestScene {
    * de su interior (orden del dueño, 24/11/2026).
    */
   namedPlace?: string | null;
+  /**
+   * La cadena que la foto tiene que mostrar (la del sitio pedido, o la que exige la escena: «Lidl o
+   * Aldi» para un discount alemán), o null. La elección exige reconocerla (orden del dueño, 24/11/2026).
+   */
+  requiredChain?: string | null;
+  /** Otras consultas para una segunda búsqueda si en la primera ninguna foto vale. */
+  retryQueries?: string[];
 }
 
 export interface PinterestRef {
@@ -342,6 +349,16 @@ const sceneSchema: z.ZodType<PinterestScene> = z.object({
     .string()
     .nullable()
     .describe("La tienda o el lugar concreto que nombra el dueño (p. ej. «dm Drogeriemarkt, Alemania», «Sephora, Alemania», «Lidl, Alemania»), o null si no nombra ninguno."),
+  requiredChain: z
+    .string()
+    .nullable()
+    .optional()
+    .describe("La cadena que tiene que reconocerse en la foto: la de namedPlace, o la que la escena exige (p. ej. «Lidl o Aldi» para un supermercado discount alemán); null si no hace falta ninguna."),
+  retryQueries: z
+    .array(z.string().min(3).max(90))
+    .max(3)
+    .optional()
+    .describe("2–3 consultas distintas para una segunda búsqueda si ninguna foto vale: con cadena, el nombre de la cadena más la ciudad o el país en el idioma local («dm Drogerie Filiale innen», «Lidl Filiale Weihnachten», «dm Filiale Berlin»)."),
 });
 
 const pickSchema = z.object({
@@ -358,7 +375,9 @@ Mira el primer fotograma de la referencia (la composición que se conserva) y el
 
 Mira también las indicaciones del dueño (cambios de este vídeo, adaptación e indicaciones del lote): si nombran una tienda o un lugar concreto (una cadena como dm, Rossmann, Sephora, Lidl, Aldi, Action, MediaMarkt, Zara, IKEA, o un sitio con nombre propio), ponlo en namedPlace con su país (el del producto si no dice otro). Con namedPlace, las consultas buscan fotos reales del interior de ese sitio en ese país, con su nombre: p. ej. «dm Drogeriemarkt Filiale innen», «dm Deutschland Regal Innenansicht», «Sephora Deutschland store interior»; nada de tiendas genéricas. Si no nombran ninguno, namedPlace es null.
 
-Después escribe 2 o 3 consultas para el buscador de Pinterest (queries): cortas (3–7 palabras), con el tipo de sitio, el punto de vista si importa (pov, Perspektive), la temporada solo si corresponde y palabras de foto cotidiana (gemütlich, Alltag, cozy, real). La primera, en el idioma del mercado del anuncio; otra puede ir en inglés. Filtros del dueño (24/11/2026): busca fotos reales hechas con iPhone, verticales y orgánicas, de usuario; cada consulta lleva una palabra de foto de móvil («iPhone Foto», «Handyfoto», «iphone photo», «pov», «real photo»). Nada de «interior design», «luxury», «showroom», «architecture», «render», «aesthetic», «professional», «studio», «stock», «wallpaper». Nada de marcas ajenas salvo una tienda que la toma pida.`;
+Después escribe 2 o 3 consultas para el buscador de Pinterest (queries): cortas (3–7 palabras), con el tipo de sitio, el punto de vista si importa (pov, Perspektive), la temporada solo si corresponde y palabras de foto cotidiana (gemütlich, Alltag, cozy, real). La primera, en el idioma del mercado del anuncio; otra puede ir en inglés. Filtros del dueño (24/11/2026): busca fotos reales hechas con iPhone, verticales y orgánicas, de usuario; cada consulta lleva una palabra de foto de móvil («iPhone Foto», «Handyfoto», «iphone photo», «pov», «real photo»). Nada de «interior design», «luxury», «showroom», «architecture», «render», «aesthetic», «professional», «studio», «stock», «wallpaper». Nada de marcas ajenas salvo una tienda que la toma pida.
+
+En requiredChain pon la cadena que tiene que reconocerse en la foto: la de namedPlace o, si la escena exige un tipo de tienda de cadena (un supermercado discount alemán, una droguería), las cadenas reales de ese país que valen («Lidl o Aldi», «dm o Rossmann»); null para una casa o un sitio sin cadena. Escribe también 2–3 retryQueries, distintas de las primeras, para una segunda búsqueda si ninguna foto vale: con cadena, su nombre más la ciudad o el país, en el idioma local («dm Drogerie Filiale innen», «Lidl Filiale Weihnachten», «dm Filiale Berlin», «Aldi Süd Filiale innen»).`;
 
 const PICK_INSTRUCTIONS = `Eliges, entre fotos candidatas encontradas en Pinterest, las que servirán de referencia de realismo y de entorno para la imagen inicial de un anuncio (no aportan personas, producto ni encuadre: eso sale de otras referencias). Sigue la regla «Referencias de Pinterest».
 
@@ -370,6 +389,8 @@ Vale una foto que:
 - respeta la época y la luz pedidas.
 
 Rechaza la foto que: es cuadrada u horizontal; parece de cámara profesional, de estudio, de stock, de catálogo o de web oficial; está retocada o con filtros fuertes; es de baja resolución, borrosa o pixelada; tiene franjas, bordes o márgenes blancos o negros, o es un montaje de varias fotos; no es un lugar (producto, textura, collage, plano de detalle); es un render, una imagen hecha con IA, un showroom, un catálogo o una foto de interiorismo demasiado perfecta; lleva texto, rótulos, frases o marcas de agua encima; está dominada por una persona con la cara visible; es otro tipo de sitio; tiene una perspectiva imposible para el encuadre o se ve mal.
+
+Cadena y país (orden del dueño, 24/11/2026): si se exige una cadena, solo vale una foto donde se reconozca esa cadena (su rótulo, su logo, sus colores o su mobiliario propio); si se ve otra cadena, una tienda sin rastro de la pedida o un rótulo ilegible, no vale. Además, todo lo que se vea (rótulos, carteles, precios, idioma) tiene que ser coherente con el país del anuncio: una tienda con rótulos de otro país o de una cadena que no existe allí no vale. No te quedes con «lo más cercano»: si ninguna cumple, no elijas ninguna y se buscará otra vez con otras consultas.
 
 Elige como mucho ${MAX_PINTEREST_REFS}, de mejor a peor, por su número de candidata. Si ninguna vale, no elijas ninguna.`;
 
@@ -1041,98 +1062,123 @@ async function runPinterestOnce(runId: number, deps: PinterestDeps): Promise<voi
   // Se carga aquí: `pinterest-searches` arrastra la cola de trabajos (subidas → trabajos de vídeo →
   // este módulo), y cargarlo arriba crea un ciclo de importaciones que rompe la compilación.
   const search = deps.search ?? (await import("@/server/pinterest-searches")).searchPins;
-  const found: Array<PinCandidate & { query: string }> = [];
-  const seen = new Set<string>();
-  const failures: string[] = [];
-  for (const query of scene.queries) {
-    const state = await search(query, { now: deps.now });
-    if (state.status === "waiting_mac") {
-      await setRun(run.id, { status: "waiting_mac" });
-      return;
+  const fetchImage = deps.fetchImage ?? fetchBytes;
+  type Shown = Array<{ candidate: PinCandidate & { query: string }; jpeg: Buffer }>;
+  type Pick = Array<{ n: number; reason: string }>;
+  // Busca con estas consultas, filtra y elige con visión.
+  const searchAndPick = async (queries: string[], round: number): Promise<"waiting_mac" | { why: string } | { shown: Shown; chosen: Pick }> => {
+    const found: Array<PinCandidate & { query: string }> = [];
+    const seen = new Set<string>();
+    const failures: string[] = [];
+    for (const query of queries) {
+      const state = await search(query, { now: deps.now });
+      if (state.status === "waiting_mac") {
+        await setRun(run.id, { status: "waiting_mac" });
+        return "waiting_mac";
+      }
+      if (state.status === "failed") {
+        failures.push(state.error);
+        continue;
+      }
+      for (const candidate of state.candidates) {
+        if (seen.has(candidate.imageUrl)) continue;
+        seen.add(candidate.imageUrl);
+        found.push({ ...candidate, query });
+      }
     }
-    if (state.status === "failed") {
-      failures.push(state.error);
+    // Repartidas entre las consultas (las primeras de cada una), hasta `MAX_CANDIDATES`.
+    // Filtro del dueño: fuera cuadradas, horizontales y de baja resolución; primero las verticales.
+    const valid = phoneShapedFirst(found);
+    const perQuery = Math.ceil(MAX_CANDIDATES / Math.max(1, queries.length));
+    const shortlist = queries.flatMap((query) => valid.filter((c) => c.query === query).slice(0, perQuery)).slice(0, MAX_CANDIDATES);
+    if (shortlist.length === 0) {
+      return {
+        why:
+          found.length > 0
+            ? `ninguna de las ${found.length} fotos era vertical de móvil con buena resolución`
+            : (failures[0] ?? "Pinterest no devolvió ninguna foto para estas búsquedas"),
+      };
+    }
+
+    // 3. Elegir con visión.
+    const thumbs: Array<{ candidate: (typeof shortlist)[number]; jpeg: Buffer }> = [];
+    // De 4 en 4: muchas ffmpeg a la vez agotan los hilos del servidor y fallan otras tareas.
+    for (let start = 0; start < shortlist.length; start += THUMB_PARALLEL) {
+      await Promise.all(
+        shortlist.slice(start, start + THUMB_PARALLEL).map(async (candidate, offset) => {
+          try {
+            thumbs[start + offset] = { candidate, jpeg: await makeThumbnail(await fetchImage(candidate.thumbUrl), "image", THUMB_SIDE) };
+          } catch {
+            // Una miniatura que no baja no se enseña.
+          }
+        }),
+      );
+    }
+    const shown = thumbs.filter(Boolean);
+    if (shown.length === 0) return { why: "No se pudo bajar ninguna foto de Pinterest" };
+    const pickContent: LlmContent = [
+      textPart(
+        [
+          `Producto: ${product.name}. Países: ${product.countries.join(", ")}.`,
+          `Sitio de la toma: ${scene.place}. Época: ${scene.season ?? "sin época concreta"}. Luz: ${scene.light}. Estilo: ${scene.style}.`,
+          `Tiene que verse: ${scene.needs}.`,
+          `País del anuncio: ${product.countries.join(", ")}. Rótulos, carteles, precios e idioma tienen que ser de ese país.`,
+          ...(scene.requiredChain ? [`Cadena que tiene que reconocerse en la foto (rótulo, logo, colores o mobiliario propio): ${scene.requiredChain}.`] : []),
+          ...(scene.namedPlace
+            ? [
+                `El dueño pide este sitio concreto: ${scene.namedPlace}. Elige solo fotos reales del INTERIOR de ese sitio (sus estanterías, su mercancía a la venta y su cartelería física con el logo auténtico), en ese país; rechaza cualquier otra tienda, un supermercado genérico, fachadas, fotos de catálogo o de web oficial y fotos sin rastro de esa tienda.`,
+              ]
+            : []),
+        ].join("\n"),
+      ),
+      ...(frameJpeg ? [textPart("Primer fotograma de la referencia (composición que se conserva):"), imagePart(frameJpeg, "image/jpeg")] : []),
+      ...shown.flatMap((item, i) => {
+        const { width, height } = item.candidate;
+        const size = width && height ? `, ${width}×${height} px` : ", medidas desconocidas";
+        return [textPart(`Candidata ${i + 1} (búsqueda «${item.candidate.query}»${size})`), imagePart(item.jpeg, "image/jpeg")];
+      }),
+    ];
+    const picked = await runStep(ctx, stepKey(ctx, "eleccion", { runId: run.id, attempt: run.attempts, ...(round > 0 ? { round } : {}) }), async () => {
+      const answer = await gateway.call({
+        tier: "medium",
+        stepKey: stepKey(ctx, "eleccion", { runId: run.id, attempt: run.attempts, ...(round > 0 ? { round } : {}) }),
+        userId: ctx.userId,
+        productId: ctx.productId,
+        rules,
+        instructions: PICK_INSTRUCTIONS,
+        content: pickContent,
+        maxTokens: 3_000,
+        schema: pickSchema,
+      });
+      return answer.data!;
+    });
+    const chosen = [...new Map(picked.picks.filter((p) => p.n >= 1 && p.n <= shown.length).map((p) => [p.n, p])).values()].slice(0, MAX_PINTEREST_REFS);
+    if (chosen.length === 0) return { why: `Ninguna foto de Pinterest valía (${picked.rejected})` };
+    return { shown, chosen };
+  };
+
+  // Primera búsqueda y, si ninguna foto vale, una segunda con otras consultas (orden del dueño,
+  // 24/11/2026: antes de quedarse con una que no encaje).
+  const rounds = [scene.queries, (scene.retryQueries ?? []).filter((q) => !scene!.queries.includes(q))].filter((qs) => qs.length > 0);
+  let shown: Shown = [];
+  let chosen: Pick = [];
+  let why = "Pinterest no devolvió ninguna foto para estas búsquedas";
+  for (const [round, queries] of rounds.entries()) {
+    if (round > 0) console.warn(`[pinterest] Vídeo ${video.id} (${product.name}): ninguna foto valía (${why}); se busca otra vez: ${queries.join(" | ")}`);
+    const result = await searchAndPick(queries, round);
+    if (result === "waiting_mac") return;
+    if ("why" in result) {
+      why = result.why;
       continue;
     }
-    for (const candidate of state.candidates) {
-      if (seen.has(candidate.imageUrl)) continue;
-      seen.add(candidate.imageUrl);
-      found.push({ ...candidate, query });
-    }
+    ({ shown, chosen } = result);
+    break;
   }
-  // Repartidas entre las consultas (las primeras de cada una), hasta `MAX_CANDIDATES`.
-  // Filtro del dueño: fuera cuadradas, horizontales y de baja resolución; primero las verticales.
-  const valid = phoneShapedFirst(found);
-  const perQuery = Math.ceil(MAX_CANDIDATES / Math.max(1, scene.queries.length));
-  const shortlist = scene.queries.flatMap((query) => valid.filter((c) => c.query === query).slice(0, perQuery)).slice(0, MAX_CANDIDATES);
-  if (shortlist.length === 0) {
-    await noValid(
-      found.length > 0
-        ? `ninguna de las ${found.length} fotos era vertical de móvil con buena resolución`
-        : (failures[0] ?? "Pinterest no devolvió ninguna foto para estas búsquedas"),
-    );
+  if (chosen.length === 0) {
+    await noValid(why);
     return;
   }
 
-  // 3. Elegir con visión.
-  const fetchImage = deps.fetchImage ?? fetchBytes;
-  const thumbs: Array<{ candidate: (typeof shortlist)[number]; jpeg: Buffer }> = [];
-  // De 4 en 4: muchas ffmpeg a la vez agotan los hilos del servidor y fallan otras tareas.
-  for (let start = 0; start < shortlist.length; start += THUMB_PARALLEL) {
-    await Promise.all(
-      shortlist.slice(start, start + THUMB_PARALLEL).map(async (candidate, offset) => {
-        try {
-          thumbs[start + offset] = { candidate, jpeg: await makeThumbnail(await fetchImage(candidate.thumbUrl), "image", THUMB_SIDE) };
-        } catch {
-          // Una miniatura que no baja no se enseña.
-        }
-      }),
-    );
-  }
-  const shown = thumbs.filter(Boolean);
-  if (shown.length === 0) {
-    await noValid("No se pudo bajar ninguna foto de Pinterest");
-    return;
-  }
-  const pickContent: LlmContent = [
-    textPart(
-      [
-        `Producto: ${product.name}. Países: ${product.countries.join(", ")}.`,
-        `Sitio de la toma: ${scene.place}. Época: ${scene.season ?? "sin época concreta"}. Luz: ${scene.light}. Estilo: ${scene.style}.`,
-        `Tiene que verse: ${scene.needs}.`,
-        ...(scene.namedPlace
-          ? [
-              `El dueño pide este sitio concreto: ${scene.namedPlace}. Elige solo fotos reales del INTERIOR de ese sitio (sus estanterías, su mercancía a la venta y su cartelería física con el logo auténtico), en ese país; rechaza cualquier otra tienda, un supermercado genérico, fachadas, fotos de catálogo o de web oficial y fotos sin rastro de esa tienda.`,
-            ]
-          : []),
-      ].join("\n"),
-    ),
-    ...(frameJpeg ? [textPart("Primer fotograma de la referencia (composición que se conserva):"), imagePart(frameJpeg, "image/jpeg")] : []),
-    ...shown.flatMap((item, i) => {
-      const { width, height } = item.candidate;
-      const size = width && height ? `, ${width}×${height} px` : ", medidas desconocidas";
-      return [textPart(`Candidata ${i + 1} (búsqueda «${item.candidate.query}»${size})`), imagePart(item.jpeg, "image/jpeg")];
-    }),
-  ];
-  const picked = await runStep(ctx, stepKey(ctx, "eleccion", { runId: run.id, attempt: run.attempts }), async () => {
-    const answer = await gateway.call({
-      tier: "medium",
-      stepKey: stepKey(ctx, "eleccion", { runId: run.id, attempt: run.attempts }),
-      userId: ctx.userId,
-      productId: ctx.productId,
-      rules,
-      instructions: PICK_INSTRUCTIONS,
-      content: pickContent,
-      maxTokens: 3_000,
-      schema: pickSchema,
-    });
-    return answer.data!;
-  });
-  const chosen = [...new Map(picked.picks.filter((p) => p.n >= 1 && p.n <= shown.length).map((p) => [p.n, p])).values()].slice(0, MAX_PINTEREST_REFS);
-  if (chosen.length === 0) {
-    await noValid(`Ninguna foto de Pinterest valía (${picked.rejected})`);
-    return;
-  }
 
   // 4. Bajar a tamaño original y guardar.
   const refs: PinterestRef[] = [];

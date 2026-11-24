@@ -97,3 +97,14 @@ se elige o no bajan), y el registro lo dice («se usa el banco de respaldo»). C
 respaldo: se reintenta. Un fondo subido a mano sigue mandando (no se busca); un ambiente o realismo a mano
 ocupa el hueco de realismo, también con fotos de Pinterest. En Codex no había filtros de medidas: se copiaron
 sus criterios de elección y sus consultas de ejemplo (`criterios-seleccion-manual.md`).
+
+## Cadena y país reconocibles; segunda búsqueda (24/11/2026)
+
+En la prueba real, el vídeo 20 (supermercado discount alemán) eligió tiendas que no eran Aldi ni Lidl (una,
+con rótulo «hôma», de fuera de Alemania) y el 15 (dm) una droguería sin rótulo de dm. Orden del dueño: pidió
+dm, Sephora y Lidl precisamente para que se vea esa tienda. Ahora la escena trae `requiredChain` (la cadena
+que tiene que reconocerse) y `retryQueries`; la elección con visión exige reconocer la cadena (rótulo, logo,
+colores o mobiliario) y que rótulos, precios e idioma sean del país del anuncio, sin quedarse con «lo más
+cercano». Si en la primera búsqueda ninguna vale, se busca otra vez con `retryQueries` (cadena + ciudad o
+país, en el idioma local) y el registro lo dice («se busca otra vez»). Solo después se reintenta (tienda
+pedida) o se usa el banco de respaldo (sin tienda).

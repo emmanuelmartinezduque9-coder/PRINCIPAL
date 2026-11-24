@@ -621,4 +621,40 @@ describe("tienda concreta pedida en la tarjeta", () => {
     expect(composeText).toContain("NO escribas el nombre de la tienda ni de ninguna marca");
     expect(composeText).toContain("exposure authority");
   });
+
+  it("la elección exige reconocer la cadena y el país; si ninguna cumple, busca otra vez con otras consultas", async () => {
+    await requirePinterestRefs(v.id).catch(() => {});
+    const run = await runOfVideo(v.id);
+    const scene = {
+      ...SCENE,
+      place: "droguería dm en Alemania",
+      namedPlace: "dm Drogeriemarkt, Alemania",
+      requiredChain: "dm",
+      queries: ["dm Deutschland Regal Innenansicht", "dm store interior"],
+      retryQueries: ["dm Drogerie Filiale innen", "dm Filiale Berlin"],
+    };
+    const { client, calls } = fakeMessages([
+      { text: JSON.stringify(scene) },
+      { text: JSON.stringify({ picks: [], rejected: "No se reconoce dm en ninguna." }) },
+      { text: JSON.stringify({ picks: [{ n: 1, reason: "Rótulo de dm y precios en euros." }], rejected: "" }) },
+      { text: JSON.stringify(COMPOSED) },
+    ]);
+    const searched: string[] = [];
+    const search: PinterestDeps["search"] = async (query) => {
+      searched.push(query);
+      return { status: "ready", via: "servidor", candidates: candidatesOf(pinterestResponse(2, `q${searched.length}-`)) };
+    };
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    await runPinterest(run.id, pinterestDeps({ gateway: createGateway({ client }), search }));
+    expect(warn.mock.calls.flat().join(" ")).toContain("se busca otra vez");
+    warn.mockRestore();
+    expect(searched).toEqual([...scene.queries, ...scene.retryQueries]);
+    const done = await runOfVideo(v.id);
+    expect(done.status).toBe("ready");
+    expect((done.refs as Array<{ pinId: string; query: string }>)[0]).toMatchObject({ pinId: "q3-1", query: "dm Drogerie Filiale innen" });
+    const pickText = (calls[1].messages[0].content as Array<{ type: string; text?: string }>).map((b) => b.text ?? "").join("\n");
+    expect(pickText).toContain("Cadena que tiene que reconocerse en la foto (rótulo, logo, colores o mobiliario propio): dm.");
+    expect(pickText).toContain("País del anuncio:");
+    expect(JSON.stringify(calls[1])).toContain("No te quedes con «lo más cercano»");
+  });
 });
