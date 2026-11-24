@@ -230,14 +230,16 @@ def mover_voz_de_la_musica(carpeta, tramos):
 
 def video_dialogo(carpeta, video, salida, desde=None, hasta=None):
     """MP4 con SOLO la voz (la que se sube a Higgsfield), con la imagen de la referencia o negro; con `desde`/`hasta`,
-    solo ese trozo."""
+    solo ese trozo. La duración se fija con `-t` (con la fuente negra infinita, `-shortest` se pasa casi un segundo)."""
     corte = (['-ss', f'{desde:.3f}', '-to', f'{hasta:.3f}'] if desde is not None else [])
+    largo = (hasta - desde) if desde is not None else duracion(carpeta / 'speech.wav')
+    fin = ['-t', f'{largo:.3f}']
     if video and Path(video).is_file():
         ffmpeg(*corte, '-i', video, *corte, '-i', carpeta / 'speech.wav', '-map', '0:v:0', '-map', '1:a:0', '-c:v', 'libx264',
-               '-preset', 'veryfast', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-b:a', '256k', '-shortest', salida)
+               '-preset', 'veryfast', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-b:a', '256k', *fin, salida)
     else:
         ffmpeg('-f', 'lavfi', '-i', NEGRO, *corte, '-i', carpeta / 'speech.wav', '-map', '0:v:0', '-map', '1:a:0', '-c:v',
-               'libx264', '-preset', 'veryfast', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-b:a', '256k', '-shortest', salida)
+               'libx264', '-preset', 'veryfast', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-b:a', '256k', *fin, salida)
 
 
 def separar(fuente, carpeta, video=None, destino=None):
