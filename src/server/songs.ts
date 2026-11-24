@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { asc, eq, inArray, sql } from "drizzle-orm";
+import { asc, desc, eq, inArray, sql } from "drizzle-orm";
 import { getDb, schema } from "@/db/client";
 import { MAX_SONG_BYTES } from "@/db/schema";
 import type { AuthUser } from "@/server/auth";
@@ -90,6 +90,12 @@ export async function songSummaries(ids: Array<number | null>): Promise<Map<numb
   if (wanted.length === 0) return new Map();
   const rows = await getDb().select(SUMMARY).from(schema.songs).where(inArray(schema.songs.id, wanted));
   return new Map(rows.map((row) => [row.id, row]));
+}
+
+/** La canción más reciente con el drop marcado (respaldo para un montaje que se quedaría mudo), o `null`. */
+export async function latestSongWithDrop(): Promise<SongSummary | null> {
+  const [row] = await getDb().select(SUMMARY).from(schema.songs).where(sql`${schema.songs.dropMs} is not null`).orderBy(desc(schema.songs.createdAt)).limit(1);
+  return row ?? null;
 }
 
 /** Los datos que se pueden poner o cambiar de una canción (sin comprobar aún). */

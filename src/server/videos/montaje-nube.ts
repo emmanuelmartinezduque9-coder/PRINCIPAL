@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
-import { and, eq, inArray, lt, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, lt, sql } from "drizzle-orm";
 import { getDb, schema } from "@/db/client";
 import type { HiggsfieldPort } from "@/connectors/higgsfield";
 import { getObjectStore, type ObjectStore } from "@/lib/object-store";
@@ -12,7 +12,7 @@ import { macOnline } from "@/server/agent-tasks";
 import { downloadLinkMedia, ensureLinkMedia, fetchInCloud, macTaskStatus, requestFromMac, saveBreakdown, type FetchDeps } from "@/server/link-media";
 import { extractAudio, MediaError, probeVideo } from "@/server/media/ffmpeg";
 import { killPrograms, lastLine, runProgram } from "@/server/media/programs";
-import { readSongFile } from "@/server/songs";
+import { latestSongWithDrop, readSongFile } from "@/server/songs";
 import { storedOriginalKey } from "@/server/videos/archive";
 import { openClipStream } from "@/server/videos/clip";
 import { dubbedAudio } from "@/server/videos/doblaje";
@@ -292,6 +292,17 @@ const AUDIO_EXT: Record<string, string> = { "audio/mpeg": "mp3", "audio/mp4": "m
 
 // ───────────────────────── Montar ─────────────────────────
 
+/** Una canción de la biblioteca para un vídeo que se quedaría mudo: la más reciente con el drop marcado. */
+async function fallbackSong(dir: string): Promise<(NonNullable<EditSpec["song"]> & { path: string }) | null> {
+  const row = await latestSongWithDrop();
+  if (!row) return null;
+  const file = await readSongFile(row.id);
+  if (!file) return null;
+  const songPath = path.join(dir, `cancion-respaldo.${AUDIO_EXT[file.mime] ?? "mp3"}`);
+  await fs.writeFile(songPath, file.data);
+  return { id: row.id, title: row.title, dropMs: row.dropMs, startMs: row.startMs ?? 0, durationMs: row.durationMs, path: songPath };
+}
+
 /**
  * Monta el vídeo de un montaje ya reservado (`running`). Termina siempre: bien (versión nueva),
  * mal (el vídeo dice por qué) o de vuelta a la cola (esperando un enlace del Mac).
@@ -355,6 +366,65 @@ export async function runEdit(run: Run, deps: MontajeDeps = {}): Promise<"done" 
         notes.push("No se pudo sacar el audio de la referencia: el vídeo queda sin él");
       }
     }
+    // La edición de la referencia efectiva: rótulos adaptados con sus tiempos y cortes (`edicion-referencia.ts`).
+    let referenceFile = editRef?.file ?? null;
+    if (!referenceFile && !spec.editReferenceUrl && spec.replicaReference?.source === "almacen" && store) {
+      const target = path.join(dir, "referencia-replica.mp4");
+      try {
+        await store.download(spec.replicaReference.key, target);
+        referenceFile = target;
+      } catch (error) {
+        notes.push("No se pudo bajar el vídeo de referencia de la réplica: se monta con el patrón de siempre");
+        console.warn(`[montaje] Referencia de la réplica ${spec.replicaReference.key}: ${messageOf(error)}`);
+      }
+    }
+    let edicion: ReferenceEdit | null = null;
+    if (referenceFile) {
+      try {
+        const [owner] = await getDb()
+          .select({ productId: schema.videos.productId, userId: schema.videos.createdBy })
+          .from(schema.videos)
+          .where(eq(schema.videos.id, spec.videoId));
+        edicion = await referenceEdit({
+          file: referenceFile,
+          product: { id: owner?.productId ?? 0, name: spec.product.name, language: spec.product.language },
+          userId: owner?.userId ?? run.requestedBy,
+          dir,
+          store,
+          videoId: spec.videoId,
+          gateway: deps.gateway,
+        });
+      } catch (error) {
+        notes.push("No se pudo leer la edición de la referencia: se monta con el patrón de siempre");
+        console.warn(`[montaje] Edición de la referencia del vídeo ${spec.videoId}: ${messageOf(error)}`);
+      }
+    } else if (!spec.editReferenceUrl) {
+      notes.push("No está el vídeo de referencia de la réplica: se monta con el patrón de siempre");
+    }
+
+    // Ningún montaje sale mudo (orden del 24/11/2026): sin canción ni audio de la referencia guardado, el audio del
+    // vídeo de referencia (el de la réplica o el de edición); si tampoco, una canción de la biblioteca. Y se avisa.
+    if (!spec.song && !referenceAudio) {
+      if (referenceFile) {
+        const out = path.join(dir, "referencia-audio-respaldo.m4a");
+        try {
+          if (await extractAudio(referenceFile, out)) {
+            referenceAudio = { path: out };
+            notes.push("No estaba guardado el audio de la referencia: se usa el del vídeo de referencia");
+          }
+        } catch (error) {
+          if (!(error instanceof MediaError)) throw error;
+        }
+      }
+      if (!referenceAudio) {
+        const fallback = await fallbackSong(dir);
+        if (fallback) {
+          song = fallback;
+          notes.push(`El vídeo no tenía audio (ni canción ni audio de la referencia): se pone la canción «${fallback.title}» de la biblioteca`);
+        } else notes.push("El vídeo no tiene audio y la biblioteca no tiene canciones con drop: elige una canción");
+      }
+    }
+
     // «Traducir el diálogo al alemán»: el «Audio original» con la voz doblada y la música de siempre.
     // Por defecto (regla fija del 24/11/2026); con canción elegida no suena la referencia y no hay nada que doblar.
     if (spec.dubDialogue && !spec.song && referenceAudio) {
@@ -402,42 +472,6 @@ export async function runEdit(run: Run, deps: MontajeDeps = {}): Promise<"done" 
       }
     }
 
-    // La edición de la referencia efectiva: rótulos adaptados con sus tiempos y cortes (`edicion-referencia.ts`).
-    let referenceFile = editRef?.file ?? null;
-    if (!referenceFile && !spec.editReferenceUrl && spec.replicaReference?.source === "almacen" && store) {
-      const target = path.join(dir, "referencia-replica.mp4");
-      try {
-        await store.download(spec.replicaReference.key, target);
-        referenceFile = target;
-      } catch (error) {
-        notes.push("No se pudo bajar el vídeo de referencia de la réplica: se monta con el patrón de siempre");
-        console.warn(`[montaje] Referencia de la réplica ${spec.replicaReference.key}: ${messageOf(error)}`);
-      }
-    }
-    let edicion: ReferenceEdit | null = null;
-    if (referenceFile) {
-      try {
-        const [owner] = await getDb()
-          .select({ productId: schema.videos.productId, userId: schema.videos.createdBy })
-          .from(schema.videos)
-          .where(eq(schema.videos.id, spec.videoId));
-        edicion = await referenceEdit({
-          file: referenceFile,
-          product: { id: owner?.productId ?? 0, name: spec.product.name, language: spec.product.language },
-          userId: owner?.userId ?? run.requestedBy,
-          dir,
-          store,
-          videoId: spec.videoId,
-          gateway: deps.gateway,
-        });
-      } catch (error) {
-        notes.push("No se pudo leer la edición de la referencia: se monta con el patrón de siempre");
-        console.warn(`[montaje] Edición de la referencia del vídeo ${spec.videoId}: ${messageOf(error)}`);
-      }
-    } else if (!spec.editReferenceUrl) {
-      notes.push("No está el vídeo de referencia de la réplica: se monta con el patrón de siempre");
-    }
-
     const font = await fontFile(store, deps);
     if (!font) {
       await finishFailed(run, montajeFailure("falta la fuente de los rótulos en el servidor"), "sin fuente", nowOf(deps), notes);
@@ -455,6 +489,7 @@ export async function runEdit(run: Run, deps: MontajeDeps = {}): Promise<"done" 
       JSON.stringify({
         ...spec,
         clips,
+        // Con la canción de respaldo si el vídeo se quedaba mudo.
         song,
         referenceAudio,
         referencia: editRef?.breakdown ? { breakdown: editRef.breakdown } : null,

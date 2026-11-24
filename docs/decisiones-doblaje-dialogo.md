@@ -43,6 +43,30 @@ El método, tal cual:
 - **Con canción de la biblioteca** el audio de la referencia no suena, así que no hay diálogo que traducir: se
   monta con la canción y se avisa.
 
+## Que no quede nada en el idioma original (24/11/2026)
+
+El montaje 7 del vídeo 6 (FalterPfote) dejó «Oh mein Gott, look at her wings!»: BandIt había metido ese grito en la
+pista de **música** (Whisper lo oía en `music.wav`, no en `speech.wav`), así que no se dobló y volvió a sonar en inglés
+al mezclar sobre la música original. Es el mismo fallo que Codex vio en el V6 del pedido 81. Ahora:
+
+1. **Rescate antes de doblar** (`doblar.py separar --destino de`): Whisper escucha las voces aisladas (UVR MDX de
+   rea-video) de la música y de los efectos; cada frase en otro idioma (el del diálogo) se amplía con la energía de esas
+   voces (hasta 1,2 s por lado, huecos de 0,3 s: Whisper corta tarde las frases pegadas) y esa voz pasa de la música a
+   la voz. Con el vídeo 6: «Oh my god! Look at her wings!» entera en la voz y nada hablado en la música.
+2. **Comprobación al final** (`doblar.py comprobar`): Whisper transcribe el audio doblado y detecta el idioma frase a
+   frase. Lo que siga en el idioma original (probabilidad ≥ 0,6) se vuelve a doblar SOLO ese trozo (`tramo`, con
+   margen de 0,25 s) y se injerta en la voz doblada (`injertar`), hasta 2 veces; lo que quede se avisa. El coste del
+   trozo se suma al doblaje del vídeo.
+3. Los doblajes hechos antes (sin `comprobado` en `dubs.raw`) se rehacen al volver a montar; al publicar, los vídeos con
+   uno de esos se vuelven a montar solos una vez (`recheckDubbedEdits`, marca `doblaje.comprobado-20261124`).
+
+## Ningún montaje mudo (24/11/2026)
+
+Sin canción y sin el audio de la referencia guardado, el montaje usa el audio del vídeo de referencia (el de la réplica
+o el de edición); si tampoco hay, la canción más reciente de la biblioteca con drop marcado; y lo dice en los avisos.
+Revisados los 8 montajes del almacén (lotes del 23/11): todos tienen audio (−16 a −19 dB de media); ninguno salió mudo.
+Los clips de Seedance sí son mudos (`generate_audio: false`): un clip descargado tal cual no lleva sonido.
+
 ## Dónde está
 
 - `montador/doblar.py` (`separar`, `mezclar`) y sus pruebas `montador/test_doblar.py`.

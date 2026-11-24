@@ -335,6 +335,35 @@ export async function redubTodaysEdits(now: Date = new Date()): Promise<number> 
   return queued;
 }
 
+export const RECHECK_SETTING = "doblaje.comprobado-20261124";
+
+/**
+ * Una vez (24/11/2026): los vídeos con un doblaje hecho antes de la comprobación con Whisper (sin `comprobado`; el
+ * del vídeo 6 dejó «look at her wings!» en inglés) se vuelven a montar; el doblaje se rehace y se comprueba.
+ */
+export async function recheckDubbedEdits(now: Date = new Date()): Promise<number> {
+  if (await getSetting<string>(RECHECK_SETTING)) return 0;
+  await setSetting(RECHECK_SETTING, now.toISOString());
+  const rows = await getDb()
+    .selectDistinct({ id: schema.dubs.videoId })
+    .from(schema.dubs)
+    .where(and(eq(schema.dubs.status, "done"), sql`coalesce((${schema.dubs.raw}->>'comprobado')::boolean, false) = false`));
+  let queued = 0;
+  for (const { id } of rows) {
+    const [video] = await getDb().select().from(videos).where(eq(videos.id, id));
+    const creator = video ? await getActiveUser(video.createdBy) : null;
+    if (!video || !creator || video.dubDialogue === false) continue;
+    try {
+      await queueEdit(video, await getProductFor(creator, video.productId), creator.id, now);
+      queued += 1;
+    } catch (error) {
+      console.warn(`[montaje] No se pudo volver a montar el vídeo ${id} para comprobar su doblaje: ${error instanceof Error ? error.message : error}`);
+    }
+  }
+  console.log(`[montaje] Doblajes sin comprobar: ${queued} vídeo(s) vuelven a montarse.`);
+  return queued;
+}
+
 /**
  * Un lote `listo` cuyos vídeos han terminado todos su montaje (hecho o fallido con su motivo)
  * pasa a `montado`. Se llama al cerrar cada montaje y en el seguimiento.

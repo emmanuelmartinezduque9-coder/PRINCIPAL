@@ -87,6 +87,35 @@ class Mezcla(unittest.TestCase):
         self.assertIn('"ok": true', out.read_text())
 
 
+@unittest.skipUnless(HAS_NUMPY and FFMPEG, 'faltan numpy o ffmpeg')
+class Reparar(unittest.TestCase):
+    def test_injertar_pone_el_trozo_nuevo_en_su_sitio_y_deja_el_resto(self):
+        d = Path(tempfile.mkdtemp(prefix='doblar-injertar-'))
+        try:
+            tono(d / 'voz.wav', 300, 4)
+            tono(d / 'trozo.wav', 900, 1)
+            doblar.injertar(d / 'voz.wav', d / 'trozo.wav', 2.0, d / 'salida.wav')
+            x = leer(d / 'salida.wav')[:, 0]
+
+            def pico(a, b):
+                seg = x[int(a * RATE):int(b * RATE)]
+                f = np.fft.rfftfreq(len(seg), 1 / RATE)
+                return f[np.argmax(np.abs(np.fft.rfft(seg)))]
+            self.assertAlmostEqual(pico(0.5, 1.5), 300, delta=5)
+            self.assertAlmostEqual(pico(2.2, 2.8), 900, delta=5)
+            self.assertAlmostEqual(pico(3.2, 3.9), 300, delta=5)
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+
+    def test_ampliar_coge_la_voz_pegada_a_la_frase(self):
+        x = np.zeros((RATE * 6, 2), np.float32)
+        t = np.arange(int(RATE * 2.5)) / RATE
+        x[int(1.5 * RATE):int(4.0 * RATE)] = (0.3 * np.sin(2 * np.pi * 200 * t))[:, None]  # voz de 1,5 a 4 s
+        a, b = doblar.ampliar(x, 2.5, 3.5)  # Whisper solo vio 2,5–3,5
+        self.assertAlmostEqual(a, 1.5, delta=0.06)
+        self.assertAlmostEqual(b, 4.0, delta=0.06)
+
+
 def modelo_disponible():
     try:
         from rea_video import effects

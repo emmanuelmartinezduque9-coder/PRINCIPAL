@@ -92,7 +92,18 @@ export interface DoblarResult {
   ok: boolean;
   error?: string;
   voz?: { hay: boolean; idioma: string | null; probabilidad: number | null; texto: string; motivo: string | null } | null;
+  /** Frases habladas que BandIt dejó en la música y se pasaron a la voz para doblarlas también. */
+  rescatadas?: Array<{ pista: string; desde: number; hasta: number; texto: string; idioma: string }>;
+  /** `comprobar`: si se pudo comprobar y las frases que siguen en el idioma original. */
+  comprobado?: boolean;
+  quedan?: Array<{ desde: number; hasta: number; texto: string; idioma: string }>;
+  /** `tramo`: el trozo que se vuelve a doblar (s). */
+  desde?: number;
+  hasta?: number;
 }
+
+/** Cuántas veces se vuelve a doblar un trozo que quedó en el idioma original. */
+export const MAX_REPAIRS = 2;
 
 export type DubOutcome =
   | { kind: "ready"; path: string }
@@ -112,6 +123,36 @@ async function sha256File(file: string): Promise<string> {
 
 async function update(id: number, values: Partial<Dub>): Promise<void> {
   await getDb().update(dubs).set({ ...values, updatedAt: new Date() }).where(eq(dubs.id, id));
+}
+
+/**
+ * Vuelve a doblar un trozo (`file`, solo esa voz) y lo deja en `out`: subir, presupuestar, mirar el saldo, enviar y
+ * esperar como mucho `DUB_WAIT_IN_RUN_MS`. `null` si no se pudo (no hay saldo, Higgsfield no lo hizo…): el montaje sigue
+ * con lo que hay y lo dice. Los créditos se suman al doblaje del vídeo.
+ */
+async function redubPiece(ctx: DubContext, higgsfield: HiggsfieldPort, userId: number, language: string, file: string, out: string): Promise<{ file: string; credits: number } | null> {
+  try {
+    const { mediaId } = await higgsfield.uploadMedia(userId, { bytes: await fs.readFile(file), filename: "dialogue-piece.mp4", contentType: "video/mp4", type: "video" });
+    const request = { mediaId, targetLanguage: language };
+    const quote = await higgsfield.quoteDubbing(userId, request);
+    if ((await higgsfield.balance(userId)).credits < quote.credits) return null;
+    const sent = await higgsfield.submitDubbing(userId, request);
+    const jobId = sent.jobIds[0];
+    const started = nowOf(ctx).getTime();
+    for (;;) {
+      const [job] = await higgsfield.jobs(userId, [jobId], ctx.pollSeconds ?? 15);
+      if (job?.status === "done" && job.urls[0]) {
+        const response = await (ctx.fetch ?? fetch)(job.urls[0]);
+        if (!response.ok || !response.body) return null;
+        await pipeline(Readable.fromWeb(response.body as import("node:stream/web").ReadableStream), createWriteStream(out));
+        return { file: out, credits: quote.credits };
+      }
+      if (job?.status === "failed" || nowOf(ctx).getTime() - started > DUB_WAIT_IN_RUN_MS) return null;
+    }
+  } catch (error) {
+    console.warn(`[doblaje] No se pudo volver a doblar un trozo del vídeo ${ctx.videoId}: ${messageOf(error)}`);
+    return null;
+  }
 }
 
 /** El «Audio original» con el diálogo doblado al idioma del anuncio (ver arriba). Nunca lanza: dice si está, si hay que esperar o por qué no. */
@@ -136,6 +177,11 @@ export async function dubbedAudio(ctx: DubContext): Promise<DubOutcome> {
     // Ya se vio que no hace falta doblar este audio: nada.
     if (row?.status === "skipped") return { kind: "skip" };
     // Ya doblado: del almacén, sin pagar otra vez.
+    // Los de antes de la comprobación con Whisper (24/11/2026) se rehacen: uno dejó una frase en inglés.
+    if (row?.status === "done" && row.storageKey && !(row.raw as { comprobado?: boolean } | null)?.comprobado) {
+      await update(row.id, { status: "failed", error: "Doblaje sin comprobar (antes del 24/11/2026): se rehace" });
+      row = undefined;
+    }
     if (row?.status === "done" && row.storageKey) {
       await ctx.store.download(row.storageKey, output);
       ctx.notes.push(`Diálogo en ${target.name}: el doblaje ya hecho de este vídeo (sin gastar otra vez)`);
@@ -149,7 +195,7 @@ export async function dubbedAudio(ctx: DubContext): Promise<DubOutcome> {
     }
 
     if (!row || row.status === "failed") {
-      const separated = await ctx.doblar(["separar", ctx.audio, stems, ...(ctx.referenceVideo ? ["--video", ctx.referenceVideo] : [])]);
+      const separated = await ctx.doblar(["separar", ctx.audio, stems, "--destino", ctx.language, ...(ctx.referenceVideo ? ["--video", ctx.referenceVideo] : [])]);
       if (!separated.ok) {
         // Aún no se ha gastado nada: se monta con el audio original y se avisa (el doblaje va por defecto).
         ctx.notes.push(`No se pudo separar la voz de la referencia (${(separated.error ?? "sin detalle").slice(0, 120)}): el diálogo va sin doblar`);
@@ -171,6 +217,9 @@ export async function dubbedAudio(ctx: DubContext): Promise<DubOutcome> {
         return { kind: "skip" };
       }
       ctx.notes.push(`Diálogo de la referencia en «${voz.idioma}»: se dobla al ${target.name}`);
+      if (separated.rescatadas?.length) {
+        ctx.notes.push(`Voz que estaba en la música, también doblada: ${separated.rescatadas.map((f) => `«${f.texto}» (${f.desde}–${f.hasta} s)`).join(", ")}`);
+      }
       const bytes = await fs.readFile(path.join(stems, "dialogue-only.mp4"));
       const { mediaId } = await higgsfield.uploadMedia(userId, { bytes, filename: "dialogue-only.mp4", contentType: "video/mp4", type: "video" });
       const request = { mediaId, targetLanguage: target.code };
@@ -190,7 +239,7 @@ export async function dubbedAudio(ctx: DubContext): Promise<DubOutcome> {
       row = created;
       try {
         const sent = await higgsfield.submitDubbing(userId, request);
-        await update(row.id, { status: "submitted", jobId: sent.jobIds[0], raw: sent.raw ?? null });
+        await update(row.id, { status: "submitted", jobId: sent.jobIds[0], raw: { envio: sent.raw ?? null, origen: voz.idioma } });
         row = { ...row, status: "submitted", jobId: sent.jobIds[0] };
         ctx.notes.push(`Diálogo en alemán: doblaje enviado a Higgsfield (${quote.credits} créditos)`);
       } catch (error) {
@@ -236,7 +285,7 @@ export async function dubbedAudio(ctx: DubContext): Promise<DubOutcome> {
     const haveStems = await fs.stat(path.join(stems, "music.wav")).then(() => true, () => false);
     if (!haveStems) {
       // Enviado en un montaje anterior: se vuelve a separar (da lo mismo: mismo audio, mismo modelo).
-      const separated = await ctx.doblar(["separar", ctx.audio, stems]);
+      const separated = await ctx.doblar(["separar", ctx.audio, stems, "--destino", ctx.language, ...(ctx.referenceVideo ? ["--video", ctx.referenceVideo] : [])]);
       if (!separated.ok) return { kind: "failed", shown: dubFailure(separated.error ?? "no se pudo separar la voz"), detail: separated.error ?? "separar" };
     }
     const mixed = await ctx.doblar(["mezclar", stems, dub, output]);
@@ -244,9 +293,45 @@ export async function dubbedAudio(ctx: DubContext): Promise<DubOutcome> {
       await update(row.id, { status: "failed", error: mixed.error ?? "mezclar" });
       return { kind: "failed", shown: dubFailure(mixed.error ?? "no se pudo mezclar"), detail: mixed.error ?? "mezclar" };
     }
+
+    // Comprobación con Whisper: que no quede nada en el idioma original; si queda, se vuelve a doblar ese trozo.
+    const origen = (row.raw as { origen?: string | null } | null)?.origen ?? null;
+    let voice = dub;
+    let extra = 0;
+    const repairs: Array<{ desde: number; hasta: number; texto: string; creditos: number }> = [];
+    let left: NonNullable<DoblarResult["quedan"]> = [];
+    let checked = false;
+    for (let attempt = 0; ; attempt++) {
+      const check = await ctx.doblar(["comprobar", output, ...(origen ? ["--origen", origen] : []), "--destino", ctx.language]);
+      checked = check.ok && check.comprobado === true;
+      left = check.quedan ?? [];
+      if (!checked || left.length === 0 || attempt >= MAX_REPAIRS) break;
+      const leak = left[0];
+      const piece = await ctx.doblar(["tramo", stems, String(leak.desde), String(leak.hasta), path.join(ctx.dir, `tramo-${attempt}.mp4`), ...(ctx.referenceVideo ? ["--video", ctx.referenceVideo] : [])]);
+      if (!piece.ok || piece.desde === undefined) break;
+      const redone = await redubPiece(ctx, higgsfield, userId, target.code, path.join(ctx.dir, `tramo-${attempt}.mp4`), path.join(ctx.dir, `tramo-${attempt}-doblado.mp4`));
+      if (!redone) break;
+      extra += redone.credits;
+      const grafted = path.join(ctx.dir, `voz-${attempt}.wav`);
+      const graft = await ctx.doblar(["injertar", voice, redone.file, String(piece.desde), grafted]);
+      if (!graft.ok) break;
+      voice = grafted;
+      repairs.push({ desde: leak.desde, hasta: leak.hasta, texto: leak.texto, creditos: redone.credits });
+      const remixed = await ctx.doblar(["mezclar", stems, voice, output]);
+      if (!remixed.ok) break;
+    }
+    if (!checked) ctx.notes.push("No se pudo comprobar con Whisper que no quede diálogo en el idioma original");
+    if (repairs.length) ctx.notes.push(`Vuelto a doblar porque seguía en el idioma original: ${repairs.map((r) => `«${r.texto}» (${r.desde}–${r.hasta} s)`).join(", ")}`);
+    if (left.length) ctx.notes.push(`Sigue en el idioma original: ${left.map((r) => `«${r.texto}» (${r.desde}–${r.hasta} s)`).join(", ")}`);
     const key = `doblajes/${ctx.videoId}/${row.id}.m4a`;
     await ctx.store.putFile(key, output, { contentType: "audio/mp4" });
-    await update(row.id, { status: "done", storageKey: key, creditsSpent: row.quotedCredits, error: null });
+    await update(row.id, {
+      status: "done",
+      storageKey: key,
+      creditsSpent: row.quotedCredits + extra,
+      error: left.length ? `Sigue en el idioma original: ${left.map((r) => r.texto).join(" · ")}`.slice(0, 500) : null,
+      raw: { ...((row.raw as object | null) ?? {}), comprobado: checked, reparaciones: repairs, quedan: left },
+    });
     ctx.notes.push(`Diálogo traducido al ${target.name}; la música es la original`);
     return { kind: "ready", path: output };
   } catch (error) {

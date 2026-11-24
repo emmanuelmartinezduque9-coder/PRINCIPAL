@@ -13,7 +13,7 @@ import type { AuthUser } from "@/server/auth";
 import { uploadSong } from "@/server/songs";
 
 import { DUB_UNKNOWN } from "@/server/videos/doblaje";
-import { redubTodaysEdits, startEdit, type EditSpec } from "@/server/videos/edits";
+import { recheckDubbedEdits, redubTodaysEdits, startEdit, type EditSpec } from "@/server/videos/edits";
 import { createBatch } from "@/server/videos/batches";
 import { claimRun, runEdit, type MontajeDeps } from "@/server/videos/montaje-nube";
 import { createVideo, getVideoFor, updateVideoChoices, videoView, type Video } from "@/server/videos/videos";
@@ -65,6 +65,20 @@ if args[0] == 'separar':
     else:
         voz = {'hay': True, 'idioma': 'en', 'probabilidad': 0.98, 'texto': 'Three, two, one', 'motivo': None}
     r = {'ok': True, 'voz': voz}
+elif args[0] == 'comprobar':
+    # Con una referencia «FUGA», la primera comprobación encuentra una frase en inglés; después, nada.
+    n = Path(args[1]).with_name('comprobaciones')
+    veces = int(n.read_text()) if n.exists() else 0
+    n.write_text(str(veces + 1))
+    fuga = (Path(args[1]).parent / 'referencia-audio.m4a').read_bytes().startswith(b'FUGA') if (Path(args[1]).parent / 'referencia-audio.m4a').exists() else False
+    quedan = [{'desde': 11.5, 'hasta': 13.2, 'texto': 'Look at her wings!', 'idioma': 'en'}] if fuga and veces == 0 else []
+    r = {'ok': True, 'comprobado': True, 'quedan': quedan}
+elif args[0] == 'tramo':
+    shutil.copy(Path(args[1]) / 'dialogue-only.mp4', args[4])
+    r = {'ok': True, 'desde': float(args[2]) - 0.25, 'hasta': float(args[3]) + 0.25}
+elif args[0] == 'injertar':
+    Path(args[4]).write_bytes(b'VOZ-INJERTADA')
+    r = {'ok': True}
 else:
     Path(args[3]).write_bytes(b'MEZCLA-ALEMANA')
     r = {'ok': True}
@@ -268,6 +282,42 @@ describe("el montaje con el diálogo traducido", () => {
     expect(await runEdit(run, deps({ higgsfield: slow.port }))).toBe("done");
     expect(slow.calls.filter((c) => c.method === "submitDubbing")).toHaveLength(1);
     expect((await dubRows())[0].status).toBe("done");
+  });
+});
+
+describe("que no quede nada en el idioma original", () => {
+  it("si Whisper oye una frase en inglés después de mezclar, se vuelve a doblar ese trozo y se injerta", async () => {
+    const video = await videoWithAudio({ dubDialogue: true });
+    const fuga = Buffer.from("FUGA-AUDIO-INGLES");
+    await getDb().update(schema.videoReferenceAudio).set({ data: fuga, size: fuga.length }).where(eq(schema.videoReferenceAudio.videoId, video.id));
+    const { outcome, row } = await mount(video.id);
+    expect(outcome).toBe("done");
+    expect(dubCalls()).toHaveLength(2); // el vídeo entero y el trozo
+    expect(row.notes).toContain("Vuelto a doblar porque seguía en el idioma original: «Look at her wings!» (11.5–13.2 s)");
+    const [dub] = await dubRows();
+    expect(dub).toMatchObject({ status: "done", creditsSpent: DUB_CREDITS * 2, error: null });
+    expect(dub.raw).toMatchObject({ comprobado: true, quedan: [], reparaciones: [{ desde: 11.5, hasta: 13.2 }] });
+  });
+
+  it("una vez al arrancar, los vídeos con un doblaje sin comprobar vuelven a montarse", async () => {
+    const video = await videoWithAudio({ dubDialogue: true });
+    await mount(video.id);
+    expect(await recheckDubbedEdits()).toBe(0); // ya comprobado: nada (y la marca queda puesta)
+    await getDb().delete(schema.settings).catch(() => {});
+    const [first] = await dubRows();
+    await getDb().update(schema.dubs).set({ raw: { origen: "en" } }).where(eq(schema.dubs.id, first.id));
+    expect(await recheckDubbedEdits()).toBe(1);
+    expect(await recheckDubbedEdits()).toBe(0);
+  });
+
+  it("un doblaje hecho antes de la comprobación (sin `comprobado`) se rehace al volver a montar", async () => {
+    const video = await videoWithAudio({ dubDialogue: true });
+    await mount(video.id);
+    const [first] = await dubRows();
+    await getDb().update(schema.dubs).set({ raw: { origen: "en" } }).where(eq(schema.dubs.id, first.id));
+    await mount(video.id);
+    expect(dubCalls()).toHaveLength(2);
+    expect((await dubRows()).map((r) => r.status)).toEqual(["failed", "done"]);
   });
 });
 

@@ -20,6 +20,12 @@ Uso (`--resultado <archivo.json>` antes de la orden deja también el resultado e
         (Whisper), para no doblar lo que no tiene diálogo o ya está en el idioma del anuncio.
   python doblar.py mezclar <carpeta> <doblaje.mp4|wav> <salida.m4a>
       → salida.m4a = música + efectos originales + voz doblada, con la duración del original.
+  python doblar.py comprobar <montaje.m4a> [--origen en] [--destino de]
+      → las frases que siguen en el idioma original (Whisper, idioma frase a frase).
+  python doblar.py tramo <carpeta> <desde> <hasta> <trozo.mp4> [--video ref.mp4]
+      → el MP4 con solo la voz de ese trozo (moviendo a la voz lo que quedara en la música), para volver a doblarlo.
+  python doblar.py injertar <voz_doblada> <trozo_doblado> <desde> <salida.wav>
+      → la voz doblada con el trozo nuevo en su sitio.
 """
 import argparse
 import json
@@ -84,19 +90,63 @@ UMBRAL_VOZ_DB = -45.0
 UMBRAL_IDIOMA = 0.5
 
 
-def detectar_dialogo(voz, voz_db):
-    """¿Hay diálogo en la voz separada y en qué idioma? Whisper (faster-whisper, modelo `base`, CPU) con detector de
-    voz: sin palabras, o con una voz casi muda, no hay diálogo; un idioma dudoso (< 0,5) tampoco cuenta (suele ser la
-    letra de la canción colándose en la voz). `None` si falta Whisper: entonces no se dobla."""
-    if voz_db < UMBRAL_VOZ_DB:
-        return dict(hay=False, idioma=None, probabilidad=None, texto='', motivo='voz casi muda')
+RELLENO_S = 0.25      # margen alrededor de una frase al moverla o doblarla
+FUNDIDO_S = 0.04
+WHISPER_RATE = 16000
+
+
+def whisper():
+    """El modelo Whisper `base` (faster-whisper, CPU) o `None` si no está instalado."""
     try:
         from faster_whisper import WhisperModel
     except ImportError:
         return None
-    modelo = WhisperModel(WHISPER_MODELO, device='cpu', compute_type='int8',
-                          download_root=os.environ.get('WHISPER_MODELS') or str(Path.home() / '.cache' / 'principal-whisper'))
-    trozos, info = modelo.transcribe(str(voz), vad_filter=True, beam_size=1, without_timestamps=True)
+    return WhisperModel(WHISPER_MODELO, device='cpu', compute_type='int8',
+                        download_root=os.environ.get('WHISPER_MODELS') or str(Path.home() / '.cache' / 'principal-whisper'))
+
+
+def leer(path, rate=RATE):
+    """Audio estéreo float32 [n, 2] a `rate`."""
+    raw = ffmpeg('-i', path, '-map', '0:a:0', '-vn', '-ac', '2', '-ar', rate, '-f', 'f32le', 'pipe:1')
+    return np.frombuffer(raw, dtype='<f4').reshape(-1, 2).copy()
+
+
+def escribir_wav(path, datos, rate=RATE):
+    ffmpeg('-f', 'f32le', '-ar', rate, '-ac', 2, '-i', 'pipe:0', '-c:a', 'pcm_f32le', path,
+           entrada=np.ascontiguousarray(datos, dtype='<f4').tobytes())
+
+
+def mono16k(x):
+    """[n, 2] a 48 kHz → mono a 16 kHz para Whisper."""
+    m = x.mean(axis=1).astype(np.float32)
+    n = int(len(m) * WHISPER_RATE / RATE)
+    return np.interp(np.linspace(0, len(m) - 1, n), np.arange(len(m)), m).astype(np.float32)
+
+
+def frases(modelo, x, vad=True):
+    """Frases de `x` ([n, 2] a 48 kHz) con su idioma, detectado frase a frase: [(desde, hasta, texto, idioma, prob)]."""
+    audio = mono16k(x)
+    trozos, _ = modelo.transcribe(audio, vad_filter=vad, beam_size=1)
+    out = []
+    for t in trozos:
+        texto = t.text.strip()
+        if not texto:
+            continue
+        a, b = int(t.start * WHISPER_RATE), int(t.end * WHISPER_RATE)
+        trozo = audio[a:max(b, a + WHISPER_RATE // 2)]
+        idioma, prob, _ = modelo.detect_language(trozo) if len(trozo) >= WHISPER_RATE // 4 else (None, 0.0, None)
+        out.append((round(t.start, 2), round(t.end, 2), texto, idioma, round(float(prob), 2)))
+    return out
+
+
+def detectar_dialogo(modelo, voz_wav, voz_db):
+    """¿Hay diálogo en la voz separada y en qué idioma? Sin palabras, con una voz casi muda o con un idioma dudoso
+    (< 0,5; suele ser la letra de la canción colándose) no hay diálogo. `None` si falta Whisper: entonces no se dobla."""
+    if voz_db < UMBRAL_VOZ_DB:
+        return dict(hay=False, idioma=None, probabilidad=None, texto='', motivo='voz casi muda')
+    if modelo is None:
+        return None
+    trozos, info = modelo.transcribe(str(voz_wav), vad_filter=True, beam_size=1, without_timestamps=True)
     texto = ' '.join(t.text for t in trozos).strip()
     prob = round(float(info.language_probability), 2)
     hay = bool(texto) and prob >= UMBRAL_IDIOMA
@@ -104,38 +154,168 @@ def detectar_dialogo(voz, voz_db):
                 motivo=None if hay else ('sin palabras' if not texto else 'idioma dudoso'))
 
 
-def separar(fuente, carpeta, video=None):
-    """Voz, música y efectos de `fuente` en `carpeta` (WAV estéreo de 48 kHz en coma flotante) y `dialogue-only.mp4`."""
+def voces_mdx(x):
+    """Las voces de `x` ([n, 2] a 48 kHz) con UVR MDX-Net (rea-video): (voces, resto) a 48 kHz."""
+    from rea_video import stems as mdx
+    tmp = Path(os.environ.get('TMPDIR') or '/tmp') / f'doblar-mdx-{os.getpid()}.wav'
+    try:
+        escribir_wav(tmp, x)
+        mezcla = mdx.load_stereo(tmp)  # [2, n] a 44,1 kHz
+        voces, _ = mdx.separate(mezcla)
+        escribir_wav(tmp, voces.T, rate=mdx.SR)
+        v = leer(tmp)
+    finally:
+        tmp.unlink(missing_ok=True)
+    n = min(len(v), len(x))
+    v = np.pad(v[:n], ((0, len(x) - n), (0, 0)))
+    return v, x - v
+
+
+def ventana(n, a, b):
+    """Peso 0–1 de la ventana [a, b) (muestras) con fundidos, sobre n muestras."""
+    w = np.zeros(n, np.float32)
+    a, b = max(0, a), min(n, b)
+    if b <= a:
+        return w
+    f = max(1, int(FUNDIDO_S * RATE))
+    w[a:b] = 1
+    w[a:a + f] = np.linspace(0, 1, min(f, b - a))
+    w[max(a, b - f):b] = np.linspace(1, 0, b - max(a, b - f))
+    return w
+
+
+def ampliar(voces, a, b, hueco=0.3, maximo=1.2, umbral_db=-42.0):
+    """Amplía [a, b] (s) hacia los lados mientras sigan sonando voces (`voces`, [n, 2] a 48 kHz) con huecos de como mucho
+    `hueco` s y hasta `maximo` s por lado: Whisper corta tarde o temprano las frases gritadas o pegadas a otra."""
+    paso = int(0.05 * RATE)
+    m = voces.mean(axis=1)
+    n = len(m) // paso
+    db = 20 * np.log10(np.sqrt(np.mean(np.square(m[:n * paso].reshape(n, paso), dtype='float64'), axis=1)) + 1e-9)
+    activo = db > umbral_db
+
+    def borde(i, d):
+        limite, sin_voz = int(maximo / 0.05), 0
+        j = i
+        for k in range(1, limite + 1):
+            t = i + d * k
+            if not 0 <= t < n:
+                break
+            if activo[t]:
+                j, sin_voz = t, 0
+            else:
+                sin_voz += 1
+                if sin_voz * 0.05 > hueco:
+                    break
+        return j
+
+    ia, ib = min(n - 1, max(0, int(a / 0.05))), min(n - 1, max(0, int(b / 0.05)))
+    return round(borde(ia, -1) * 0.05, 2), round((borde(ib, 1) + 1) * 0.05, 2)
+
+
+def mover_voz_de_la_musica(carpeta, tramos):
+    """La voz que BandIt dejó en la música (o en los efectos) dentro de `tramos` [(desde, hasta) s] pasa a la pista de voz
+    (UVR MDX separa voces y resto en esos trozos); fuera de ellos la música no se toca."""
+    voz, musica, efectos = (leer(carpeta / f'{n}.wav') for n in STEMS)
+    peso = np.zeros(len(musica), np.float32)
+    for a, b in tramos:
+        peso = np.maximum(peso, ventana(len(musica), int((a - RELLENO_S) * RATE), int((b + RELLENO_S) * RATE)))
+    for nombre, pista in (('music', musica), ('sfx', efectos)):
+        v, _ = voces_mdx(pista)
+        movida = v * peso[:, None]
+        voz = voz + movida
+        pista -= movida
+        escribir_wav(carpeta / f'{nombre}.wav', pista)
+    escribir_wav(carpeta / 'speech.wav', voz)
+
+
+def video_dialogo(carpeta, video, salida, desde=None, hasta=None):
+    """MP4 con SOLO la voz (la que se sube a Higgsfield), con la imagen de la referencia o negro; con `desde`/`hasta`,
+    solo ese trozo."""
+    corte = (['-ss', f'{desde:.3f}', '-to', f'{hasta:.3f}'] if desde is not None else [])
+    if video and Path(video).is_file():
+        ffmpeg(*corte, '-i', video, *corte, '-i', carpeta / 'speech.wav', '-map', '0:v:0', '-map', '1:a:0', '-c:v', 'libx264',
+               '-preset', 'veryfast', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-b:a', '256k', '-shortest', salida)
+    else:
+        ffmpeg('-f', 'lavfi', '-i', NEGRO, *corte, '-i', carpeta / 'speech.wav', '-map', '0:v:0', '-map', '1:a:0', '-c:v',
+               'libx264', '-preset', 'veryfast', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-b:a', '256k', '-shortest', salida)
+
+
+def separar(fuente, carpeta, video=None, destino=None):
+    """Voz, música y efectos de `fuente` en `carpeta` (WAV estéreo de 48 kHz en coma flotante) y `dialogue-only.mp4`.
+    Si en la música o los efectos quedan frases habladas en otro idioma que `destino` (BandIt mete a veces un grito o una
+    voz procesada en la música), esa voz pasa a la pista de voz para que también se doble (`rescatadas`)."""
     carpeta = Path(carpeta)
     carpeta.mkdir(parents=True, exist_ok=True)
     if not tiene_audio(fuente):
         raise Fallo('La referencia no trae audio: no hay diálogo que traducir')
-    mezcla = ffmpeg('-i', fuente, '-map', '0:a:0', '-vn', '-ac', '2', '-ar', RATE, '-f', 'f32le', 'pipe:1')
-    x = np.frombuffer(mezcla, dtype='<f4').reshape(-1, 2)
+    x = leer(fuente)
     if len(x) < RATE // 2:
         raise Fallo('El audio de la referencia dura menos de medio segundo')
     effects, sesion = modelo()
     # Como en Codex: canal a canal (el modelo es mono).
     pistas = np.stack([effects.separate(np.ascontiguousarray(x[:, c]), sesion) for c in range(2)], axis=-1)  # 3, n, 2
-
-    def escribir(nombre, datos):
-        ffmpeg('-f', 'f32le', '-ar', RATE, '-ac', 2, '-i', 'pipe:0', '-c:a', 'pcm_f32le', carpeta / f'{nombre}.wav',
-               entrada=np.ascontiguousarray(datos, dtype='<f4').tobytes())
-
-    escribir('mix', x)
+    escribir_wav(carpeta / 'mix.wav', x)
     for i, nombre in enumerate(STEMS):
-        escribir(nombre, pistas[i])
-    dialogo = carpeta / 'dialogue-only.mp4'
-    if video and Path(video).is_file():
-        ffmpeg('-i', video, '-i', carpeta / 'speech.wav', '-map', '0:v:0', '-map', '1:a:0', '-c:v', 'copy', '-c:a', 'aac',
-               '-b:a', '256k', '-shortest', dialogo)
-    else:
-        ffmpeg('-f', 'lavfi', '-i', NEGRO, '-i', carpeta / 'speech.wav', '-map', '0:v:0', '-map', '1:a:0', '-c:v', 'libx264',
-               '-preset', 'veryfast', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-b:a', '256k', '-shortest', dialogo)
+        escribir_wav(carpeta / f'{nombre}.wav', pistas[i])
     r = dict(ok=True, segundos=round(len(x) / RATE, 3), mix_db=rms_db(x),
-             **{f'{n}_db': rms_db(pistas[i]) for i, n in enumerate(STEMS)}, dialogo=str(dialogo))
-    r['voz'] = detectar_dialogo(carpeta / 'speech.wav', r['speech_db'])
+             **{f'{n}_db': rms_db(pistas[i]) for i, n in enumerate(STEMS)})
+    w = whisper()
+    voz = detectar_dialogo(w, carpeta / 'speech.wav', r['speech_db'])
+    rescatadas = []
+    if w is not None:
+        origen = voz['idioma'] if voz and voz['hay'] else None
+        for i, nombre in ((1, 'music'), (2, 'sfx')):
+            voces, _ = voces_mdx(pistas[i])  # Whisper oye mejor las voces aisladas que la música entera
+            for a, b, texto, idioma, prob in frases(w, voces):
+                if idioma and idioma != destino and prob >= UMBRAL_IDIOMA and (origen is None or idioma == origen):
+                    a, b = ampliar(voces, a, b)
+                    rescatadas.append(dict(pista=nombre, desde=a, hasta=b, texto=texto[:120], idioma=idioma))
+        if rescatadas:
+            mover_voz_de_la_musica(carpeta, [(f['desde'], f['hasta']) for f in rescatadas])
+            if not (voz and voz['hay']):
+                voz = dict(hay=True, idioma=rescatadas[0]['idioma'], probabilidad=None,
+                           texto=' '.join(f['texto'] for f in rescatadas)[:300], motivo=None)
+    dialogo = carpeta / 'dialogue-only.mp4'
+    video_dialogo(carpeta, video, dialogo)
+    r.update(dialogo=str(dialogo), voz=voz, rescatadas=rescatadas)
     return r
+
+
+def comprobar(audio, origen, destino):
+    """Frases del montaje doblado que siguen en el idioma ORIGINAL (`origen`, o cualquiera distinto de `destino`):
+    [{desde, hasta, texto, idioma}]. Whisper detecta el idioma frase a frase."""
+    w = whisper()
+    if w is None:
+        return None
+    quedan = []
+    for a, b, texto, idioma, prob in frases(w, leer(audio)):
+        if idioma and idioma != destino and prob >= 0.6 and (origen is None or idioma == origen):
+            quedan.append(dict(desde=a, hasta=b, texto=texto[:120], idioma=idioma, probabilidad=prob))
+    return quedan
+
+
+def tramo(carpeta, desde, hasta, salida, video=None):
+    """Prepara un trozo para volver a doblarlo: la voz que quede en la música en [desde, hasta] pasa a la pista de voz y
+    se hace el MP4 con solo ese trozo de voz (con margen)."""
+    carpeta = Path(carpeta)
+    mover_voz_de_la_musica(carpeta, [(desde, hasta)])
+    a = max(0.0, desde - RELLENO_S)
+    b = min(duracion(carpeta / 'speech.wav'), hasta + RELLENO_S)
+    video_dialogo(carpeta, video, salida, a, b)
+    return dict(ok=True, desde=round(a, 3), hasta=round(b, 3), salida=str(salida))
+
+
+def injertar(doblaje, trozo, desde, salida):
+    """La voz doblada entera con el trozo vuelto a doblar puesto en su sitio (desde `desde` s), con fundidos."""
+    voz = leer(doblaje)
+    nuevo = leer(trozo)
+    a = int(desde * RATE)
+    b = min(len(voz), a + len(nuevo))
+    w = ventana(len(voz), a, b)[:, None]
+    pieza = np.zeros_like(voz)
+    pieza[a:b] = nuevo[:b - a]
+    escribir_wav(salida, voz * (1 - w) + pieza * w)
+    return dict(ok=True, salida=str(salida))
 
 
 def mezclar(carpeta, doblaje, salida):
@@ -160,13 +340,39 @@ def main(argv=None):
     s.add_argument('fuente', type=Path)
     s.add_argument('carpeta', type=Path)
     s.add_argument('--video', type=Path)
+    s.add_argument('--destino', help='idioma del anuncio (ISO 639-1)')
+    c = cmds.add_parser('comprobar')
+    c.add_argument('audio', type=Path)
+    c.add_argument('--origen')
+    c.add_argument('--destino')
+    t = cmds.add_parser('tramo')
+    t.add_argument('carpeta', type=Path)
+    t.add_argument('desde', type=float)
+    t.add_argument('hasta', type=float)
+    t.add_argument('salida', type=Path)
+    t.add_argument('--video', type=Path)
+    j = cmds.add_parser('injertar')
+    j.add_argument('doblaje', type=Path)
+    j.add_argument('trozo', type=Path)
+    j.add_argument('desde', type=float)
+    j.add_argument('salida', type=Path)
     m = cmds.add_parser('mezclar')
     m.add_argument('carpeta', type=Path)
     m.add_argument('doblaje', type=Path)
     m.add_argument('salida', type=Path)
     a = p.parse_args(argv)
     try:
-        r = separar(a.fuente, a.carpeta, a.video) if a.orden == 'separar' else mezclar(a.carpeta, a.doblaje, a.salida)
+        if a.orden == 'separar':
+            r = separar(a.fuente, a.carpeta, a.video, a.destino)
+        elif a.orden == 'comprobar':
+            quedan = comprobar(a.audio, a.origen, a.destino)
+            r = dict(ok=True, comprobado=quedan is not None, quedan=quedan or [])
+        elif a.orden == 'tramo':
+            r = tramo(a.carpeta, a.desde, a.hasta, a.salida, a.video)
+        elif a.orden == 'injertar':
+            r = injertar(a.doblaje, a.trozo, a.desde, a.salida)
+        else:
+            r = mezclar(a.carpeta, a.doblaje, a.salida)
     except Fallo as error:
         r = dict(ok=False, error=str(error))
     print(json.dumps(r, ensure_ascii=False))

@@ -20,7 +20,9 @@ import { appendChunk, CHUNK_BYTES, finishUpload, startUpload } from "@/server/vi
 import { createVideo, getVideoFor, type Video } from "@/server/videos/videos";
 import { makeProduct, makeUser } from "./helpers/fixtures";
 import { truncateAll } from "./helpers/global-setup";
+import { makeSampleAudio } from "./helpers/sample-audio";
 import { makeSampleVideo } from "./helpers/sample-video";
+import { uploadSong } from "@/server/songs";
 
 /**
  * «Editar como el vídeo de referencia de la réplica» (regla de Codex: «enlace de edición vacío → el vídeo
@@ -177,6 +179,22 @@ describe("editar como la referencia", () => {
     const { row, spec } = await mount(none.id);
     expect(spec.replicaReference).toBeNull();
     expect(row.notes).toContain("No está el vídeo de referencia de la réplica: se monta con el patrón de siempre");
+  });
+});
+
+describe("ningún montaje sale mudo", () => {
+  it("sin audio guardado ni canción, se usa el audio del vídeo de referencia; sin referencia, una canción de la biblioteca", async () => {
+    await store.putBuffer("referencias/y/ref.mp4", mp4, { contentType: "video/mp4" });
+    const withRef = await videoWithClip({ referenceStorageKey: "referencias/y/ref.mp4", dubDialogue: false });
+    const first = await mount(withRef.id);
+    expect(first.row.notes).toContain("No estaba guardado el audio de la referencia: se usa el del vídeo de referencia");
+
+    const bare = await videoWithClip({ dubDialogue: false });
+    const empty = await mount(bare.id);
+    expect(empty.row.notes).toContain("El vídeo no tiene audio y la biblioteca no tiene canciones con drop: elige una canción");
+    const { song } = await uploadSong(ana, fs.readFileSync(await makeSampleAudio(dir, "mp3", { seconds: 8 })), { title: "Respaldo", dropMs: 2000 });
+    const again = await mount(bare.id);
+    expect(again.row.notes).toContain(`El vídeo no tenía audio (ni canción ni audio de la referencia): se pone la canción «${song.title}» de la biblioteca`);
   });
 });
 

@@ -34,7 +34,11 @@ startWorker().then(
     startEditLoop();
     // Una vez (24/11/2026): los vídeos de los lotes de hoy ya montados se vuelven a montar con el doblaje por defecto.
     void import("@/server/videos/edits")
-      .then(({ redubTodaysEdits }) => redubTodaysEdits())
+      .then(async ({ redubTodaysEdits, recheckDubbedEdits }) => {
+        await redubTodaysEdits();
+        // Y los doblados antes de la comprobación con Whisper (el vídeo 6 dejó una frase en inglés).
+        await recheckDubbedEdits();
+      })
       .catch((error) => console.error("[montaje] No se pudieron volver a montar los vídeos de hoy para doblarlos:", error));
     // Una vez (23/11/2026): la imagen de prueba del método aprobado que el dueño aprobó para el vídeo 2
     // entra como candidata, sin gastar otra vez (ver `importar-imagen.ts`).
