@@ -386,6 +386,13 @@
       "when": 1795484060963,
       "tag": "0054_claude_code_mac",
       "breakpoints": true
+    },
+    {
+      "idx": 55,
+      "version": "7",
+      "when": 1795528082421,
+      "tag": "0055_recursos_de_marca",
+      "breakpoints": true
     }
   ]
 }

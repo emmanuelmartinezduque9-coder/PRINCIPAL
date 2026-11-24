@@ -161,7 +161,7 @@ describe("fotos de producto", () => {
   });
 
   it("una foto nueva es «artículo» si no se dice otra cosa, y se puede subir ya con su papel", async () => {
-    expect(PHOTO_ROLES).toEqual(["articulo", "embalaje", "avatar", "entorno", "funcionamiento", "otro"]);
+    expect(PHOTO_ROLES).toEqual(["articulo", "embalaje", "avatar", "entorno", "funcionamiento", "marca", "logo_web", "otro"]);
     expect((await addProductPhoto(ana, producto.id, JPEG)).role).toBe("articulo");
     expect((await addProductPhoto(ana, producto.id, JPEG, "avatar")).role).toBe("avatar");
   });

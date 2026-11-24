@@ -28,8 +28,8 @@ export interface HfMediaRef {
 export interface HfImageRequest {
   model: string;
   prompt: string;
-  /** 9:16 para los fotogramas de vídeo; 1:1 para las fotos de catálogo (mockup). */
-  aspectRatio: "9:16" | "1:1";
+  /** 9:16 para los fotogramas de vídeo; 1:1 para las fotos de catálogo (mockup, marca, caja); 3:4 para el logo vertical. */
+  aspectRatio: "9:16" | "1:1" | "3:4";
   resolution: "2k";
   medias: HfMediaRef[];
 }

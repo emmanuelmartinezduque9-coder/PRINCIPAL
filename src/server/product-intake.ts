@@ -27,6 +27,7 @@ import { downloadLinkMedia, ensureLinkMedia, fetchInCloud, macTaskStatus, reques
 import { ensureLinkProfile, linkProfileById, resetLinkProfile, MAX_PROFILE_FAILURES, profileDataOf, profileTaskStatus, requestProfileFromMac, topReels, type ProfileData } from "@/server/link-profiles";
 import { extractFrames, imageMimeOf, makeThumbnail, probeVideo } from "@/server/media/ffmpeg";
 import { addProductPhoto, listProductPhotos, readProductPhoto } from "@/server/photos";
+import { requestBrandAssets } from "@/server/product-brand-assets";
 import { allProductNames, createProduct, getProductFor, setProductFacts, type Product } from "@/server/products";
 import { loadRules } from "@/server/rules";
 import { JobPausedError, runStep, StepFailedError } from "@/jobs/steps";
@@ -469,6 +470,10 @@ const intakeSchema = z.object({
    * idioma del mercado. Vacío si no lleva texto o ya está en ese idioma.
    */
   textoImpreso: z.array(z.object({ original: z.string(), adaptado: z.string() })),
+  /** Para el logo-emblema (en inglés): qué ilustración lleva y con qué colores (como lo escribía Codex). */
+  ideaMarca: z.string(),
+  /** Subtítulo corto de la caja en el idioma del mercado (p. ej. «Hoodie mit integrierter Gesichtsmaske»). */
+  descriptorCaja: z.string(),
   fuentes: z.array(z.object({ url: z.string(), que: z.string() })),
 });
 export type IntakeAnswer = z.infer<typeof intakeSchema>;
@@ -628,6 +633,7 @@ function intakeInstructions(row: Intake, language: string, brands: string[]): st
     `Marcas que Emmanuel ya usa (no repitas sus raíces salvo que sea la misma familia): ${brands.join(", ") || "ninguna"}.`,
     "Campos: `producto` (qué es, en español, corto), `queHace` (una frase sencilla en español), `mecanismo`, `nicho`, `audiencia` (quién compra y quién usa), `anguloActual` (con qué motivo se vende en la fuente), `emoji` (uno), `marca` (la mejor opción y dos alternativas, en el idioma del mercado, con el porqué en español), `referencia` (la imagen numerada donde mejor se ve el producto entero y limpio para el mockup: `fotograma`, `foto_tienda`, `foto_subida` o `miniatura` con su número empezando en 1, o `ninguna`; mejor una foto limpia de la tienda que un fotograma), `promptMockup` (en inglés, según la regla), `fuentes` (direcciones que de verdad consultaste y qué sacaste de cada una).",
     `Texto impreso en el producto (regla de Emmanuel del 24/11/2026): si el producto lleva texto impreso, bordado o grabado en un idioma que no es el del mercado (${LANGUAGE_NAME[language] ?? language}), adáptalo SIEMPRE, sin preguntar: tradúcelo a un ${LANGUAGE_NAME[language] ?? language} natural y del estilo de la prenda, no palabra por palabra (p. ej. «Child of God / John 1:12» → «Kind Gottes / Johannes 1,12», con las citas como se escriben en ese país). Ponlo en \`textoImpreso\` (original → adaptado) y en \`promptMockup\` pide ese texto ya adaptado, escrito exactamente, con la misma tipografía, tamaño, color y colocación. Los logotipos y nombres de marca no se traducen. Sin texto, \`textoImpreso\` vacío.`,
+    `Recursos de la marca (se generan solos después): \`ideaMarca\` = en inglés, la ilustración del emblema circular de la marca y su paleta, con carácter y relacionada con el producto o su mundo (p. ej. «A filled dark midnight-blue hood silhouette frames a warm gold cross and a restrained ivory halo; midnight blue, warm gold and cream»); \`descriptorCaja\` = qué es el producto en 3–6 palabras en ${LANGUAGE_NAME[language] ?? language}, para imprimir en la caja (p. ej. «Hoodie mit integrierter Gesichtsmaske»), sin promesas.`,
     "Sin avisos de marcas registradas, derechos, licencias ni propiedad intelectual en ningún campo (indicación de Emmanuel: la decisión es suya). En `promptMockup` no nombres marcas, franquicias, películas ni personajes: describe el producto y su estampado por formas, colores y dibujos (p. ej. «cartoon snowman», «ice castle line art»), para que el filtro de Higgsfield no lo bloquee.",
     "Si no puedes identificar el producto con seguridad, `identificado: false` y en `motivo` explica en una frase sencilla por qué y qué haría falta; deja el resto vacío. Si lo identificas, `motivo` puede quedar vacío o avisar de una duda.",
   ].join("\n");
@@ -781,6 +787,8 @@ async function stepMockup(row: Intake, owner: AuthUser, deps: IntakeDeps): Promi
       if (!file) return row;
       const jpeg = await makeThumbnail(file.bytes, "image", 2048);
       const photo = await addProductPhoto(owner, row.productId, jpeg, "articulo");
+      // Con el artículo listo, los recursos de marca (logo, logo web y cajas) se generan solos.
+      await requestBrandAssets(row.productId, owner.id);
       return finish({ mockupStatus: "hecho", mockupPhotoId: photo.id, mockupNote: null });
     }
     if (job?.status === "failed") {

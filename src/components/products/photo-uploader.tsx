@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Gift, ImagePlus, Loader2, MapPin, Package, Shapes, Sparkles, Trash2, UserRound, X, type LucideIcon } from "lucide-react";
+import { BadgeCheck, Gift, ImagePlus, Loader2, MapPin, Package, PanelTop, Shapes, Sparkles, Trash2, UserRound, X, type LucideIcon } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -67,6 +67,8 @@ export const ROLE_ICONS: Record<PhotoRole, LucideIcon> = {
   avatar: UserRound,
   entorno: MapPin,
   funcionamiento: Sparkles,
+  marca: BadgeCheck,
+  logo_web: PanelTop,
   otro: Shapes,
 };
 
@@ -77,6 +79,8 @@ export const ROLE_TINT: Record<PhotoRole, string> = {
   avatar: "bg-kind-adapt text-white",
   entorno: "bg-success text-white",
   funcionamiento: "bg-kind-adapt text-white",
+  marca: "bg-slate-800 text-white",
+  logo_web: "bg-slate-700 text-white",
   otro: "bg-slate-500 text-white",
 };
 

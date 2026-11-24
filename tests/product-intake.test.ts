@@ -27,6 +27,7 @@ import {
   type IntakeDeps,
 } from "@/server/product-intake";
 import { addProductPhoto, listProductPhotos } from "@/server/photos";
+import { brandAssetsOf } from "@/server/product-brand-assets";
 import { agentHeartbeat, appendTaskChunk, claimTask, createAgentToken, finishTask } from "@/server/agent";
 import { ensureLinkProfile, linkProfileById, requestProfileFromMac } from "@/server/link-profiles";
 import { getProductFor } from "@/server/products";
@@ -51,6 +52,8 @@ const ANSWER: IntakeAnswer = {
   referencia: { tipo: "foto_tienda", numero: 1 },
   promptMockup: "Photorealistic product photo of the exact pink mini ice cream maker on medium gray #929396.",
   textoImpreso: [],
+  ideaMarca: "A pink ice cream cone with a sparkle; pink, cream and chocolate brown",
+  descriptorCaja: "Mini-Eismaschine",
   fuentes: [
     { url: "https://www.aliexpress.com/item/1.html", que: "Ficha del producto" },
     { url: "https://inventada.example/x", que: "Algo que no se vio" },
@@ -180,6 +183,8 @@ describe("alta desde un enlace", () => {
     const photos = await listProductPhotos(dueno, product.id);
     expect(photos.map((p) => p.role).sort()).toEqual(["articulo", "otro"]);
     expect(view?.mockupPhotoId).toBe(photos.find((p) => p.role === "articulo")!.id);
+    // Con el artículo listo quedan pedidos el logo, el logo web y la caja.
+    expect((await brandAssetsOf(product.id)).map((r) => r.kind).sort()).toEqual(["caja", "logo_web", "marca"]);
   });
 
   it("si el filtro de Higgsfield bloquea el mockup, se reintenta una vez solo con el otro modelo y un prompt neutro", async () => {

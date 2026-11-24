@@ -235,3 +235,25 @@ prompt del mockup pide el texto ya adaptado al idioma del mercado, también en l
 un bloqueo del filtro (`printedTextClause`). Así el «Artículo» que usa la imagen inicial ya sale en
 el idioma del país, sin preguntar. Las marcas y logotipos no se traducen. Regla `alta-de-producto`
 actualizada (versión nueva automática).
+
+## Variante blanca, cajas y logos de KreuzKapuze; recursos de marca automáticos (24/11/2026)
+
+- **Variante blanca**: el mockup alemán (178) y la foto de referencia (177) editados con Nano Banana
+  cambiando solo el color de la prenda a blanco roto (mismo diseño y mismos detalles dorados): fotos
+  179 («Artículo») y 180 («Otra»). Variantes **Negro** (178) y **Blanco** (179) para elegir en las tarjetas.
+- **Recursos de marca automáticos** (copiados de Codex, `nuevo-producto` PASO 2 y los prompts reales
+  de su alta de KreuzKapuze del 24/11): al terminar el mockup del alta se piden solos, en el
+  Higgsfield de quien creó el producto y sin preguntar (`src/server/product-brand-assets.ts`, tabla
+  `product_brand_assets`, tarea `producto.recursos` cada minuto):
+  - **Logo** (papel nuevo «Logo», `marca`): emblema circular ilustrado, solo el nombre, 1:1. La idea
+    visual (`ideaMarca`, en inglés) la escribe Claude en el alta, como la escribía Codex.
+  - **Logo web** (papel nuevo «Logo web», `logo_web`): el mismo logo en **vertical** (símbolo arriba,
+    nombre debajo, 3:4), como pidió Emmanuel. Codex lo hacía horizontal.
+  - **Caja**: una por variante (o una para el producto sin variantes), 3/4 sobre gris, con el
+    emblema, la ilustración del producto de esa variante y el texto en el idioma del país
+    (`descriptorCaja`). Queda como «Embalaje» del producto y de su variante: ya la usan las imágenes
+    de unboxing. Las variantes nuevas reciben su caja solas.
+  - Mejoras sobre la salida de Codex: la caja de Codex traía caras fantasma al fondo y el logo
+    horizontal tenía el nombre casi invisible; los prompts piden «only the box: no people, no ghost
+    figures» y el nombre «dark enough to read on white».
+  - Más de 6 créditos por imagen no se envía solo (lo normal son 2).

@@ -266,3 +266,9 @@ export async function productNamesByIds(ids: number[]): Promise<Map<number, stri
     .where(inArray(schema.products.id, unique));
   return new Map(rows.map((row) => [row.id, row.name]));
 }
+
+/** Quién creó un producto (para hacer en su nombre lo que se genera solo). `null` si no existe. */
+export async function productOwnerId(productId: number): Promise<number | null> {
+  const [row] = await getDb().select({ createdBy: schema.products.createdBy }).from(schema.products).where(eq(schema.products.id, productId));
+  return row?.createdBy ?? null;
+}

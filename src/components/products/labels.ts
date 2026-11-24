@@ -16,6 +16,8 @@ export const PHOTO_ROLE_LABELS: Record<PhotoRole, string> = {
   avatar: "Avatar",
   entorno: "Entorno",
   funcionamiento: "Funcionando",
+  marca: "Logo",
+  logo_web: "Logo web",
   otro: "Otra",
 };
 export const PHOTO_ROLE_HINTS: Record<PhotoRole, string> = {
@@ -24,6 +26,8 @@ export const PHOTO_ROLE_HINTS: Record<PhotoRole, string> = {
   avatar: "Avatar: la persona que saldrá en los vídeos",
   entorno: "Entorno: el sitio o el estilo que quieres",
   funcionamiento: "Funcionando: el producto en uso o su efecto (se adjunta con el artículo)",
+  marca: "Logo: el emblema de la cuenta",
+  logo_web: "Logo web: el logo en vertical, para la web",
   otro: "Otra",
 };
 

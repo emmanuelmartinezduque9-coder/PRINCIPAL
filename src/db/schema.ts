@@ -144,7 +144,7 @@ export const productPhotos = pgTable(
   },
   (t) => [
     index("product_photos_product").on(t.productId, t.id),
-    check("product_photos_role_valid", sql`${t.role} in ('articulo', 'embalaje', 'avatar', 'entorno', 'funcionamiento', 'otro')`),
+    check("product_photos_role_valid", sql`${t.role} in ('articulo', 'embalaje', 'avatar', 'entorno', 'funcionamiento', 'marca', 'logo_web', 'otro')`),
   ],
 );
 
@@ -1699,3 +1699,35 @@ export const rejectionTypes = pgTable("rejection_types", {
   reason: text("reason").notNull(),
   classifiedAt: instant("classified_at").notNull().defaultNow(),
 });
+
+/**
+ * Recursos de marca de un producto que se generan solos al crearlo (copiado de Codex,
+ * `nuevo-producto`): el logo-emblema (`marca`), el logo en vertical para la web (`logo_web`) y una
+ * caja (`caja`) por variante (o una para el producto si no tiene variantes). Ver
+ * `src/server/product-brand-assets.ts`.
+ */
+export const productBrandAssets = pgTable(
+  "product_brand_assets",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    productId: bigint("product_id", { mode: "number" })
+      .notNull()
+      .references(() => products.id, { onDelete: "cascade" }),
+    kind: text("kind").notNull(),
+    variantId: bigint("variant_id", { mode: "number" }),
+    /** `pendiente`, `enviado`, `hecho` o `fallido`. */
+    status: text("status").notNull().default("pendiente"),
+    jobId: text("job_id"),
+    credits: integer("credits"),
+    photoId: bigint("photo_id", { mode: "number" }).references((): AnyPgColumn => productPhotos.id, { onDelete: "set null" }),
+    attempts: integer("attempts").notNull().default(0),
+    error: text("error"),
+    createdAt: instant("created_at").notNull().defaultNow(),
+    updatedAt: instant("updated_at").notNull().defaultNow(),
+  },
+  (t) => [
+    check("product_brand_assets_kind_valid", sql`${t.kind} in ('marca', 'logo_web', 'caja')`),
+    check("product_brand_assets_status_valid", sql`${t.status} in ('pendiente', 'enviado', 'hecho', 'fallido')`),
+    uniqueIndex("product_brand_assets_one").on(t.productId, t.kind, sql`coalesce(${t.variantId}, 0)`),
+  ],
+);

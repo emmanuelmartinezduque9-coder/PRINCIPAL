@@ -1,6 +1,7 @@
 import { defineJob, defineSchedule } from "@/jobs/registry";
 import { StepFailedError } from "@/jobs/steps";
 import { advanceIntake, INTAKE_JOB, INTAKE_SWEEP, intakeSweep } from "@/server/product-intake";
+import { BRAND_SWEEP, brandAssetsSweep } from "@/server/product-brand-assets";
 import { RESEARCH_JOB, RESEARCH_SWEEP, researchSweep, runResearch } from "@/server/product-research";
 
 /**
@@ -33,3 +34,6 @@ defineJob<{ researchId: number }>(
 
 /** Cada minuto: las búsquedas que esperan las cifras del Mac o una ronda nueva de candidatos. */
 defineSchedule(RESEARCH_SWEEP, "* * * * *", () => researchSweep());
+
+/** Cada minuto: logo, logo web y cajas de los productos nuevos (en el Higgsfield de quien los creó). */
+defineSchedule(BRAND_SWEEP, "* * * * *", () => brandAssetsSweep());
