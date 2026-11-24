@@ -161,12 +161,15 @@
       "docs/casos/referencias-pinterest/regla-refinada-propuesta.md",
       "docs/reglas-motor-del-dueno.md"
     ],
-    "updateNote": "Tienda concreta (24/11): se busca en Pinterest; el prompt no nombra la tienda ni marcas (filtro de Higgsfield)",
+    "updateNote": "24/11: cadena y país reconocibles; segunda búsqueda; último intento con un interior real del país sin otra cadena",
     "replacesSha256": [
       "1c201c1cad4a48d47aa36db5fe1ddcb3c3bf36de5a7ec84972e9e3d5f62ea5d7",
       "879b4d7262960f4f82e3740288d99ea8e1c9ab05a6495c0dcb4e878c60619149",
       "4c5689fb447202d164a2da761b3ca00bac061597d4ab6503c85fff19e6d59100",
-      "4b5716e9b7b55a478ddf4f8c2aa5762849a83e2211a18e931780a4523834aaad"
+      "4b5716e9b7b55a478ddf4f8c2aa5762849a83e2211a18e931780a4523834aaad",
+      "0971b331f7bb798c2a19616c4f05228c9685c3ac92e4112bd137117d616aa88a",
+      "49d126531574ae55f4b15287d406d7a69f49e458ad590f6f9418b6f182a7a5a8",
+      "d08ff1092d6166d99948fee49315eb31342397eded5761aca73c542a589b4390"
     ]
   },
   {

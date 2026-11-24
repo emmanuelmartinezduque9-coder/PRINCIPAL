@@ -79,3 +79,40 @@ rechazo del dueño no llegaba a la siguiente imagen. Ahora: `COMPOSE_INSTRUCTION
 momento de image 1 y pone el producto del encargo en la mano (o sus cajas en el escaparate); el banco y la
 composición eligen un fondo del tipo de producto; el NEGATIVE prohíbe franjas y bordes; el motivo del rechazo
 del dueño (`OWNER_CORRECTION_PREFIX`) pasa a la escena y al prompt, y al rechazarse se rehace la sala.
+
+## Se vuelve a buscar en Pinterest, con los filtros del dueño (24/11/2026)
+
+Orden expresa de Emmanuel: se acabó reutilizar el banco. `BANK_ONLY = false`. Toda imagen inicial busca en
+Pinterest según la escena, con sus filtros (fotos de iPhone, verticales, orgánicas; nada cuadrado, profesional,
+de estudio, de stock, render ni retocado), aplicados en tres sitios:
+- **Consultas** (`PLAN_INSTRUCTIONS`): cada una lleva una palabra de foto de móvil y nunca «professional»,
+  «studio», «stock», «aesthetic»…
+- **Medidas** (`phoneShapedFirst`): fuera las originales con alto/ancho < 1,2 o lado largo < 1000 px; primero
+  las verticales con medidas, después las que no traen medidas (las mira la visión).
+- **Visión** (`PICK_INSTRUCTIONS`): ve las medidas de cada candidata y rechaza cuadradas u horizontales, de
+  cámara profesional, de estudio, de stock, retocadas o de baja resolución.
+
+El banco solo es respaldo cuando Pinterest no da nada válido (sin candidatas, ninguna pasa el filtro, ninguna
+se elige o no bajan), y el registro lo dice («se usa el banco de respaldo»). Con una tienda concreta no hay
+respaldo: se reintenta. Un fondo subido a mano sigue mandando (no se busca); un ambiente o realismo a mano
+ocupa el hueco de realismo, también con fotos de Pinterest. En Codex no había filtros de medidas: se copiaron
+sus criterios de elección y sus consultas de ejemplo (`criterios-seleccion-manual.md`).
+
+## Cadena y país reconocibles; segunda búsqueda (24/11/2026)
+
+En la prueba real, el vídeo 20 (supermercado discount alemán) eligió tiendas que no eran Aldi ni Lidl (una,
+con rótulo «hôma», de fuera de Alemania) y el 15 (dm) una droguería sin rótulo de dm. Orden del dueño: pidió
+dm, Sephora y Lidl precisamente para que se vea esa tienda. Ahora la escena trae `requiredChain` (la cadena
+que tiene que reconocerse) y `retryQueries`; la elección con visión exige reconocer la cadena (rótulo, logo,
+colores o mobiliario) y que rótulos, precios e idioma sean del país del anuncio, sin quedarse con «lo más
+cercano». Si en la primera búsqueda ninguna vale, se busca otra vez con `retryQueries` (cadena + ciudad o
+país, en el idioma local) y el registro lo dice («se busca otra vez»). Solo después se reintenta (tienda
+pedida) o se usa el banco de respaldo (sin tienda).
+
+Prueba real (vídeos 15 y 20): con la exigencia estricta, ninguna foto valió ni en la segunda búsqueda
+(Pinterest casi no tiene fotos de móvil del interior de dm o de Aldi en Alemania: salían dm de Eslovaquia,
+Aldi de EE. UU., collages, fachadas). Fallar ahí pararía el lote, contra la regla del flujo automático. Por
+eso hay un tercer paso: con las candidatas ya vistas, vale un interior real de ese tipo de tienda en ese
+país, sin rastro de otra cadena ni de otro país (se apunta «último intento»). Además, la escena del vídeo 20
+se inventó «Aldi» como tienda pedida (namedPlace), lo que quitaba el respaldo del banco: namedPlace es solo
+lo que escribe el dueño; lo que exige la escena va en `requiredChain`.
