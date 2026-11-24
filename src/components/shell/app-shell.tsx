@@ -1,7 +1,7 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { BookOpen, Film, Layers, LogOut, Music, Package, Settings, UserRound, Users, Wallet, type LucideIcon } from "lucide-react";
+import { BookOpen, Film, Layers, LogOut, Music, Package, Settings, TrendingUp, UserRound, Users, Wallet, type LucideIcon } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef } from "react";
@@ -11,6 +11,7 @@ import { cn, initials } from "@/lib/utils";
 import { Brand } from "./brand";
 import { ThemeToggle } from "./theme-toggle";
 import { useNewBatchDraft } from "@/components/batches/draft-provider";
+import { ReportButton } from "@/components/mejoras/report-button";
 
 interface NavItem {
   href: string;
@@ -26,6 +27,7 @@ const NAV: NavItem[] = [
   { href: "/biblioteca", label: "Biblioteca", icon: Film },
   { href: "/canciones", label: "Canciones", icon: Music },
   { href: "/avatares", label: "Avatares", icon: UserRound },
+  { href: "/mejoras", label: "Mejoras", icon: TrendingUp },
   { href: "/gasto", label: "Gasto", icon: Wallet, ownerOnly: true },
   { href: "/reglas", label: "Reglas", icon: BookOpen, ownerOnly: true },
   { href: "/personas", label: "Personas", icon: Users, ownerOnly: true },
@@ -34,7 +36,7 @@ const NAV: NavItem[] = [
 
 const ROLE_LABELS: Record<AuthUser["role"], string> = { dueno: "Dueño", colaborador: "Colaborador" };
 
-/** Opciones del menú que ve una persona según su papel: todos, Productos, Lotes, Biblioteca, Canciones, Avatares y Ajustes; el dueño, además Gasto, Reglas y Personas. */
+/** Opciones del menú que ve una persona según su papel: todos, Productos, Lotes, Biblioteca, Canciones, Avatares, Mejoras (sus reportes) y Ajustes; el dueño, además Gasto, Reglas y Personas. */
 export function navFor(role: AuthUser["role"] | undefined): NavItem[] {
   return NAV.filter((item) => !item.ownerOnly || role === "dueno");
 }
@@ -244,6 +246,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           })}
         </nav>
         <div className="mt-auto flex flex-col gap-2 p-3">
+          <ReportButton target={{ stage: "pantalla" }} className="justify-start" />
           <ThemeToggle className="w-full" />
           <div className="flex items-center gap-1 rounded-lg">
             {data?.user ? <CurrentUser user={data.user} /> : null}
@@ -257,6 +260,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         <header className="sticky top-0 z-30 flex h-14 items-center justify-between border-b bg-background/90 px-4 backdrop-blur md:hidden">
           <HomeLink />
           <div className="flex items-center gap-1">
+            <ReportButton target={{ stage: "pantalla" }} compact className="size-10 justify-center" />
             <ThemeToggle />
             <SignOutButton className="size-10 justify-center" />
           </div>

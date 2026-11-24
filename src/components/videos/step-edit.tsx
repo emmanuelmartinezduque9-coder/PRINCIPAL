@@ -10,6 +10,7 @@ import { Label } from "@/components/ui/label";
 import { api } from "@/lib/api";
 import { EditDownload, EditNotice, EditPlayer, SelfCheck, StartEditButton } from "./edit-parts";
 import type { VideoViewJson } from "./labels";
+import { ReportButton } from "@/components/mejoras/report-button";
 
 /** Los dos rótulos del montaje (el principal y el CTA). Sirven para el siguiente «Montar». */
 function EditTexts({ view }: { view: VideoViewJson }) {
@@ -73,6 +74,7 @@ export function StepEdit({ view }: { view: VideoViewJson }) {
         {edit.latest !== null || edit.status === "fallido" ? <StartEditButton videoId={video.id} edit={edit} /> : null}
         <SelfCheck edit={edit} />
         <EditTexts key={`${view.editTexts.main}|${view.editTexts.cta}`} view={view} />
+        <ReportButton target={{ stage: "montaje", videoId: video.id }} className="self-start" />
       </aside>
     </div>
   );

@@ -19,6 +19,7 @@ import { PinterestRefs } from "./pinterest-refs";
 import { RejectDialog } from "./reject-dialog";
 import { ResultImage } from "./result-image";
 import { useGenerationActions } from "./use-generation";
+import { ReportButton } from "@/components/mejoras/report-button";
 
 /** Estados del clip que ya no atan la imagen aprobada (como `CLIP_RELEASES_FRAME` en el servidor). */
 const CLIP_RELEASES_FRAME = ["not_sent", "failed"];
@@ -238,6 +239,7 @@ export function StepFrame({ view, onGoToClip }: { view: VideoViewJson; onGoToCli
         ) : null}
 
         {mine && closed ? <NoRegenerationsLeft what="imagen" /> : null}
+        <ReportButton target={{ stage: "imagen", videoId: video.id, generationId: current?.id ?? null }} className="self-start" />
       </aside>
     </div>
   );

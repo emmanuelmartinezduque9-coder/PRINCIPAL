@@ -1591,3 +1591,110 @@ export const videoReferences = pgTable(
     check("video_references_role_valid", sql`${t.role} in ('fondo', 'ambiente', 'ropa', 'realismo', 'otro')`),
   ],
 );
+
+/**
+ * Reportes de un problema («Reportar un problema», `src/server/videos/mejoras/`): lo que vio una persona,
+ * ligado al objeto concreto (vídeo, generación y resultado, montaje, lote o pantalla) con su versión.
+ * Claude (Haiku) lo clasifica: tipo de problema, causa y qué hace falta (regla/prompt, código o nada).
+ * Recorrido: `recibido` → `clasificado` → `aplicado` → `comprobado` | `no_mejora`, o `sin_arreglo`.
+ */
+export const problemReports = pgTable(
+  "problem_reports",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    createdBy: bigint("created_by", { mode: "number" }).notNull(),
+    createdAt: instant("created_at").notNull().defaultNow(),
+    /** `imagen`, `clip`, `montaje`, `lote`, `desglose` o `pantalla`. */
+    stage: text("stage").notNull(),
+    body: text("body").notNull(),
+    screenshotMime: text("screenshot_mime"),
+    screenshot: bytea("screenshot"),
+    videoId: bigint("video_id", { mode: "number" }).references(() => videos.id, { onDelete: "set null" }),
+    generationId: bigint("generation_id", { mode: "number" }).references(() => generations.id, { onDelete: "set null" }),
+    resultId: bigint("result_id", { mode: "number" }).references(() => generationResults.id, { onDelete: "set null" }),
+    editId: bigint("edit_id", { mode: "number" }).references(() => edits.id, { onDelete: "set null" }),
+    batchId: bigint("batch_id", { mode: "number" }).references(() => batches.id, { onDelete: "set null" }),
+    productId: bigint("product_id", { mode: "number" }),
+    /** La página donde se reportó. */
+    page: text("page"),
+    /** Qué versión vio: «imagen, ronda 2», «montaje v3»… */
+    versionLabel: text("version_label"),
+    /** Versión de la web (commit) cuando se reportó. */
+    appVersion: text("app_version").notNull(),
+    status: text("status").notNull().default("recibido"),
+    problemType: text("problem_type"),
+    fixKind: text("fix_kind"),
+    /** La causa, en español sencillo. */
+    cause: text("cause"),
+    correctionId: bigint("correction_id", { mode: "number" }),
+    classifiedAt: instant("classified_at"),
+    classifyAttempts: integer("classify_attempts").notNull().default(0),
+    /** No se vuelve a intentar clasificar antes (tope de gasto, Claude sin configurar…). */
+    classifyAfter: instant("classify_after"),
+    classifyError: text("classify_error"),
+    /** Arreglo de código: el commit que lo arregla, cuándo y una nota. */
+    codeCommit: text("code_commit"),
+    codeFixedAt: instant("code_fixed_at"),
+    codeNote: text("code_note"),
+    updatedAt: instant("updated_at").notNull().defaultNow(),
+  },
+  (t) => [
+    index("problem_reports_status").on(t.status, t.id),
+    index("problem_reports_user").on(t.createdBy, t.id),
+    index("problem_reports_video").on(t.videoId),
+    check("problem_reports_stage_valid", sql`${t.stage} in ('imagen', 'clip', 'montaje', 'lote', 'desglose', 'pantalla')`),
+    check(
+      "problem_reports_status_valid",
+      sql`${t.status} in ('recibido', 'clasificado', 'aplicado', 'comprobado', 'no_mejora', 'sin_arreglo')`,
+    ),
+    check("problem_reports_fix_kind_valid", sql`${t.fixKind} is null or ${t.fixKind} in ('regla', 'codigo', 'uso')`),
+  ],
+);
+
+/**
+ * Correcciones aprendidas: una instrucción corta (en inglés, como los prompts) que el motor añade al
+ * prompt de la imagen inicial (`frame`) o del clip (`clip`), para todos los productos o solo uno.
+ * Cada fila es una versión inmutable (`key`, `version`); cambiarla es una versión nueva y la anterior
+ * se retira. Se sabe qué generación la llevó porque el texto va literal en su prompt.
+ */
+export const learnedCorrections = pgTable(
+  "learned_corrections",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    key: text("key").notNull(),
+    version: integer("version").notNull(),
+    stage: text("stage").notNull(),
+    problemType: text("problem_type").notNull(),
+    productId: bigint("product_id", { mode: "number" }),
+    directive: text("directive").notNull(),
+    /** Qué corrige, en español sencillo. */
+    note: text("note").notNull(),
+    /** `activa` o `retirada`. */
+    status: text("status").notNull().default("activa"),
+    sourceReportId: bigint("source_report_id", { mode: "number" }),
+    /** Nulo: la creó la clasificación automática. */
+    createdBy: bigint("created_by", { mode: "number" }),
+    createdAt: instant("created_at").notNull().defaultNow(),
+    retiredAt: instant("retired_at"),
+  },
+  (t) => [
+    unique("learned_corrections_key_version").on(t.key, t.version),
+    index("learned_corrections_active").on(t.stage, t.status),
+    check("learned_corrections_stage_valid", sql`${t.stage} in ('frame', 'clip')`),
+    check("learned_corrections_status_valid", sql`${t.status} in ('activa', 'retirada')`),
+  ],
+);
+
+/**
+ * Tipo de problema de cada rechazo con motivo (`generations.reject_reason`), clasificado con Haiku en
+ * lotes: es lo que permite contar regeneraciones por tipo antes y después de una corrección.
+ */
+export const rejectionTypes = pgTable("rejection_types", {
+  generationId: bigint("generation_id", { mode: "number" })
+    .primaryKey()
+    .references(() => generations.id, { onDelete: "cascade" }),
+  problemType: text("problem_type").notNull(),
+  /** El motivo tal como se clasificó (si cambia, se vuelve a clasificar). */
+  reason: text("reason").notNull(),
+  classifiedAt: instant("classified_at").notNull().defaultNow(),
+});

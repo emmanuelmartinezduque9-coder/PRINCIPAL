@@ -9,6 +9,7 @@ import { useRef, useState } from "react";
 import { toast } from "sonner";
 import { ActionBar } from "@/components/shell/action-bar";
 import { EmptyState } from "@/components/shell/empty-state";
+import { ReportButton } from "@/components/mejoras/report-button";
 import { PageHeader } from "@/components/shell/page-header";
 import { MusicPicker } from "@/components/songs/music-picker";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -707,6 +708,7 @@ export function BatchBoard({ batchId }: { batchId: number }) {
           <time dateTime={data.batch.createdAt} className="px-1">
             {format(new Date(data.batch.createdAt), "d MMM yyyy", { locale: es })}
           </time>
+          <ReportButton target={{ stage: "lote", batchId: data.batch.id }} className="h-7" />
         </div>
       </PageHeader>
 

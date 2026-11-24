@@ -18,6 +18,7 @@ import { onRadioKeyDown, radioTabIndex } from "./radio-keys";
 import { RejectDialog } from "./reject-dialog";
 import { NoRegenerationsLeft, RegenerationsLeft } from "./step-frame";
 import { useGenerationActions } from "./use-generation";
+import { ReportButton } from "@/components/mejoras/report-button";
 
 const RESOLUTIONS: Array<{ value: ClipResolution; note?: string }> = [
   { value: "480p", note: "la más barata" },
@@ -290,6 +291,7 @@ export function StepClip({
         {hookOnly ? <Bodies bodies={view.bodies} /> : null}
 
         {mine && closed && !canRequest ? <NoRegenerationsLeft what="clip" /> : null}
+        <ReportButton target={{ stage: "clip", videoId: video.id, generationId: current?.id ?? null }} className="self-start" />
       </aside>
     </div>
   );

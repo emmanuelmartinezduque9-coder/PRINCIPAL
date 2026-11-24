@@ -18,6 +18,7 @@ import { getProductFor } from "@/server/products";
 import { fileSlug } from "@/server/videos/filename";
 import { asHttp, registerRequestBuilder, type GenDeps, type RequestBuilder } from "@/server/videos/generations";
 import { clipManifest, clipPromptFor, type ManifestItem } from "@/server/videos/manifest";
+import { learnedSuffix } from "@/server/videos/mejoras/corrections";
 import { checkVideoPrompt, PROMPT_ERROR } from "@/server/videos/prompt-check";
 import {
   BRIEF_CHANGED,
@@ -134,8 +135,8 @@ export const buildClipRequest: RequestBuilder = async (user, video, deps) => {
   if (problem) throw new HttpError(409, problem);
   const manifest = clipManifest(video, await manifestRefsFor(user, video), undefined, model);
   if (manifest.some((item) => item.source.kind === "avatar_pending")) throw new HttpError(409, NO_AUTO_AVATAR);
-  // Correcciones aprendidas de los reportes («Mejoras», `src/server/mejoras/`): van literales al final.
-  const prompt = clipPromptFor(video.videoPrompt ?? "", manifest);
+  // Correcciones aprendidas de los reportes («Mejoras», `src/server/videos/mejoras/`): van literales al final.
+  const prompt = `${clipPromptFor(video.videoPrompt ?? "", manifest)}${await learnedSuffix("clip", video.productId)}`;
   const error = checkVideoPrompt(prompt, manifest).find((issue) => issue.level === "error");
   if (error) throw new HttpError(400, error.message, PROMPT_ERROR);
 
