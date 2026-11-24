@@ -165,3 +165,20 @@ export async function saveEditChange(videoId: number, override: EditOverride, re
     })
     .where(eq(schema.videos.id, videoId));
 }
+
+/** Una vez por `key` (al arrancar el worker): pide un cambio como quien creó el vídeo, por el mismo camino que el botón. */
+export async function requestEditChangeOnce(key: string, videoId: number, instruction: string, now: Date = new Date()): Promise<void> {
+  const { getSetting, setSetting } = await import("@/db/client");
+  const { getActiveUser } = await import("@/server/auth");
+  if (await getSetting<string>(key)) return;
+  await setSetting(key, now.toISOString());
+  const [video] = await getDb().select({ createdBy: schema.videos.createdBy }).from(schema.videos).where(eq(schema.videos.id, videoId));
+  const user = video ? await getActiveUser(video.createdBy) : null;
+  if (!user) return;
+  try {
+    const { runId, reportId } = await requestEditChange(user, videoId, instruction, now);
+    console.log(`[montaje] Cambio pedido (${key}) en el vídeo ${videoId}: montaje ${runId}, reporte ${reportId}.`);
+  } catch (error) {
+    console.warn(`[montaje] No se pudo pedir el cambio ${key} del vídeo ${videoId}: ${error instanceof Error ? error.message : error}`);
+  }
+}
