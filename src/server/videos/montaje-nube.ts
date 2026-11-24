@@ -310,7 +310,7 @@ async function decompose(file: string, dir: string, deps: MontajeDeps): Promise<
   const python = deps.reaPython === undefined ? process.env.REA_VIDEO_PYTHON || deps.python || process.env.MONTADOR_PYTHON || "python3" : deps.reaPython;
   if (!python) return null;
   const out = path.join(dir, "rea");
-  const ran = await runProgram(python, ["-m", "rea_video", "decompose", file, "-o", out], { cwd: dir, timeoutMs: REA_VIDEO_TIMEOUT_MS, env: safeEnv() });
+  const ran = await runProgram(python, ["-m", "rea_video", "decompose", file, "-o", out], { cwd: dir, timeoutMs: REA_VIDEO_TIMEOUT_MS, env: safeEnv(numbaCacheOf(dir)) });
   if (ran.code !== 0) {
     console.warn(`[montaje] rea-video no pudo: ${ran.timedOut ? "tardó demasiado" : lastLine(ran.stderr)}`);
     return null;
@@ -321,6 +321,12 @@ async function decompose(file: string, dir: string, deps: MontajeDeps): Promise<
     return null;
   }
 }
+
+/**
+ * Caché de numba (la usa librosa) de UN montaje, dentro de su carpeta. Una caché compartida (`/tmp/numba`) por varios
+ * montajes a la vez se corrompe y el montador muere con SIGSEGV en `librosa.onset` (vídeo 21 del lote 6, 24/11/2026).
+ */
+const numbaCacheOf = (dir: string) => ({ NUMBA_CACHE_DIR: path.join(dir, "numba") });
 
 /** Entorno de los programas: sin secretos de la web (base de datos, bóveda, claves). */
 function safeEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv {
@@ -502,7 +508,7 @@ export async function runEdit(run: Run, deps: MontajeDeps = {}): Promise<"done" 
             const ran = await runProgram(python, ["-B", path.join(montadorDir, "doblar.py"), "--resultado", out, ...args], {
               cwd: montadorDir,
               timeoutMs: DOBLAR_TIMEOUT_MS,
-              env: safeEnv(),
+              env: safeEnv(numbaCacheOf(dir)),
             });
             try {
               return JSON.parse(await fs.readFile(out, "utf8")) as import("@/server/videos/doblaje").DoblarResult;
@@ -555,7 +561,7 @@ export async function runEdit(run: Run, deps: MontajeDeps = {}): Promise<"done" 
     const ran = await runProgram(python, ["-B", path.join(montadorDir, "montar_auto.py"), specPath, work], {
       cwd: montadorDir,
       timeoutMs: MONTADOR_TIMEOUT_MS,
-      env: safeEnv({ MONTADOR_FUENTE: font, MONTADOR_CACHE: path.join(os.tmpdir(), "montador-cache"), ...(emojiFont ? { EMOJI_FONT: emojiFont } : {}) }),
+      env: safeEnv({ ...numbaCacheOf(dir), MONTADOR_FUENTE: font, MONTADOR_CACHE: path.join(os.tmpdir(), "montador-cache"), ...(emojiFont ? { EMOJI_FONT: emojiFont } : {}) }),
     });
     let result: { ok?: boolean; error?: string; autocomprobacion?: unknown; avisos?: unknown } | null = null;
     try {

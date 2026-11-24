@@ -44,7 +44,8 @@ work = Path(sys.argv[2])
 ref = (spec.get('referenceAudio') or {}).get('path')
 audio = Path(ref).read_bytes()[:30].decode('utf8', 'replace') if ref else 'ninguno'
 shutil.copy(spec['clips'][0]['path'], work / 'salida.mp4')
-(work / 'resultado.json').write_text(json.dumps({'ok': True, 'avisos': spec.get('avisos', []) + ['audio:' + audio],
+import os
+(work / 'resultado.json').write_text(json.dumps({'ok': True, 'avisos': spec.get('avisos', []) + ['audio:' + audio, 'numba:' + os.environ.get('NUMBA_CACHE_DIR', '')],
   'autocomprobacion': {'ok': True, 'avisos': [], 'planos': 3, 'cortesEnBeat': '2/2', 'intentos': 1}}))
 `;
 
@@ -191,6 +192,15 @@ async function mount(videoId: number, over: Partial<MontajeDeps> = {}) {
 
 const dubRows = () => getDb().select().from(schema.dubs).orderBy(schema.dubs.id);
 const dubCalls = () => hf.calls.filter((c) => c.method === "submitDubbing");
+
+describe("caché de numba", () => {
+  it("cada montaje usa su propia caché de numba (una compartida se corrompe y el montador muere con SIGSEGV)", async () => {
+    const video = await videoWithAudio({ dubDialogue: false });
+    const { row } = await mount(video.id);
+    const numba = row.notes!.find((n) => n.startsWith("numba:"))!.slice("numba:".length);
+    expect(numba).toMatch(new RegExp(`montaje-${row.id}-[^/]+/numba$`));
+  });
+});
 
 describe("la opción", () => {
   it("por defecto se dobla (regla fija del dueño); solo no si se apaga en la tarjeta", async () => {
