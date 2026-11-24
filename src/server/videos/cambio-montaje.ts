@@ -166,19 +166,28 @@ export async function saveEditChange(videoId: number, override: EditOverride, re
     .where(eq(schema.videos.id, videoId));
 }
 
-/** Una vez por `key` (al arrancar el worker): pide un cambio como quien creó el vídeo, por el mismo camino que el botón. */
-export async function requestEditChangeOnce(key: string, videoId: number, instruction: string, now: Date = new Date()): Promise<void> {
+/**
+ * Una vez por `key` (al arrancar el worker): deshace los cambios pedidos de un vídeo y lo vuelve a montar como en el
+ * montaje `runId` (sus mismos rótulos de la tarjeta; los de la referencia, de la lectura guardada).
+ */
+export async function undoEditChangesOnce(key: string, videoId: number, runId: number, now: Date = new Date()): Promise<void> {
   const { getSetting, setSetting } = await import("@/db/client");
   const { getActiveUser } = await import("@/server/auth");
   if (await getSetting<string>(key)) return;
   await setSetting(key, now.toISOString());
-  const [video] = await getDb().select({ createdBy: schema.videos.createdBy }).from(schema.videos).where(eq(schema.videos.id, videoId));
+  const [video] = await getDb().select().from(schema.videos).where(eq(schema.videos.id, videoId));
+  const [run] = await getDb().select({ spec: schema.editRuns.spec, videoId: schema.editRuns.videoId }).from(schema.editRuns).where(eq(schema.editRuns.id, runId));
   const user = video ? await getActiveUser(video.createdBy) : null;
-  if (!user) return;
+  if (!video || !user || run?.videoId !== videoId) return;
+  const texts = (run.spec as { texts?: { main: string; cta: string } }).texts;
+  await getDb()
+    .update(schema.videos)
+    .set({ editOverride: null, ...(texts ? { editMainText: texts.main, editCtaText: texts.cta } : {}) })
+    .where(eq(schema.videos.id, videoId));
   try {
-    const { runId, reportId } = await requestEditChange(user, videoId, instruction, now);
-    console.log(`[montaje] Cambio pedido (${key}) en el vídeo ${videoId}: montaje ${runId}, reporte ${reportId}.`);
+    const { runId: next } = await queueEdit({ ...video, editOverride: null, ...(texts ? { editMainText: texts.main, editCtaText: texts.cta } : {}) }, await getProductFor(user, video.productId), user.id, now);
+    console.log(`[montaje] Vídeo ${videoId}: cambios pedidos deshechos (${key}), se monta otra vez como el montaje ${runId}: montaje ${next}.`);
   } catch (error) {
-    console.warn(`[montaje] No se pudo pedir el cambio ${key} del vídeo ${videoId}: ${error instanceof Error ? error.message : error}`);
+    console.warn(`[montaje] No se pudo volver a montar el vídeo ${videoId} (${key}): ${error instanceof Error ? error.message : error}`);
   }
 }

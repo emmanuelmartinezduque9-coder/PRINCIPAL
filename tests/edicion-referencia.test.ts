@@ -14,7 +14,7 @@ import type { AuthUser } from "@/server/auth";
 import { saveCredential } from "@/server/credentials";
 import { REFERENCE_EDIT_INSTRUCTIONS, refineSwitch, targetPlace, withLocalPlaces, withoutThirdParties } from "@/server/videos/edicion-referencia";
 import { setAssignments } from "@/server/access";
-import { requestEditChange } from "@/server/videos/cambio-montaje";
+import { requestEditChange, undoEditChangesOnce } from "@/server/videos/cambio-montaje";
 import { startEdit, type EditSpec } from "@/server/videos/edits";
 import { processReference } from "@/server/videos/intake";
 import { claimRun, runEdit, type MontajeDeps } from "@/server/videos/montaje-nube";
@@ -357,6 +357,16 @@ describe("«¿Qué quieres cambiar?» en el montaje", () => {
     expect(report).toMatchObject({ stage: "montaje", videoId: video.id, createdBy: ana.id });
     expect(report.body).toContain("que el primer rótulo diga que es en Berlín");
     expect(report.versionLabel).toBe("montaje v1");
+    // Deshacerlo: vuelve a montarse como el primer montaje (los rótulos leídos), sin pasar por Claude.
+    const original = (await getDb().select().from(schema.editRuns).where(eq(schema.editRuns.videoId, video.id)).orderBy(schema.editRuns.id))[0];
+    await undoEditChangesOnce("prueba.deshacer", video.id, original.id);
+    await undoEditChangesOnce("prueba.deshacer", video.id, original.id);
+    expect(await runNext()).toBe("done");
+    const undone = (await getDb().select().from(schema.editRuns).where(eq(schema.editRuns.videoId, video.id)).orderBy(schema.editRuns.id)).at(-1)!;
+    expect(cueTexts(undone)).toEqual(cueTexts(original));
+    expect((await getVideoFor(ana, video.id)).editOverride).toBeNull();
+    await requestEditChange(ana, video.id, "que el primer rótulo diga que es en Berlín");
+    expect(await runNext()).toBe("done");
     // Volver a montar sin cambio: los rótulos cambiados se quedan y no se vuelve a llamar a Claude para el cambio.
     const before = calls.length;
     const again = await mount(video.id);

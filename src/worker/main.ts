@@ -79,12 +79,9 @@ startWorker().then(
           note: "Regla 6c en la lectura de la edición de la referencia: todo lugar o país del original se cambia por el de la tarjeta o el del producto (targetPlace), con red de seguridad withLocalPlaces también sobre las lecturas guardadas. El vídeo 24 se vuelve a montar.",
         });
         await remountEditsOnce("montaje.remontado-24-lugar-20261124", [24]);
-        // Una vez: prueba de verdad de «¿Qué quieres cambiar?» (encargo del 24/11/2026) en el vídeo 24.
-        await (await import("@/server/videos/cambio-montaje")).requestEditChangeOnce(
-          "montaje.cambio-prueba-24-20261124",
-          24,
-          "En el último rótulo, cambia «Hoodie» por «Kapuzenpullover». Lo demás igual.",
-        );
+        // Una vez: la prueba del «¿Qué quieres cambiar?» (montaje 69) cambió el CTA del 24 sin que el dueño lo pidiera;
+        // vuelve a ser como el montaje 68 («Hoodie»).
+        await (await import("@/server/videos/cambio-montaje")).undoEditChangesOnce("montaje.deshacer-prueba-24-20261124", 24, 68);
         // TEMPORAL: enlaces para comprobar a mano el sonido y los rótulos de los ya montados.
         await (await import("@/server/videos/montaje-nube")).logVerifyLinks([15, 22]);
         // Y los doblados antes de la comprobación con Whisper (el vídeo 6 dejó una frase en inglés).
