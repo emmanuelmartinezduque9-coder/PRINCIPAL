@@ -21,6 +21,7 @@ FONT = os.environ.get('MONTADOR_FUENTE') or '/Volumes/AutomatizacionProyecto/AUT
 DEPS = all(importlib.util.find_spec(n) for n in ('freetype', 'uharfbuzz', 'PIL', 'numpy'))
 # Tamaños que eligió el Swift para cada rótulo de cues.json.
 SWIFT_SIZES = [74, 58, 74, 26, 64]
+USEFUL = 886 - 2 * 0.05 * 58 - 12  # ancho útil al tamaño fijo (rotulos_layout.useful_width)
 # Rótulos sin emoji (el dibujo del emoji depende de la fuente de emojis del sistema).
 TEXT_ONLY = [2, 3, 4]
 
@@ -81,7 +82,7 @@ class Texto06B(unittest.TestCase):
             self.assertLess(mean, 3.5 if i in TEXT_ONLY else 6.0, f'rótulo {i}: diferencia media {mean:.2f}')
             self.assertLess(off, 2.0 if i in TEXT_ONLY else 4.0, f'rótulo {i}: {off:.2f} % de píxeles muy distintos')
 
-    def test_programa_como_el_swift(self):
+    def test_programa_tamano_fijo(self):
         with tempfile.TemporaryDirectory() as tmp:
             sys.argv = ['texto06b.py', str(REF / 'cues.json'), tmp, FONT]
             from io import StringIO
@@ -89,8 +90,56 @@ class Texto06B(unittest.TestCase):
             out = StringIO()
             with redirect_stdout(out):
                 self.t.main(sys.argv)
-            self.assertIn('cue 1 size=58.0', out.getvalue())
+            self.assertIn(f'cue 1 size={float(self.t.FIXED_SIZE)}', out.getvalue())
             self.assertTrue((Path(tmp) / 'cue-4.png').is_file())
+
+    def test_equilibrio_pistas(self):
+        text = '„Wir haben unsere Weihnachtsdeko schon aufgehängt… nur eben nicht am Baum 😅"'
+        self.assertIsNone(self.t.balanced_lines(self.font, text))
+        parts = self.t.split_cue_texts(self.font, text)
+        self.assertEqual(len(parts), 2)
+        self.assertEqual(parts, [['„Wir haben unsere', 'Weihnachtsdeko', 'schon aufgehängt…'], ['nur eben nicht am Baum 😅"']])
+        for lines in parts:
+            widths = [self.font.layout(x, self.t.FIXED_SIZE)[1] for x in lines]
+            self.assertLessEqual(len(lines), 3)
+            # Ninguna palabra corta sola en su línea (una palabra larga sola, como «Weihnachtsdeko», no queda coja).
+            self.assertTrue(all(len(line.split()) > 1 or self.font.layout(line, self.t.FIXED_SIZE)[1] >= 0.4 * USEFUL for line in lines))
+            self.assertLessEqual(max(widths), USEFUL)
+            self.assertLess(max(widths)-min(widths), 220)
+            for a, b in zip(widths, widths[1:]):
+                self.assertLessEqual(a, 1.15*b)
+        self.assertEqual(parts, self.t.split_cue_texts(self.font, text.replace('aufgehängt…', 'aufgehängt… |')))
+        self.assertNotEqual(self.t.balanced_lines(self.font, 'Das | perfekte Geschenk für eine Mama mit zerzausten Haaren 😳😅')[0], 'Das')
+
+    def test_partes_tiempos_tamano(self):
+        from rotulos_layout import prepare_cues
+        text = ('Mein Mann hat gesagt, ich soll nicht so viel für Weihnachten ausgeben. '
+                'Also habe ich ihm das hier gekauft und jetzt will er es selbst behalten 😂🎄 ')*2
+        cues = prepare_cues(self.font, [dict(start=2., end=14., text=text, role='cta'),
+                                       dict(start=14., end=16., text='Wow 😍')])
+        self.assertGreater(len(cues), 2)
+        self.assertEqual({c['font_size_px'] for c in cues}, {self.t.FIXED_SIZE})
+        self.assertEqual(cues[0]['start'], 2)
+        self.assertEqual(cues[-1]['end'], 16)
+        for a, b in zip(cues, cues[1:]):
+            self.assertEqual(a['end'], b['start'])
+        for c in cues:
+            self.assertLessEqual(len(c['lines']), 3)
+            self.assertGreaterEqual(c['end']-c['start'], .8-1e-9)
+            self.assertTrue(all(self.font.layout(x, self.t.FIXED_SIZE)[1] <= USEFUL for x in c['lines']))
+        self.assertTrue(all(c['role'] == 'cta' for c in cues[:-1]))
+        self.assertEqual(' '.join(c['text'] for c in cues[:-1]), text.strip())
+        short = prepare_cues(self.font, [dict(start=0., end=.5, text=text)])
+        self.assertGreater(len(short), 1)
+        self.assertEqual(short[-1]['end'], .5)
+
+    def test_centro_vertical(self):
+        centers = []
+        for n in (1, 2, 3):
+            img = self.t.render(self.font, ['Hallo Welt']*n, self.t.FIXED_SIZE)
+            ys = self.np.where(self.np.asarray(img)[..., 3].max(axis=1)>0)[0]
+            centers.append((ys.min()+ys.max())/2)
+        self.assertLessEqual(max(centers)-min(centers), 1)
 
     def test_no_cabe(self):
         with self.assertRaises(ValueError):

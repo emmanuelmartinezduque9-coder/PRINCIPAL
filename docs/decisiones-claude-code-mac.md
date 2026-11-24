@@ -168,3 +168,34 @@ el Claude Code de su Mac (su suscripción) para todo lo que hace Claude; la web 
 - `tests/agente-mac-claude.test.ts`: argumentos y entorno de `claude` (sin clave de API), búsqueda del
   binario, lectura de la salida (JSON, fuentes, límite, sin sesión, cortada) y una vuelta completa con
   `claude` y web de mentira (corte por la web y por tiempo).
+
+## Rótulos: tamaño fijo y líneas equilibradas (06B de Codex)
+
+Orden de Emmanuel (24/11/2026): unos rótulos salían diminutos y otros enormes, con líneas descompensadas
+(«„Wir haben unsere Weihnachtsdeko schon aufgehängt… nur eben nicht am Baum 😅"» a 35 px en dos líneas muy
+desiguales). Causa: cada rótulo se encogía por su cuenta desde 74 px y las líneas venían de los `|` de la
+referencia (en alemán, desiguales) o de cortar a 34 caracteres.
+
+Ahora (`montador/rotulos_layout.py`, usado por `texto06b.py`, `montar_auto.py` y `montador.py`):
+- **Un tamaño fijo para todos los rótulos: 58 px** (los rótulos de Codex solían quedar entre 50 y 64; a 58 la
+  mayoría cabe en dos líneas con el corte en la frase, como los hacía Codex a mano; a 64 salían muchos de tres).
+  Nunca se encoge un rótulo para que quepa.
+- Ancho útil 886 − 2·0,05·58 − 12 = 868,2 px, medido con la fuente real (kerning y emojis). **Máximo 3 líneas.**
+- Se usan las mínimas líneas que caben; sin una palabra corta suelta en su línea (una palabra larga sola, como
+  «Weihnachtsdeko», sí vale); la de arriba ≤ **1,15** × la de abajo si se puede; y entre esas, las líneas más
+  parejas. Con un 3 % del ancho de margen gana el corte en puntuación o en un `|` de la referencia: los `|` son
+  pistas, nunca saltos obligatorios. Los emojis van pegados a la palabra anterior; si una palabra larga con sus
+  emojis no cabe, los emojis pueden bajar de línea.
+- Si no cabe en 3 líneas, se parte en **rótulos seguidos** (primero en fin de frase, luego en coma, luego por
+  palabras), repartiendo el tiempo por caracteres, sin huecos ni solapes, con un mínimo de **0,8 s** por parte
+  cuando hay tiempo. El CTA conserva su papel en todas sus partes; las continuaciones no avisan de «fuera de corte».
+- Misma posición vertical: el bloque se centra siempre en el centro de la caja x112/y287/886×318.
+- Único caso que se encoge: una sola palabra que no cabe ni sola en una línea (rarísimo); ese rótulo, al mayor
+  tamaño en que cabe, para no romper el montaje.
+- Se conserva el resto del 06B: TikTokDisplay-Medium, blanco, contorno 0,05 em, interlínea 35/31, PNG 886×318.
+  `fit_size` queda solo para la prueba de equivalencia con el Swift.
+
+Programado con Codex (`codex exec`) y revisado aquí: se cambió el orden de criterios (el corte en frase manda al
+partir en rótulos; «las más parejas» en vez de «cada línea más corta que la siguiente», que dejaba «„Wir haben»
+sola arriba) y se arregló un fallo real («Das kommt auf meinen Weihnachtswunschzettel 🍦🎄🤭» hacía caer el
+montaje). Pruebas: `montador/test_texto06b.py` y `test_montar_auto.py`.

@@ -26,7 +26,7 @@ Qué hace, en orden (ver README.md y docs/piloto-pedido-54/montaje-v1.md):
     plan-aplicado, autocomprobación, hoja de contactos y tiras de cada corte.
 Los planes v0 (in/out fijos, sin `auto`) siguen funcionando igual que antes.
 """
-import hashlib, json, math, re, subprocess, sys, textwrap
+import hashlib, json, math, re, subprocess, sys
 from pathlib import Path
 
 HOME = Path.home()
@@ -501,11 +501,14 @@ def scene_cuts(path, threshold):
 
 
 # ---------------------------------------------------------------- textos 06B
-def wrap(text):
-    lines = []
-    for part in text.split('\n'):
-        lines.extend(textwrap.wrap(part.strip(), width=34, break_long_words=False, break_on_hyphens=False))
-    return lines
+def wrap(text, font=FONT):
+    from rotulos_layout import balanced_lines, PillowFont
+    try:
+        from texto06b import Fuente
+        measured = Fuente(font)
+    except ImportError:
+        measured = PillowFont(font)
+    return balanced_lines(measured, text)
 
 
 def text_timing(texts, cuts, dur, P):
@@ -530,24 +533,18 @@ def text_timing(texts, cuts, dur, P):
         s, why = starts[i]
         e = starts[i + 1][0] if i + 1 < len(texts) else dur
         if e - s > 1e-6:
-            out.append(dict(start=r4(s), end=r4(e), text=t['text'], lines=t.get('lines'), motivo=why))
+            out.append(dict(t, start=r4(s), end=r4(e), text=t['text'], lines=t.get('lines'), motivo=why))
     return out
 
 
 def render_texts(cues, dur, work, font):
-    for c in cues:
-        c['lines'] = c.get('lines') or wrap(c['text'])
-        c['text'] = ' '.join(c['lines'])
-    if not cues:
-        return cues
-    (work / 'cues.json').write_text(json.dumps([dict(start=c['start'], end=c['end'], lines=c['lines'], text=c['text'])
-                                                for c in cues], ensure_ascii=False))
-    log = run(['/usr/bin/swift', TOOL / 'texto06b.swift', work / 'cues.json', work / 'textos', font])
-    sizes = dict(re.findall(r'cue (\d+) size=([0-9.]+)', log))
-    for i, c in enumerate(cues):
-        c['png'] = str(work / 'textos' / f'cue-{i}.png')
-        c['font_size_px'] = float(sizes[str(i)])
-    return cues
+    # La misma preparación y dibujo 06B también en Mac; evita el autoencogido del Swift.
+    from montar_auto import rotulos_06b, rotulos_pillow
+    try:
+        import texto06b
+    except ImportError:
+        return rotulos_pillow(cues, dur, work, font)
+    return rotulos_06b(cues, dur, work, font)
 
 
 # ---------------------------------------------------------------- mini-zooms (apagados por defecto)
@@ -734,7 +731,7 @@ def self_check(out, segs, cues, beats, P, total):
         on_cut = any(abs(f - x) <= 1 for x in cuts)
         on_beat = any(abs(c['start'] - b) <= 0.06 for b in beats)
         rot.append(dict(t=c['start'], texto=c['text'][:40], en_corte=on_cut, en_beat=on_beat))
-        if not (on_cut or on_beat):
+        if not (on_cut or on_beat) and not c.get('split_continuation'):
             avisos.append(f"rótulo «{c['text'][:30]}…» cambia a {c['start']:.3f} s, fuera de corte y de beat")
     cut_s = [c / FPS for c in cuts]
     dist = [r4(min((abs(c - b) for b in beats), default=9)) for c in cut_s]
@@ -934,7 +931,7 @@ def main():
         if v1:
             cues_t = text_timing(plan.get('texts', []), cuts, dur, P)
         else:
-            cues_t = [dict(start=r4(t['start']), end=r4(min(float(t['end']), dur) if t.get('end') is not None else dur),
+            cues_t = [dict(t, start=r4(t['start']), end=r4(min(float(t['end']), dur) if t.get('end') is not None else dur),
                            text=t['text'], lines=t.get('lines'), motivo='tiempos del plan (v0)') for t in plan.get('texts', [])]
         cues = render_texts(cues_t, dur, work, plan.get('font', FONT))
         zooms, zoom_skipped = ([], [])

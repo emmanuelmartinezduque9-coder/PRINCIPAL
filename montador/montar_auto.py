@@ -100,10 +100,9 @@ def rotulos_06b(cues, dur, work, font):
     out = Path(work) / 'textos'
     out.mkdir(parents=True, exist_ok=True)
     fuente = texto06b.Fuente(font)
+    cues = texto06b.prepare_cues(fuente, cues)
     for i, c in enumerate(cues):
-        c['lines'] = c.get('lines') or m.wrap(c['text'])
-        c['text'] = ' '.join(c['lines'])
-        size = texto06b.fit_size(fuente, c['lines'])
+        size = c['font_size_px']
         c['png'] = str(out / f'cue-{i}.png')
         texto06b.render(fuente, c['lines'], size).save(c['png'])
         c['font_size_px'] = float(size)
@@ -116,23 +115,23 @@ def rotulos_pillow(cues, dur, work, font):
     out = Path(work) / 'textos'
     out.mkdir(parents=True, exist_ok=True)
     w, h = m.BOX['w'], m.BOX['h']
+    from rotulos_layout import prepare_cues, PillowFont, FIXED_SIZE
+    measured = PillowFont(font)
+    cues = prepare_cues(measured, cues)
     for i, c in enumerate(cues):
-        c['lines'] = c.get('lines') or m.wrap(c['text'])
-        c['text'] = ' '.join(c['lines'])
-        size = 72
-        while True:
-            f = ImageFont.truetype(font, size)
-            widths = [f.getbbox(line)[2] for line in c['lines']] or [0]
-            if (max(widths) <= w and len(c['lines']) * size * 1.15 <= h) or size <= 20:
-                break
-            size -= 2
+        size = c['font_size_px']
+        f = measured.font if size == FIXED_SIZE else ImageFont.truetype(str(font), size)
         img = Image.new('RGBA', (w, h), (0, 0, 0, 0))
         d = ImageDraw.Draw(img)
-        y = (h - len(c['lines']) * size * 1.15) / 2
+        adv = size * 35 / 31
+        asc, desc = f.getmetrics()
+        total = asc + desc + adv * (len(c['lines']) - 1)
+        baseline = (h - total) / 2 + asc
         for line in c['lines']:
-            x = (w - f.getbbox(line)[2]) / 2
-            d.text((x, y), line, font=f, fill='white', stroke_width=max(1, round(size * 0.05)), stroke_fill='black')
-            y += size * 1.15
+            x = (w - f.getlength(line)) / 2
+            d.text((x, baseline), line, anchor='ls', font=f, fill='white',
+                   stroke_width=max(1, round(size * 0.05)), stroke_fill='black')
+            baseline += adv
         c['png'] = str(out / f'cue-{i}.png')
         img.save(c['png'])
         c['font_size_px'] = float(size)
@@ -226,9 +225,8 @@ def cta_standard(spec):
 
 
 def lineas(texto):
-    """`|` marca el salto de línea (como `editorial.py` de Codex); sin `|`, el montador parte las líneas."""
-    partes = [x.strip() for x in str(texto).split('|') if x.strip()]
-    return partes if len(partes) > 1 else None
+    """Los saltos de referencia son pistas en text; se deciden al medir la fuente."""
+    return None  # Los | se conservan en text como pistas para el equilibrado.
 
 
 MIN_PLANO_S = 0.28  # como el motor de Codex: cortes a menos de esto son el mismo cambio
@@ -311,7 +309,7 @@ def rotulos_replica(edicion, frames, tramos=None, modo='entero'):
     for i, f in enumerate(inicios):
         fin = inicios[i + 1] if i + 1 < len(inicios) else total
         r = usadas[i]
-        texto = ' '.join(x.strip() for x in str(r['texto']).split('|') if x.strip())
+        texto = str(r['texto'])
         out.append(dict(role='cta' if r.get('cta') else ('main' if i == 0 else 'extra'), text=texto, lines=lineas(r['texto']),
                         start=round(f / FPS, 4), end=round(fin / FPS, 4)))
     return out
@@ -400,9 +398,9 @@ def construir_plan(spec, clips, work, font, gancho=None, pistas=None, con_audio=
     plan = dict(
         id=f"auto-{spec.get('videoId')}", version=1, tipo=tipo, clips=plan_clips, audio=audio,
         texts=copia['rotulos'] if copia else [
-            dict(role='main', text=' '.join(str(main_ref['texto']).split('|')) if main_ref else (texts.get('main') or (spec.get('product') or {}).get('name') or ' '),
+            dict(role='main', text=str(main_ref['texto']) if main_ref else (texts.get('main') or (spec.get('product') or {}).get('name') or ' '),
                  lines=lineas(main_ref['texto']) if main_ref else None),
-            dict(role='cta', text=' '.join(str(cta_ref['texto']).split('|')) if cta_ref else (texts.get('cta') or cta_standard(spec)),
+            dict(role='cta', text=str(cta_ref['texto']) if cta_ref else (texts.get('cta') or cta_standard(spec)),
                  lines=lineas(cta_ref['texto']) if cta_ref else None)],
         zoom=dict(enabled=False), ritmo=ritmo, font=font, notas=notas,
         work_dir=str(Path(work) / 'montador'), revision_dir=str(Path(work) / 'revision'),

@@ -7,8 +7,8 @@ Mismo resultado que el Swift del Mac (AppKit/CoreText), pieza a pieza:
     uniones redondeadas (sin picos en M/N/V).
   - Cada rótulo es un PNG transparente de 886×318 (la caja invisible x112/y287 sobre 1080×1920), centrado H y V.
   - Interlínea 35/31 em. Alto de línea como AppKit: round(ascendente) + round(descendente).
-  - El tamaño baja de 1 en 1 desde 74 hasta que todas las líneas caben (ancho ≤ 886 − 2·0,05·tamaño − 12;
-    alto < 318), sin deformar ni omitir texto; por debajo de 13, error.
+  - Montaje a tamaño fijo (rotulos_layout.FIXED_SIZE, 58 px), hasta tres líneas equilibradas; los textos largos se reparten en varios rótulos.
+    fit_size conserva el algoritmo histórico exclusivamente para comparar el dibujo con Swift.
   - Formas como CoreText: HarfBuzz (uharfbuzz) aplica el kerning y las ligaduras de la fuente (fi, fl…); cada glifo
     se dibuja por su número con FreeType (freetype-py), sin hinting, con su posición fraccionaria.
   - Emojis: CoreText los dibuja con la fuente de emojis del sistema y avance de 1 em. Aquí, con la fuente de emojis
@@ -29,6 +29,8 @@ import freetype
 import numpy as np
 import uharfbuzz as hb
 from PIL import Image, ImageFont
+
+from rotulos_layout import FIXED_SIZE, balanced_lines, split_cue_texts, prepare_cues  # noqa: F401
 
 W, H = 886, 318
 START_SIZE = 74
@@ -367,16 +369,9 @@ def main(argv):
     out_dir = Path(argv[2])
     out_dir.mkdir(parents=True, exist_ok=True)
     font = Fuente(argv[3])
-    for i, cue in enumerate(cues):
-        lines = cue['lines']
-        if not lines:
-            sys.exit('Rótulo vacío')
-        try:
-            size = fit_size(font, lines)
-        except ValueError as error:
-            sys.exit(str(error))
-        render(font, lines, size).save(out_dir / f'cue-{i}.png')
-        print(f'cue {i} size={float(size)}')
+    for i, cue in enumerate(prepare_cues(font, [dict(c, start=c.get("start", 0), end=c.get("end", 1)) for c in cues])):
+        render(font, cue['lines'], cue['font_size_px']).save(out_dir / f'cue-{i}.png')
+        print(f'cue {i} size={float(cue["font_size_px"])}')
 
 
 if __name__ == '__main__':

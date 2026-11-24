@@ -146,6 +146,33 @@ class Plan(unittest.TestCase):
         self.assertEqual(len(ma.motivo('x' * 1000)), 400)
 
 
+@unittest.skipUnless(HAS_PIL, 'sin Pillow')
+class RotulosFijos(unittest.TestCase):
+    def test_ambos_motores_particionan_y_conservan_cta(self):
+        font = ma.m.FONT
+        if not Path(font).is_file():
+            self.skipTest('sin fuente real')
+        text = ('Mein Mann hat gesagt, ich soll nicht so viel für Weihnachten ausgeben. '
+                'Also habe ich ihm das hier gekauft und jetzt will er es selbst behalten 😂🎄 ')*2
+        for render in (ma.rotulos_06b, ma.rotulos_pillow, ma.m.render_texts):
+            with self.subTest(render=render.__name__), tempfile.TemporaryDirectory() as tmp:
+                try:
+                    cues = render([dict(start=1., end=9., text=text, role='cta'),
+                                   dict(start=9., end=11., text='Wow 😍')], 11., Path(tmp), font)
+                except ImportError as error:
+                    self.skipTest(str(error))
+                self.assertGreater(len(cues), 2)
+                self.assertEqual({c['font_size_px'] for c in cues}, {58})
+                self.assertEqual(cues[0]['start'], 1.)
+                self.assertEqual(cues[-1]['end'], 11.)
+                self.assertTrue(all(c['role']=='cta' for c in cues[:-1]))
+                for a, b in zip(cues, cues[1:]):
+                    self.assertEqual(a['end'], b['start'])
+                for c in cues:
+                    self.assertLessEqual(len(c['lines']), 3)
+                    self.assertTrue(Path(c['png']).is_file())
+
+
 def ffmpeg(*args):
     subprocess.run(['ffmpeg', '-v', 'error', '-y', *args], check=True)
 
@@ -170,8 +197,9 @@ class EdicionDeLaReferencia(unittest.TestCase):
         rot = ma.rotulos_replica(EDICION, 240)
         # 6 s de 8 en la referencia → 180 de 240 fotogramas = 7,5 s en el clip.
         self.assertEqual([(r['role'], r['start'], r['end']) for r in rot], [('main', 0.0, 7.5), ('cta', 7.5, 10.0)])
-        self.assertEqual(rot[0]['lines'], ['Setz das auf meine', 'Wunschliste 🍦🎄'])
-        self.assertEqual(rot[1]['text'], 'Kommentiere „EisWerk“, wenn du auch eins willst! 💕')
+        self.assertIsNone(rot[0]['lines'])
+        self.assertIn('|', rot[0]['text'])
+        self.assertEqual(rot[1]['text'], EDICION['rotulos'][1]['texto'])
         self.assertEqual(ma.rotulos_replica(dict(EDICION, rotulos=[]), 240), [])
 
     def test_replica_con_los_planos_la_duracion_los_rotulos_y_el_drop_de_la_referencia(self):
@@ -208,7 +236,7 @@ class EdicionDeLaReferencia(unittest.TestCase):
         plan, _ = ma.construir_plan(dict(SPEC, edicionReferencia=EDICION), [('hook', '/0'), ('body', '/1')], '/w', '/f.ttf', gancho=(0, 96))
         self.assertTrue(all(c.get('auto') for c in plan['clips'][1:]))
         self.assertEqual([(t['role'], t['text']) for t in plan['texts']],
-                         [('main', 'Setz das auf meine Wunschliste 🍦🎄'), ('cta', 'Kommentiere „EisWerk“, wenn du auch eins willst! 💕')])
+                         [('main', EDICION['rotulos'][0]['texto']), ('cta', EDICION['rotulos'][1]['texto'])])
 
 
 @unittest.skipUnless(FFMPEG and HAS_NUMPY and HAS_PIL and FONTS, 'faltan ffmpeg, numpy, Pillow o una fuente TTF')
