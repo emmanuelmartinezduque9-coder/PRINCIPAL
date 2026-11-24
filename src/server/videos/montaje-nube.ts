@@ -17,7 +17,7 @@ import { latestSongWithDrop, readSongFile } from "@/server/songs";
 import { storedOriginalKey } from "@/server/videos/archive";
 import { openClipStream } from "@/server/videos/clip";
 import { dubbedAudio } from "@/server/videos/doblaje";
-import { referenceEdit, type ReferenceEdit } from "@/server/videos/edicion-referencia";
+import { referenceEdit, targetPlace, withLocalPlaces, type ReferenceEdit } from "@/server/videos/edicion-referencia";
 import { batchOfVideo, cleanSelfCheck, failEdit, MAX_EDIT_BYTES, readReferenceAudio, saveEdit, settleBatch, type EditSpec } from "@/server/videos/edits";
 
 /**
@@ -161,7 +161,7 @@ export async function logVerifyLinks(videoIds: number[], now: Date = new Date())
 }
 
 /** TEMPORAL: vídeos del lote 6 cuyo montaje final se comprueba a mano (enlace firmado en el registro). */
-const VERIFY_VIDEOS = new Set([11, 15, 16, 19, 20, 21, 22]);
+const VERIFY_VIDEOS = new Set([11, 15, 16, 19, 20, 21, 22, 24]);
 const VERIFY_UNTIL = new Date("2026-11-25T12:00:00Z");
 /** Cada cuánto vuelve a probar un montaje que espera a Claude (y al momento cuando el Mac está listo). */
 export const CLAUDE_RETRY_MS = 5 * 60_000;
@@ -426,14 +426,34 @@ export async function runEdit(run: Run, deps: MontajeDeps = {}): Promise<"done" 
         console.warn(`[montaje] Referencia de la réplica ${spec.replicaReference.key}: ${messageOf(error)}`);
       }
     }
+    const [owner] = await getDb()
+      .select({
+        productId: schema.videos.productId,
+        userId: schema.videos.createdBy,
+        note: schema.videos.note,
+        adaptation: schema.videos.adaptation,
+        batchId: schema.videos.batchId,
+      })
+      .from(schema.videos)
+      .where(eq(schema.videos.id, spec.videoId));
+    const [batchProduct] =
+      owner?.batchId != null
+        ? await getDb()
+            .select({ notes: schema.batchProducts.notes })
+            .from(schema.batchProducts)
+            .where(and(eq(schema.batchProducts.batchId, owner.batchId), eq(schema.batchProducts.productId, owner.productId)))
+        : [];
+    // Dónde pasa el anuncio (regla 6c): la ciudad de las indicaciones del dueño o el país del producto.
+    const place = targetPlace(
+      [owner?.note, owner?.adaptation, batchProduct?.notes].filter(Boolean).join("\n"),
+      spec.product.countries ?? [],
+      spec.product.language,
+    );
     let edicion: ReferenceEdit | null = null;
     if (referenceFile) {
       try {
-        const [owner] = await getDb()
-          .select({ productId: schema.videos.productId, userId: schema.videos.createdBy })
-          .from(schema.videos)
-          .where(eq(schema.videos.id, spec.videoId));
         edicion = await referenceEdit({
+          place,
           file: referenceFile,
           product: { id: owner?.productId ?? 0, name: spec.product.name, language: spec.product.language },
           userId: owner?.userId ?? run.requestedBy,
@@ -546,6 +566,8 @@ export async function runEdit(run: Run, deps: MontajeDeps = {}): Promise<"done" 
       specPath,
       JSON.stringify({
         ...spec,
+        // Regla 6c también en los rótulos del desglose o de la tarjeta: nada de lugares de otro mercado.
+        texts: { main: withLocalPlaces(spec.texts.main, [], place), cta: withLocalPlaces(spec.texts.cta, [], place) },
         clips,
         // Con la canción de respaldo si el vídeo se quedaba mudo.
         song,

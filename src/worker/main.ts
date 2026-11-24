@@ -67,6 +67,18 @@ startWorker().then(
         await remountEditsOnce("montaje.remontado-15-emojis-20261124", [15]);
         // Una vez: el 22 salió con un doblaje viejo en inglés (montaje 61); con 932bde2 se rehace el doblaje.
         await remountEditsOnce("montaje.remontado-22-doblaje-20261124", [22]);
+        // Una vez: el 24 (lote 7) decía «…an Fremde in den USA…» en un anuncio de Berlín (montaje 67). Queda en
+        // Mejoras como reporte ligado a ese montaje con el arreglo aplicado (regla 6c de la lectura de la edición)
+        // y se vuelve a montar con el lugar de la tarjeta; los demás rótulos salen de la misma lectura guardada.
+        await (await import("@/server/videos/mejoras/reports")).recordAppliedFixOnce("mejoras.reporte-24-lugar-20261124", {
+          videoId: 24,
+          editStorageKey: "montajes/24/67.mp4",
+          problemType: "rotulos",
+          body: "El rótulo dice «Ich verteile christliche Notizen an Fremde in den USA…», pero la tarjeta pide las calles de Berlín, Alemania, y el vídeo está en Berlín.",
+          cause: "Al adaptar los rótulos de la referencia (de EE. UU.) se dejó el lugar del original en vez del de nuestro anuncio.",
+          note: "Regla 6c en la lectura de la edición de la referencia: todo lugar o país del original se cambia por el de la tarjeta o el del producto (targetPlace), con red de seguridad withLocalPlaces también sobre las lecturas guardadas. El vídeo 24 se vuelve a montar.",
+        });
+        await remountEditsOnce("montaje.remontado-24-lugar-20261124", [24]);
         // TEMPORAL: enlaces para comprobar a mano el sonido y los rótulos de los ya montados.
         await (await import("@/server/videos/montaje-nube")).logVerifyLinks([15, 22]);
         // Y los doblados antes de la comprobación con Whisper (el vídeo 6 dejó una frase en inglés).

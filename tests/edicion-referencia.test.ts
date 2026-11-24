@@ -12,7 +12,7 @@ import type { LlmCall, LlmGateway, LlmResult } from "@/llm/gateway";
 import { LocalStore, setObjectStoreForTests } from "@/lib/object-store";
 import type { AuthUser } from "@/server/auth";
 import { saveCredential } from "@/server/credentials";
-import { REFERENCE_EDIT_INSTRUCTIONS, refineSwitch, withoutThirdParties } from "@/server/videos/edicion-referencia";
+import { REFERENCE_EDIT_INSTRUCTIONS, refineSwitch, targetPlace, withLocalPlaces, withoutThirdParties } from "@/server/videos/edicion-referencia";
 import { startEdit, type EditSpec } from "@/server/videos/edits";
 import { processReference } from "@/server/videos/intake";
 import { claimRun, runEdit, type MontajeDeps } from "@/server/videos/montaje-nube";
@@ -226,5 +226,36 @@ describe("marcas y personajes de terceros en los rótulos", () => {
     expect(withoutThirdParties("LINK IN BIO „FalterPfote“", [], "FalterPfote")).toBe("LINK IN BIO „FalterPfote“");
     // El propio producto en la lista no se toca.
     expect(withoutThirdParties("FalterPfote ist da", ["FalterPfote"], "FalterPfote")).toBe("FalterPfote ist da");
+  });
+});
+
+describe("lugares de la referencia en los rótulos (regla 6c, vídeo 24)", () => {
+  it("la instrucción manda cambiar lugares y países por los de nuestro anuncio y pide la lista", () => {
+    expect(REFERENCE_EDIT_INSTRUCTIONS).toMatch(/6c\. Lugares/);
+    expect(REFERENCE_EDIT_INSTRUCTIONS).toContain("{LUGAR}");
+    expect(REFERENCE_EDIT_INSTRUCTIONS).toMatch(/9\. lugares/);
+  });
+
+  it("el lugar sale de la tarjeta (ciudad) o del país del producto", () => {
+    expect(targetPlace("Grábalo en las calles de Berlín, Alemania", ["DE"], "de")).toBe("Berlin");
+    expect(targetPlace("en Múnich", ["DE"], "de")).toBe("München");
+    expect(targetPlace("", ["AT", "DE"], "de")).toBe("Österreich");
+    expect(targetPlace("", ["DE", "AT", "CH"], "de")).toBe("Deutschland");
+    expect(targetPlace("", ["IT"], "it")).toBe("Italia");
+    expect(targetPlace("calles de Milán", ["IT"], "it")).toBe("Milano");
+  });
+
+  it("si un lugar de otro mercado se cuela, se cambia por el nuestro con su artículo fuera", () => {
+    expect(withLocalPlaces("Ich verteile christliche Notizen an Fremde in den USA 🙏", [], "Berlin")).toBe(
+      "Ich verteile christliche Notizen an Fremde in Berlin 🙏",
+    );
+    expect(withLocalPlaces("Fremde in Amerika|Teil 2", [], "Deutschland")).toBe("Fremde in Deutschland|Teil 2");
+    expect(withLocalPlaces("in the US", [], "Berlin")).toBe("in Berlin");
+    expect(withLocalPlaces("Straßen von New York", [], "Berlin")).toBe("Straßen von Berlin");
+    // Lo que Claude vio en el original también.
+    expect(withLocalPlaces("Mitten in Brooklyn", ["Brooklyn"], "Berlin")).toBe("Mitten in Berlin");
+    // Nada que tocar: palabras que contienen las siglas, el propio destino y la tienda.
+    expect(withLocalPlaces("MUSS PLUS USB in Berlin bei dm", [], "Berlin")).toBe("MUSS PLUS USB in Berlin bei dm");
+    expect(withLocalPlaces("Hamburg ist schön", ["Hamburg"], "Hamburg")).toBe("Hamburg ist schön");
   });
 });

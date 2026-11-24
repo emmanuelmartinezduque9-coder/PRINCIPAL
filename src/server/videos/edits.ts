@@ -53,7 +53,8 @@ export interface EditSpec {
   videoId: number;
   title: string;
   kind: string;
-  product: { name: string; language: string };
+  /** `countries`: dónde se vende (el lugar de los rótulos sin ciudad en la tarjeta, regla 6c); falta en fichas viejas. */
+  product: { name: string; language: string; countries?: string[] };
   /**
    * Los clips en orden: con «Solo gancho», el gancho (`hook`) y detrás sus cuerpos (`body`); con los
    * otros tipos, el clip aprobado (`clip`). `jobId` es el trabajo de Higgsfield (su copia en el
@@ -185,7 +186,7 @@ async function buildSpec(video: Video, product: Product): Promise<EditSpec> {
     videoId: video.id,
     title: video.title,
     kind: video.kind,
-    product: { name: product.name, language: product.language },
+    product: { name: product.name, language: product.language, countries: product.countries },
     clips,
     hookMs: hookTiming(video)?.hookMs ?? null,
     song: song ? { id: song.id, title: song.title, dropMs: song.dropMs, startMs: song.startMs, durationMs: song.durationMs } : null,
