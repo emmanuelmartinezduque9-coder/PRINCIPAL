@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
-import { and, desc, eq, inArray, lt, sql } from "drizzle-orm";
+import { and, eq, inArray, lt, sql } from "drizzle-orm";
 import { getDb, schema } from "@/db/client";
 import type { HiggsfieldPort } from "@/connectors/higgsfield";
 import { getObjectStore, type ObjectStore } from "@/lib/object-store";
