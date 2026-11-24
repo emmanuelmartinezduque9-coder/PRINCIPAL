@@ -38,6 +38,10 @@ Las pruebas `tests/flujo-automatico.test.ts` fijan estas reglas: si una cambia, 
   que él ya aprobó (`reference_bank`, sembrado desde `reglas/banco-referencias.json`; crece con cada imagen
   aprobada que llevaba referencia a mano). La app elige sola la que encaja; él no elige nada. `BANK_ONLY`
   en `pinterest.ts`: no lo pongas a `false` sin una orden expresa suya.
+- **Excepción (24/11/2026, orden expresa de Emmanuel):** si la tarjeta, la nota o las indicaciones nombran una
+  tienda o un lugar concreto (dm, Sephora, Lidl, Aldi, Rossmann, Zara…), NO se usa el banco: se buscan en
+  Pinterest fotos reales del interior de esa tienda en el país del producto (`scene.namedPlace`), con la
+  redacción de tienda del método aprobado. El banco sigue para todo lo demás.
 - Está en código, no solo en texto: `src/server/videos/pinterest.ts` (búsqueda, elección con visión,
   almacén), `frame.ts` (la imagen no se pide sin ellas) y `reglas/referencias-pinterest.md` (qué buscar
   según la escena). No lo quites ni lo hagas opcional sin una orden expresa del dueño.

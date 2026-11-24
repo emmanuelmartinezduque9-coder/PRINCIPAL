@@ -126,3 +126,46 @@ export async function ensureWorkingPhoto(productName: string, objectKey: string,
     .limit(1);
   if (last) await rejectFrameOnce(videoId, last.round, reason);
 }
+
+/** Tiendas o lugares con nombre que pide el dueño (para la corrección del lote 6). */
+const NAMED_STORE = /\b(dm|rossmann|sephora|lidl|aldi|action|media ?markt|zara|ikea|müller|douglas|kaufland|rewe|edeka|penny|netto|primark|h&m|tk ?maxx)\b/i;
+
+/**
+ * Una vez (24/11/2026, orden del dueño): en el lote `batchId`, los vídeos cuya tarjeta o
+ * indicaciones nombran una tienda concreta salieron con un fondo del banco. Se rehace su
+ * referencia (ahora se busca en Pinterest el interior de esa tienda) y se rechaza su imagen con
+ * `reason` (cuenta como un rechazo dentro de sus rondas) para que el lote la regenere sola.
+ */
+export async function redoNamedStoreFrames(batchId: number, reason: string): Promise<void> {
+  const videos = await getDb().select().from(schema.videos).where(eq(schema.videos.batchId, batchId));
+  for (const video of videos) {
+    const [group] = await getDb()
+      .select({ notes: schema.batchProducts.notes })
+      .from(schema.batchProducts)
+      .where(and(eq(schema.batchProducts.batchId, batchId), eq(schema.batchProducts.productId, video.productId)));
+    const text = [video.note, video.adaptation, group?.notes].filter(Boolean).join(" ");
+    if (!NAMED_STORE.test(text) || video.approvedFrameResultId !== null) continue;
+    const [done] = await getDb()
+      .select({ id: schema.generations.id })
+      .from(schema.generations)
+      .where(and(eq(schema.generations.videoId, video.id), eq(schema.generations.rejectReason, reason)))
+      .limit(1);
+    if (done) continue;
+    await getDb().delete(schema.videoPinterestRefs).where(eq(schema.videoPinterestRefs.videoId, video.id));
+    const [last] = await getDb()
+      .select({ round: schema.generations.round, status: schema.generations.status, rejectReason: schema.generations.rejectReason })
+      .from(schema.generations)
+      .where(and(eq(schema.generations.videoId, video.id), eq(schema.generations.kind, "frame")))
+      .orderBy(desc(schema.generations.round))
+      .limit(1);
+    if (!last || last.status !== "done" || last.rejectReason !== null) {
+      console.log(`[imagen] Vídeo ${video.id}: pide una tienda concreta; su referencia se rehace (sin imagen que rechazar).`);
+      continue;
+    }
+    const owner = await getActiveUser(video.createdBy);
+    if (!owner) continue;
+    const { rejectFrame } = await import("@/server/videos/frame");
+    await rejectFrame(owner, video.id, reason);
+    console.log(`[imagen] Vídeo ${video.id}: pide una tienda concreta («${text.slice(0, 80)}»); imagen rechazada para regenerarla con su interior real.`);
+  }
+}

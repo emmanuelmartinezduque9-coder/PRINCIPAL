@@ -33,6 +33,11 @@ startWorker().then(
   () => {
     console.log("[worker] en marcha");
     startEditLoop();
+    // Una vez (24/11/2026): en el lote 6, las imágenes que pedían una tienda concreta (dm, Sephora,
+    // Lidl) salieron con un fondo del banco; se regeneran con el interior real de esa tienda.
+    void import("@/server/videos/importar-imagen")
+      .then(({ redoNamedStoreFrames }) => redoNamedStoreFrames(6, "El fondo tiene que ser la tienda que pide la tarjeta (su interior real), no un supermercado cualquiera"))
+      .catch((error) => console.error("[imagen] No se pudieron rehacer las imágenes con tienda del lote 6:", error));
     // Una vez (24/11/2026): los vídeos de los lotes de hoy ya montados se vuelven a montar con el doblaje por defecto.
     void import("@/server/videos/edits")
       .then(async ({ redubTodaysEdits, recheckDubbedEdits, remountDubbedWithoutEdit }) => {

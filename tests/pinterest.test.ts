@@ -95,6 +95,7 @@ const SCENE = {
   style: "casa alemana normal y habitada",
   needs: "sofá y mesa baja con sitio para las manos",
   queries: ["Wohnzimmer Weihnachten Sofa Handyfoto", "christmas living room sofa real home"],
+  namedPlace: null,
 };
 
 const COMPOSED = {
@@ -551,5 +552,33 @@ describe("sin saldo en la API de Claude", () => {
     await getDb().update(schema.videoPinterestRefs).set({ status: "searching", error: null, updatedAt: new Date(Date.now() - 60 * 60_000) }).where(eq(schema.videoPinterestRefs.id, run.id));
     await sweepPinterest(new Date());
     expect(await runOfVideo(v.id)).toMatchObject({ status: "pending", attempts: 1 });
+  });
+});
+
+describe("tienda concreta pedida en la tarjeta", () => {
+  it("si se nombra una tienda, no se usa el banco: se busca en Pinterest su interior y el prompt va con la redacción de tienda", async () => {
+    await requirePinterestRefs(v.id).catch(() => {});
+    const run = await runOfVideo(v.id);
+    const scene = { ...SCENE, place: "droguería dm en Alemania", namedPlace: "dm Drogeriemarkt, Alemania", queries: ["dm Drogeriemarkt Filiale innen", "dm Deutschland Regal Innenansicht"] };
+    const { client, calls } = fakeMessages([
+      { text: JSON.stringify(scene) },
+      { text: JSON.stringify({ picks: [{ n: 2, reason: "Interior real de dm con su cartelería." }], rejected: "Las demás no son dm." }) },
+      { text: JSON.stringify(COMPOSED) },
+    ]);
+    const searched: string[] = [];
+    const search: PinterestDeps["search"] = async (query) => {
+      searched.push(query);
+      return { status: "ready", via: "servidor", candidates: candidatesOf(pinterestResponse(3, query.includes("Filiale") ? "dm" : "de")) };
+    };
+    await runPinterest(run.id, pinterestDeps({ gateway: createGateway({ client }), search }));
+    const done = await runOfVideo(v.id);
+    expect(done.status).toBe("ready");
+    expect(searched).toEqual(scene.queries);
+    expect((done.refs as Array<{ pinId: string }>).map((r) => r.pinId)).toEqual(["dm2"]);
+    const pickText = (calls[1].messages[0].content as Array<{ type: string; text?: string }>).map((b) => b.text ?? "").join("\n");
+    expect(pickText).toContain("El dueño pide este sitio concreto: dm Drogeriemarkt, Alemania");
+    const composeText = (calls[2].messages[0].content as Array<{ type: string; text?: string }>).map((b) => b.text ?? "").join("\n");
+    expect(composeText).toContain("supplies the real [tienda y ciudad o país] retail space");
+    expect(composeText).toContain("exposure authority");
   });
 });

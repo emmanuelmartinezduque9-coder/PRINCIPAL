@@ -71,6 +71,12 @@ export interface PinterestScene {
   /** Lo que tiene que verse para que la acción quepa (congelador abierto, encimera libre…). */
   needs: string;
   queries: string[];
+  /**
+   * Una tienda o un lugar concreto que pide el dueño en la tarjeta, la nota o las indicaciones (dm,
+   * Sephora, Lidl…), con su país. Entonces no se usa el banco: se buscan en Pinterest fotos reales
+   * de su interior (orden del dueño, 24/11/2026).
+   */
+  namedPlace?: string | null;
 }
 
 export interface PinterestRef {
@@ -332,6 +338,10 @@ const sceneSchema: z.ZodType<PinterestScene> = z.object({
     .min(2)
     .max(3)
     .describe("2–3 búsquedas para el buscador de Pinterest, de 3 a 7 palabras, como las del dueño: la primera en el idioma del mercado."),
+  namedPlace: z
+    .string()
+    .nullable()
+    .describe("La tienda o el lugar concreto que nombra el dueño (p. ej. «dm Drogeriemarkt, Alemania», «Sephora, Alemania», «Lidl, Alemania»), o null si no nombra ninguno."),
 });
 
 const pickSchema = z.object({
@@ -345,6 +355,8 @@ const pickSchema = z.object({
 const PLAN_INSTRUCTIONS = `Preparas la búsqueda en Pinterest de las fotos reales que acompañarán a la imagen inicial de un anuncio como referencia de realismo y de entorno (lugar, luz, decoración, aspecto de foto de móvil). Sigue la regla «Referencias de Pinterest»: decide en el orden producto → acción de la toma → espacio → cámara, y escribe consultas como las que el dueño usaba a mano para casos parecidos.
 
 Mira el primer fotograma de la referencia (la composición que se conserva) y el desglose. Describe el sitio de la toma (place), la época (season, solo si cuenta: si la escena es navideña, Navidad), la luz, el estilo de la casa o tienda y lo que tiene que verse para que quepa la acción (needs).
+
+Mira también las indicaciones del dueño (cambios de este vídeo, adaptación e indicaciones del lote): si nombran una tienda o un lugar concreto (una cadena como dm, Rossmann, Sephora, Lidl, Aldi, Action, MediaMarkt, Zara, IKEA, o un sitio con nombre propio), ponlo en namedPlace con su país (el del producto si no dice otro). Con namedPlace, las consultas buscan fotos reales del interior de ese sitio en ese país, con su nombre: p. ej. «dm Drogeriemarkt Filiale innen», «dm Deutschland Regal Innenansicht», «Sephora Deutschland store interior»; nada de tiendas genéricas. Si no nombran ninguno, namedPlace es null.
 
 Después escribe 2 o 3 consultas para el buscador de Pinterest (queries): cortas (3–7 palabras), con el tipo de sitio, el punto de vista si importa (pov, Perspektive), la temporada solo si corresponde y palabras de foto cotidiana (gemütlich, Alltag, cozy, real). La primera, en el idioma del mercado del anuncio; otra puede ir en inglés. Nada de «interior design», «luxury», «showroom», «architecture», «render», «aesthetic». Nada de marcas ajenas salvo una tienda que la toma pida.`;
 
@@ -602,8 +614,9 @@ async function finishWithRefs(
   product: { name: string },
   scene: PinterestScene,
   userSelected: boolean,
+  store: string | null = null,
 ): Promise<void> {
-  const composed = await composeFramePrompt(run, ctx, gateway, rules, refs, frameJpeg, userSelected);
+  const composed = await composeFramePrompt(run, ctx, gateway, rules, refs, frameJpeg, userSelected, store);
   if (!composed) return;
   const [current] = await getDb().select({ scene: runs.scene }).from(runs).where(eq(runs.id, run.id));
   await setRun(run.id, {
@@ -733,6 +746,7 @@ async function composeFramePrompt(
   refs: PinterestRef[],
   frameJpeg: Buffer | null,
   userSelected = false,
+  store: string | null = null,
 ): Promise<{
   prompt: string;
   baseSha: string;
@@ -765,9 +779,11 @@ async function composeFramePrompt(
     ...productPhotos.flatMap((photo) => [textPart(`image ${photo.tag} — ${photo.label}:`), imagePart(photo.jpeg, "image/jpeg")]),
     ...(frameJpeg ? [textPart("image 1 — fotograma original (composición):"), imagePart(frameJpeg, "image/jpeg")] : []),
     textPart(
-      userSelected
-        ? "image {ROOM} — el fondo que el dueño subió a mano en la tarjeta, fondo EXACTO. En el párrafo environment empieza con «Image {ROOM} is the user-selected room background only, not product identity.»:"
-        : "image {ROOM} — la sala elegida, fondo EXACTO:",
+      store
+        ? `image {ROOM} — foto real del interior de la tienda que pide el dueño (${store}), fondo EXACTO. Como en el método aprobado: en environment escribe «The environment reference image {ROOM} supplies the real [tienda y ciudad o país] retail space: [lo que ves: techo, luces, muebles, mercancía a la venta] and genuine [tienda] physical signage. Reproject this environment to the source [checkout or aisle] angle, preserving all actor positions, camera height and movement space. Keep merchandise varied, real store shadows and casually stocked surfaces; no showroom rendering.»; en lighting empieza con «Use the attached real [tienda] photograph as exposure authority: [las luces que ves]». El nombre de la tienda sí va en el prompt (solo como cartelería física del sitio); el del producto, no:`
+        : userSelected
+          ? "image {ROOM} — el fondo que el dueño subió a mano en la tarjeta, fondo EXACTO. En el párrafo environment empieza con «Image {ROOM} is the user-selected room background only, not product identity.»:"
+          : "image {ROOM} — la sala elegida, fondo EXACTO:",
     ),
     imagePart(room, "image/jpeg"),
     ...extraParts,
@@ -904,6 +920,14 @@ async function runPinterestOnce(runId: number, deps: PinterestDeps): Promise<voi
   const frameJpeg = frame ? await makeThumbnail(Buffer.from(frame.data), "image", 768) : null;
   const month = (deps.now ?? new Date()).toLocaleDateString("es-ES", { month: "long" });
 
+  const [batchProduct] =
+    video.batchId === null
+      ? []
+      : await getDb()
+          .select({ notes: schema.batchProducts.notes })
+          .from(schema.batchProducts)
+          .where(and(eq(schema.batchProducts.batchId, video.batchId), eq(schema.batchProducts.productId, video.productId)));
+  const batchNotes = batchProduct?.notes ?? null;
   // 1. Escena y consultas.
   let scene = run.scene as PinterestScene | null;
   if (!scene) {
@@ -917,6 +941,7 @@ async function runPinterestOnce(runId: number, deps: PinterestDeps): Promise<voi
           `Mes actual: ${month}`,
           video.note ? `Cambios pedidos para este vídeo: ${video.note}` : "",
           video.adaptation ? `Adaptación pedida: ${video.adaptation}` : "",
+          batchNotes ? `Indicaciones del lote para este producto: ${batchNotes}` : "",
           "",
           "Desglose de la referencia:",
           analysisText(analysis.result as Record<string, unknown> | null),
@@ -945,7 +970,9 @@ async function runPinterestOnce(runId: number, deps: PinterestDeps): Promise<voi
   }
 
   // 2. Orden del dueño (23/11): de momento no se busca en Pinterest; se elige del banco de aprobadas.
-  if (BANK_ONLY) {
+  // Excepción (orden del dueño, 24/11/2026): si pide una tienda o un lugar concreto, se busca en
+  // Pinterest su interior real; el banco solo sirve cuando no se nombra ningún sitio.
+  if (BANK_ONLY && !scene.namedPlace) {
     await pickFromBank(run, ctx, gateway, rules, scene, product, frameJpeg);
     return;
   }
@@ -1007,6 +1034,11 @@ async function runPinterestOnce(runId: number, deps: PinterestDeps): Promise<voi
         `Producto: ${product.name}. Países: ${product.countries.join(", ")}.`,
         `Sitio de la toma: ${scene.place}. Época: ${scene.season ?? "sin época concreta"}. Luz: ${scene.light}. Estilo: ${scene.style}.`,
         `Tiene que verse: ${scene.needs}.`,
+        ...(scene.namedPlace
+          ? [
+              `El dueño pide este sitio concreto: ${scene.namedPlace}. Elige solo fotos reales del INTERIOR de ese sitio (sus estanterías, su mercancía a la venta y su cartelería física con el logo auténtico), en ese país; rechaza cualquier otra tienda, un supermercado genérico, fachadas, fotos de catálogo o de web oficial y fotos sin rastro de esa tienda.`,
+            ]
+          : []),
       ].join("\n"),
     ),
     ...(frameJpeg ? [textPart("Primer fotograma de la referencia (composición que se conserva):"), imagePart(frameJpeg, "image/jpeg")] : []),
@@ -1053,10 +1085,11 @@ async function runPinterestOnce(runId: number, deps: PinterestDeps): Promise<voi
     await failRun(run, "No se pudieron bajar las fotos elegidas de Pinterest");
     return;
   }
-  await setRun(run.id, { status: "ready", refs, error: null });
   console.log(
-    `[pinterest] Vídeo ${video.id} (${product.name}): ${refs.length} referencia(s) para «${scene.place}» (${scene.queries.join(" | ")}): ${refs.map((r) => r.sha256).join(", ")}`,
+    `[pinterest] Vídeo ${video.id} (${product.name}): ${refs.length} referencia(s) de Pinterest para «${scene.namedPlace ?? scene.place}» (${scene.queries.join(" | ")}): ${refs.map((r) => r.sourceUrl).join(", ")}`,
   );
+  // Con el prompt del método aprobado, como las del banco (sala descrita, su luz manda).
+  await finishWithRefs(run, ctx, gateway, rules, refs, frameJpeg, product, scene, false, scene.namedPlace ?? null);
 }
 
 // ───────────────────────── Seguimiento ─────────────────────────
