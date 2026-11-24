@@ -258,7 +258,7 @@ describe("el montaje con el diálogo traducido", () => {
     const video = await videoWithAudio({ dubDialogue: true });
     const { song } = await uploadSong(dueno, mp3, { title: "Canción", dropMs: 1000 });
     await getDb().update(schema.videos).set({ songId: song.id, audioMode: "cancion" }).where(eq(schema.videos.id, video.id));
-    const { row } = await mount(video.id);
+    await mount(video.id);
     expect(dubCalls()).toEqual([]);
     expect(await dubRows()).toEqual([]);
   });
