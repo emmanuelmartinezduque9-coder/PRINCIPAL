@@ -97,6 +97,8 @@ describe("cómo se lanza claude", () => {
     expect(env.CLAUDECODE).toBeUndefined();
     expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBe("sk-ant-oat01-suscripcion");
     expect(env.CLAUDE_CONFIG_DIR).toContain(".principal-tools");
+    // Cachés y datos de Claude Code dentro de ~/.principal-tools (en el SSD), no en otras carpetas del disco interno.
+    for (const key of ["XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME"]) expect(env[key]?.startsWith(env.CLAUDE_CONFIG_DIR!)).toBe(true);
     expect(env.CLAUDE_CODE_MAX_OUTPUT_TOKENS).toBe("2000");
     expect(env.PATH).toBe("/bin");
     expect((claudeEnv({ PATH: "/bin" } as unknown as NodeJS.ProcessEnv, null, JOB) as unknown as Record<string, string | undefined>).CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();

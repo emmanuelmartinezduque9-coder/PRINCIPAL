@@ -97,6 +97,15 @@ echo "Programa copiado a $DESTINO"
 # 4. launchd: rutas completas, sin ~ ni PATH del terminal.
 escapar() { printf '%s' "$1" | sed -e 's/[&|\\]/\\&/g'; }
 sed -e "s|__HOME__|$(escapar "$HOME")|g" -e "s|__NODE__|$(escapar "$NODE")|g" -e "s|__PATH__|$(escapar "$RUTA")|g" "$ORIGEN/com.principal.agente.plist" > "$PLIST"
+# Datos de PRINCIPAL en el SSD (docs/datos-en-ssd.md): con la imagen montada, los temporales del
+# agente (descargas, carpetas de trabajo de Claude Code) van a ella y no al disco interno.
+DATOS_SSD="${PRINCIPAL_DATOS_SSD:-/Volumes/PRINCIPAL-DATOS}"
+if [ -d "$DATOS_SSD" ]; then
+  mkdir -p "$DATOS_SSD/tmp"
+  /usr/libexec/PlistBuddy -c "Set :EnvironmentVariables:TMPDIR $DATOS_SSD/tmp/" "$PLIST" 2>/dev/null ||
+    /usr/libexec/PlistBuddy -c "Add :EnvironmentVariables:TMPDIR string $DATOS_SSD/tmp/" "$PLIST"
+  echo "Temporales del agente en $DATOS_SSD/tmp/"
+fi
 echo "Arranque automático escrito en $PLIST"
 
 # 5. Se descarga el anterior (si lo había), se espera a que termine de irse y se carga el nuevo

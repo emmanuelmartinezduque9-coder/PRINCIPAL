@@ -890,7 +890,8 @@ describe("instalar.sh", () => {
     );
     const run = (env: Record<string, string> = {}, input = "") =>
       spawnSync("bash", [path.join(ROOT, "agente-mac", "instalar.sh")], {
-        env: { HOME: home, PATH: `${bin}:/usr/bin:/bin`, ...env } as unknown as NodeJS.ProcessEnv,
+        // Sin la imagen del SSD salvo que la prueba la ponga (nunca la de verdad de este Mac).
+        env: { HOME: home, PATH: `${bin}:/usr/bin:/bin`, PRINCIPAL_DATOS_SSD: path.join(tmp, "sin-ssd"), ...env } as unknown as NodeJS.ProcessEnv,
         encoding: "utf8",
         input,
       });
@@ -934,6 +935,24 @@ describe("instalar.sh", () => {
       `bootstrap gui/${uid} ${plistPath}`,
     ]);
     expect(fsSync.readFileSync(plistPath, "utf8")).toBe(plist);
+  });
+
+  it("con la imagen del SSD montada, los temporales del agente van a ella (TMPDIR en el plist); sin ella, no", () => {
+    const { home, run } = fakeMac();
+    const plistPath = path.join(home, "Library", "LaunchAgents", "com.principal.agente.plist");
+    expect(run().status).toBe(0);
+    expect(fsSync.readFileSync(plistPath, "utf8")).not.toContain("TMPDIR");
+
+    const ssd = path.join(tmp, "PRINCIPAL-DATOS");
+    fsSync.mkdirSync(ssd);
+    for (let i = 0; i < 2; i++) {
+      const done = run({ PRINCIPAL_DATOS_SSD: ssd });
+      expect(done.status, done.stderr).toBe(0);
+      const plist = fsSync.readFileSync(plistPath, "utf8");
+      expect(plist).toMatch(new RegExp(`<key>TMPDIR</key>\\s*<string>${ssd}/tmp/</string>`));
+      expect(plist.match(/<key>TMPDIR<\/key>/g)).toHaveLength(1);
+    }
+    expect(fsSync.statSync(path.join(ssd, "tmp")).isDirectory()).toBe(true);
   });
 
   it("pide la ficha sin enseñarla, la guarda cerrada y no toca la que ya había", () => {

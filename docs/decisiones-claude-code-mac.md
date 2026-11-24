@@ -36,6 +36,12 @@ el Claude Code de su Mac (su suscripción) para todo lo que hace Claude; la web 
     menos del que usa ahora la app de escritorio) y la CLI no tiene sesión propia (la de la app de
     escritorio no sirve para un programa en segundo plano). Por eso el agente busca el binario él
     mismo (`claudeCandidates`, el más nuevo de la app primero) y usa la ficha.
+- **Nada en el disco interno** (orden del 24/11/2026, `docs/datos-en-ssd.md`): `instalar.sh`, si
+  está montada `/Volumes/PRINCIPAL-DATOS`, pone `TMPDIR=/Volumes/PRINCIPAL-DATOS/tmp/` en el plist del
+  agente (también al reinstalar, sin tener que repetir `disco-ssd.sh` para eso). Las carpetas de
+  trabajo de `claude` van a `TMPDIR`; su configuración, sesión, cachés y datos (`CLAUDE_CONFIG_DIR` y
+  `XDG_*`) a `~/.principal-tools/claude-config` (enlazada al SSD). `--no-session-persistence`: no
+  guarda conversaciones.
 - **Fotos en la fila, no en el almacén.** Las fotos de una llamada están en memoria en el proceso de
   trabajos, no en el almacén: van en base64 en `payload` mientras la tarea espera y se borran al
   terminar (queda solo la respuesta). Un mensaje de más de 24 MB va a la API.

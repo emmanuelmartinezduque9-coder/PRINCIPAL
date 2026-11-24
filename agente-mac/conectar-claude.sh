@@ -35,7 +35,8 @@ if [ -t 0 ]; then
   echo "Ahora se abre el navegador: entra con tu cuenta de Claude (la del plan Max)."
   echo "Al terminar, copia la ficha que aparece (empieza por «sk-ant-oat»)."
   echo
-  env -u ANTHROPIC_API_KEY "$CLAUDE" setup-token || true
+  mkdir -p "$HOME/.principal-tools/claude-config"
+  CLAUDE_CONFIG_DIR="$HOME/.principal-tools/claude-config" env -u ANTHROPIC_API_KEY "$CLAUDE" setup-token || true
   echo
   read -r -s -p "Pega aquí la ficha de Claude y pulsa Intro: " FICHA || true
   echo

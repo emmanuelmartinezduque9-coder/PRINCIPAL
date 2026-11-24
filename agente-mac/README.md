@@ -158,7 +158,9 @@ en `~/.principal-agente-claude.json`, solo legible por ti, y nunca va a la web.
   También cuántas llamadas hizo el Mac este mes y cuánto habrían costado en la API.
 - Hace hasta 4 llamadas a la vez, sin herramientas (solo buscar y leer en internet cuando la llamada
   lo pide), en una carpeta temporal vacía y con 10 minutos como mucho cada una. No lee tus CLAUDE.md,
-  tu memoria ni tus plugins, y no guarda las conversaciones.
+  tu memoria ni tus plugins, y no guarda las conversaciones. Sus temporales van a `TMPDIR` (en el
+  SSD si `/Volumes/PRINCIPAL-DATOS` está montada: `instalar.sh` lo pone en el plist) y su
+  configuración y cachés a `~/.principal-tools/claude-config`.
 - Las llamadas de las demás personas siguen por la API con sus topes.
 - Si Claude Code dice que llegaste al límite del plan, el Mac descansa 30 minutos y mientras tanto va
   por la API (o espera, con «Solo Mac»).

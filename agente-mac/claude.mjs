@@ -62,6 +62,12 @@ export function claudeEnv(env, token, job) {
   if (token) {
     out.CLAUDE_CODE_OAUTH_TOKEN = token;
     out.CLAUDE_CONFIG_DIR = CLAUDE_CONFIG_DIR;
+    // Cachés y datos de Claude Code también ahí (en el Mac del dueño, ~/.principal-tools está en el
+    // SSD): nada en otras carpetas del disco interno. Los temporales, en TMPDIR (el del agente).
+    out.XDG_CONFIG_HOME = path.join(CLAUDE_CONFIG_DIR, "xdg", "config");
+    out.XDG_CACHE_HOME = path.join(CLAUDE_CONFIG_DIR, "xdg", "cache");
+    out.XDG_DATA_HOME = path.join(CLAUDE_CONFIG_DIR, "xdg", "data");
+    out.XDG_STATE_HOME = path.join(CLAUDE_CONFIG_DIR, "xdg", "state");
   }
   if (job?.maxTokens) out.CLAUDE_CODE_MAX_OUTPUT_TOKENS = String(job.maxTokens);
   out.DISABLE_AUTOUPDATER = "1";
