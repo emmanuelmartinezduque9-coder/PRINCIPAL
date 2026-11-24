@@ -917,3 +917,6 @@ doblaje, que va en el montaje).
   estimation», también en Codex). Previsión: ~0,33 créditos por segundo, mínimo 2 (`upscaleEstimate`),
   a partir de sus movimientos (3 y 5 créditos por clip). Entra en la previsión del clip de los lotes
   nuevos; como el dueño lo autoriza para todos, al pedirlo solo se comprueba el saldo.
+- **Sin «Desglose» ni «Preguntas» a la vista** (24/11/2026): el lote resuelve solo lo que preguntaba
+  y deja fuera, con su motivo, el vídeo que no tiene arreglo, en vez de parar. Inventario completo
+  en `docs/lote-pausas-y-preguntas.md`.

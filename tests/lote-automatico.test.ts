@@ -381,18 +381,32 @@ describe("preguntas del lote", () => {
     expect((await quoteBatch(ana, batchId, deps)).total).toBe(2 * (FRAME + CLIP_EST));
   });
 
-  it("un desglose que falla no se repite solo: se pregunta", async () => {
-    const { batchId, videos } = await batchWith(1);
+  it("un desglose que falla se repite solo (sin preguntar) y, si sigue fallando, el vídeo queda fuera", async () => {
+    const { batchId, videos } = await batchWith(2, { automatic: true });
     await sendBatch(ana, batchId);
-    const { rows } = await getPool().query("select id from video_analyses where status = 'queued'");
-    const { client } = fakeMessages([{ text: "esto no es JSON", usage: { inputTokens: 10, outputTokens: 10 } }]);
-    await runAnalysis(rows[0].id, { gateway: createGateway({ client }) }).catch(() => {});
+    const fail = async () => {
+      const { rows } = await getPool().query("select id, video_id from video_analyses where status = 'queued' order by id");
+      for (const row of rows as Array<{ id: number; video_id: number }>) {
+        const reply = row.video_id === videos[0].id ? "esto no es JSON" : JSON.stringify(REPLY);
+        const { client } = fakeMessages([{ text: reply, usage: { inputTokens: 10, outputTokens: 10 } }]);
+        await runAnalysis(row.id, { gateway: createGateway({ client }) }).catch(() => {});
+      }
+    };
+    await fail();
     await advanceBatch(batchId, deps);
-    expect((await getPool().query("select count(*)::int as n from video_analyses where status = 'queued'")).rows[0].n).toBe(0);
-    const [question] = await batchQuestions(ana, batchId);
-    expect(question).toMatchObject({ videoId: videos[0].id, kind: "desglose" });
-    await answerQuestion(ana, batchId, { videoId: videos[0].id, key: "sys:desglose", value: "__repetir__" });
-    expect((await getPool().query("select count(*)::int as n from video_analyses where status = 'queued'")).rows[0].n).toBe(1);
+    expect(await batchQuestions(ana, batchId)).toEqual([]);
+    // Se ha vuelto a pedir solo.
+    expect((await getPool().query("select count(*)::int as n from video_analyses where status = 'queued' and video_id = $1", [videos[0].id])).rows[0].n).toBe(1);
+    for (let i = 0; i < 3; i++) {
+      await fail();
+      await advanceBatch(batchId, deps);
+    }
+    const out = await getVideoFor(ana, videos[0].id);
+    expect(out.autoSkipped).toBe(true);
+    expect(out.autoStop).toContain("El desglose falló");
+    // El otro sigue: el lote pasa a las imágenes.
+    await advanceBatch(batchId, deps);
+    expect(await statusOf(batchId)).toBe("imagenes");
   });
 });
 
@@ -410,27 +424,17 @@ describe("presupuesto y dinero", () => {
     expect(await statusOf(batchId)).toBe("preguntas");
   });
 
-  it("un precio por encima de lo previsto pausa sin enviar; «Continuar» autoriza la diferencia", async () => {
+  it("un precio por encima de lo previsto no para el lote si cabe en lo autorizado", async () => {
     const { batchId, videos } = await sentAndConfirmed(2);
+    await getPool().query("update batches set budget_credits = 1000 where id = $1", [batchId]);
     const quoteImages = fake.port.quoteImages;
     fake.port.quoteImages = async (userId, request, count) => ({ ...(await quoteImages(userId, request, count)), credits: 6 });
     await advanceBatch(batchId, deps);
-    expect(await generations()).toEqual([]);
-    const paused = await getBatchFor(ana, batchId);
-    expect(paused).toMatchObject({ status: "pausado" });
-    expect(paused.pause).toMatchObject({ kind: "precio", extraCredits: 2, videoId: videos[0].id, kindOf: "frame", quoted: 6, from: "imagenes" });
-    expect(paused.pause!.reason).toBe("Vídeo 1: la imagen cuesta 6 créditos (previsto 4).");
-    // Mientras está en pausa no avanza.
-    await advanceBatch(batchId, deps);
-    expect(await generations()).toEqual([]);
-
-    await expect(resumeBatch(ana, batchId, {})).rejects.toMatchObject({ status: 400 });
-    await resumeBatch(ana, batchId, { extraCredits: 2 });
-    expect(await getBatchFor(ana, batchId)).toMatchObject({ status: "imagenes", budgetCredits: 2 * (FRAME + CLIP_EST) + 2 });
-    await advanceBatch(batchId, deps);
-    // El primero ya con su precio nuevo; el segundo sube igual y vuelve a pausar.
-    expect((await generations()).map((g) => [g.videoId, g.quotedCredits])).toEqual([[videos[0].id, 6]]);
-    expect((await getBatchFor(ana, batchId)).pause).toMatchObject({ kind: "precio", videoId: videos[1].id });
+    expect((await getBatchFor(ana, batchId)).pause).toBeNull();
+    expect((await generations()).map((g) => [g.videoId, g.quotedCredits])).toEqual([
+      [videos[0].id, 6],
+      [videos[1].id, 6],
+    ]);
   });
 
   it("el total comprometido nunca pasa de lo autorizado: una regeneración sin margen pausa", async () => {
@@ -473,18 +477,30 @@ describe("presupuesto y dinero", () => {
     expect((await generations()).map((g) => g.status)).toEqual(["intent"]);
   });
 
-  it("un vídeo que falla en Higgsfield pausa el lote; «Saltar» lo deja fuera y el resto sigue", async () => {
+  it("un vídeo que falla en Higgsfield se repite solo; sin rondas, queda fuera y el resto sigue (sin pausa)", async () => {
     const { batchId, videos } = await sentAndConfirmed(2);
+    await getPool().query("update batches set budget_credits = 1000 where id = $1", [batchId]);
+    const failFirst = async () => {
+      for (const g of await generations()) if (g.status === "intent") await submitGeneration(g.id, deps);
+      for (const g of await generations()) {
+        if (g.status !== "submitted" || g.videoId !== videos[0].id) continue;
+        const { rows } = await getPool().query("select job_ids as \"jobIds\" from generations where id = $1", [g.id]);
+        for (const jobId of rows[0].jobIds) fake.state.jobs[jobId] = { jobId, status: "failed", failure: null, error: "Error interno", urls: [] };
+        await finalizeGeneration(g.id, deps);
+      }
+    };
     await advanceBatch(batchId, deps);
-    for (const g of await generations()) await submitGeneration(g.id, deps);
-    const [first] = await generations();
-    const { rows } = await getPool().query("select job_ids as \"jobIds\" from generations where id = $1", [first.id]);
-    for (const jobId of rows[0].jobIds) fake.state.jobs[jobId] = { jobId, status: "failed", failure: "nsfw", error: null, urls: [] };
-    await finalizeGeneration(first.id, deps);
+    await failFirst();
     await advanceBatch(batchId, deps);
-    expect((await getBatchFor(ana, batchId)).pause).toMatchObject({ kind: "fallo", videoId: videos[0].id });
-    await resumeBatch(ana, batchId, { skip: true });
+    expect((await getBatchFor(ana, batchId)).pause).toBeNull();
+    // Repetida sola: otra imagen del primero en marcha.
+    expect((await active()).some((g) => g.videoId === videos[0].id && g.kind === "frame")).toBe(true);
+    for (let i = 0; i < 3; i++) {
+      await failFirst();
+      await advanceBatch(batchId, deps);
+    }
     expect((await getVideoFor(ana, videos[0].id)).autoSkipped).toBe(true);
+    expect((await getBatchFor(ana, batchId)).pause).toBeNull();
     await sendAndFinish();
     await advanceBatch(batchId, deps);
     expect(await statusOf(batchId)).toBe("revision_imagenes");

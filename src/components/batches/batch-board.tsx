@@ -3,7 +3,7 @@
 import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { format } from "date-fns";
 import { es } from "date-fns/locale";
-import { ChevronRight, CircleAlert, CircleHelp, Clapperboard, Coins, Download, Ellipsis, Eye, Film, ImageIcon, Link2, Link2Off, ListFilter, Loader2, Pencil, Play, RefreshCw, ScanSearch, Scissors, SearchX, Sparkles } from "lucide-react";
+import { ChevronRight, CircleAlert, CircleHelp, Clapperboard, Coins, Download, Ellipsis, Eye, Film, ImageIcon, Link2, Link2Off, ListFilter, Loader2, Pencil, Play, RefreshCw, Scissors, SearchX, Sparkles } from "lucide-react";
 import Link from "next/link";
 import { useRef, useState } from "react";
 import { toast } from "sonner";
@@ -32,10 +32,9 @@ import { formatUsd } from "@/lib/money";
 import { cn } from "@/lib/utils";
 import { AutoAction, AutoStepper, PauseBanner, SendBatchButton } from "./auto-send";
 import type { VariantJson } from "./batch-fields";
-import { AutoAnalyzeSwitch, FrameCountPicker, GroupHeader, RowActions } from "./board-parts";
+import { FrameCountPicker, GroupHeader, RowActions } from "./board-parts";
 import { checkLink, EditReferenceField, rowSupportsEditReference } from "./edit-reference";
 import {
-  analysisState,
   editState,
   failedLink,
   generationState,
@@ -57,7 +56,6 @@ import { batchZipUrl, downloadInBackground, FinishedDownloads } from "./finished
 import { RowThumb } from "./row-thumb";
 import { ClipModelSelect, clipModelHint } from "@/components/videos/clip-model-picker";
 import { CLIP_MODEL_LABEL, type ClipModelChoice } from "@/lib/clip-models";
-import { runPool } from "./run-pool";
 
 const TONE: Record<Tone, { chip: string; dot: string }> = {
   off: { chip: "text-muted-foreground", dot: "bg-foreground/25" },
@@ -526,7 +524,7 @@ export function BatchBoard({ batchId }: { batchId: number }) {
   // Con el estado de la fila en ese momento (`rowState`): en cuanto la fila cambia, el aviso ya no se enseña.
   const [notices, setNotices] = useState<Record<number, { message: string; at: string }>>({});
   /** La acción en bloque en marcha: solo una a la vez, así nunca hay más de 2 peticiones en vuelo. */
-  const [running, setRunning] = useState<null | "breakdown" | "download" | "edited">(null);
+  const [running, setRunning] = useState<null | "download" | "edited">(null);
   const inFlight = useRef(false);
   const [downloaded, setDownloaded] = useState(0);
   /** «Por revisar»: solo las filas con algo que mirar. */
@@ -557,7 +555,6 @@ export function BatchBoard({ batchId }: { batchId: number }) {
   const auto = data.auto;
   const refresh = () => void client.invalidateQueries({ queryKey: ["batch", batchId] });
   const uploadOf = (row: BatchRowJson): LocalUpload => uploads[row.id] ?? { kind: "idle" };
-  const forBreakdown = rows.filter(ready.breakdown);
   const forReview = rows.filter(ready.review);
   const forDownload = rows.filter(ready.download);
   const forEdited = rows.filter(ready.edited);
@@ -581,20 +578,7 @@ export function BatchBoard({ batchId }: { batchId: number }) {
   const canChangeLink = (row: BatchRowJson) =>
     row.mine && mac.own && (failedLink(row) !== null || (row.referenceStatus !== "ready" && row.referenceStatus !== "processing" && uploadOf(row).kind !== "uploading"));
   // Sin «Generar imágenes/clips»: el lote las pide solo (regla fija del dueño, 23/11/2026).
-  const anyBulk = forBreakdown.length + forReview.length + forDownload.length + forEdited.length > 0;
-
-  async function breakdownAll() {
-    if (inFlight.current) return;
-    inFlight.current = true;
-    setRunning("breakdown");
-    const results = await runPool(forBreakdown, 2, (row) => api(`/api/videos/${row.id}/desglose`, { method: "POST" }));
-    note(Object.fromEntries(forBreakdown.map((row, i) => [row.id, results[i].ok ? null : message((results[i] as { error: unknown }).error, "No se pudo desglosar.")])));
-    const failed = results.filter((r) => !r.ok).length;
-    if (failed > 0) toast.error(failed === 1 ? "1 vídeo no se ha podido desglosar." : `${failed} vídeos no se han podido desglosar.`);
-    setRunning(null);
-    inFlight.current = false;
-    refresh();
-  }
+  const anyBulk = forReview.length + forDownload.length + forEdited.length > 0;
 
   async function downloadAll(edited = false) {
     if (inFlight.current) return;
@@ -655,12 +639,6 @@ export function BatchBoard({ batchId }: { batchId: number }) {
                   <DropdownMenuItem onSelect={() => setOnlyReview((on) => !on)}>
                     <ListFilter aria-hidden />
                     {onlyReview ? "Ver todos" : `Por revisar (${toReview.length})`}
-                  </DropdownMenuItem>
-                ) : null}
-                {forBreakdown.length > 0 ? (
-                  <DropdownMenuItem onSelect={() => void breakdownAll()}>
-                    <ScanSearch aria-hidden />
-                    Desglosar ({forBreakdown.length})
                   </DropdownMenuItem>
                 ) : null}
                 {forReview.length > 0 ? (
@@ -755,7 +733,6 @@ export function BatchBoard({ batchId }: { batchId: number }) {
                     <TableHead className="w-24">Quién</TableHead>
                     <TableHead className="w-24">Música</TableHead>
                     <TableHead className="w-36">Referencia</TableHead>
-                    <TableHead className="w-28">Desglose</TableHead>
                     <TableHead className="w-26">Imagen</TableHead>
                     <TableHead className="w-36">Clip</TableHead>
                     <TableHead className="w-20 text-right">Coste</TableHead>
@@ -767,7 +744,7 @@ export function BatchBoard({ batchId }: { batchId: number }) {
                     const upload = uploadOf(row);
                     const states = [
                       referenceState(row, upload),
-                      analysisState(row),
+                      // Sin columna «Desglose»: se hace por dentro (regla fija del dueño, 24/11/2026).
                       generationState(row.frame, "frame"),
                       // Con el clip hecho, la columna enseña su montaje.
                       row.edit.status === "none" ? generationState(row.clip, "clip") : editState(row.edit),
@@ -892,7 +869,6 @@ export function BatchBoard({ batchId }: { batchId: number }) {
           aside={
             auto.status === "borrador" ? (
               <div className="flex flex-wrap items-center gap-x-3">
-                <AutoAnalyzeSwitch batchId={batchId} value={data.batch.autoAnalyze} editable={data.batch.mine} />
                 <FrameCountPicker batchId={batchId} value={data.batch.frameCount} editable={data.batch.mine} />
               </div>
             ) : (

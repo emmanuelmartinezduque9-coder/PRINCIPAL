@@ -184,6 +184,17 @@ function retryAfterOf(batch: Batch): Date {
   return new Date(times.length > 0 ? Math.max(...times) : 0);
 }
 
+/**
+ * Una ronda que falló se puede repetir sola: quedan rondas y no es el bloqueo del filtro de Higgsfield
+ * (ese lo repite `sanitizeAfterBlock` con el prompt reescrito).
+ */
+function retryable(list: readonly Generation[]): boolean {
+  const last = list.at(-1);
+  if (!last || (last.status !== "failed" && last.status !== "not_sent") || last.rejectReason) return false;
+  if (last.error === BLOCKED) return false;
+  return list.filter((g) => SPENT.includes(g.status)).length < 1 + MAX_REGENERATIONS;
+}
+
 const frameStage = (row: Row, batch: Batch) => stageOf(row.frames, row.video.approvedFrameResultId !== null, retryAfterOf(batch));
 
 /** Intentos de Topaz por clip antes de montar con el de 480p (con aviso). */
@@ -971,13 +982,12 @@ async function onRequestError(user: AuthUser, batch: Batch, row: Row, kind: Gene
     console.warn(`[lotes] Vídeo ${row.video.id}: no se pudo pedir la subida a 1080p: ${message}`);
     return "skip";
   }
+  // Higgsfield sin conectar o caído: eso sí lo tiene que arreglar él (para todo el lote).
   const general = error.code === HIGGSFIELD_CONNECT || status === 503;
-  return pauseBatch(batch, {
-    kind: "fallo",
-    reason: general ? message : `${row.video.title}: ${message}`,
-    videoId: general ? null : row.video.id,
-    kindOf: pauseKind(kind),
-  });
+  if (general) return pauseBatch(batch, { kind: "fallo", reason: message, videoId: null, kindOf: pauseKind(kind) });
+  // Lo de un solo vídeo no para el lote: ese vídeo queda fuera con su motivo.
+  await skipVideo(row.video, message);
+  return "skip";
 }
 
 /**
@@ -1015,16 +1025,8 @@ async function requestFor(user: AuthUser, batch: Batch, rows: Row[], row: Row, k
   }
   const estimates = batch.estimates ?? {};
   const own = estimates[String(row.video.id)] ?? { frame: quote.credits, clip: 0 };
-  if (quote.credits > own[kind]) {
-    await pauseBatch(batch, {
-      kind: "precio",
-      reason: `${row.video.title}: ${KIND_WORD[kind]} cuesta ${quote.credits} créditos (previsto ${own[kind]}).`,
-      extraCredits: quote.credits - own[kind],
-      videoId: row.video.id,
-      kindOf: pauseKind(kind),
-      quoted: quote.credits,
-    });
-  }
+  // Un precio más alto que lo previsto no para el lote (24/11/2026): cuenta igual contra lo
+  // autorizado, que solo para si de verdad se pasa (abajo).
   // Lo que aún queda por pedir del lote (con lo previsto), sin contar lo que se pide ahora.
   let reserve = kind === "frame" && ["need", "failed"].includes(clipStage(row, batch)) ? own.clip : 0;
   for (const other of rows) {
@@ -1076,7 +1078,9 @@ async function autoConfirmBatch(user: AuthUser, batch: Batch, rows: Row[], deps:
     const row = rows.find((r) => r.video.id === failed.videoId)!;
     // Un prompt interno con errores se rehace solo (nunca se pregunta).
     if (isPromptProblem(failed.error!) && (await redoPrompt(user, row))) return;
-    await pauseBatch(batch, { kind: "fallo", reason: `${row.video.title}: ${failed.error}`, videoId: row.video.id, kindOf: "frame" });
+    // Si no tiene arreglo, ese vídeo queda fuera con su motivo y los demás siguen (sin pausa).
+    await skipVideo(row.video, failed.error!);
+    return kickBatch(batch);
   }
   if (quote.balance !== null && quote.balance < quote.total) {
     await pauseBatch(batch, {
@@ -1093,8 +1097,72 @@ async function autoConfirmBatch(user: AuthUser, batch: Batch, rows: Row[], deps:
 }
 
 /** «Preguntas»: pide el desglose de lo que ya no tiene nada pendiente (p. ej. tras responder) y, con todo listo, sigue solo. */
+/** Desgloses fallidos de una misma referencia que se reintentan solos antes de dejar el vídeo fuera. */
+const MAX_ANALYSIS_RETRIES = 2;
+
+/** Deja un vídeo fuera del envío con su motivo (lo enseñan el tablero y el registro), sin parar el lote. */
+async function skipVideo(video: Video, reason: string): Promise<void> {
+  await getDb().update(schema.videos).set({ autoSkipped: true, autoStop: reason.slice(0, 500), updatedAt: new Date() }).where(eq(schema.videos.id, video.id));
+  console.warn(`[lotes] Vídeo ${video.id} fuera del lote ${video.batchId}: ${reason}`);
+}
+
+/**
+ * Regla fija del dueño (24/11/2026, como Codex): desde «Enviar lote» hasta las imágenes no se le
+ * pregunta nada. Lo que el lote preguntaba se resuelve aquí solo:
+ * - quién sale sin elegir → «Automático» (o «Sin sustitución» sin biblioteca);
+ * - las elecciones del desglose (avatar de la biblioteca, variante, canción) → la primera sugerida /
+ *   las fotos de siempre / el audio original;
+ * - un modelo que no admite el tramo → el primero que sí;
+ * - un desglose fallido → se repite solo (hasta 2 veces) y, si sigue fallando, el vídeo queda fuera;
+ * - una referencia que no se pudo preparar (enlace fallido, subida a medias) → el vídeo queda fuera.
+ * Solo quedan las que de verdad decide él: falta la foto del artículo, la adaptación o el tope de gasto.
+ * Devuelve si cambió algo.
+ */
+async function autoAnswer(user: AuthUser, batch: Batch, rows: Row[], asks: Map<number, RowAsk>): Promise<boolean> {
+  let changed = false;
+  for (const row of rows) {
+    const ask = asks.get(row.video.id);
+    if (ask?.state !== "questions") continue;
+    for (const question of ask.questions) {
+      const values = question.options.map((o) => o.value);
+      let value: string | null = null;
+      if (question.kind === "referencia") {
+        await skipVideo(row.video, question.text);
+        changed = true;
+        break;
+      }
+      if (question.kind === "avatar") value = values.includes("automatico") ? "automatico" : "sin_sustitucion";
+      else if (question.kind === "biblioteca" || question.kind === "modelo") value = values.find((v) => v !== SKIP) ?? null;
+      else if (question.kind === "variante") value = NO_VARIANT;
+      else if (question.kind === "cancion") value = ORIGINAL_AUDIO;
+      else if (question.kind === "desglose" && values.includes(RETRY)) {
+        const failed = row.analyses.filter((a) => a.status === "failed" && a.referenceMediaId === row.video.referenceMediaId).length;
+        if (failed > MAX_ANALYSIS_RETRIES) {
+          await skipVideo(row.video, `El desglose falló ${failed} veces: ${question.text}`);
+          changed = true;
+          break;
+        }
+        value = RETRY;
+      }
+      if (value === null) continue;
+      try {
+        await answerQuestion(user, batch.id, { videoId: row.video.id, key: question.key, value });
+        changed = true;
+      } catch (error) {
+        if (!(error instanceof HttpError)) throw error;
+        console.warn(`[lotes] No se pudo resolver solo «${question.text}» del vídeo ${row.video.id}: ${error.message}`);
+      }
+    }
+  }
+  return changed;
+}
+
 async function advanceQuestions(user: AuthUser, batch: Batch, rows: Row[], deps: GenDeps): Promise<void> {
-  const asks = await askRows(user, rows);
+  let asks = await askRows(user, rows);
+  if (await autoAnswer(user, batch, rows, asks)) {
+    rows = await rowsOf(user, batch);
+    asks = await askRows(user, rows);
+  }
   if (batch.autoConfirm && rows.length > 0 && rows.every((row) => asks.get(row.video.id)?.state === "ready")) {
     return autoConfirmBatch(user, batch, rows, deps);
   }
@@ -1132,33 +1200,34 @@ async function advanceGenerations(user: AuthUser, start: Batch, deps: GenDeps): 
 
   // Cada vídeo avanza por su cuenta (petición de Emmanuel, 23/11/2026): con su imagen aprobada se
   // pide su clip sin esperar a las demás, y con su clip hecho se monta sin esperar al lote entero.
-  const pauseFor = async (row: Row, kind: GenerationKind, s: Stage) => {
+  // Sin pausas por un vídeo (regla fija del dueño, 24/11/2026): lo que falla se repite solo dentro de
+  // sus rondas; sin rondas, o bloqueado por el filtro también con el prompt reescrito, ese vídeo queda
+  // fuera con su motivo y los demás siguen.
+  const skipFor = async (row: Row, kind: GenerationKind, s: Stage) => {
     const list = kind === "frame" ? row.frames : row.clips;
-    if (s === "failed") {
+    if (s === "failed" && !retryable(list)) {
       const blockedAgain = kind === "clip" && list.at(-1)?.error === BLOCKED;
-      await pauseBatch(batch, {
-        kind: "fallo",
-        reason: blockedAgain
-          ? `${row.video.title}: Higgsfield bloquea el clip por su filtro de contenido o de marcas también con el prompt reescrito sin marcas (${MAX_BLOCKED_RETRIES} reintentos, sin coste). Lo bloquea el vídeo de referencia o la imagen: cambia la referencia o salta este vídeo.`
-          : `${row.video.title}: ${list.at(-1)?.error ?? "Higgsfield no ha podido generarlo."}`,
-        videoId: row.video.id,
-        kindOf: pauseKind(kind),
-      });
+      await skipVideo(
+        row.video,
+        blockedAgain
+          ? `Higgsfield bloquea el clip por su filtro de contenido o de marcas también con el prompt reescrito (${MAX_BLOCKED_RETRIES} reintentos, sin coste).`
+          : (list.at(-1)?.error ?? "Higgsfield no ha podido generarlo."),
+      );
+      return true;
     }
     if (s === "maxed") {
-      await pauseBatch(batch, {
-        kind: "fallo",
-        reason: `${row.video.title}: ${KIND_WORD[kind]} ha llegado al máximo de ${MAX_REGENERATIONS} regeneraciones.`,
-        videoId: row.video.id,
-        kindOf: pauseKind(kind),
-      });
+      await skipVideo(row.video, `${KIND_WORD[kind]} ha llegado al máximo de ${MAX_REGENERATIONS} regeneraciones.`);
+      return true;
     }
+    return false;
   };
+  let skipped = false;
   for (const row of rows) {
     const frame = frameStage(row, batch);
-    await pauseFor(row, "frame", frame);
-    if (frame === "approved") await pauseFor(row, "clip", clipStage(row, batch));
+    if (await skipFor(row, "frame", frame)) skipped = true;
+    else if (frame === "approved" && (await skipFor(row, "clip", clipStage(row, batch)))) skipped = true;
   }
+  if (skipped) rows = await rowsOf(user, batch);
 
   await startFinishedEdits(user, rows, batch);
 
@@ -1170,8 +1239,9 @@ async function advanceGenerations(user: AuthUser, start: Batch, deps: GenDeps): 
   for (const kind of ["frame", "clip", "upscale"] as const) {
     for (const row of rows) {
       if (slots <= 0) return;
-      if (kind === "frame" && frameStage(row, batch) !== "need") continue;
-      if (kind === "clip" && (frameStage(row, batch) !== "approved" || clipStage(row, batch) !== "need")) continue;
+      const wants = (s: Stage, list: Generation[]) => s === "need" || (s === "failed" && retryable(list));
+      if (kind === "frame" && !wants(frameStage(row, batch), row.frames)) continue;
+      if (kind === "clip" && (frameStage(row, batch) !== "approved" || !wants(clipStage(row, batch), row.clips))) continue;
       if (kind === "upscale" && upscaleStage(row, batch) !== "need") continue;
       if (all(row).some((g) => BUSY_GENERATION.includes(g.status))) continue;
       // Un clip bloqueado por el filtro se repite con el prompt reescrito (cuando el desglose esté listo).

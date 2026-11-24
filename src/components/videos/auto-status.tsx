@@ -67,7 +67,9 @@ export function AutoNotice({ view, step }: { view: VideoViewJson; step: "imagen"
       </p>
     );
   }
-  if ((auto.state === "working" && auto.step === step) || auto.state === "off") {
+  // El desglose va por dentro: en «Imagen» se ve como que se está preparando la imagen.
+  const preparing = step === "imagen" && auto.state === "working" && auto.step === "desglose";
+  if ((auto.state === "working" && auto.step === step) || auto.state === "off" || preparing) {
     return (
       <p role="status" className="flex items-center gap-2.5 text-sm text-muted-foreground">
         <Loader2 className="size-4 shrink-0 animate-spin" aria-hidden />

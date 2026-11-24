@@ -58,7 +58,8 @@ function pollEvery(view: VideoViewJson | undefined): number | false {
  */
 function reachableSteps(view: VideoViewJson): FlowStep[] {
   const steps: FlowStep[] = ["referencia", "desglose"];
-  if ((view.analysis?.status === "done" && !view.analysis.stale) || view.frame.current !== null) steps.push("imagen");
+  // El desglose va por dentro (24/11/2026): con la referencia lista, lo siguiente que se ve es la imagen.
+  if (view.analysis !== null || view.video.referenceStatus === "ready" || view.frame.current !== null) steps.push("imagen");
   if (view.frame.approvedResultId !== null || view.clip.current !== null) steps.push("clip");
   // Montaje: con el clip hecho (se puede montar) o si ya se pidió alguno.
   if (view.edit.canStart || view.edit.latest !== null || view.edit.status !== "none") steps.push("montaje");
@@ -71,7 +72,7 @@ function firstStep(view: VideoViewJson, referenceDone: boolean): FlowStep {
   if (reachable.includes("montaje") && (view.edit.latest !== null || view.edit.status !== "none")) return "montaje";
   if (reachable.includes("clip")) return "clip";
   if (reachable.includes("imagen") && view.frame.current !== null) return "imagen";
-  return view.analysis || referenceDone ? "desglose" : "referencia";
+  return view.analysis || referenceDone ? "imagen" : "referencia";
 }
 
 function Loading() {
@@ -193,7 +194,8 @@ function FlowBody({
     { key: "clip", label: "Clip", icon: Clapperboard, done: data.clip.approvedResultId !== null },
     { key: "montaje", label: "Montaje", icon: Scissors, done: data.edit.latest !== null },
   ];
-  const steps = allSteps.filter((step) => reachable.includes(step.key));
+  // «Desglose» no se enseña (se hace por dentro); solo se abre a propósito con `?paso=desglose`.
+  const steps = allSteps.filter((step) => reachable.includes(step.key) && (step.key !== "desglose" || current === "desglose"));
   const spent = data.costs.higgsfieldCredits > 0 || data.costs.claudeMicros > 0;
 
   return (

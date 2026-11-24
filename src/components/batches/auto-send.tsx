@@ -13,19 +13,23 @@ import type { AutoViewJson, BatchRowJson } from "./labels";
 
 type Status = AutoViewJson["status"];
 
+/** Como Codex: Imágenes → Revisión → Vídeos → Listos. El desglose y lo que antes eran «Preguntas» van por dentro. */
 const STEPS = [
-  { status: "preguntas", label: "Preguntas", icon: CircleHelp, count: (a: AutoViewJson) => a.steps.preguntas },
   { status: "imagenes", label: "Imágenes", icon: ImageIcon, count: (a: AutoViewJson) => a.steps.imagenes },
   { status: "revision_imagenes", label: "Revisión", icon: ScanEye, count: (a: AutoViewJson) => a.steps.revision },
-  { status: "clips", label: "Clips", icon: Clapperboard, count: (a: AutoViewJson) => a.steps.clips },
-  { status: "listo", label: "Montaje", icon: Scissors, count: (a: AutoViewJson) => a.steps.montaje },
+  { status: "clips", label: "Vídeos", icon: Clapperboard, count: (a: AutoViewJson) => a.steps.clips },
+  { status: "listo", label: "Listos", icon: Scissors, count: (a: AutoViewJson) => a.steps.montaje },
 ] as const;
 
 /** `listo`: clips hechos y montándose en la nube; `montado`: todos los montajes terminados (el final). */
 const ORDER: Status[] = ["borrador", "preguntas", "imagenes", "revision_imagenes", "clips", "listo", "montado"];
 
 /** El paso en el que está (en pausa: el paso en el que se paró). */
-const currentOf = (auto: AutoViewJson): Status => (auto.status === "pausado" ? ((auto.pause?.from as Status) ?? "imagenes") : auto.status);
+const currentOf = (auto: AutoViewJson): Status => {
+  const status = auto.status === "pausado" ? ((auto.pause?.from as Status) ?? "imagenes") : auto.status;
+  // Lo de antes de las imágenes (desglose por dentro) ya cuenta como «Imágenes».
+  return status === "preguntas" ? "imagenes" : status;
+};
 
 /**
  * Preguntas · Imágenes · Revisión · Clips · Montaje, como una pista con nodos: lo hecho en verde, el
@@ -37,7 +41,7 @@ export function AutoStepper({ auto }: { auto: AutoViewJson }) {
   const at = ORDER.indexOf(current);
   const paused = auto.status === "pausado";
   return (
-    <ol aria-label="Pasos del lote" className="panel grid grid-cols-5 px-2 py-4">
+    <ol aria-label="Pasos del lote" className="panel grid grid-cols-4 px-2 py-4">
       {STEPS.map((step, index) => {
         const position = ORDER.indexOf(step.status);
         const done = position < at;
@@ -71,7 +75,6 @@ export function AutoStepper({ auto }: { auto: AutoViewJson }) {
               <span className={cn("truncate text-sm font-medium", !now && !done && "text-muted-foreground")}>{step.label}</span>
               <span className="text-xs text-muted-foreground tabular-nums">
                 {current === "borrador" ? "—" : `${count}/${auto.total}`}
-                {step.status === "preguntas" && now && auto.questions > 0 ? ` · ${auto.questions} ?` : ""}
               </span>
             </span>
           </li>

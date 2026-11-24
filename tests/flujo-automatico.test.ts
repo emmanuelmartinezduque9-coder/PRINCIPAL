@@ -328,18 +328,15 @@ describe("flujo automático del lote", () => {
     ]);
   });
 
-  it("avatar obligatorio sin elegir → solo esa pregunta; al responder sigue solo", async () => {
+  it("quién sale sin elegir → «Automático» solo, sin preguntar; el lote sigue a las imágenes", async () => {
     const { batchId, ids } = await automaticBatch(2, { avatar: false });
     await sendBatch(ana, batchId);
     await runQueuedAnalyses();
     await advanceBatch(batchId, deps);
-    const questions = await batchQuestions(ana, batchId);
-    expect(questions.map((q) => [q.videoId, q.kind])).toEqual([[ids[0], "avatar"]]);
-    expect((await getBatchFor(ana, batchId)).status).toBe("preguntas");
-    expect(await generations()).toEqual([]);
-
-    await answerQuestion(ana, batchId, { videoId: ids[0], key: "sys:avatar", value: `foto:${avatar}` });
-    await advanceBatch(batchId, deps);
+    expect(await batchQuestions(ana, batchId)).toEqual([]);
+    const video = await getVideoFor(ana, ids[0]);
+    expect(["automatico", "sin_sustitucion"]).toContain(video.avatarMode);
+    // El desglose se rehace con el avatar elegido solo, y el lote llega a las imágenes.
     await runQueuedAnalyses();
     await advanceBatch(batchId, deps);
     expect((await getBatchFor(ana, batchId)).status).toBe("imagenes");

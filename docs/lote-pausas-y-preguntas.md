@@ -1,0 +1,41 @@
+# Lote: qué puede pararlo o preguntar (24/11/2026)
+
+Regla fija de Emmanuel (como Codex): desde «Enviar lote» no se le molesta hasta que están **todas**
+las imágenes; se le enseñan juntas («Aprobar todas»); desde que aprueba, no se le molesta hasta que
+están **todos** los vídeos listos para subir. El desglose va por dentro: no se ve en los pasos del
+lote (Imágenes → Revisión → Vídeos → Listos), ni en el tablero, ni en la pantalla del vídeo (solo se
+abre a propósito con `?paso=desglose`).
+
+Todo está en `src/server/videos/lote.ts`.
+
+## Lo que se resuelve solo (sin preguntar ni parar)
+
+| Antes preguntaba o paraba | Ahora | Dónde |
+| --- | --- | --- |
+| «¿Quién sale?» (avatar sin elegir) | «Automático» (o «Sin sustitución» si no hay biblioteca) | `autoAnswer` |
+| Avatar de la biblioteca / variante / canción que pedía el desglose | El primero sugerido / las fotos de siempre / el audio original | `autoAnswer` |
+| El modelo elegido no admite el tramo | El primer modelo que sí lo admite | `autoAnswer` |
+| Desglose fallido | Se repite solo hasta 2 veces; si sigue fallando, ese vídeo queda fuera | `autoAnswer` |
+| Referencia que no se pudo preparar (enlace fallido, subida a medias, gancho cambiado) | Ese vídeo queda fuera | `autoAnswer` |
+| Prompt interno con errores | Se rehace el desglose de ese vídeo; si no tiene arreglo, queda fuera | `autoConfirmBatch`, `onRequestError` (`redoPrompt`) |
+| Un vídeo que no se puede presupuestar | Ese vídeo queda fuera; los demás siguen | `autoConfirmBatch` |
+| «Confirmar y generar» el presupuesto | Se autoriza solo (con margen para 2 regeneraciones) | `autoConfirmBatch` |
+| Precio más alto que lo previsto | Se acepta si cabe en lo autorizado | `requestFor` |
+| Imagen o clip que falla en Higgsfield | Se repite solo dentro de sus rondas; sin rondas, ese vídeo queda fuera | `advanceGenerations` (`retryable`, `skipFor`) |
+| Bloqueado por el filtro de Higgsfield | El clip se repite con el prompt reescrito (`sanitizeAfterBlock`); si sigue bloqueado, ese vídeo queda fuera | `advanceGenerations` |
+| Llegar al máximo de regeneraciones | Ese vídeo queda fuera | `skipFor` |
+| Error de un vídeo al pedir su generación | Ese vídeo queda fuera | `onRequestError` |
+
+Un vídeo «fuera» lleva `videos.auto_skipped = true` y su motivo en `videos.auto_stop`; también se
+escribe en el registro (`[lotes] Vídeo N fuera del lote M: …`). El lote termina con los demás.
+
+## Lo único que todavía para o pregunta (solo lo puede decidir él)
+
+| Motivo | Cómo se ve | Dónde |
+| --- | --- | --- |
+| Sin saldo en Higgsfield (para el lote o para una generación) | Pausa «saldo» con las cifras; «Continuar» al recargar | `autoConfirmBatch`, `requestFor`, `onRequestError` |
+| Higgsfield sin conectar o caído (503) | Pausa «fallo» del lote entero | `onRequestError` |
+| El lote pasaría de lo autorizado (con el margen de 2 regeneraciones ya incluido) | Pausa «presupuesto» con los créditos de más | `requestFor` |
+| El producto no tiene foto del artículo | Pregunta «Falta una foto del artículo.» | `askRow` |
+| «Adaptación de concepto» sin decir qué adaptación | Pregunta «¿Qué adaptación quieres?» (en «Nuevo lote» no deja enviar sin ella) | `askRow` |
+| El desglose en pausa por el tope mensual de gasto de Claude | Pregunta con el motivo | `askRow` |
