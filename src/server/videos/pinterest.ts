@@ -654,7 +654,7 @@ async function finishWithRefs(
   });
   console.log(`[pinterest] Prompt con la sala del vídeo ${run.videoId}:\n${composed.prompt}`);
   console.log(
-    `[pinterest] Vídeo ${run.videoId} (${product.name}): ${refs.length} referencia(s) del banco de aprobadas para «${scene.place}»: ${refs.map((r) => r.pinId).join(", ")} (${refs.map((r) => r.sha256).join(", ")})`,
+    `[pinterest] Vídeo ${run.videoId} (${product.name}): ${refs.length} referencia(s) (${refs.map((r) => (r.sourceUrl.startsWith("banco:") ? "banco" : r.sourceUrl === "subida-a-mano" ? "a mano" : "Pinterest")).join(", ")}) para «${scene.place}»: ${refs.map((r) => r.pinId).join(", ")} (${refs.map((r) => r.sha256).join(", ")})`,
   );
 }
 
