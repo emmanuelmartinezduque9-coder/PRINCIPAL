@@ -150,10 +150,11 @@ beforeEach(async () => {
 });
 
 /** Claude simulado para «¿habla o canto?»: lo que empieza por «CANTO» es canto; el resto, habla. Con `down`, no responde. */
-const speech = { calls: 0, down: false };
+const speech = { calls: 0, down: false, instructions: "" };
 const gateway: LlmGateway = {
   async call<T>(request: LlmCall<T>): Promise<LlmResult<T>> {
     speech.calls += 1;
+    speech.instructions = request.instructions;
     if (speech.down) throw new Error("Claude sin saldo");
     const lines = String((request.content as Array<{ text?: string }>)[0]?.text ?? "").split("\n");
     const data = { frases: lines.map((line, i) => ({ n: i + 1, tipo: line.includes("CANTO") ? "canto" : "habla", motivo: "prueba" })) };
@@ -278,6 +279,21 @@ describe("el montaje con el diálogo traducido", () => {
     expect(second.outcome).toBe("done");
     expect(second.row.notes).toContain("audio:MEZCLA-ALEMANA");
     expect(dubCalls()).toHaveLength(1);
+  });
+
+  it("las correcciones aprendidas del doblaje («Mejoras») van a la decisión de habla o canto y el montaje las apunta", async () => {
+    const [habla] = await getDb()
+      .insert(schema.learnedCorrections)
+      .values({ key: "habla", version: 1, stage: "doblaje", problemType: "audio", directive: "Una frase dicha sobre la música es HABLA aunque salga de la pista de música.", note: "Lote 6, vídeo 22" })
+      .returning();
+    // Doblaje por defecto (sin forzarlo en la tarjeta): Claude decide habla o canto.
+    const video = await videoWithAudio();
+    const first = await mount(video.id);
+    expect(first.outcome).toBe("done");
+    expect(speech.calls).toBeGreaterThan(0);
+    expect(speech.instructions).toContain("Correcciones aprendidas de problemas reportados");
+    expect(speech.instructions).toContain("aunque salga de la pista de música");
+    expect(first.row.learnedCorrections).toEqual([habla.id]);
   });
 
   it("con canción elegida no hay diálogo que traducir: monta con la canción y lo avisa, sin gastar", async () => {

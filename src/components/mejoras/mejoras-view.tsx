@@ -26,6 +26,20 @@ const num = (value: number | null) => (value === null ? "—" : value.toLocaleSt
 const typeLabel = (type: string | null) => (type && isProblemType(type) ? PROBLEM_TYPES[type] : "Sin clasificar");
 const when = (iso: string) => format(new Date(iso), "d MMM yyyy, HH:mm", { locale: es });
 
+const STAGE_LABELS: Record<Correction["stage"], string> = {
+  frame: "imagen inicial",
+  clip: "clip",
+  montaje: "rótulos del montaje",
+  doblaje: "doblaje (habla o canción)",
+};
+
+const STAGE_HOW: Record<Correction["stage"], string> = {
+  frame: "El motor la añade al final del prompt; se cuenta como «después» cada vídeo cuyo prompt la llevó.",
+  clip: "El motor la añade al final del prompt; se cuenta como «después» cada vídeo cuyo prompt la llevó.",
+  montaje: "Claude la cumple al leer y adaptar los rótulos; se cuenta como «después» cada vídeo cuyo primer montaje la usó (rehacer el montaje cuenta como regeneración).",
+  doblaje: "Claude la cumple al decidir si la voz es habla o canción; se cuenta como «después» cada vídeo cuyo primer montaje la usó.",
+};
+
 const VERDICT: Record<Evaluation["verdict"], { label: string; tone: string }> = {
   mejora: { label: "Aprendido: mejora con números", tone: "bg-success/15 text-success" },
   no_mejora: { label: "No mejora: no cuenta como aprendido", tone: "bg-destructive/10 text-destructive" },
@@ -121,7 +135,7 @@ function CorrectionCard({ correction, owner, products }: { correction: Correctio
       <div className="flex flex-wrap items-center gap-2">
         <span className="font-medium">{typeName}</span>
         <span className="text-sm text-muted-foreground">
-          · {correction.stage === "frame" ? "imagen inicial" : "clip"} · {correction.productName ? `solo ${correction.productName}` : "todos los productos"} · v{correction.current.version}
+          · {STAGE_LABELS[correction.stage]} · {correction.productName ? `solo ${correction.productName}` : "todos los productos"} · v{correction.current.version}
         </span>
         <span className="ml-auto flex items-center gap-2">
           {correction.active ? <VerdictBadge verdict={correction.evaluation.verdict} /> : <span className="text-xs text-muted-foreground">Retirada</span>}
@@ -131,7 +145,7 @@ function CorrectionCard({ correction, owner, products }: { correction: Correctio
       <div className="rounded-lg bg-muted/60 px-3 py-2 font-mono text-xs leading-relaxed">{correction.current.directive}</div>
       <p className="text-xs text-muted-foreground">
         {correction.current.automatic ? "Aplicada sola" : "Escrita a mano"} el {when(correction.current.createdAt)}
-        {correction.reportIds.length ? ` · sale de ${correction.reportIds.map((id) => `#${id}`).join(", ")}` : ""}. El motor la añade al final del prompt; se cuenta como «después» cada vídeo cuyo prompt la llevó.
+        {correction.reportIds.length ? ` · sale de ${correction.reportIds.map((id) => `#${id}`).join(", ")}` : ""}. {STAGE_HOW[correction.stage]}
       </p>
       <EvidenceTable evaluation={correction.evaluation} products={products} typeName={typeName} />
       {correction.versions.length > 1 ? (

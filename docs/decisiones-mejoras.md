@@ -72,3 +72,23 @@ reportes con su recorrido: Recibido → Causa → Cambio aplicado → Comprobado
 - La corrección se detecta por su texto literal en el prompt guardado: no hace falta otra columna en
   `generations` y la evidencia es lo que de verdad se envió a Higgsfield.
 - El estado «Comprobado» no se escribe a mano: sale de los números cada vez que se abre la página.
+
+## Rótulos del montaje y doblaje (24/11/2026, «que también aprenda de los textos y el doblaje»)
+
+- Dos pasos nuevos para las correcciones (`learned_corrections.stage`): `montaje` (Claude lee los rótulos de la
+  referencia y los traduce y adapta, `edicion-referencia.ts`) y `doblaje` (Claude decide si la voz es habla, que se
+  dobla, o canción, que no, `doblaje.ts` → `classifySpeech`). Van en español, como bloque «Correcciones aprendidas de
+  problemas reportados» al final de esas instrucciones (`instructionsBlock`), como mucho 4 por paso.
+- **La traducción hablada no admite correcciones:** la hace el modelo `dubbing` de Higgsfield solo con el idioma de
+  destino, sin texto nuestro. Haiku clasifica un fallo de esa traducción como «código».
+- La edición de la referencia se guarda en caché en el almacén; las correcciones van en su clave, así que al cambiar
+  se vuelve a leer (un Claude mediano más por vídeo, solo esa vez).
+- El montaje apunta qué correcciones usó (`edit_runs.learned_corrections`). Se mide **por montaje**: cada vídeo con
+  montaje hecho es un caso; «después» = su primer montaje usó la corrección; rehacer el montaje cuenta como
+  regeneración; el problema son los reportes del montaje de ese tipo. Mismo veredicto que en imagen y clip.
+- Haiku ya puede proponer reglas de `montaje` y `doblaje` desde un reporte del montaje o del lote; entonces se crea la
+  corrección versionada y se aplica sola.
+- Sembradas (migración 0056) con los casos reales del día: marcas de terceros en rótulos (Harry Potter) y lote 6,
+  vídeo 22 (diálogo tomado por canción, sin doblar). El de lote 7, vídeo 24 («in den USA» → «in Berlin») no se siembra:
+  la sesión del Mac lo arregló como código (regla 6c de `REFERENCE_EDIT_INSTRUCTIONS` y `withLocalPlaces`) y lo dejó en
+  Mejoras como reporte con su arreglo (`recordAppliedFixOnce`), que se mide como arreglo de código.

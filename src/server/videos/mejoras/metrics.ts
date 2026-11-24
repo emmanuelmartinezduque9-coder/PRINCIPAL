@@ -15,11 +15,16 @@ export const MAX_BEFORE = 40;
 /** Ventana de «antes» de un arreglo de código. */
 export const CODE_BEFORE_DAYS = 30;
 
-/** Lo que pasó con la imagen inicial o con el clip de un vídeo. */
+export type Stage = "frame" | "clip" | "montaje" | "doblaje";
+
+/**
+ * Lo que pasó en un paso de un vídeo: la imagen inicial o el clip (por rondas), o el montaje (por montajes hechos;
+ * `montaje` y `doblaje` son el mismo montaje visto desde las correcciones de rótulos o de doblaje).
+ */
 export interface StageRecord {
   videoId: number;
   productId: number;
-  stage: "frame" | "clip";
+  stage: Stage;
   /** Cuándo se pidió la primera ronda. */
   firstAt: Date;
   /** Ya hay un veredicto de la persona: un resultado aprobado o al menos un rechazo suyo. */
@@ -30,8 +35,10 @@ export interface StageRecord {
   regenerations: number;
   /** Tipo de cada problema: rechazos clasificados, bloqueos de Higgsfield y reportes de ese paso. */
   problems: ProblemType[];
-  /** El prompt de cada ronda, la primera la primera. */
+  /** El prompt de cada ronda, la primera la primera (imagen y clip). */
   prompts: string[];
+  /** Correcciones aprendidas que usó cada intento, el primero el primero (montaje: `edit_runs.learned_corrections`). */
+  applied?: number[][];
 }
 
 export interface SideStats {
@@ -96,7 +103,8 @@ export function verdictOf(before: SideStats, after: SideStats, typeLabel: string
 }
 
 export interface CorrectionVersion {
-  stage: "frame" | "clip";
+  id?: number;
+  stage: Stage;
   productId: number | null;
   directive: string;
   createdAt: Date;
@@ -104,7 +112,7 @@ export interface CorrectionVersion {
 
 /**
  * Evalúa una corrección (todas sus versiones): después = vídeos cuya primera ronda llevó el texto de
- * alguna versión en el prompt; antes = los vídeos anteriores a la primera versión, del mismo paso y del
+ * alguna versión en el prompt (o cuyo primer montaje la usó); antes = los vídeos anteriores a la primera versión, del mismo paso y del
  * mismo producto si la corrección es de un producto (los `MAX_BEFORE` más recientes).
  */
 export function evaluateCorrection(
@@ -118,10 +126,15 @@ export function evaluateCorrection(
   const start = Math.min(...versions.map((v) => v.createdAt.getTime()));
   const directives = versions.map((v) => v.directive);
   const scoped = records.filter((r) => r.stage === stage && (productId === null || r.productId === productId));
-  const carried = (r: StageRecord) => r.prompts.length > 0 && directives.some((d) => r.prompts[0].includes(d));
+  const ids = versions.map((v) => v.id).filter((id): id is number => id !== undefined);
+  const inPrompt = (prompt: string | undefined) => prompt !== undefined && directives.some((d) => prompt.includes(d));
+  const inApplied = (list: number[] | undefined) => list !== undefined && list.some((id) => ids.includes(id));
+  // Imagen y clip: el texto va literal en el prompt guardado. Montaje: el montaje apunta qué correcciones usó.
+  const carried = (r: StageRecord) => inPrompt(r.prompts[0]) || inApplied(r.applied?.[0]);
+  const ever = (r: StageRecord) => r.prompts.some(inPrompt) || (r.applied ?? []).some(inApplied);
   const after = scoped.filter(carried);
   const before = scoped
-    .filter((r) => r.firstAt.getTime() < start && !r.prompts.some((p) => directives.some((d) => p.includes(d))))
+    .filter((r) => r.firstAt.getTime() < start && !ever(r))
     .sort((a, b) => b.firstAt.getTime() - a.firstAt.getTime())
     .slice(0, MAX_BEFORE);
   const b = sideStats(before, type);
@@ -143,7 +156,8 @@ export function evaluateCodeFix(
 ): Evaluation {
   // Un registro por vídeo: lo que pasó en todos sus pasos.
   const byVideo = new Map<number, StageRecord>();
-  for (const r of records) {
+  // `doblaje` es el mismo montaje que `montaje`: no se cuenta dos veces.
+  for (const r of records.filter((record) => record.stage !== "doblaje")) {
     const seen = byVideo.get(r.videoId);
     if (!seen) {
       byVideo.set(r.videoId, { ...r, problems: [...r.problems, ...(extraProblems.get(r.videoId) ?? [])] });

@@ -1256,6 +1256,11 @@ export const editRuns = pgTable(
     error: text("error"),
     /** Avisos del montaje (referencia que no llegó, Mac apagado…), además de la autocomprobación. */
     notes: jsonb("notes").$type<string[]>(),
+    /**
+     * Correcciones aprendidas («Mejoras») que usó este montaje: las de rótulos en la lectura de la edición de la
+     * referencia (`montaje`) y las de habla o canto en el doblaje (`doblaje`). Para medir antes y después por montaje.
+     */
+    learnedCorrections: jsonb("learned_corrections").$type<number[]>().notNull().default([]),
     createdAt: instant("created_at").notNull().defaultNow(),
   },
   (t) => [
@@ -1653,8 +1658,9 @@ export const problemReports = pgTable(
 );
 
 /**
- * Correcciones aprendidas: una instrucción corta (en inglés, como los prompts) que el motor añade al
- * prompt de la imagen inicial (`frame`) o del clip (`clip`), para todos los productos o solo uno.
+ * Correcciones aprendidas: una instrucción corta que el motor añade al prompt de la imagen inicial (`frame`) o del
+ * clip (`clip`), en inglés como esos prompts, o, en español, a la lectura y adaptación de los rótulos del montaje
+ * (`montaje`) o a la decisión de habla o canto del doblaje (`doblaje`); para todos los productos o solo uno.
  * Cada fila es una versión inmutable (`key`, `version`); cambiarla es una versión nueva y la anterior
  * se retira. Se sabe qué generación la llevó porque el texto va literal en su prompt.
  */
@@ -1681,7 +1687,7 @@ export const learnedCorrections = pgTable(
   (t) => [
     unique("learned_corrections_key_version").on(t.key, t.version),
     index("learned_corrections_active").on(t.stage, t.status),
-    check("learned_corrections_stage_valid", sql`${t.stage} in ('frame', 'clip')`),
+    check("learned_corrections_stage_valid", sql`${t.stage} in ('frame', 'clip', 'montaje', 'doblaje')`),
     check("learned_corrections_status_valid", sql`${t.status} in ('activa', 'retirada')`),
   ],
 );

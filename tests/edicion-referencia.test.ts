@@ -165,6 +165,33 @@ describe("editar como la referencia", () => {
     expect(calls).toHaveLength(1);
   });
 
+  it("las correcciones aprendidas de rótulos («Mejoras») van a las instrucciones, el montaje las apunta y, si cambian, se vuelve a leer", async () => {
+    await store.putBuffer("referencias/x/ref.mp4", mp4, { contentType: "video/mp4" });
+    const video = await videoWithClip({ referenceStorageKey: "referencias/x/ref.mp4" });
+    const [lugar] = await getDb()
+      .insert(schema.learnedCorrections)
+      .values({ key: "precios", version: 1, stage: "montaje", problemType: "rotulos", directive: "Escribe los precios con el símbolo del euro detrás (p. ej. «19,99 €»).", note: "Precios" })
+      .returning();
+    // Una de imagen no entra en los rótulos.
+    await getDb().insert(schema.learnedCorrections).values({ key: "img", version: 1, stage: "frame", problemType: "producto", directive: "Keep the product.", note: "x" });
+    const first = await mount(video.id);
+    expect(first.outcome).toBe("done");
+    expect(calls).toHaveLength(1);
+    expect(calls[0].instructions).toContain("Correcciones aprendidas de problemas reportados");
+    expect(calls[0].instructions).toContain("símbolo del euro detrás");
+    expect(calls[0].instructions).not.toContain("Keep the product.");
+    expect(first.row.learnedCorrections).toEqual([lugar.id]);
+    // Otra corrección: la edición en caché ya no vale y se vuelve a leer con las dos.
+    const [marcas] = await getDb()
+      .insert(schema.learnedCorrections)
+      .values({ key: "marcas", version: 1, stage: "montaje", problemType: "rotulos", directive: "Ninguna marca de terceros (p. ej. Harry Potter) en los rótulos.", note: "Harry Potter" })
+      .returning();
+    const second = await mount(video.id);
+    expect(calls).toHaveLength(2);
+    expect(calls[1].instructions).toContain("Harry Potter");
+    expect([...second.row.learnedCorrections].sort()).toEqual([lugar.id, marcas.id].sort());
+  });
+
   it("con referencia de edición se usa esa, no la de la réplica", async () => {
     const video = await videoWithClip({ referenceStorageKey: "referencias/x/ref.mp4", editReferenceUrl: "https://www.instagram.com/reel/abc/" });
     const { spec } = await mount(video.id);

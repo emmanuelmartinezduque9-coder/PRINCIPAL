@@ -16,7 +16,7 @@ import type { AuthUser } from "@/server/auth";
 import { HttpError } from "@/server/http";
 import { allCorrections, reviseCorrection, setCorrectionActive, type Correction } from "@/server/videos/mejoras/corrections";
 import { loadStageRecords } from "@/server/videos/mejoras/evidence";
-import { evaluateCodeFix, evaluateCorrection, type Evaluation } from "@/server/videos/mejoras/metrics";
+import { evaluateCodeFix, evaluateCorrection, type Evaluation, type Stage } from "@/server/videos/mejoras/metrics";
 import { productNamesByIds } from "@/server/products";
 import { getVideoFor } from "@/server/videos/videos";
 
@@ -170,7 +170,7 @@ export async function readScreenshot(user: AuthUser, reportId: number): Promise<
 /** Lo que se enseña de una corrección: su texto vigente, sus versiones y la evidencia. */
 export interface CorrectionView {
   key: string;
-  stage: "frame" | "clip";
+  stage: Stage;
   problemType: ProblemType;
   productId: number | null;
   productName: string | null;
@@ -294,7 +294,7 @@ export async function mejorasView(user: AuthUser): Promise<MejorasView> {
     const last = versions[versions.length - 1];
     const type = isProblemType(last.problemType) ? last.problemType : "otro";
     const evaluation = evaluateCorrection(
-      versions.map((v) => ({ stage: v.stage as "frame" | "clip", productId: v.productId, directive: v.directive, createdAt: v.createdAt })),
+      versions.map((v) => ({ id: v.id, stage: v.stage as Stage, productId: v.productId, directive: v.directive, createdAt: v.createdAt })),
       type,
       typeLabel(type),
       records,
@@ -302,7 +302,7 @@ export async function mejorasView(user: AuthUser): Promise<MejorasView> {
     evaluations.set(key, evaluation);
     correctionViews.push({
       key,
-      stage: last.stage as "frame" | "clip",
+      stage: last.stage as Stage,
       problemType: type,
       productId: last.productId,
       productName: last.productId ? (names.get(last.productId) ?? null) : null,

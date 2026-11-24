@@ -8,7 +8,13 @@ import type { ProblemType } from "@/lib/mejoras";
  * crea la versión siguiente y retira la anterior. Solo este archivo escribe la tabla.
  */
 
-export type CorrectionStage = "frame" | "clip";
+/**
+ * `frame` y `clip`: prompts de Higgsfield (en inglés). `montaje`: la lectura y adaptación de los rótulos de la
+ * referencia (`edicion-referencia.ts`). `doblaje`: la decisión de habla o canto (`doblaje.ts`). La traducción hablada
+ * la hace el modelo `dubbing` de Higgsfield sin texto nuestro: ahí no entra ninguna instrucción.
+ */
+export type CorrectionStage = "frame" | "clip" | "montaje" | "doblaje";
+export const CORRECTION_STAGES: readonly CorrectionStage[] = ["frame", "clip", "montaje", "doblaje"];
 
 /** Como mucho tantas correcciones por prompt (las más recientes), para no ahogar el prompt del desglose. */
 export const MAX_DIRECTIVES = 4;
@@ -40,14 +46,30 @@ export function directivesSuffix(corrections: Pick<Correction, "directive">[]): 
   return lines.length === 0 ? "" : ` ${lines.join(" ")}`;
 }
 
-/** Lo que añade el motor al prompt de ese paso y producto. Si la base de datos falla, no para la generación. */
-export async function learnedSuffix(stage: CorrectionStage, productId: number): Promise<string> {
+/** Bloque para las instrucciones en español de Claude (rótulos del montaje y habla o canto). */
+export function instructionsBlock(corrections: Pick<Correction, "directive">[]): string {
+  const lines = corrections.map((c) => c.directive.trim()).filter(Boolean);
+  return lines.length === 0 ? "" : `\n\nCorrecciones aprendidas de problemas reportados (cúmplelas siempre):\n${lines.map((line) => `- ${line}`).join("\n")}`;
+}
+
+/**
+ * Lo que añade el motor en ese paso y producto, y qué correcciones son (para apuntarlas en el montaje). Si la base
+ * de datos falla, no para nada: se sigue sin correcciones.
+ */
+export async function learnedFor(stage: CorrectionStage, productId: number | null): Promise<{ text: string; ids: number[] }> {
   try {
-    return directivesSuffix(await activeCorrections(stage, productId));
+    const active = await activeCorrections(stage, productId);
+    const text = stage === "frame" || stage === "clip" ? directivesSuffix(active) : instructionsBlock(active);
+    return { text, ids: active.map((c) => c.id) };
   } catch (error) {
     console.error(`[mejoras] No se pudieron leer las correcciones aprendidas: ${error instanceof Error ? error.message : String(error)}`);
-    return "";
+    return { text: "", ids: [] };
   }
+}
+
+/** Lo que añade el motor al prompt de imagen o clip de ese producto. */
+export async function learnedSuffix(stage: "frame" | "clip", productId: number): Promise<string> {
+  return (await learnedFor(stage, productId)).text;
 }
 
 /** Limpia una instrucción: una sola línea, sin comillas sueltas, con punto final y con el tope de largo. */

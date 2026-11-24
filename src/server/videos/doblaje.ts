@@ -10,6 +10,7 @@ import { getHiggsfield, HiggsfieldRejectedError, HiggsfieldUnknownOutcomeError, 
 import { z } from "zod";
 import { textPart } from "@/llm/content";
 import { getGateway, type LlmGateway } from "@/llm/gateway";
+import { learnedFor } from "@/server/videos/mejoras/corrections";
 import type { ObjectStore } from "@/lib/object-store";
 
 /**
@@ -92,6 +93,8 @@ export interface DubContext {
   forced?: boolean;
   /** Claude (pruebas: uno simulado) para decidir si la voz es habla o una canción. */
   gateway?: LlmGateway;
+  /** Aquí se apuntan las correcciones aprendidas («Mejoras», paso `doblaje`) que se usaron. */
+  learned?: number[];
 }
 
 /** Lo que responde `doblar.py`; `voz` (al separar): si hay diálogo y en qué idioma (Whisper), `null` si no se sabe. */
@@ -145,7 +148,7 @@ const speechSchema = z.object({
  * dobla: en caso de duda, no). Lo que no conteste queda en «duda».
  */
 export async function classifySpeech(
-  ctx: Pick<DubContext, "videoId" | "gateway">,
+  ctx: Pick<DubContext, "videoId" | "gateway" | "learned">,
   userId: number,
   productId: number | null,
   phrases: Array<Phrase & { pista: string }>,
@@ -154,14 +157,17 @@ export async function classifySpeech(
   const listing = phrases
     .map((f, i) => `${i + 1}. [${f.pista}] ${f.desde.toFixed(1)}–${f.hasta.toFixed(1)} s (${(f.hasta - f.desde).toFixed(1)} s) no_habla=${f.no_habla} confianza=${f.confianza}: «${f.texto}»`)
     .join("\n");
+  // Correcciones aprendidas de los reportes sobre el doblaje («Mejoras»): van al final de las instrucciones.
+  const learned = await learnedFor("doblaje", productId);
+  ctx.learned?.push(...learned.ids);
   try {
     const answer = await (ctx.gateway ?? getGateway()).call({
       tier: "medium",
-      stepKey: `montaje:${ctx.videoId}:habla-o-canto:${crypto.createHash("sha256").update(listing).digest("hex").slice(0, 16)}`,
+      stepKey: `montaje:${ctx.videoId}:habla-o-canto:${crypto.createHash("sha256").update(listing + learned.text).digest("hex").slice(0, 16)}`,
       userId,
       productId,
       rules: [],
-      instructions: SPEECH_INSTRUCTIONS,
+      instructions: SPEECH_INSTRUCTIONS + learned.text,
       content: [textPart(listing)],
       maxTokens: 1_500,
       schema: speechSchema,

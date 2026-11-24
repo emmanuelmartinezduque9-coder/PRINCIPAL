@@ -359,6 +359,8 @@ export async function runEdit(run: Run, deps: MontajeDeps = {}): Promise<"done" 
   const store = deps.store === undefined ? getObjectStore() : deps.store;
   const spec = run.spec as EditSpec;
   const notes: string[] = [];
+  // Correcciones aprendidas («Mejoras») que use este montaje (rótulos y doblaje): se guardan para medir su efecto.
+  const learned: number[] = [];
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), `montaje-${run.id}-`));
   const beat = setInterval(() => {
     void getDb().update(runs).set({ heartbeatAt: new Date() }).where(and(eq(runs.id, run.id), eq(runs.status, "running"))).catch(() => {});
@@ -441,6 +443,7 @@ export async function runEdit(run: Run, deps: MontajeDeps = {}): Promise<"done" 
           store,
           videoId: spec.videoId,
           gateway: deps.gateway,
+          learned,
         });
       } catch (error) {
         // Sin Claude por ahora (API sin saldo, Mac apagado o sin sesión): se espera a que lo haya en vez de
@@ -503,6 +506,7 @@ export async function runEdit(run: Run, deps: MontajeDeps = {}): Promise<"done" 
           now: deps.now,
           pollSeconds: deps.dubPollSeconds,
           gateway: deps.gateway,
+          learned,
           doblar: async (args) => {
             const out = path.join(dir, `doblar-${args[0]}.json`);
             await fs.rm(out, { force: true });
@@ -596,7 +600,7 @@ export async function runEdit(run: Run, deps: MontajeDeps = {}): Promise<"done" 
     const finished = await getDb().transaction(async (tx) => {
       const [row] = await tx
         .update(runs)
-        .set({ status: "done", finishedAt: nowOf(deps), error: null, notes: [...new Set([...notes, ...avisos])] })
+        .set({ status: "done", finishedAt: nowOf(deps), error: null, notes: [...new Set([...notes, ...avisos])], learnedCorrections: [...new Set(learned)] })
         .where(and(eq(runs.id, run.id), eq(runs.status, "running")))
         .returning({ id: runs.id });
       if (!row) return false;

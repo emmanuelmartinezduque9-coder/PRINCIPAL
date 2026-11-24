@@ -6,6 +6,7 @@ import { pipeline } from "node:stream/promises";
 import { z } from "zod";
 import { imagePart, textPart } from "@/llm/content";
 import { getGateway, type LlmGateway } from "@/llm/gateway";
+import { learnedFor } from "@/server/videos/mejoras/corrections";
 import type { ObjectStore } from "@/lib/object-store";
 import { probeVideo } from "@/server/media/ffmpeg";
 import { ffmpegLog, ffmpegOutput } from "@/server/media/ffmpeg-crudo";
@@ -182,15 +183,21 @@ export interface ReferenceEditContext {
   /** Para la caché del almacén: de qué vídeo es. */
   videoId: number;
   gateway?: LlmGateway;
+  /** Aquí se apuntan las correcciones aprendidas («Mejoras», paso `montaje`) que se usaron. */
+  learned?: number[];
 }
 
-const cacheKey = (videoId: number, sha: string, productName: string) =>
-  `ediciones/${videoId}/${crypto.createHash("sha256").update(`${sha}\n${productName}\nv3`).digest("hex").slice(0, 32)}.json`;
+/** Con las correcciones aprendidas en la clave: si cambian, la edición se vuelve a leer. */
+const cacheKey = (videoId: number, sha: string, productName: string, learned = "") =>
+  `ediciones/${videoId}/${crypto.createHash("sha256").update(`${sha}\n${productName}\nv3${learned ? `\n${learned}` : ""}`).digest("hex").slice(0, 32)}.json`;
 
 /** La edición de la referencia (rótulos adaptados con sus tiempos y cortes). Lanza si Claude no puede. */
 export async function referenceEdit(ctx: ReferenceEditContext): Promise<ReferenceEdit> {
   const sha = await sha256File(ctx.file);
-  const key = cacheKey(ctx.videoId, sha, ctx.product.name);
+  // Correcciones aprendidas de los reportes sobre rótulos («Mejoras»): van al final de las instrucciones.
+  const learned = await learnedFor("montaje", ctx.product.id || null);
+  ctx.learned?.push(...learned.ids);
+  const key = cacheKey(ctx.videoId, sha, ctx.product.name, learned.text);
   if (ctx.store && (await ctx.store.head(key).catch(() => null)) !== null) {
     const cached = path.join(ctx.dir, "edicion-referencia.json");
     await ctx.store.download(key, cached);
@@ -205,7 +212,7 @@ export async function referenceEdit(ctx: ReferenceEditContext): Promise<Referenc
     userId: ctx.userId,
     productId: ctx.product.id,
     rules: [],
-    instructions: REFERENCE_EDIT_INSTRUCTIONS.replaceAll("{PRODUCTO}", ctx.product.name),
+    instructions: REFERENCE_EDIT_INSTRUCTIONS.replaceAll("{PRODUCTO}", ctx.product.name) + learned.text,
     content: [
       textPart(`Nuestro producto: ${ctx.product.name}. Idioma del anuncio: ${ctx.product.language === "it" ? "italiano" : "alemán"}. La referencia dura ${durationS.toFixed(2)} s.`),
       ...shots.flatMap((s) => [textPart(`t = ${s.t.toFixed(2)} s`), imagePart(s.jpeg, "image/jpeg")]),

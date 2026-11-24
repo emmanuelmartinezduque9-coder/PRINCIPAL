@@ -5,7 +5,7 @@ import { createGateway } from "@/llm/gateway";
 import type { AuthUser } from "@/server/auth";
 import { classifyRejections, classifyReport, mejorasSweep } from "@/server/videos/mejoras/classify";
 import { cleanDirective, directivesSuffix, learnedSuffix } from "@/server/videos/mejoras/corrections";
-import { buildStageRecords } from "@/server/videos/mejoras/evidence";
+import { buildEditRecords, buildStageRecords } from "@/server/videos/mejoras/evidence";
 import { evaluateCodeFix, evaluateCorrection, MIN_AFTER, type StageRecord } from "@/server/videos/mejoras/metrics";
 import { codeQueueMarkdown, createReport, mejorasView, updateReport } from "@/server/videos/mejoras/reports";
 import type { Product } from "@/server/products";
@@ -111,6 +111,35 @@ describe("cuentas de evidencia (sin base de datos)", () => {
     expect(five).toMatchObject({ decided: true, firstAccepted: false, regenerations: 1, problems: ["producto", "bloqueo_higgsfield"], prompts: ["p1", "p2", "p3", "p4"] });
     const six = records.find((r) => r.videoId === 6)!;
     expect(six).toMatchObject({ firstAccepted: true, regenerations: 0, problems: ["luz"] });
+  });
+
+  it("montaje: un registro por vídeo con sus montajes; rehacerlo es regeneración y los reportes del montaje son el problema", () => {
+    const at = (h: number) => new Date(T0.getTime() + h * 3600e3);
+    const records = buildEditRecords(
+      [
+        { video_id: 24, product_id: 3, created_at: at(2), learned_corrections: [] },
+        { video_id: 24, product_id: 3, created_at: at(1), learned_corrections: [] },
+        { video_id: 25, product_id: 3, created_at: at(5), learned_corrections: [9] },
+      ],
+      new Map([[24, [{ stage: "montaje", type: "rotulos" as const }, { stage: "frame", type: "luz" as const }]]]),
+    );
+    const v24 = records.find((r) => r.videoId === 24 && r.stage === "montaje")!;
+    expect(v24).toMatchObject({ firstAccepted: false, regenerations: 1, problems: ["rotulos"], firstAt: at(1) });
+    expect(records.filter((r) => r.videoId === 25).map((r) => r.stage).sort()).toEqual(["doblaje", "montaje"]);
+    expect(records.find((r) => r.videoId === 25 && r.stage === "montaje")).toMatchObject({ firstAccepted: true, applied: [[9]] });
+  });
+
+  it("una corrección de rótulos se mide por montaje: «después» son los montajes que la usaron (por su id)", () => {
+    const when = new Date(T0.getTime() + DAY);
+    const versions = [{ id: 9, stage: "montaje" as const, productId: null, directive: "Pon «in Berlin».", createdAt: when }];
+    const montage = (id: number, over: Partial<StageRecord>) => record(id, { stage: "montaje", prompts: [], applied: [[]], ...over });
+    const before = [1, 2, 3, 4].map((id) => montage(id, { firstAccepted: id === 4, regenerations: id === 4 ? 0 : 1, problems: id === 4 ? [] : ["rotulos"] }));
+    const after = [10, 11, 12, 13, 14].map((id) => montage(id, { firstAt: new Date(T0.getTime() + 2 * DAY), applied: [[9]] }));
+    const frame = record(30, { firstAt: new Date(T0.getTime() + 2 * DAY), prompts: ["Pon «in Berlin»."] });
+    const evaluation = evaluateCorrection(versions, "rotulos", "Rótulos", [...before, ...after, frame]);
+    expect(evaluation.after.videoIds).toEqual([10, 11, 12, 13, 14]);
+    expect(evaluation.before.typeRate).toBeCloseTo(0.75);
+    expect(evaluation.verdict).toBe("mejora");
   });
 
   it("la instrucción se limpia (una línea, tope, punto final) y se añade literal al final del prompt", () => {

@@ -6,7 +6,7 @@ import type { StageRecord } from "@/server/videos/mejoras/metrics";
 
 /**
  * Lee de la base de datos lo que hace falta para las cuentas de `metrics.ts`: por vídeo y paso (imagen
- * inicial o clip), sus rondas, si se aceptó a la primera, sus rechazos con el tipo clasificado, sus
+ * inicial, clip o montaje), sus rondas, si se aceptó a la primera, sus rechazos con el tipo clasificado, sus
  * bloqueos de Higgsfield, los reportes de ese paso y el prompt de cada ronda.
  */
 
@@ -38,7 +38,7 @@ export async function reportedProblems(): Promise<Map<number, Array<{ stage: str
   const out = new Map<number, Array<{ stage: string; type: ProblemType }>>();
   for (const row of rows) {
     if (!isProblemType(row.problem_type)) continue;
-    const stage = row.stage === "imagen" ? "frame" : row.stage === "clip" ? "clip" : "otro";
+    const stage = row.stage === "imagen" ? "frame" : row.stage === "clip" ? "clip" : row.stage === "montaje" ? "montaje" : "otro";
     const list = out.get(Number(row.video_id)) ?? [];
     list.push({ stage, type: row.problem_type });
     out.set(Number(row.video_id), list);
@@ -82,6 +82,41 @@ export function buildStageRecords(rows: GenRow[], reports: Map<number, Array<{ s
   return records;
 }
 
+type RunRow = {
+  video_id: number;
+  product_id: number;
+  created_at: Date;
+  learned_corrections: number[] | null;
+};
+
+/**
+ * Un registro por vídeo y montaje hecho (`edit_runs` terminados), dos veces: como `montaje` (correcciones de
+ * rótulos) y como `doblaje` (de habla o canto). Rehacer el montaje cuenta como regeneración; los problemas son los
+ * reportes del montaje. Pura: se prueba sin base de datos.
+ */
+export function buildEditRecords(rows: RunRow[], reports: Map<number, Array<{ stage: string; type: ProblemType }>>): StageRecord[] {
+  const byVideo = new Map<number, RunRow[]>();
+  for (const row of rows) byVideo.set(Number(row.video_id), [...(byVideo.get(Number(row.video_id)) ?? []), row]);
+  const records: StageRecord[] = [];
+  for (const [videoId, list] of byVideo) {
+    list.sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+    const problems = (reports.get(videoId) ?? []).filter((rep) => rep.stage === "montaje").map((rep) => rep.type);
+    const base = {
+      videoId,
+      productId: Number(list[0].product_id),
+      firstAt: new Date(list[0].created_at),
+      decided: true,
+      firstAccepted: list.length === 1 && problems.length === 0,
+      regenerations: list.length - 1,
+      problems,
+      prompts: [],
+      applied: list.map((row) => (row.learned_corrections ?? []).map(Number)),
+    };
+    records.push({ ...base, stage: "montaje" }, { ...base, problems: [...problems], stage: "doblaje" });
+  }
+  return records;
+}
+
 /** Los registros de los últimos `EVIDENCE_DAYS` días. */
 export async function loadStageRecords(): Promise<{ records: StageRecord[]; reports: Map<number, Array<{ stage: string; type: ProblemType }>> }> {
   const { rows } = await getDb().execute<GenRow>(sql`
@@ -98,6 +133,11 @@ export async function loadStageRecords(): Promise<{ records: StageRecord[]; repo
     left join rejection_types rt on rt.generation_id = g.id
     where g.kind in ('frame', 'clip') and g.intent_at > now() - make_interval(days => ${EVIDENCE_DAYS})
   `);
+  const { rows: runs } = await getDb().execute<RunRow>(sql`
+    select r.video_id, v.product_id, r.created_at, r.learned_corrections
+    from edit_runs r join videos v on v.id = r.video_id
+    where r.status = 'done' and r.created_at > now() - make_interval(days => ${EVIDENCE_DAYS})
+  `);
   const reports = await reportedProblems();
-  return { records: buildStageRecords(rows, reports), reports };
+  return { records: [...buildStageRecords(rows, reports), ...buildEditRecords(runs, reports)], reports };
 }

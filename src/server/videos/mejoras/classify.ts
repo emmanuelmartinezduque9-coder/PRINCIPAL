@@ -6,7 +6,7 @@ import { getGateway, LlmCapReachedError, LlmNotConfiguredError, type LlmGateway 
 import { PROBLEM_TYPE_KEYS, PROBLEM_TYPES, type ProblemType } from "@/lib/mejoras";
 import { makeThumbnail } from "@/server/media/ffmpeg";
 import { productNamesByIds } from "@/server/products";
-import { activeCorrections, createCorrection, MAX_DIRECTIVE_CHARS, type Correction } from "@/server/videos/mejoras/corrections";
+import { activeCorrections, createCorrection, MAX_DIRECTIVE_CHARS, type Correction, type CorrectionStage } from "@/server/videos/mejoras/corrections";
 import { SYSTEM_REJECT_PREFIX } from "@/server/videos/generations";
 
 /**
@@ -31,7 +31,7 @@ export const reportClassification = z.object({
   problem_type: typeEnum,
   fix_kind: z.enum(["regla", "codigo", "uso"]),
   cause: z.string().min(1).max(400),
-  stage: z.enum(["frame", "clip"]).nullable(),
+  stage: z.enum(["frame", "clip", "montaje", "doblaje"]).nullable(),
   directive: z.string().max(MAX_DIRECTIVE_CHARS).nullable(),
   existing_correction_id: z.number().int().nullable(),
   product_specific: z.boolean(),
@@ -47,12 +47,16 @@ Devuelve:
 - problem_type, uno de:
 ${typeList}
 - fix_kind:
-  - "regla": se arregla cambiando el prompt de la imagen inicial o del clip (p. ej. producto deformado, fondo que no encaja, luz, rótulos o textos dentro de la imagen, manos raras, movimiento malo).
-  - "codigo": es un fallo del programa (p. ej. vídeo sin audio, montaje roto, botón que no funciona, algo que no se guarda, error en pantalla, descarga que falla).
+  - "regla": se arregla con una instrucción nueva para Claude o Higgsfield en uno de estos pasos:
+    - "frame": el prompt de la imagen inicial (producto deformado, fondo que no encaja, luz, textos dentro de la imagen, manos raras).
+    - "clip": el prompt del clip (movimiento malo, acción, cámara).
+    - "montaje": la lectura y adaptación de los rótulos del montaje (rótulo mal traducido o adaptado, un lugar o país que no toca, una marca o personaje de terceros en un rótulo, rótulo que falta o sobra).
+    - "doblaje": la decisión de si la voz de la referencia es habla (se dobla) o canción (no se dobla), p. ej. un diálogo que quedó sin doblar porque se tomó por canción, o una canción que se dobló.
+  - "codigo": es un fallo del programa (p. ej. vídeo sin audio, montaje roto, botón que no funciona, algo que no se guarda, error en pantalla, descarga que falla). La traducción hablada del doblaje la hace Higgsfield sin instrucciones nuestras: si lo que falla es esa traducción o la voz doblada, es "codigo".
   - "uso": no hay nada que cambiar (duda de uso, ya resuelto, petición que no es un fallo).
 - cause: la causa más probable, en español sencillo, una o dos frases, sin tecnicismos. Si el contexto técnico la explica (p. ej. el modelo del clip no genera audio), dila.
-- stage: "frame" (imagen inicial) o "clip" si fix_kind es "regla"; si no, null.
-- directive: si fix_kind es "regla", UNA instrucción en inglés, imperativa, concreta y general (que valga para próximos vídeos, sin nombres de archivo ni números de vídeo), de como mucho ${MAX_DIRECTIVE_CHARS} caracteres, para añadir al final del prompt. Si no, null.
+- stage: el paso ("frame", "clip", "montaje" o "doblaje") si fix_kind es "regla"; si no, null.
+- directive: si fix_kind es "regla", UNA instrucción imperativa, concreta y general (que valga para próximos vídeos, sin nombres de archivo ni números de vídeo), de como mucho ${MAX_DIRECTIVE_CHARS} caracteres: en inglés para "frame" y "clip" (va al final de su prompt) y en español para "montaje" y "doblaje" (va a las instrucciones de Claude). Si no, null.
 - existing_correction_id: si una de las correcciones activas que te paso ya cubre exactamente este problema, su id (y directive null); si no, null.
 - product_specific: true si la instrucción solo tiene sentido para este producto.
 No inventes: si no está claro, elige el tipo más probable y explica la duda en cause.`;
@@ -169,8 +173,8 @@ export async function classifyReport(reportId: number, deps: Deps = {}): Promise
   const [report] = await getDb().select().from(schema.problemReports).where(eq(schema.problemReports.id, reportId));
   if (!report || report.status !== "recibido") return;
   try {
-    const stage = report.stage === "imagen" ? "frame" : report.stage === "clip" ? "clip" : null;
-    const active: Correction[] = stage ? await activeCorrections(stage, report.productId) : [];
+    const stages: CorrectionStage[] = report.stage === "imagen" ? ["frame"] : report.stage === "clip" ? ["clip"] : report.stage === "montaje" || report.stage === "lote" ? ["montaje", "doblaje"] : [];
+    const active: Correction[] = (await Promise.all(stages.map((stage) => activeCorrections(stage, report.productId)))).flat();
     const content: LlmContent = [
       textPart(
         [
@@ -181,7 +185,7 @@ export async function classifyReport(reportId: number, deps: Deps = {}): Promise
           "Contexto técnico:",
           await videoContext(report),
           "",
-          active.length ? `Correcciones activas de este paso:\n${active.map((c) => `- id ${c.id} (${c.problemType}): ${c.directive}`).join("\n")}` : "No hay correcciones activas de este paso.",
+          active.length ? `Correcciones activas de este paso:\n${active.map((c) => `- id ${c.id} (${c.stage}, ${c.problemType}): ${c.directive}`).join("\n")}` : "No hay correcciones activas de este paso.",
         ].join("\n"),
       ),
     ];
