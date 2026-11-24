@@ -888,10 +888,36 @@ describe("instalar.sh", () => {
       `#!/bin/bash\necho "$@" >> "${record}"\nif [ "$1" = "print" ]; then [ -f "${tmp}/cargado" ] && exit 0 || exit 113; fi\nif [ "$1" = "bootstrap" ]; then touch "${tmp}/cargado"; fi\nif [ "$1" = "bootout" ]; then rm -f "${tmp}/cargado"; fi\nexit 0\n`,
       { mode: 0o755 },
     );
+    // PlistBuddy simulado (el de verdad es de macOS y la CI corre en Linux): «Set» falla si la clave no está; «Add»
+    // la añade dentro del diccionario. Solo lo que usa el instalador: EnvironmentVariables:CLAVE.
+    const buddy = path.join(bin, "PlistBuddy");
+    fsSync.writeFileSync(
+      buddy,
+      [
+        `#!${process.execPath}`,
+        'const fs = require("fs");',
+        "const [command, file] = process.argv.slice(3);",
+        'const [verb, keyPath, ...rest] = command.split(" ");',
+        'const key = keyPath.split(":").pop();',
+        'let xml = fs.readFileSync(file, "utf8");',
+        'const open = "<key>" + key + "</key>";',
+        'const at = xml.indexOf(open);',
+        'if (verb === "Set") {',
+        "  if (at < 0) process.exit(1);",
+        '  const a = xml.indexOf("<string>", at) + "<string>".length;',
+        '  xml = xml.slice(0, a) + rest.join(" ") + xml.slice(xml.indexOf("</string>", a));',
+        '} else if (verb === "Add") {',
+        '  const dict = xml.indexOf("<dict>", xml.indexOf("<key>EnvironmentVariables</key>")) + "<dict>".length;',
+        '  xml = xml.slice(0, dict) + "\\n    " + open + "\\n    <string>" + rest.slice(1).join(" ") + "</string>" + xml.slice(dict);',
+        "}",
+        "fs.writeFileSync(file, xml);",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
     const run = (env: Record<string, string> = {}, input = "") =>
       spawnSync("bash", [path.join(ROOT, "agente-mac", "instalar.sh")], {
         // Sin la imagen del SSD salvo que la prueba la ponga (nunca la de verdad de este Mac).
-        env: { HOME: home, PATH: `${bin}:/usr/bin:/bin`, PRINCIPAL_DATOS_SSD: path.join(tmp, "sin-ssd"), ...env } as unknown as NodeJS.ProcessEnv,
+        env: { HOME: home, PATH: `${bin}:/usr/bin:/bin`, PRINCIPAL_DATOS_SSD: path.join(tmp, "sin-ssd"), PRINCIPAL_PLISTBUDDY: buddy, ...env } as unknown as NodeJS.ProcessEnv,
         encoding: "utf8",
         input,
       });

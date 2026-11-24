@@ -100,10 +100,12 @@ sed -e "s|__HOME__|$(escapar "$HOME")|g" -e "s|__NODE__|$(escapar "$NODE")|g" -e
 # Datos de PRINCIPAL en el SSD (docs/datos-en-ssd.md): con la imagen montada, los temporales del
 # agente (descargas, carpetas de trabajo de Claude Code) van a ella y no al disco interno.
 DATOS_SSD="${PRINCIPAL_DATOS_SSD:-/Volumes/PRINCIPAL-DATOS}"
+# PlistBuddy es de macOS; las pruebas (también en Linux) ponen uno simulado con PRINCIPAL_PLISTBUDDY.
+PLISTBUDDY="${PRINCIPAL_PLISTBUDDY:-/usr/libexec/PlistBuddy}"
 if [ -d "$DATOS_SSD" ]; then
   mkdir -p "$DATOS_SSD/tmp"
-  /usr/libexec/PlistBuddy -c "Set :EnvironmentVariables:TMPDIR $DATOS_SSD/tmp/" "$PLIST" 2>/dev/null ||
-    /usr/libexec/PlistBuddy -c "Add :EnvironmentVariables:TMPDIR string $DATOS_SSD/tmp/" "$PLIST"
+  "$PLISTBUDDY" -c "Set :EnvironmentVariables:TMPDIR $DATOS_SSD/tmp/" "$PLIST" 2>/dev/null ||
+    "$PLISTBUDDY" -c "Add :EnvironmentVariables:TMPDIR string $DATOS_SSD/tmp/" "$PLIST"
   echo "Temporales del agente en $DATOS_SSD/tmp/"
 fi
 echo "Arranque automático escrito en $PLIST"
