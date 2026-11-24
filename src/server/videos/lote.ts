@@ -1100,6 +1100,14 @@ async function autoConfirmBatch(user: AuthUser, batch: Batch, rows: Row[], deps:
 /** «Preguntas»: pide el desglose de lo que ya no tiene nada pendiente (p. ej. tras responder) y, con todo listo, sigue solo. */
 /** Desgloses fallidos de una misma referencia que se reintentan solos antes de dejar el vídeo fuera. */
 const MAX_ANALYSIS_RETRIES = 2;
+/**
+ * Fallos del desglose que son de la API de Claude (petición rechazada, sin saldo, sin respuesta), no
+ * del vídeo: no cuentan para `MAX_ANALYSIS_RETRIES` ni sacan el vídeo del lote (24/11/2026, lote 6).
+ * Sí tienen un tope propio, por si fueran permanentes (cada intento rechazado no cuesta).
+ */
+const CLAUDE_SIDE = /petición a Claude no es válida|API de Claude|cuenta de Claude no tiene saldo|Claude no ha respondido|Claude no acepta la clave|tope (mensual )?de gasto/i;
+const MAX_CLAUDE_SIDE_RETRIES = 20;
+export const isClaudeSideFailure = (error: string | null) => error !== null && CLAUDE_SIDE.test(error);
 
 /** Deja un vídeo fuera del envío con su motivo (lo enseñan el tablero y el registro), sin parar el lote. */
 async function skipVideo(video: Video, reason: string): Promise<void> {
@@ -1137,8 +1145,9 @@ async function autoAnswer(user: AuthUser, batch: Batch, rows: Row[], asks: Map<n
       else if (question.kind === "variante") value = NO_VARIANT;
       else if (question.kind === "cancion") value = ORIGINAL_AUDIO;
       else if (question.kind === "desglose" && values.includes(RETRY)) {
-        const failed = row.analyses.filter((a) => a.status === "failed" && a.referenceMediaId === row.video.referenceMediaId).length;
-        if (failed > MAX_ANALYSIS_RETRIES) {
+        const failedHere = row.analyses.filter((a) => a.status === "failed" && a.referenceMediaId === row.video.referenceMediaId);
+        const failed = failedHere.filter((a) => !isClaudeSideFailure(a.error)).length;
+        if (failed > MAX_ANALYSIS_RETRIES || failedHere.length > MAX_CLAUDE_SIDE_RETRIES) {
           await skipVideo(row.video, `El desglose falló ${failed} veces: ${question.text}`);
           changed = true;
           break;
@@ -1230,6 +1239,30 @@ async function advanceGenerations(user: AuthUser, start: Batch, deps: GenDeps): 
   }
   if (skipped) rows = await rowsOf(user, batch);
 
+  // Un vídeo que aún no tiene un desglose que valga (p. ej. volvió al lote tras un fallo de la API de
+  // Claude): se rehace aquí, sin preguntar, y su imagen se pide cuando esté.
+  const waitingAnalysis = new Set<number>();
+  for (const row of rows) {
+    if (frameStage(row, batch) !== "need" || row.frames.length > 0) continue;
+    const done = row.analyses.find((a) => a.status === "done");
+    if (done && staleness(done, await withProductNotes(row.video)).staleReason === null) continue;
+    waitingAnalysis.add(row.video.id);
+    const [latest] = row.analyses;
+    if (latest && ACTIVE_ANALYSIS.includes(latest.status)) continue;
+    const failedHere = row.analyses.filter((a) => a.status === "failed" && a.referenceMediaId === row.video.referenceMediaId);
+    const failed = failedHere.filter((a) => !isClaudeSideFailure(a.error)).length;
+    if (failed > MAX_ANALYSIS_RETRIES || failedHere.length > MAX_CLAUDE_SIDE_RETRIES) {
+      await skipVideo(row.video, `El desglose falló ${failedHere.length} veces: ${latest?.error ?? ""}`);
+      continue;
+    }
+    try {
+      await requestAnalysis(user, row.video.id);
+    } catch (error) {
+      if (!(error instanceof HttpError)) throw error;
+      console.warn(`[lotes] No se pudo rehacer el desglose del vídeo ${row.video.id}: ${error.message}`);
+    }
+  }
+
   await startFinishedEdits(user, rows, batch);
 
   const all = (row: Row) => row.frames.concat(row.clips, row.upscales);
@@ -1241,7 +1274,7 @@ async function advanceGenerations(user: AuthUser, start: Batch, deps: GenDeps): 
     for (const row of rows) {
       if (slots <= 0) return;
       const wants = (s: Stage, list: Generation[]) => s === "need" || (s === "failed" && retryable(list));
-      if (kind === "frame" && !wants(frameStage(row, batch), row.frames)) continue;
+      if (kind === "frame" && (!wants(frameStage(row, batch), row.frames) || waitingAnalysis.has(row.video.id))) continue;
       if (kind === "clip" && (frameStage(row, batch) !== "approved" || !wants(clipStage(row, batch), row.clips))) continue;
       if (kind === "upscale" && upscaleStage(row, batch) !== "need") continue;
       if (all(row).some((g) => BUSY_GENERATION.includes(g.status))) continue;
@@ -1390,8 +1423,46 @@ async function logBatchStates(): Promise<void> {
   }
 }
 
+/**
+ * Reparación (24/11/2026, lote 6): en un lote sin terminar, los vídeos que el lote sacó solo porque
+ * falló la API de Claude (no el vídeo) vuelven a entrar; el avance rehace su desglose, pide su imagen
+ * y se suma a la revisión. Lo autorizado sube lo que cuesta un vídeo medio del lote (con el margen de
+ * regeneraciones), para que quepan sin preguntar. Un «Saltar» a mano (sin motivo) no se toca.
+ */
+export async function reincludeClaudeSkips(): Promise<number> {
+  const db = getDb();
+  const rows = await db
+    .select({ id: schema.videos.id, batchId: schema.videos.batchId, autoStop: schema.videos.autoStop })
+    .from(schema.videos)
+    .innerJoin(schema.batches, eq(schema.batches.id, schema.videos.batchId))
+    .where(and(eq(schema.videos.autoSkipped, true), inArray(schema.batches.status, [...RUNNING, "pausado"])));
+  const back = rows.filter((row) => isClaudeSideFailure(row.autoStop));
+  for (const row of back) {
+    const [batch] = await db.select().from(schema.batches).where(eq(schema.batches.id, row.batchId!));
+    const estimates = batch.estimates ?? {};
+    const known = Object.values(estimates);
+    const average = known.length > 0 ? Math.ceil(known.reduce((sum, e) => sum + e.frame + e.clip, 0) / known.length) : 0;
+    await db.transaction(async (tx) => {
+      await tx.update(schema.videos).set({ autoSkipped: false, autoStop: null, updatedAt: new Date() }).where(eq(schema.videos.id, row.id));
+      if (batch.budgetCredits !== null && !estimates[String(row.id)]) {
+        await tx
+          .update(schema.batches)
+          .set({ budgetCredits: batch.budgetCredits + average * (1 + MAX_REGENERATIONS) })
+          .where(eq(schema.batches.id, batch.id));
+      }
+    });
+    console.warn(`[lotes] Vídeo ${row.id} vuelve al lote ${row.batchId}: salió por un fallo de la API de Claude (${row.autoStop}).`);
+  }
+  return back.length;
+}
+
 /** Para el seguimiento de cada minuto: avanza cada lote que va solo, uno detrás de otro. */
 export async function advanceRunningBatches(deps: GenDeps = {}): Promise<void> {
+  try {
+    await reincludeClaudeSkips();
+  } catch (error) {
+    console.error("[lotes] No se pudieron devolver al lote los vídeos que salieron por la API de Claude:", error);
+  }
   try {
     await resumePromptPauses();
   } catch (error) {

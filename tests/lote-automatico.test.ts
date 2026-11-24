@@ -381,6 +381,35 @@ describe("preguntas del lote", () => {
     expect((await quoteBatch(ana, batchId, deps)).total).toBe(2 * (FRAME + CLIP_EST));
   });
 
+  it("los vídeos que salieron por un fallo de la API de Claude vuelven solos y su imagen se suma a la revisión; un «Saltar» a mano no", async () => {
+    const { batchId, videos } = await batchWith(4, { automatic: true });
+    await sendBatch(ana, batchId);
+    await runQueuedAnalyses();
+    // El vídeo 3 salió por la API de Claude (lote 6, 24/11/2026); el 4 lo saltó él a mano.
+    await getPool().query(
+      "update videos set auto_skipped = true, auto_stop = 'El desglose falló 3 veces: La petición a Claude no es válida; avisa al dueño.' where id = $1",
+      [videos[2].id],
+    );
+    await getPool().query("update video_analyses set status = 'failed', result = null, error = 'La petición a Claude no es válida; avisa al dueño.' where video_id = $1", [videos[2].id]);
+    await getPool().query("update videos set auto_skipped = true, auto_stop = null where id = $1", [videos[3].id]);
+    await advanceBatch(batchId, deps);
+    await cycle(batchId, 2);
+    expect(await statusOf(batchId)).toBe("revision_imagenes");
+    const budget = (await getBatchFor(ana, batchId)).budgetCredits!;
+
+    await advanceRunningBatches(deps);
+    const back = await getVideoFor(ana, videos[2].id);
+    expect(back).toMatchObject({ autoSkipped: false, autoStop: null });
+    expect((await getVideoFor(ana, videos[3].id)).autoSkipped).toBe(true);
+    expect((await getBatchFor(ana, batchId)).budgetCredits).toBeGreaterThan(budget);
+    // Rehace su desglose y, con él, pide su imagen; el lote sigue en la revisión.
+    await runQueuedAnalyses();
+    await advanceBatch(batchId, deps);
+    expect((await active()).map((g) => [g.videoId, g.kind])).toEqual([[videos[2].id, "frame"]]);
+    expect(await statusOf(batchId)).toBe("revision_imagenes");
+    expect((await getBatchFor(ana, batchId)).pause).toBeNull();
+  });
+
   it("un desglose que falla se repite solo (sin preguntar) y, si sigue fallando, el vídeo queda fuera", async () => {
     const { batchId, videos } = await batchWith(2, { automatic: true });
     await sendBatch(ana, batchId);

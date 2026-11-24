@@ -39,3 +39,12 @@ escribe en el registro (`[lotes] Vídeo N fuera del lote M: …`). El lote termi
 | El producto no tiene foto del artículo | Pregunta «Falta una foto del artículo.» | `askRow` |
 | «Adaptación de concepto» sin decir qué adaptación | Pregunta «¿Qué adaptación quieres?» (en «Nuevo lote» no deja enviar sin ella) | `askRow` |
 | El desglose en pausa por el tope mensual de gasto de Claude | Pregunta con el motivo | `askRow` |
+
+## Fallos de la API de Claude (24/11/2026, lote 6)
+
+Un desglose que falla por la API de Claude (petición rechazada, sin saldo, sin respuesta, clave o
+tope de gasto) no es culpa del vídeo: no cuenta para los 2 reintentos ni lo saca del lote (tiene su
+propio tope de 20 intentos). Los vídeos que ya salieron por eso vuelven solos al lote en el
+seguimiento de cada minuto (`reincludeClaudeSkips`): se rehace su desglose, se pide su imagen y se
+suma a la revisión; lo autorizado sube lo de un vídeo medio del lote con el margen de regeneraciones.
+Un «Saltar» hecho a mano (sin motivo guardado) no se toca.
