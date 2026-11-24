@@ -169,3 +169,16 @@ export async function redoNamedStoreFrames(batchId: number, reason: string): Pro
     console.log(`[imagen] Vídeo ${video.id}: pide una tienda concreta («${text.slice(0, 80)}»); imagen rechazada para regenerarla con su interior real.`);
   }
 }
+
+/**
+ * Una vez (24/11/2026): el vídeo 16 (Sephora) del lote 6 lo bloqueó Higgsfield por el nombre de la
+ * tienda en el prompt y salió del lote. Su prompt con sala se rehace (ahora sin nombres de marca)
+ * y vuelve al lote; un bloqueo del filtro no gasta regeneraciones.
+ */
+export async function bringBackBlocked(videoId: number, marker: string): Promise<void> {
+  const [video] = await getDb().select().from(schema.videos).where(eq(schema.videos.id, videoId));
+  if (!video || !video.autoSkipped || !video.autoStop?.includes("filtro") || video.autoStop.includes(marker)) return;
+  await getDb().delete(schema.videoPinterestRefs).where(eq(schema.videoPinterestRefs.videoId, videoId));
+  await getDb().update(schema.videos).set({ autoSkipped: false, autoStop: null, updatedAt: new Date() }).where(eq(schema.videos.id, videoId));
+  console.log(`[imagen] Vídeo ${videoId}: vuelve al lote; su prompt con sala se rehace sin nombres de marca (${marker}).`);
+}

@@ -578,7 +578,7 @@ describe("tienda concreta pedida en la tarjeta", () => {
     const pickText = (calls[1].messages[0].content as Array<{ type: string; text?: string }>).map((b) => b.text ?? "").join("\n");
     expect(pickText).toContain("El dueño pide este sitio concreto: dm Drogeriemarkt, Alemania");
     const composeText = (calls[2].messages[0].content as Array<{ type: string; text?: string }>).map((b) => b.text ?? "").join("\n");
-    expect(composeText).toContain("supplies the real [tienda y ciudad o país] retail space");
+    expect(composeText).toContain("NO escribas el nombre de la tienda ni de ninguna marca");
     expect(composeText).toContain("exposure authority");
   });
 });
