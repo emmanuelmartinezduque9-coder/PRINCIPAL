@@ -136,3 +136,29 @@ Para tenerlo, vuelve a lanzar `bash agente-mac/instalar.sh`.
 ## Datos en el SSD
 
 En el Mac de Emmanuel todo va al T7: ver `docs/datos-en-ssd.md` y `disco-ssd.sh`.
+
+## 1.8.0: Claude de tus lotes con tu plan, no con la API (24/11/2026)
+
+Todo lo que hace Claude en tus lotes (desglose, prompts, elegir referencias, revisión de imágenes,
+clasificar reportes, nichos…) lo hace ahora el **Claude Code de este Mac con tu plan Max**, no la
+API. La web sigue en la nube igual; solo cambia quién piensa.
+
+Una sola vez:
+
+    bash agente-mac/instalar.sh
+    bash agente-mac/conectar-claude.sh
+
+El segundo abre el navegador para que entres con tu cuenta de Claude (como cuando inicias sesión) y
+te da una ficha que empieza por `sk-ant-oat`: pégala cuando la pida (no se ve al pegarla). Se queda
+en `~/.principal-agente-claude.json`, solo legible por ti, y nunca va a la web.
+
+- En **Ajustes → Mac** el Mac dice «Claude Code 2.x» y, debajo, **Claude para tus lotes**: «Mac
+  primero» (por defecto: si el Mac está apagado, sin sesión o en el límite del plan, esa llamada va
+  por la API dentro del tope), «Solo Mac» (espera al Mac; nunca gasta API) o «Solo API» (como antes).
+  También cuántas llamadas hizo el Mac este mes y cuánto habrían costado en la API.
+- Hace hasta 4 llamadas a la vez, sin herramientas (solo buscar y leer en internet cuando la llamada
+  lo pide), en una carpeta temporal vacía y con 10 minutos como mucho cada una. No lee tus CLAUDE.md,
+  tu memoria ni tus plugins, y no guarda las conversaciones.
+- Las llamadas de las demás personas siguen por la API con sus topes.
+- Si Claude Code dice que llegaste al límite del plan, el Mac descansa 30 minutos y mientras tanto va
+  por la API (o espera, con «Solo Mac»).

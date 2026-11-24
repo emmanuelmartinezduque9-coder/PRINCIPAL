@@ -6,7 +6,9 @@ const parseId = (value: string) => (/^[1-9]\d{0,15}$/.test(value) ? Number(value
 
 function parseResult(body: unknown): TaskResult | null {
   if (typeof body !== "object" || body === null) return null;
-  const { ok, uploadId, totalBytes, error, title, selfCheck } = body as {
+  const { ok, uploadId, totalBytes, error, title, selfCheck, resultado, limite } = body as {
+    resultado?: unknown;
+    limite?: unknown;
     ok?: unknown;
     uploadId?: unknown;
     totalBytes?: unknown;
@@ -15,6 +17,8 @@ function parseResult(body: unknown): TaskResult | null {
     selfCheck?: unknown;
   };
   if (typeof uploadId !== "string") return null;
+  // Una llamada a Claude hecha en el Mac (`claude_code`): la respuesta va en `resultado`.
+  if (ok === true && resultado !== undefined && totalBytes === undefined) return { ok: true, uploadId, resultado };
   if (ok === true && typeof totalBytes === "number") {
     return {
       ok: true,
@@ -24,7 +28,7 @@ function parseResult(body: unknown): TaskResult | null {
       ...(selfCheck !== undefined ? { selfCheck } : {}),
     };
   }
-  if (ok === false) return { ok: false, uploadId, error: typeof error === "string" ? error : "" };
+  if (ok === false) return { ok: false, uploadId, error: typeof error === "string" ? error : "", ...(limite === true ? { limite: true } : {}) };
   return null;
 }
 

@@ -5,6 +5,8 @@
 //
 //   node agente.mjs
 //
+// Desde 1.8.0 también hace las llamadas a Claude del dueño con el Claude Code de este Mac.
+//
 // Configuración: ~/.principal-agente.json  { "url": "https://…", "token": "pra_…" }
 // (o las variables PRINCIPAL_URL y PRINCIPAL_AGENTE_TOKEN). Ver README.md.
 
@@ -26,6 +28,7 @@ import {
   TOOLS_RETRY_MS,
   VERSION,
 } from "./lib.mjs";
+import { CLAUDE_CHECK_MS, CLAUDE_SLOTS, checkClaude, runClaudeOnce } from "./claude.mjs";
 
 const CONFIG_RETRY_MS = 30_000;
 const LOCK_FILE = path.join(os.tmpdir(), "principal-agente.lock");
@@ -56,15 +59,13 @@ async function waitForConfig() {
   }
 }
 
-// El yt-dlp en marcha, para cortarlo (con lo que haya lanzado) si el programa se para.
-let running = null;
+// Los programas en marcha (yt-dlp, claude), para cortarlos (con lo que hayan lanzado) si el programa se para.
+const running = new Set();
 function spawnTracked(command, args, options) {
   const child = spawn(command, args, options);
   if (options?.detached) {
-    running = child;
-    child.once("close", () => {
-      if (running === child) running = null;
-    });
+    running.add(child);
+    child.once("close", () => running.delete(child));
   }
   return child;
 }
@@ -78,11 +79,12 @@ function releaseLockNow() {
 process.on("exit", releaseLockNow);
 for (const signal of ["SIGINT", "SIGTERM"]) {
   process.on(signal, () => {
-    if (running?.pid) {
+    for (const child of running) {
+      if (!child.pid) continue;
       try {
-        process.kill(-running.pid, "SIGKILL");
+        process.kill(-child.pid, "SIGKILL");
       } catch {
-        running.kill("SIGKILL");
+        child.kill("SIGKILL");
       }
     }
     process.exit(0);
@@ -97,7 +99,7 @@ if (!(await acquireLock(fs, LOCK_FILE))) {
 }
 await cleanLeftovers(fs);
 const config = await waitForConfig();
-const deps = { fetch, spawn: spawnTracked, fs, sleep, log };
+const deps = { fetch, spawn: spawnTracked, fs, sleep, log, env: process.env };
 
 let tools = await checkTools(deps);
 /** Sin yt-dlp o sin ffmpeg no se recoge nada: se vuelve a mirar cada minuto hasta que estén. */
@@ -124,11 +126,24 @@ async function waitForTools() {
 config.puede = ["enlace_medio", "perfil", "pinterest", "datos"];
 log("Listo para traer enlaces (también los que pide el montaje en la nube).");
 
+// Desde 1.8.0 hace las llamadas a Claude del dueño con el Claude Code de este Mac (su plan, no la
+// API), varias a la vez y aparte de los enlaces. Si Claude Code no tiene sesión, la web lo sabe por
+// el latido y esas llamadas van por la API hasta que la tenga.
+let claude = { bin: null, reason: "Comprobando Claude Code…" };
+async function refreshClaude() {
+  const before = claude.bin;
+  claude = await checkClaude(deps);
+  if (claude.bin && !before) log(`Claude Code ${claude.version} listo: las llamadas a Claude del dueño se hacen en este Mac.`);
+  if (!claude.bin) log(claude.reason);
+}
+await refreshClaude();
+setInterval(() => void refreshClaude(), CLAUDE_CHECK_MS);
+
 let connected = null;
 async function beat() {
   let state;
   try {
-    const response = await heartbeat(config, deps, { ytDlp: tools.ytDlp });
+    const response = await heartbeat(config, deps, { ytDlp: tools.ytDlp, claude: claude.bin ? claude.version : null });
     state = response.ok ? "conectado" : response.status === 401 ? "ficha" : "error";
   } catch {
     state = "error";
@@ -142,6 +157,32 @@ async function beat() {
 }
 await beat();
 setInterval(beat, HEARTBEAT_MS);
+
+/** Un hueco de llamadas a Claude: recoge una, la hace, y a por la siguiente. */
+async function claudeSlot() {
+  for (let wait = 0; ; ) {
+    if (!claude.bin) {
+      await sleep(15_000);
+      continue;
+    }
+    let outcome = "offline";
+    try {
+      outcome = await runClaudeOnce(config, deps, claude);
+    } catch (error) {
+      log(`Algo falló con una llamada de Claude: ${error instanceof Error ? error.message.split(config.token).join("***") : "error desconocido"}`);
+    }
+    if (outcome === "auth") {
+      // Perdió la sesión: deja de recoger y la web pasa a la API en el siguiente latido.
+      claude = { bin: null, reason: "Claude Code ha perdido la sesión: lanza «bash agente-mac/conectar-claude.sh»." };
+      log(claude.reason);
+      void beat();
+      continue;
+    }
+    wait = outcome === "idle" ? 2_000 : nextWait(outcome, wait);
+    if (wait > 0) await sleep(wait);
+  }
+}
+for (let slot = 0; slot < CLAUDE_SLOTS; slot++) void claudeSlot();
 
 for (let wait = 0; ; ) {
   if (tools.missing.length > 0) await waitForTools();

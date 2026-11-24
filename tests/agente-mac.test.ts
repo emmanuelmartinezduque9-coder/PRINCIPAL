@@ -517,8 +517,8 @@ describe("canciones", () => {
     };
   }
 
-  it("el Mac es de la versión 1.7.0 (trae enlaces, lee perfiles, busca en Pinterest y mide datos de mercado)", () => {
-    expect(VERSION).toBe("1.7.0");
+  it("el Mac es de la versión 1.8.0 (trae enlaces, lee perfiles, busca en Pinterest, mide datos de mercado y hace las llamadas a Claude del dueño)", () => {
+    expect(VERSION).toBe("1.8.0");
   });
 
   it("saca el audio como MP3 con una lista de argumentos fija y el enlace detrás de `--`", () => {
@@ -903,7 +903,7 @@ describe("instalar.sh", () => {
     const first = run();
     expect(first.status, first.stderr).toBe(0);
     const dest = path.join(home, ".principal-tools", "agente-mac");
-    expect(fsSync.readdirSync(dest).sort()).toEqual(["README.md", "agente.mjs", "datos.mjs", "lib.mjs", "perfil.mjs"]);
+    expect(fsSync.readdirSync(dest).sort()).toEqual(["README.md", "agente.mjs", "claude.mjs", "conectar-claude.sh", "datos.mjs", "lib.mjs", "perfil.mjs"]);
     expect(fsSync.readFileSync(path.join(dest, "lib.mjs"), "utf8")).toBe(fsSync.readFileSync(path.join(ROOT, "agente-mac", "lib.mjs"), "utf8"));
 
     const plistPath = path.join(home, "Library", "LaunchAgents", "com.principal.agente.plist");

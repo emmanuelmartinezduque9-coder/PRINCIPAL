@@ -465,3 +465,46 @@ export async function settledCostMicros(entryId: number): Promise<number | null>
     .where(eq(entries.id, entryId));
   return row?.status === "settled" ? row.costMicros : null;
 }
+
+/**
+ * Apunta una llamada a Claude hecha en el Mac del dueño con su plan de Claude Code (`claude-mac.ts`):
+ * no cuesta nada en la API, así que va liquidada a 0 $ sin reservar ni mirar los topes. `detail`
+ * lleva `via: "mac"` y lo que habría costado en la API, para ver el ahorro.
+ */
+export async function recordMacSpend(input: {
+  userId: number;
+  productId: number | null;
+  model: string;
+  stepKey: string;
+  inputTokens?: number;
+  outputTokens?: number;
+  cacheReadTokens?: number;
+  cacheWriteTokens?: number;
+  detail: Record<string, unknown>;
+  now?: Date;
+}): Promise<{ entryId: number }> {
+  if (!input.stepKey) throw new Error("Falta la clave del paso.");
+  [input.inputTokens, input.outputTokens, input.cacheReadTokens, input.cacheWriteTokens].forEach(assertTokens);
+  const now = input.now ?? new Date();
+  const [row] = await getDb()
+    .insert(entries)
+    .values({
+      createdAt: now,
+      settledAt: now,
+      userId: input.userId,
+      productId: input.productId,
+      provider: "claude",
+      model: input.model,
+      stepKey: input.stepKey,
+      status: "settled",
+      reservedMicros: 0,
+      costMicros: 0,
+      inputTokens: input.inputTokens ?? null,
+      outputTokens: input.outputTokens ?? null,
+      cacheReadTokens: input.cacheReadTokens ?? null,
+      cacheWriteTokens: input.cacheWriteTokens ?? null,
+      detail: { ...input.detail, via: "mac" },
+    })
+    .returning({ id: entries.id });
+  return { entryId: row.id };
+}

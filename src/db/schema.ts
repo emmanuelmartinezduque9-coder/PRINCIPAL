@@ -1060,7 +1060,8 @@ export const agents = pgTable(
     /** Último latido; «conectado» es uno en los últimos 90 segundos. */
     lastSeenAt: instant("last_seen_at"),
     /** Lo que el programa dice de sí mismo en cada latido. */
-    info: jsonb("info").$type<{ version: string; ytDlp: string | null }>(),
+    /** `claude`: la versión de Claude Code si tiene sesión y hace las llamadas del dueño (1.8.0); si no, `null`. */
+    info: jsonb("info").$type<{ version: string; ytDlp: string | null; claude?: string | null }>(),
     revokedAt: instant("revoked_at"),
   },
   (t) => [index("agents_created_by").on(t.createdBy)],
@@ -1141,7 +1142,7 @@ export const agentTasks = pgTable(
     uniqueIndex("agent_tasks_one_active_pinterest_search")
       .on(t.url)
       .where(sql`${t.kind} = 'pinterest_search' and ${t.status} in ('queued', 'leased')`),
-    check("agent_tasks_kind_valid", sql`${t.kind} in ('link_download', 'song_download', 'montaje', 'media_fetch', 'profile_fetch', 'pinterest_search', 'market_data')`),
+    check("agent_tasks_kind_valid", sql`${t.kind} in ('link_download', 'song_download', 'montaje', 'media_fetch', 'profile_fetch', 'pinterest_search', 'market_data', 'claude_code')`),
     // Una referencia y un montaje son siempre de un vídeo; una canción, de ninguno.
     check("agent_tasks_target_valid", sql`(${t.kind} in ('link_download', 'montaje')) = (${t.videoId} is not null)`),
     check("agent_tasks_status_valid", sql`${t.status} in ('queued', 'leased', 'done', 'failed')`),

@@ -91,7 +91,7 @@ fi
 
 # 3. El programa.
 mkdir -p "$DESTINO" "$(dirname "$PLIST")" "$(dirname "$REGISTRO")"
-cp "$ORIGEN/agente.mjs" "$ORIGEN/lib.mjs" "$ORIGEN/perfil.mjs" "$ORIGEN/datos.mjs" "$ORIGEN/README.md" "$DESTINO/"
+cp "$ORIGEN/agente.mjs" "$ORIGEN/lib.mjs" "$ORIGEN/perfil.mjs" "$ORIGEN/datos.mjs" "$ORIGEN/claude.mjs" "$ORIGEN/conectar-claude.sh" "$ORIGEN/README.md" "$DESTINO/"
 echo "Programa copiado a $DESTINO"
 
 # 4. launchd: rutas completas, sin ~ ni PATH del terminal.
@@ -112,5 +112,8 @@ fi
 launchctl bootstrap "$DOMINIO" "$PLIST"
 
 echo "Listo: el agente está en marcha y arrancará solo al encender el Mac."
+if [ ! -f "$HOME/.principal-agente-claude.json" ]; then
+  echo "Para que tus lotes usen tu plan de Claude (no la API), lanza una vez:  bash agente-mac/conectar-claude.sh"
+fi
 echo "Para ver qué hace:  tail -f \"$REGISTRO\""
 echo "Para pararlo:       launchctl bootout $DOMINIO/$ETIQUETA"

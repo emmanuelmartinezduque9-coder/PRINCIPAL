@@ -1,6 +1,6 @@
 "use client";
 
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { formatDistanceToNowStrict } from "date-fns";
 import { es } from "date-fns/locale";
 import { Check, Copy, KeyRound, Laptop, Loader2, Trash2 } from "lucide-react";
@@ -11,8 +11,10 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { MAC_KEY, useMac, type MacStatus } from "@/components/videos/use-mac";
-import { api } from "@/lib/api";
+import { api, type Serialized } from "@/lib/api";
+import type { MacClaudeSummary, MacMode } from "@/server/claude-mac";
 import { cn } from "@/lib/utils";
 
 type Agent = NonNullable<MacStatus["agents"]>[number];
@@ -63,7 +65,11 @@ function AgentRow({ agent, onRevoke }: { agent: Agent; onRevoke: () => void }) {
         <span className="truncate text-sm font-medium">{agent.name}</span>
         <span className="truncate text-xs text-muted-foreground">
           {/* Si está conectado ya lo dice la cabecera: aquí, con qué yt-dlp; si no, cuándo se le vio. */}
-          {agent.lastSeenAt === null ? "Aún sin conectar" : agent.online ? (agent.ytDlp ? `yt-dlp ${agent.ytDlp}` : "Sin yt-dlp") : seenAgo(agent.lastSeenAt)}
+          {agent.lastSeenAt === null
+            ? "Aún sin conectar"
+            : agent.online
+              ? [agent.ytDlp ? `yt-dlp ${agent.ytDlp}` : "Sin yt-dlp", agent.claude ? `Claude Code ${agent.claude}` : "Claude Code sin sesión"].join(" · ")
+              : seenAgo(agent.lastSeenAt)}
         </span>
       </div>
       <Button variant="ghost" className="h-8 gap-1.5 px-2.5 text-muted-foreground hover:text-destructive" aria-label={`Revocar ${agent.name}`} onClick={onRevoke}>
@@ -71,6 +77,64 @@ function AgentRow({ agent, onRevoke }: { agent: Agent; onRevoke: () => void }) {
         Revocar
       </Button>
     </li>
+  );
+}
+
+const CLAUDE_KEY = ["ajustes", "claude"];
+const MODE_LABEL: Record<MacMode, string> = { mac_primero: "Mac primero", solo_mac: "Solo Mac", api: "Solo API" };
+const dollars = (micros: number) => (micros / 1_000_000).toLocaleString("es-ES", { style: "currency", currency: "USD", maximumFractionDigits: 2 });
+
+/**
+ * Claude para lo del dueño: con su Claude Code del Mac (plan de suscripción, 0 $) o con la API.
+ * «Mac primero» usa la API solo si el Mac no puede; «Solo Mac» espera al Mac.
+ */
+function ClaudeOnMac() {
+  const client = useQueryClient();
+  const query = useQuery({
+    queryKey: CLAUDE_KEY,
+    queryFn: () => api<Serialized<MacClaudeSummary>>("/api/ajustes/claude"),
+    refetchInterval: 30_000,
+  });
+  const [saving, setSaving] = useState(false);
+  async function change(mode: string) {
+    if (!mode || mode === query.data?.mode) return;
+    setSaving(true);
+    try {
+      const next = await api<Serialized<MacClaudeSummary>>("/api/ajustes/claude", { method: "PUT", body: JSON.stringify({ mode }) });
+      client.setQueryData(CLAUDE_KEY, next);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "No se pudo cambiar.");
+    } finally {
+      setSaving(false);
+    }
+  }
+  const data = query.data;
+  if (!data) return null;
+  return (
+    <div className="flex flex-col gap-2 border-t pt-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <span className="text-sm font-medium">Claude para tus lotes</span>
+        <ToggleGroup type="single" value={data.mode} onValueChange={(mode) => void change(mode)} disabled={saving} aria-label="Claude para tus lotes">
+          {(Object.keys(MODE_LABEL) as MacMode[]).map((mode) => (
+            <ToggleGroupItem key={mode} value={mode} className="px-3 text-xs">
+              {MODE_LABEL[mode]}
+            </ToggleGroupItem>
+          ))}
+        </ToggleGroup>
+      </div>
+      <p className="text-xs text-muted-foreground">
+        {data.mode === "api"
+          ? "Todo va por la API, con su tope."
+          : data.mode === "solo_mac"
+            ? "Con el Claude Code de este Mac (tu plan). Si el Mac no puede, se espera a que pueda."
+            : "Con el Claude Code de este Mac (tu plan). Si el Mac no puede, va por la API, dentro del tope."}
+        {data.limitUntil ? ` Ha llegado al límite del plan: vuelve a probar a las ${new Date(data.limitUntil).toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" })}.` : ""}
+      </p>
+      <p className="text-xs" role="status">
+        Este mes: {data.macCalls} {data.macCalls === 1 ? "llamada" : "llamadas"} en el Mac · ahorro {dollars(data.savedMicros)}
+        {data.apiFallbacks > 0 ? ` · ${data.apiFallbacks} por la API` : ""}
+      </p>
+    </div>
   );
 }
 
@@ -148,6 +212,7 @@ export function MacCard() {
               ))}
             </ul>
           ) : null}
+          {agents.length > 0 ? <ClaudeOnMac /> : null}
           {token ? (
             <NewToken token={token} onDone={() => setToken(null)} />
           ) : (

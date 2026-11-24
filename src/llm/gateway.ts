@@ -11,16 +11,23 @@ import {
   type ModelTier,
   type Usage,
 } from "@/llm/models";
+import { macBridge } from "@/server/claude-mac";
 import type { RuleSnapshot } from "@/server/rules";
-import { releaseSpend, reserveSpend, settleSpend, SpendCapError } from "@/server/spend";
+import { recordMacSpend, releaseSpend, reserveSpend, settleSpend, SpendCapError } from "@/server/spend";
 
 /**
  * Pasarela única a Claude: toda llamada a un modelo pasa por aquí. Antes de llamar reserva en el
  * libro de gasto el peor caso de la llamada (si no cabe en el tope, no se llama) y al volver
  * apunta el coste real. Solo `src/llm` importa el SDK de Anthropic.
  *
- * Orden de una llamada: clave → validar → reservar (queda confirmado en la base de datos antes
- * de llamar) → llamar → liquidar con el coste real → mirar por qué paró → validar los datos.
+ * Orden de una llamada: validar → (dueño con Mac: su Claude Code, ver abajo) → clave → reservar
+ * (queda confirmado en la base de datos antes de llamar) → llamar → liquidar con el coste real →
+ * mirar por qué paró → validar los datos.
+ *
+ * Las llamadas del dueño con un Mac conectado van primero a ese Mac (`src/server/claude-mac.ts`):
+ * su Claude Code con el plan de suscripción, a 0 $ en el libro. Si el Mac está apagado, llegó al
+ * límite del plan o falla, siguen por la API de siempre (modo «Mac primero») o quedan en pausa
+ * (modo «solo Mac»). Para quien llama no cambia nada.
  */
 
 /**
@@ -115,6 +122,53 @@ export interface LlmResult<T> {
 export interface LlmGateway {
   call<T = unknown>(request: LlmCall<T>): Promise<LlmResult<T>>;
 }
+
+// ───────────────────────── Claude Code del Mac del dueño ─────────────────────────
+
+/** Lo que se manda al Mac: lo mismo que se mandaría a la API, ya montado. Nunca secretos. */
+export interface MacJob {
+  /** Reglas + instrucciones del paso (+ el aviso del JSON final con búsqueda). */
+  system: string;
+  /** El mensaje de la persona, tal cual (texto y fotos en base64). */
+  content: LlmCall<unknown>["content"];
+  /** Esquema JSON de la salida (`--json-schema`), o `null`. Con búsqueda va en `system`. */
+  jsonSchema: Record<string, unknown> | null;
+  model: string;
+  effort: string;
+  maxTokens: number;
+  web: WebAccess | null;
+}
+
+export interface MacAnswer {
+  /** El texto de la respuesta (con `jsonSchema`, el JSON en texto). */
+  text: string;
+  /** El JSON ya validado por Claude Code con `jsonSchema`, o `null`. */
+  structured: unknown;
+  model: string;
+  usage: Usage;
+  /** Lo que habría costado en la API, según Claude Code; `null` si no lo dijo. */
+  apiEquivalentMicros: number | null;
+  webSources: string[];
+  stopReason: "end" | "max_turns" | "refusal";
+}
+
+export type MacFailure = "apagado" | "limite" | "fallo" | "grande";
+export type MacOutcome = { ok: true; taskId: number; answer: MacAnswer } | { ok: false; reason: MacFailure; detail: string };
+export type MacRoute = { mode: "mac_primero" | "solo_mac"; usable: true } | { mode: "mac_primero" | "solo_mac"; usable: false; reason: MacFailure };
+
+/** El puente con el Mac (el real está en `src/server/claude-mac.ts`; en pruebas, uno de mentira). */
+export interface MacBridge {
+  /** `null`: esta llamada va a la API como siempre. */
+  route(userId: number): Promise<MacRoute | null>;
+  run(input: { userId: number; stepKey: string; job: MacJob }): Promise<MacOutcome>;
+}
+
+const MAC_PAUSED: Record<MacFailure, string> = {
+  apagado: "El Mac está apagado: las llamadas a Claude siguen cuando vuelva a estar conectado.",
+  limite: "Claude Code del Mac ha llegado al límite del plan: se sigue cuando se renueve.",
+  fallo: "El Mac no ha podido hacer esta llamada a Claude.",
+  grande: "Esta llamada es demasiado grande para el Mac.",
+};
 
 /** Falta la clave: no se reserva ni se llama. */
 export class LlmNotConfiguredError extends Error {
@@ -298,6 +352,23 @@ function buildParams(request: LlmCall<unknown>): CreateParams {
     params.betas = [FALLBACK_BETA];
   }
   return params;
+}
+
+/** La llamada tal como se manda al Claude Code del Mac. */
+export function macJobOf(request: LlmCall<unknown>): MacJob {
+  const params = buildParams(request);
+  const system = (params.system as Anthropic.Beta.Messages.BetaTextBlockParam[]).map((block) => block.text);
+  if (request.web?.country) system.push(`Busca y lee como alguien que está en el país ${request.web.country}.`);
+  const format = params.output_config?.format as { schema?: Record<string, unknown> } | undefined;
+  return {
+    system: system.join("\n\n"),
+    content: request.content,
+    jsonSchema: format?.schema ?? null,
+    model: MODELS[request.tier],
+    effort: EFFORT[request.tier],
+    maxTokens: request.maxTokens,
+    web: request.web ?? null,
+  };
 }
 
 /** Caracteres de entrada de la petición, tirando por lo alto, para estimar sus tokens. */
@@ -559,7 +630,8 @@ function parseData<T>(schema: z.ZodType<T>, text: string): T {
  * memoria del proceso y nunca se escribe en registros ni respuestas. `client` y `now` existen
  * para las pruebas: `now` fija la fecha del apunte y el código de la aplicación no debe pasarlo.
  */
-export function createGateway(deps: { client?: MessagesClient; now?: () => Date } = {}): LlmGateway {
+export function createGateway(deps: { client?: MessagesClient; now?: () => Date; mac?: MacBridge | null } = {}): LlmGateway {
+  const mac = deps.mac === undefined ? macBridge : deps.mac;
   let real: { apiKey: string; client: MessagesClient } | null = null;
 
   function resolveClient(): MessagesClient {
@@ -582,6 +654,44 @@ export function createGateway(deps: { client?: MessagesClient; now?: () => Date 
     return real.client;
   }
 
+  /** La respuesta del Mac con el mismo contrato que la de la API; el libro la apunta a 0 $. */
+  async function macResult<T>(request: LlmCall<T>, outcome: Extract<MacOutcome, { ok: true }>, ruleVersions: Record<string, number>): Promise<LlmResult<T>> {
+    const { answer } = outcome;
+    const model = answer.model || MODELS[request.tier];
+    const { entryId } = await recordMacSpend({
+      userId: request.userId,
+      productId: request.productId,
+      model,
+      stepKey: request.stepKey,
+      inputTokens: ledgerTokens(answer.usage.inputTokens),
+      outputTokens: ledgerTokens(answer.usage.outputTokens),
+      cacheReadTokens: ledgerTokens(answer.usage.cacheReadTokens),
+      cacheWriteTokens: ledgerTokens(answer.usage.cacheWriteTokens),
+      detail: {
+        tier: request.tier,
+        ruleVersions,
+        macTaskId: outcome.taskId,
+        stopReason: answer.stopReason,
+        ...(answer.apiEquivalentMicros !== null ? { apiEquivalentMicros: answer.apiEquivalentMicros } : {}),
+      },
+      ...(deps.now ? { now: deps.now() } : {}),
+    });
+    if (answer.stopReason === "refusal") throw new LlmRefusalError(null);
+    if (answer.stopReason === "max_turns") throw new LlmTruncatedError({ text: answer.text, model, costMicros: 0, spendEntryId: entryId });
+    let data: T | null = null;
+    if (request.schema) {
+      if (answer.structured !== null && answer.structured !== undefined) {
+        const parsed = request.schema.safeParse(answer.structured);
+        if (!parsed.success) throw new LlmInvalidOutputError();
+        data = parsed.data;
+      } else {
+        data = parseData(request.schema, request.web ? trailingJson(answer.text) : answer.text);
+      }
+    }
+    const text = request.schema && !request.web && answer.structured !== null && answer.structured !== undefined ? JSON.stringify(answer.structured) : answer.text;
+    return { text, data, model, usage: answer.usage, costMicros: 0, spendEntryId: entryId, ruleVersions, webSources: answer.webSources };
+  }
+
   /** No se sabe si el proveedor cobró: lo reservado queda apuntado como gastado y marcado. */
   async function bookUnknown(entryId: number, reservedMicros: number, detail: Record<string, unknown>): Promise<void> {
     try {
@@ -594,13 +704,29 @@ export function createGateway(deps: { client?: MessagesClient; now?: () => Date 
 
   return {
     async call<T = unknown>(request: LlmCall<T>): Promise<LlmResult<T>> {
-      const client = resolveClient();
       validate(request);
+      const ruleVersions = Object.fromEntries(request.rules.map((rule) => [rule.slug, rule.version]));
 
+      // El dueño con Mac: primero su Claude Code (0 $). Si no puede, la API (o pausa con «solo Mac»).
+      let macFallback: MacFailure | null = null;
+      const route = mac ? await mac.route(request.userId) : null;
+      if (route && mac) {
+        const outcome: MacOutcome = route.usable
+          ? await mac.run({ userId: request.userId, stepKey: request.stepKey, job: macJobOf(request) })
+          : { ok: false, reason: route.reason, detail: MAC_PAUSED[route.reason] };
+        if (outcome.ok) return macResult(request, outcome, ruleVersions);
+        if (route.mode === "solo_mac") {
+          if (outcome.reason === "apagado" || outcome.reason === "limite") throw new LlmCapReachedError("persona", MAC_PAUSED[outcome.reason]);
+          throw new LlmCallError("no", null, MAC_PAUSED[outcome.reason], new Error(outcome.detail));
+        }
+        macFallback = outcome.reason;
+        console.warn(`[claude] ${request.stepKey}: el Mac no pudo (${outcome.reason}: ${outcome.detail}); va por la API.`);
+      }
+
+      const client = resolveClient();
       const model = MODELS[request.tier];
       const params = buildParams(request);
-      const ruleVersions = Object.fromEntries(request.rules.map((rule) => [rule.slug, rule.version]));
-      const baseDetail = { tier: request.tier, ruleVersions };
+      const baseDetail = { tier: request.tier, ruleVersions, ...(macFallback ? { macFallback } : {}) };
 
       /**
        * Una vuelta: reserva, llama, liquida. Con búsqueda en internet el servidor puede pausar la

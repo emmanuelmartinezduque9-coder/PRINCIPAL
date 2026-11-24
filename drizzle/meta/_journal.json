@@ -379,6 +379,13 @@
       "when": 1795478721770,
       "tag": "0053_mejoras_reportes",
       "breakpoints": true
+    },
+    {
+      "idx": 54,
+      "version": "7",
+      "when": 1795484060963,
+      "tag": "0054_claude_code_mac",
+      "breakpoints": true
     }
   ]
 }

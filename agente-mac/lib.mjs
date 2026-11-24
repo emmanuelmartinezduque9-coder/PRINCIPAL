@@ -27,7 +27,7 @@ export function cookieArgs(file = COOKIES_FILE, exists = existsSync) {
   return exists(file) ? ["--cookies", file] : ["--cookies-from-browser", "brave"];
 }
 
-export const VERSION = "1.7.0";
+export const VERSION = "1.8.0";
 
 /** Sitios de los que se descarga, con sus subdominios. La misma lista que el servidor. */
 export const LINK_HOSTS = ["instagram.com", "tiktok.com", "youtube.com", "youtu.be", "facebook.com", "fb.watch"];
@@ -208,7 +208,7 @@ export async function readConfig(env, fs, home = os.homedir()) {
 }
 
 /** Quita la ficha de cualquier texto antes de escribirlo o enviarlo. */
-function scrub(config, text) {
+export function scrub(config, text) {
   return String(text).split(config.token).join("***");
 }
 
@@ -219,7 +219,7 @@ const messageOf = (error) => (error instanceof Error ? error.message : String(er
  * parte: si la web contestara con una redirección, la petición falla en vez de seguirla (la ficha
  * no viaja a otra dirección).
  */
-function call(config, deps, method, route, { json, body, timeout = REQUEST_TIMEOUT_MS } = {}) {
+export function call(config, deps, method, route, { json, body, timeout = REQUEST_TIMEOUT_MS } = {}) {
   const headers = { Authorization: `Bearer ${config.token}` };
   if (json !== undefined) headers["Content-Type"] = "application/json";
   return deps.fetch(`${config.url}${route}`, {
@@ -233,7 +233,8 @@ function call(config, deps, method, route, { json, body, timeout = REQUEST_TIMEO
 
 /** Latido del programa: está vivo, y con qué versiones. Devuelve la respuesta de la web. */
 export function heartbeat(config, deps, info) {
-  return call(config, deps, "POST", "/api/agente/latido", { json: { version: VERSION, ytDlp: info?.ytDlp ?? null } });
+  // `claude`: la versión de Claude Code si tiene sesión y puede hacer las llamadas del dueño; si no, `null`.
+  return call(config, deps, "POST", "/api/agente/latido", { json: { version: VERSION, ytDlp: info?.ytDlp ?? null, claude: info?.claude ?? null } });
 }
 
 /**

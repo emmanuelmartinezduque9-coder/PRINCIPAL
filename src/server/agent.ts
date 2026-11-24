@@ -9,6 +9,7 @@ import {
   type ClaimedPinterestSearch,
   type PinterestSearchResult,
 } from "@/server/pinterest-searches";
+import { CLAUDE_CODE_TASK, claimClaudeCodeTask, failClaudeCodeTask, finishClaudeCodeTask, type ClaimedClaudeCode, type ClaudeCodeResult } from "@/server/claude-mac";
 import crypto from "node:crypto";
 import { and, asc, eq, gte, inArray, isNull, lt, lte, max, ne, notExists, or, sql, type SQL } from "drizzle-orm";
 import { getDb, schema } from "@/db/client";
@@ -185,6 +186,8 @@ export interface AgentInfo {
   online: boolean;
   version: string | null;
   ytDlp: string | null;
+  /** Claude Code con sesión en ese Mac (versión), o `null`. */
+  claude: string | null;
 }
 
 /** Los Mac del dueño con ficha en vigor, para Ajustes. Nunca incluye la ficha ni su huella. */
@@ -200,6 +203,7 @@ export async function listAgents(owner: AuthUser, now: Date = new Date()): Promi
     online: isOnline(row.lastSeenAt, now),
     version: info?.version || null,
     ytDlp: info?.ytDlp ?? null,
+    claude: info?.claude ?? null,
   }));
 }
 
@@ -232,10 +236,14 @@ export async function requireAgent(request: Request, now: Date = new Date()): Pr
 // ───────────────────────── Conectado ─────────────────────────
 
 /** Latido del programa (cada 30 s): está vivo, y con qué versiones. */
-export async function agentHeartbeat(agentId: number, info: { version: string; ytDlp: string | null }, now: Date = new Date()): Promise<void> {
+export async function agentHeartbeat(
+  agentId: number,
+  info: { version: string; ytDlp: string | null; claude?: string | null },
+  now: Date = new Date(),
+): Promise<void> {
   await getDb()
     .update(agents)
-    .set({ lastSeenAt: now, info: { version: clip(info.version, MAX_INFO), ytDlp: clip(info.ytDlp, MAX_INFO) || null } })
+    .set({ lastSeenAt: now, info: { version: clip(info.version, MAX_INFO), ytDlp: clip(info.ytDlp, MAX_INFO) || null, claude: clip(info.claude, MAX_INFO) || null } })
     .where(eq(agents.id, agentId));
 }
 
@@ -367,7 +375,9 @@ export type ClaimedTask =
   /** `datos`: datos de mercado reales (Amazon, anuncios de Meta, TikTok, YouTube) de unas consultas. */
   | ClaimedMarketData
   /** `pinterest`: pedir una búsqueda de Pinterest desde el Mac y entregar la respuesta (JSON). */
-  | ClaimedPinterestSearch;
+  | ClaimedPinterestSearch
+  /** `claude_code`: una llamada a Claude del dueño, hecha con el Claude Code del Mac (1.8.0). */
+  | ClaimedClaudeCode;
 
 /**
  * El Mac se lleva la tarea más antigua de la cola de su dueño, o `null` si no hay: las de varios
@@ -375,12 +385,19 @@ export type ClaimedTask =
  * abrir su sesión de subida van en la misma transacción; con `for update skip locked`, dos Macs
  * que preguntan a la vez no se llevan la misma (el segundo prueba con la siguiente).
  */
-export async function claimTask(agentId: number, now: Date = new Date(), options: { can?: readonly OptionalTask[] } = {}): Promise<ClaimedTask | null> {
+export async function claimTask(
+  agentId: number,
+  now: Date = new Date(),
+  options: { can?: readonly OptionalTask[]; solo?: typeof CLAUDE_CODE_TASK } = {},
+): Promise<ClaimedTask | null> {
   const db = getDb();
   const [agent] = await db.select({ createdBy: agents.createdBy }).from(agents).where(and(eq(agents.id, agentId), isNull(agents.revokedAt)));
   if (!agent) return null;
+  // Las llamadas a Claude van por su propia cola (`solo: "claude_code"`, varias a la vez); nunca por la de los enlaces.
+  if (options.solo === CLAUDE_CODE_TASK) return claimClaudeCodeTask(agent.createdBy, leaseValues(agentId, now), now);
   // Un Mac que no dice que sabe traer vídeos de enlaces para el montaje (anterior a 1.4.0) no se los lleva.
   const kinds = and(
+    ne(agentTasks.kind, CLAUDE_CODE_TASK),
     options.can?.includes("enlace_medio") ? undefined : ne(agentTasks.kind, MEDIA_FETCH_TASK),
     // Ni leer perfiles (anterior a 1.5.0).
     options.can?.includes("perfil") ? undefined : ne(agentTasks.kind, PROFILE_TASK),
@@ -541,7 +558,8 @@ export async function appendTaskChunk(
  */
 export type TaskResult =
   | { ok: true; uploadId: string; totalBytes: number; title?: string }
-  | { ok: false; uploadId: string; error: string };
+  | { ok: false; uploadId: string; error: string }
+  | ClaudeCodeResult;
 
 /**
  * El Mac termina la tarea. Si fue bien, dice cuánto pesa lo que entregó y el vídeo entra en el
@@ -559,6 +577,9 @@ export async function finishTask(agentId: number, taskId: number, result: TaskRe
     .from(agentTasks)
     .where(eq(agentTasks.id, taskId));
   if (!found || found.agentId !== agentId) throw taskLost();
+  // Una llamada a Claude se cierra (y se guarda) en `claude-mac`.
+  if (found.kind === CLAUDE_CODE_TASK) return finishClaudeCodeTask(agentId, taskId, result as ClaudeCodeResult, now);
+  if (!("totalBytes" in result) && result.ok) throw new HttpError(400, "Resultado no válido.");
   // Un vídeo de enlace para el montaje se cierra (y se guarda) en `link-media`.
   if (found.kind === MEDIA_FETCH_TASK) return finishMediaFetchTask(agentId, taskId, result as MediaFetchResult, { now: () => now });
   // Un perfil se cierra (y se guarda) en `link-profiles`.
@@ -637,6 +658,7 @@ async function retryOrFailLink(tx: Tx, taskId: number, videoId: number, now: Dat
  */
 async function failTask(task: { id: number; videoId: number | null; kind: string }, condition: SQL | undefined, reason: string, now: Date): Promise<void> {
   const { videoId } = task;
+  if (task.kind === CLAUDE_CODE_TASK) return failClaudeCodeTask(task, condition, reason, now);
   if (task.kind === MEDIA_FETCH_TASK) return failMediaFetchTask(task, condition, reason, now);
   if (task.kind === PROFILE_TASK) return failProfileTask(task, condition, reason, now);
   if (task.kind === MARKET_TASK) return failMarketTask(task, condition, reason, now);
