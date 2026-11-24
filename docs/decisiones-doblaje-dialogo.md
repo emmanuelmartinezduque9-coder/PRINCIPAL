@@ -66,15 +66,22 @@ En el lote 6 se doblaron canciones (vídeos 8, 11, 13, 14, 20, 21 y 22): su pist
 salió de la MÚSICA (Whisper oía la letra en inglés y el rescate la trataba como diálogo). Orden del dueño: se dobla solo
 cuando una persona habla; una canción no se traduce nunca; en caso de duda, no. Ahora:
 
-1. Solo se buscan frases en la música si la pista de VOZ ya tiene palabras, y del mismo idioma (`doblar.py separar`:
-   salen como `candidatas`, sin mover nada). Sin voz con palabras no hay doblaje (los del lote 6 caen aquí).
-2. Antes de gastar, Claude (Haiku, `classifySpeech`) dice frase a frase si es HABLA, CANTO o DUDA con el texto y los
-   datos de Whisper (`no_speech_prob`, `avg_logprob`, duración, de qué pista sale). Solo se dobla si alguna frase de la
-   voz es habla; las candidatas de habla se pasan a la voz (`rescatar`). Si Claude no responde: no se dobla.
+1. La pista no decide: BandIt mete a veces TODO el diálogo en la música (vídeo 22, FalterPfote 5: «Three, two, one,
+   let's…» con la voz a −57 dB) y otras veces mete una canción en la voz. Las frases en otro idioma de la voz y de la
+   música son `candidatas` (`doblar.py separar`, sin mover nada).
+2. Antes de gastar, Claude (Sonnet, `classifySpeech`, con ejemplos: cuenta atrás y exclamaciones = habla; «Last
+   Christmas», «Rockin' around the Christmas tree», «All I want for Christmas» = canto) dice frase a frase HABLA, CANTO o
+   DUDA con el texto y los datos de Whisper (`no_speech_prob`, `avg_logprob`, duración, pista). Solo se dobla la habla:
+   `rescatar` deja en la voz solo las ventanas de habla (la habla de la música pasa a la voz y el canto de la voz vuelve a
+   la música, que suena igual). Si Claude no responde o duda: no se dobla. Probado con las frases reales del lote 6:
+   los villancicos de 8, 11, 13, 20 y 21 → canto o duda; 22 y 6 → habla.
 3. La comprobación final solo mira dentro de las ventanas del diálogo (fuera suena la canción).
-4. Los doblajes ya hechos sin `clasificado` se vuelven a mirar: si eran canción, se retiran (`skipped`) y vuelve el audio
-   original; si eran habla, se reutilizan sin pagar. Al publicar, sus vídeos se vuelven a montar una vez
-   (`reclassifyDubbedEdits`, marca `doblaje.habla-o-canto-20261124`).
+4. Los doblajes y las marcas de «no doblar» de antes (sin `decision: 2`) se vuelven a mirar: doblado y era canción →
+   se retira y vuelve el audio original; era habla → se reutiliza sin pagar; marcado «sin diálogo» con habla en la
+   música → ahora se dobla. Al publicar, sus vídeos se vuelven a montar una vez (`reclassifyDubbedEdits`, marca
+   `doblaje.habla-o-canto-v2-20261124`).
+5. «Solo gancho» sin cuerpos elegidos en la tarjeta: el montaje lleva los cuerpos del producto (el vídeo 22 salió solo
+   con el gancho porque nadie eligió su cuerpo «bury»).
 
 No hay nada parecido en Codex: allí el doblaje se pedía a mano por vídeo y su V6 tradujo letras de la canción.
 

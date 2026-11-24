@@ -6,7 +6,7 @@ import { HttpError } from "@/server/http";
 import { getProductFor, type Product } from "@/server/products";
 import { parseRange, songSummaries } from "@/server/songs";
 import type { Analysis } from "@/server/videos/analysis";
-import { bodiesOfVideo } from "@/server/videos/bodies";
+import { bodiesOfVideo, productBodyIds } from "@/server/videos/bodies";
 import { dubDialogueOf } from "@/server/videos/doblaje";
 import { getObjectStore } from "@/lib/object-store";
 import { downloadableClip, servableClipUrl } from "@/server/videos/clip";
@@ -166,7 +166,9 @@ async function buildSpec(video: Video, product: Product): Promise<EditSpec> {
   const clips: EditSpec["clips"] = [];
   if (video.kind === "solo_gancho") {
     clips.push({ role: "hook", jobId: clip.jobId, url: clip.url });
-    for (const body of await bodiesOfVideo(video, { raw: true })) {
+    // Sin cuerpos elegidos en la tarjeta: los del producto (un «Solo gancho» lleva su cuerpo).
+    const chosen = video.bodyClipIds.length > 0 ? video : { ...video, bodyClipIds: await productBodyIds(video.productId) };
+    for (const body of await bodiesOfVideo(chosen, { raw: true })) {
       if (!servableClipUrl(body.videoUrl)) throw new HttpError(409, BODY_NOT_SERVABLE);
       clips.push({ role: "body", jobId: body.jobId, url: body.videoUrl });
     }
@@ -335,12 +337,13 @@ export async function redubTodaysEdits(now: Date = new Date()): Promise<number> 
   return queued;
 }
 
-export const RECLASSIFY_SETTING = "doblaje.habla-o-canto-20261124";
+export const RECLASSIFY_SETTING = "doblaje.habla-o-canto-v2-20261124";
 
 /**
- * Una vez (24/11/2026, orden del dueño: «una canción no se traduce nunca»): los vídeos con un doblaje hecho antes de
- * decidir si la voz era habla o canto (sin `clasificado`) se vuelven a montar. Si era una canción, el doblaje se retira
- * y vuelve el audio original; si era habla, se reutiliza sin pagar otra vez.
+ * Una vez (24/11/2026, orden del dueño: «una canción no se traduce nunca»; se dobla solo cuando alguien habla): los
+ * vídeos con un doblaje (o una marca de «no doblar») de antes de decidir frase a frase habla o canto se vuelven a
+ * montar. Doblado y era canción: se retira y vuelve el audio original; era habla: se reutiliza sin pagar. Marcado
+ * «sin diálogo» pero con habla en la música (vídeo 22): ahora se dobla.
  */
 export async function reclassifyDubbedEdits(now: Date = new Date()): Promise<number> {
   if (await getSetting<string>(RECLASSIFY_SETTING)) return 0;
@@ -348,7 +351,10 @@ export async function reclassifyDubbedEdits(now: Date = new Date()): Promise<num
   const rows = await getDb()
     .selectDistinct({ id: schema.dubs.videoId })
     .from(schema.dubs)
-    .where(and(eq(schema.dubs.status, "done"), sql`coalesce((${schema.dubs.raw}->>'clasificado')::boolean, false) = false`));
+    .where(
+      sql`(${schema.dubs.status} = 'done' and coalesce((${schema.dubs.raw}->>'decision')::int, 0) < 2)
+        or (${schema.dubs.status} = 'skipped' and coalesce((${schema.dubs.raw}->>'decision')::int, 0) < 2)`,
+    );
   let queued = 0;
   for (const { id } of rows) {
     const [video] = await getDb().select().from(videos).where(eq(videos.id, id));

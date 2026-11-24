@@ -255,9 +255,9 @@ def video_dialogo(carpeta, video, salida, desde=None, hasta=None):
 
 def separar(fuente, carpeta, video=None, destino=None):
     """Voz, música y efectos de `fuente` en `carpeta` (WAV estéreo de 48 kHz en coma flotante) y `dialogue-only.mp4`.
-    Solo si la pista de voz ya tiene palabras, se buscan en la música y los efectos frases en ESE idioma (BandIt mete a
-    veces un grito o una voz procesada en la música): salen como `candidatas`, sin mover nada; `doblaje.ts` decide con
-    Claude si son habla o letra cantada y mueve solo las de habla (`rescatar`). Una canción no se traduce nunca."""
+    Las frases en otro idioma que el anuncio que haya en la música y los efectos salen como `candidatas` (BandIt mete a
+    veces el diálogo en la música), sin mover nada; `doblaje.ts` decide con Claude si cada frase es habla o letra
+    cantada y solo dobla la habla (`rescatar`). Una canción no se traduce nunca."""
     carpeta = Path(carpeta)
     carpeta.mkdir(parents=True, exist_ok=True)
     if not tiene_audio(fuente):
@@ -276,11 +276,13 @@ def separar(fuente, carpeta, video=None, destino=None):
     w = whisper()
     voz = detectar_dialogo(w, carpeta / 'speech.wav', r['speech_db'])
     candidatas = []
-    if w is not None and voz and voz['hay']:
+    if w is not None:
+        # También con la voz muda: BandIt mete a veces TODO el diálogo en la música (vídeo 22: «Three, two, one,
+        # let's…»). Son solo candidatas: Claude decide frase a frase si son habla o la letra de la canción.
         for i, nombre in ((1, 'music'), (2, 'sfx')):
             voces, _ = voces_mdx(pistas[i])  # Whisper oye mejor las voces aisladas que la música entera
             for f in frases(w, voces):
-                if f['idioma'] == voz['idioma'] and f['idioma'] != destino and f['prob'] >= UMBRAL_IDIOMA and f['no_habla'] <= MAX_NO_HABLA:
+                if f['idioma'] and f['idioma'] != destino and f['prob'] >= UMBRAL_IDIOMA and f['no_habla'] <= MAX_NO_HABLA:
                     a, b = ampliar(voces, f['desde'], f['hasta'])
                     candidatas.append(dict(f, pista=nombre, desde=a, hasta=b))
     dialogo = carpeta / 'dialogue-only.mp4'
@@ -289,14 +291,24 @@ def separar(fuente, carpeta, video=None, destino=None):
     return r
 
 
-def rescatar(carpeta, tramos, video=None):
-    """Pasa a la pista de voz la voz de la música en `tramos` [(desde, hasta)] (las frases que Claude dio por HABLA) y
-    rehace `dialogue-only.mp4`."""
+def rescatar(carpeta, tramos, video=None, habla=None):
+    """Deja en la pista de voz SOLO lo que es habla: pasa a la voz la voz de la música en `tramos` [(desde, hasta)] (frases
+    de habla que BandIt dejó en la música) y, con `habla` (todas las ventanas de habla), devuelve a la música lo que la
+    voz tenga fuera de ellas (canto: no se dobla y sigue sonando igual). Rehace `dialogue-only.mp4`."""
     carpeta = Path(carpeta)
     if tramos:
         mover_voz_de_la_musica(carpeta, tramos)
+    if habla is not None:
+        voz, musica = leer(carpeta / 'speech.wav'), leer(carpeta / 'music.wav')
+        peso = np.zeros(len(voz), np.float32)
+        for a, b in habla:
+            peso = np.maximum(peso, ventana(len(voz), int((a - RELLENO_S) * RATE), int((b + RELLENO_S) * RATE)))
+        n = min(len(voz), len(musica))
+        fuera = voz[:n] * (1 - peso[:n, None])
+        escribir_wav(carpeta / 'music.wav', musica[:n] + fuera)
+        escribir_wav(carpeta / 'speech.wav', voz[:n] - fuera)
     video_dialogo(carpeta, video, carpeta / 'dialogue-only.mp4')
-    return dict(ok=True, tramos=[[a, b] for a, b in tramos])
+    return dict(ok=True, tramos=[[a, b] for a, b in tramos], habla=[[a, b] for a, b in (habla or [])])
 
 
 def comprobar(audio, origen, destino, ventanas=None):
@@ -370,6 +382,7 @@ def main(argv=None):
     rs.add_argument('carpeta', type=Path)
     rs.add_argument('tramos', nargs='*', help='desde:hasta en segundos')
     rs.add_argument('--video', type=Path)
+    rs.add_argument('--habla', nargs='*', help='desde:hasta de TODA la habla (fuera, la voz vuelve a la música)')
     t = cmds.add_parser('tramo')
     t.add_argument('carpeta', type=Path)
     t.add_argument('desde', type=float)
@@ -394,7 +407,8 @@ def main(argv=None):
             quedan = comprobar(a.audio, a.origen, a.destino, ventanas)
             r = dict(ok=True, comprobado=quedan is not None, quedan=quedan or [])
         elif a.orden == 'rescatar':
-            r = rescatar(a.carpeta, [tuple(float(v) for v in x.split(':')) for x in a.tramos], a.video)
+            habla = [tuple(float(v) for v in x.split(':')) for x in a.habla] if a.habla is not None else None
+            r = rescatar(a.carpeta, [tuple(float(v) for v in x.split(':')) for x in a.tramos], a.video, habla)
         elif a.orden == 'tramo':
             r = tramo(a.carpeta, a.desde, a.hasta, a.salida, a.video)
         elif a.orden == 'injertar':

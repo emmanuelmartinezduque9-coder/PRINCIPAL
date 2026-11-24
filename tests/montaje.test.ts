@@ -218,6 +218,14 @@ describe("ficha de montaje", () => {
     expect((await runRow(runId)).requestedBy).toBe(dueno.id);
   });
 
+  it("«Solo gancho» sin cuerpos elegidos: lleva los cuerpos del producto (gancho y cuerpo, nunca el gancho solo)", async () => {
+    const product = await makeProduct(dueno, { name: "FalterPfote" });
+    await body(dueno, product.id, "https://d1abc.cloudfront.net/bury.mp4", "bury");
+    const video = await videoWithClip(dueno, { kind: "solo_gancho", hookSeconds: 4, segmentDurationMs: 4000, bodyClipIds: [] }, product);
+    const { runId } = await startEdit(dueno, video.id, T0);
+    expect((await specOf(runId)).clips).toMatchObject([{ role: "hook" }, { role: "body", url: "https://d1abc.cloudfront.net/bury.mp4", jobId: "lib-bury" }]);
+  });
+
   it("«Audio original» es el audio de la referencia: el guardado; si no, el enlace; si no hay ninguno, nada", async () => {
     const audioOf = async (video: Video) => (await specOf((await startEdit(dueno, video.id, T0)).runId)).referenceAudio;
     const guardado = await videoWithClip(dueno, { referenceSource: "link", referenceUrl: REEL });

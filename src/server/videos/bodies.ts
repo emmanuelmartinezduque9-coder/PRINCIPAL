@@ -190,3 +190,12 @@ export async function bodiesOfVideos(
 export async function bodiesOfVideo(video: { id: number; productId: number; bodyClipIds: number[] }, options: { raw?: boolean } = {}): Promise<VideoBody[]> {
   return (await bodiesOfVideos([video], options)).get(video.id) ?? [];
 }
+
+/**
+ * Los cuerpos del producto, en el orden en que se añadieron: con «Solo gancho» y ningún cuerpo elegido en la tarjeta,
+ * el montaje los usa todos (orden del dueño, 24/11/2026: un «Solo gancho» se monta con su gancho Y su cuerpo).
+ */
+export async function productBodyIds(productId: number): Promise<number[]> {
+  const rows = await getDb().select({ id: bodies.id }).from(bodies).where(eq(bodies.productId, productId)).orderBy(asc(bodies.id));
+  return rows.map((row) => row.id);
+}
