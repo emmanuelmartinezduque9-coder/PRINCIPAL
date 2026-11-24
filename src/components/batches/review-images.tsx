@@ -15,6 +15,7 @@ import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
 import { frameUrl, thumbUrl, type GenerationResult } from "@/components/videos/labels";
 import { PinterestRefs } from "@/components/videos/pinterest-refs";
+import { PlaceFrames, placePending } from "@/components/videos/place-frames";
 import { RejectDialog } from "@/components/videos/reject-dialog";
 import { ResultImage } from "@/components/videos/result-image";
 import { api, ApiError } from "@/lib/api";
@@ -42,8 +43,10 @@ function ReviewItem({
   onReject,
   onRejectOpen,
   onZoom,
+  onPlaceChanged,
 }: {
   row: BatchRowJson;
+  onPlaceChanged: () => Promise<unknown>;
   focused: boolean;
   /** Lo que se está guardando de este vídeo: la candidata que se aprueba o el rechazo. */
   saving: number | "reject" | undefined;
@@ -169,6 +172,15 @@ function ReviewItem({
           );
         })}
       </div>
+      <PlaceFrames
+        videoId={row.id}
+        title={row.title}
+        updatedAt={row.updatedAt}
+        mine={row.mine}
+        places={row.places ?? []}
+        onChanged={onPlaceChanged}
+        onZoom={onZoom}
+      />
     </li>
   );
 }
@@ -199,7 +211,7 @@ export function ReviewImages({ batchId }: { batchId: number }) {
   const firstPending = rows.find(open)?.id ?? rows[0]?.id ?? null;
   const focused = rows.some((row) => row.id === focusId) ? focusId : firstPending;
   const index = rows.findIndex((row) => row.id === focused);
-  const pending = rows.filter(open).length;
+  const pending = rows.filter((row) => open(row) || (row.places ?? []).some(placePending)).length;
 
   const refresh = useCallback(() => client.invalidateQueries({ queryKey: ["batch", batchId] }), [client, batchId]);
   const mark = (videoId: number, value: number | "reject" | undefined) =>
@@ -350,6 +362,7 @@ export function ReviewImages({ batchId }: { batchId: number }) {
               onApprove={(resultId) => void approve(row, resultId)}
               onReject={(reason) => reject(row, reason)}
               onRejectOpen={setDialogOpen}
+              onPlaceChanged={refresh}
               onZoom={setZoomed}
             />
           ))}

@@ -20,6 +20,7 @@ import { asHttp, registerRequestBuilder, type GenDeps, type RequestBuilder } fro
 import { clipManifest, clipPromptFor, type ManifestItem } from "@/server/videos/manifest";
 import { learnedSuffix } from "@/server/videos/mejoras/corrections";
 import { checkVideoPrompt, PROMPT_ERROR } from "@/server/videos/prompt-check";
+import { tramoKind, type TramoVideo } from "@/server/videos/tramos";
 import {
   BRIEF_CHANGED,
   clipDurationSeconds,
@@ -69,6 +70,9 @@ const NO_CLIP = "Todavía no hay clip.";
 
 const EXTENSIONS: Record<string, string> = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp" };
 
+/** El sitio de la referencia de un vídeo visto desde un sitio (`tramos.ts`), o 0. */
+const tramoIndexOf = (video: Video) => (video as TramoVideo).tramo?.index ?? 0;
+
 /** El `jobId` de la imagen inicial aprobada (un resultado bueno de una imagen de este vídeo), o `null`. */
 async function approvedFrameJobId(video: Video): Promise<string | null> {
   if (video.approvedFrameResultId === null) return null;
@@ -81,7 +85,7 @@ async function approvedFrameJobId(video: Video): Promise<string | null> {
         eq(schema.generationResults.id, video.approvedFrameResultId),
         eq(schema.generationResults.ok, true),
         eq(schema.generations.videoId, video.id),
-        eq(schema.generations.kind, "frame"),
+        eq(schema.generations.kind, tramoKind("frame", tramoIndexOf(video))),
       ),
     );
   return found?.jobId ?? null;
@@ -197,11 +201,12 @@ registerRequestBuilder("clip", buildClipRequest);
 
 /** El clip hecho que se sube a 1080p: el aprobado o, si no hay, el último bueno; `null` si no hay. */
 async function finishedClip(video: Video): Promise<{ jobId: string } | null> {
+  const kind = tramoKind("clip", tramoIndexOf(video));
   const results = await getDb()
     .select({ id: schema.generationResults.id, jobId: schema.generationResults.jobId })
     .from(schema.generationResults)
     .innerJoin(schema.generations, eq(schema.generations.id, schema.generationResults.generationId))
-    .where(and(eq(schema.generations.videoId, video.id), eq(schema.generations.kind, "clip"), eq(schema.generations.status, "done"), eq(schema.generationResults.ok, true)))
+    .where(and(eq(schema.generations.videoId, video.id), eq(schema.generations.kind, kind), eq(schema.generations.status, "done"), eq(schema.generationResults.ok, true)))
     .orderBy(desc(schema.generations.id), asc(schema.generationResults.index));
   return results.find((result) => result.id === video.approvedClipResultId) ?? results[0] ?? null;
 }
@@ -299,7 +304,9 @@ export async function downloadableClipUrl(video: Video): Promise<string | null> 
 }
 
 /** Como `downloadableClipUrl`, con el trabajo de Higgsfield (para buscar su copia en el almacén propio). */
-export async function downloadableClip(video: Video): Promise<{ url: string; jobId: string } | null> {
+export async function downloadableClip(video: Video, tramo = 0): Promise<{ url: string; jobId: string } | null> {
+  const kind = tramoKind("clip", tramo);
+  const approvedId = tramo === 0 ? video.approvedClipResultId : (video.tramoApprovals?.[kind] ?? null);
   const results = await getDb()
     .select({ id: schema.generationResults.id, url: schema.generationResults.url, jobId: schema.generationResults.jobId })
     .from(schema.generationResults)
@@ -307,22 +314,22 @@ export async function downloadableClip(video: Video): Promise<{ url: string; job
     .where(
       and(
         eq(schema.generations.videoId, video.id),
-        eq(schema.generations.kind, "clip"),
+        eq(schema.generations.kind, kind),
         eq(schema.generations.status, "done"),
         eq(schema.generationResults.ok, true),
       ),
     )
     .orderBy(desc(schema.generations.id), asc(schema.generationResults.index));
-  const approved = results.find((result) => result.id === video.approvedClipResultId);
+  const approved = results.find((result) => result.id === approvedId);
   const chosen = [approved, ...results].find((result) => result && servableClipUrl(result.url));
   if (!chosen?.url) return null;
   // El montaje y la descarga van con el clip subido a 1080p con Topaz, si ya está (orden de Emmanuel,
   // 24/11/2026); si Topaz no pudo, con el de 480p.
-  return (await upscaledOf(video, chosen.jobId)) ?? { url: chosen.url, jobId: chosen.jobId };
+  return (await upscaledOf(video, chosen.jobId, tramo)) ?? { url: chosen.url, jobId: chosen.jobId };
 }
 
 /** La subida a 1080p (Topaz) terminada de ese clip, o `null`. */
-async function upscaledOf(video: Video, clipJobId: string): Promise<{ url: string; jobId: string } | null> {
+async function upscaledOf(video: Video, clipJobId: string, tramo = 0): Promise<{ url: string; jobId: string } | null> {
   const rows = await getDb()
     .select({ url: schema.generationResults.url, jobId: schema.generationResults.jobId, request: schema.generations.request })
     .from(schema.generationResults)
@@ -330,7 +337,7 @@ async function upscaledOf(video: Video, clipJobId: string): Promise<{ url: strin
     .where(
       and(
         eq(schema.generations.videoId, video.id),
-        eq(schema.generations.kind, "upscale"),
+        eq(schema.generations.kind, tramoKind("upscale", tramo)),
         eq(schema.generations.status, "done"),
         eq(schema.generationResults.ok, true),
       ),

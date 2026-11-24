@@ -18,6 +18,7 @@ import { analysisLock, type Analysis } from "@/server/videos/analysis";
 import { checkKindInput, cleanNote, cleanProductNotes, isAvatarMode, type AvatarMode, type VideoKind } from "@/server/videos/brief";
 import { songSummaries, type SongSummary } from "@/server/songs";
 import { avatarSummaries, isChoosableAvatar } from "@/server/avatars";
+import { placeFrameViews, type PlaceFrameView } from "@/server/videos/tramos";
 import {
   audioColumns,
   canChooseSong,
@@ -536,6 +537,8 @@ export interface BatchRow {
   /** Sin ninguna generación todavía: se puede quitar del lote. */
   removable: boolean;
   frame: GenerationView;
+  /** Las aperturas de los sitios extra de la referencia (regla del 24/11/2026, `tramos.ts`); vacío con uno solo. */
+  places?: PlaceFrameView[];
   clip: GenerationView;
   costs: VideoCosts;
   /** Hay un clip que se puede descargar (el aprobado o el último terminado). */
@@ -649,11 +652,12 @@ export async function batchView(user: AuthUser, batchId: number): Promise<BatchV
     list.map(async (video): Promise<BatchRow> => {
       const analysis = analysisOf.get(video.id);
       const fresh = analysis ? staleness(analysis, { ...video, productNotes: notesOf.get(video.productId) ?? null }) : null;
-      const [frame, clip, costs, pinterest] = await Promise.all([
+      const [frame, clip, costs, pinterest, places] = await Promise.all([
         generationView(video, "frame", user.id),
         generationView(video, "clip", user.id),
         costsOfVideo(video),
         video.environmentPhotoId === null ? pinterestView(video.id) : null,
+        placeFrameViews(video, user.id),
       ]);
       const clipUrl = clipUrls.get(video.id) ?? null;
       return {
@@ -690,6 +694,7 @@ export async function batchView(user: AuthUser, batchId: number): Promise<BatchV
         risks: analysis?.status === "done" ? (analysis.risks ?? []) : [],
         removable: !withGenerations.has(video.id),
         frame,
+        places,
         clip,
         costs,
         clipReady: clipUrl !== null,

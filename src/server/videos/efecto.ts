@@ -54,7 +54,7 @@ export async function effectPassInfo(videoId: number): Promise<EffectInfo | null
   const [run] = await getDb()
     .select({ status: schema.videoPinterestRefs.status, scene: schema.videoPinterestRefs.scene, framePrompt: schema.videoPinterestRefs.framePrompt })
     .from(schema.videoPinterestRefs)
-    .where(and(eq(schema.videoPinterestRefs.videoId, videoId), eq(schema.videoPinterestRefs.analysisId, analysis.id)));
+    .where(and(eq(schema.videoPinterestRefs.videoId, videoId), eq(schema.videoPinterestRefs.analysisId, analysis.id), eq(schema.videoPinterestRefs.tramo, 0)));
   const scene = run?.scene as { effectVisible?: boolean; effectPrompt?: string; productHidden?: boolean } | null;
   if (run?.status !== "ready" || !run.framePrompt || !scene?.effectVisible || scene.productHidden || !scene.effectPrompt) return null;
   const [photo] = await getDb()

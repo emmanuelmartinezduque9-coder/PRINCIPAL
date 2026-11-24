@@ -635,6 +635,12 @@ export const videos = pgTable(
       { onDelete: "set null" },
     ),
     /**
+     * Lo aprobado de cada sitio extra de la referencia (regla del 24/11/2026, `tramos.ts`): por tipo
+     * de generación con su sitio («frame:1», «clip:1»…), el resultado aprobado. El primer sitio usa
+     * `approvedFrameResultId` y `approvedClipResultId`.
+     */
+    tramoApprovals: jsonb("tramo_approvals").$type<Record<string, number>>().notNull().default({}),
+    /**
      * El enlace pegado que este vídeo espera del Mac, o el último que falló (su tarea en
      * `agent_tasks`): es lo que enseña la pantalla. `null` si no hay ninguno. Mientras tanto, una
      * referencia que ya estaba lista sigue lista. Se vacía al entregarse el archivo o al subir uno.
@@ -922,7 +928,8 @@ export const generations = pgTable(
     index("generations_status").on(t.status),
     index("generations_video_kind").on(t.videoId, t.kind, t.id),
     index("generations_job_ids").using("gin", t.jobIds),
-    check("generations_kind_valid", sql`${t.kind} in ('frame', 'clip', 'upscale')`),
+    // `frame:N`, `clip:N`, `upscale:N`: los del sitio N de la referencia (N ≥ 1; ver `tramos.ts`).
+    check("generations_kind_valid", sql`${t.kind} ~ '^(frame|clip|upscale)(:[1-9][0-9]?)?$'`),
     check(
       "generations_status_valid",
       sql`${t.status} in ('intent', 'submitting', 'submitted', 'done', 'failed', 'not_sent', 'unknown')`,
@@ -1510,6 +1517,8 @@ export const videoPinterestRefs = pgTable(
       .references(() => videoAnalyses.id, { onDelete: "cascade" }),
     /** `pending` (por buscar), `searching`, `waiting_mac` (Pinterest no deja al servidor: lo busca el Mac), `ready`, `failed`. */
     status: text("status").notNull().default("pending"),
+    /** El sitio de la referencia (0, el primero; ver `tramos.ts`): cada sitio busca sus propias fotos. */
+    tramo: integer("tramo").notNull().default(0),
     scene: jsonb("scene"),
     queries: jsonb("queries"),
     /** Las elegidas, en orden: `{ sha256, query, pinId, sourceUrl, reason }[]`. */
@@ -1527,7 +1536,7 @@ export const videoPinterestRefs = pgTable(
     updatedAt: instant("updated_at").notNull().defaultNow(),
   },
   (t) => [
-    unique("video_pinterest_refs_video_analysis").on(t.videoId, t.analysisId),
+    unique("video_pinterest_refs_video_analysis_tramo").on(t.videoId, t.analysisId, t.tramo),
     check("video_pinterest_refs_status_valid", sql`${t.status} in ('pending', 'searching', 'waiting_mac', 'ready', 'failed')`),
   ],
 );

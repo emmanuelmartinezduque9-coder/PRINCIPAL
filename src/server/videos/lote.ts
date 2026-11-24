@@ -17,7 +17,8 @@ import { PINTEREST_PENDING } from "@/server/videos/pinterest";
 import { expectsEffectPass } from "@/server/videos/efecto";
 // Registra el constructor de la imagen inicial (`frame`) en las generaciones.
 import { approveFrame, rejectFrame } from "@/server/videos/frame";
-import { BLOCKED, MAX_REGENERATIONS, upscaleEstimate, quoteGeneration, SYSTEM_REJECT_PREFIX, requestGeneration, type GenDeps, type GenerationKind } from "@/server/videos/generations";
+import { sourceMsFor, tramoKind, tramosOf, tramoVideo } from "@/server/videos/tramos";
+import { baseKindOf, type BaseGenerationKind, BLOCKED, MAX_REGENERATIONS, upscaleEstimate, quoteGeneration, SYSTEM_REJECT_PREFIX, requestGeneration, type GenDeps, type GenerationKind } from "@/server/videos/generations";
 import { clipModelProblem, getVideoFor, setVideoSong, referenceOutdated, REFERENCE_OUTDATED, staleness, updateVideoChoices, withProductNotes, type Video } from "@/server/videos/videos";
 import { CLIP_MODEL_LABEL, CLIP_MODELS, resolveClipModel, SEEDANCE, sourceProblem } from "@/lib/clip-models";
 import { isPromptProblem, PROMPT_ERROR } from "@/server/videos/prompt-check";
@@ -96,6 +97,13 @@ export type BatchPause = NonNullable<Batch["pause"]>;
 
 interface Row {
   video: Video;
+  /**
+   * Con varios sitios en la referencia (regla del 24/11/2026, `tramos.ts`): una fila por sitio, con
+   * el vídeo visto desde ese sitio y sus generaciones (`frame:N`…). Sin ellos, `undefined`.
+   */
+  parts?: Row[];
+  /** El sitio de esta fila (0 en la del vídeo). */
+  tramo?: number;
   frames: Generation[];
   clips: Generation[];
   /** La subida a 1080p con Topaz del clip hecho. */
@@ -133,14 +141,34 @@ async function rowsOf(user: AuthUser, batch: Batch, options: { withSkipped?: boo
     .from(schema.videoAnalyses)
     .where(inArray(schema.videoAnalyses.videoId, ids))
     .orderBy(desc(schema.videoAnalyses.version));
-  return visible.map((video) => ({
-    video,
-    frames: gens.filter((g) => g.videoId === video.id && g.kind === "frame"),
-    clips: gens.filter((g) => g.videoId === video.id && g.kind === "clip"),
-    upscales: gens.filter((g) => g.videoId === video.id && g.kind === "upscale"),
-    analyses: analyses.filter((a) => a.videoId === video.id),
-  }));
+  const rowsOut: Row[] = [];
+  for (const video of visible) {
+    const own = analyses.filter((a) => a.videoId === video.id);
+    const ofKind = (kind: string) => gens.filter((g) => g.videoId === video.id && g.kind === kind);
+    const row: Row = { video, tramo: 0, frames: ofKind("frame"), clips: ofKind("clip"), upscales: ofKind("upscale"), analyses: own };
+    const done = own.find((a) => a.status === "done");
+    const tramos = done ? await tramosOf(video, (done.result as Record<string, unknown> | null) ?? null) : null;
+    if (tramos) {
+      row.parts = tramos.map((t) => ({
+        video: tramoVideo(video, tramos, t.index),
+        tramo: t.index,
+        frames: ofKind(tramoKind("frame", t.index)),
+        clips: ofKind(tramoKind("clip", t.index)),
+        upscales: ofKind(tramoKind("upscale", t.index)),
+        analyses: own,
+      }));
+    }
+    rowsOut.push(row);
+  }
+  return rowsOut;
 }
+
+/** Las filas que se generan de un vídeo: la suya o, con varios sitios, una por sitio. */
+const partsOf = (row: Row): Row[] => row.parts ?? [row];
+
+/** El peor estado de varios sitios (el vídeo está como su sitio más atrasado). */
+const STAGE_ORDER: Stage[] = ["maxed", "failed", "need", "busy", "done", "approved"];
+const worstStage = (stages: Stage[]): Stage => stages.reduce((a, b) => (STAGE_ORDER.indexOf(b) < STAGE_ORDER.indexOf(a) ? b : a));
 
 const ACTIVE_ANALYSIS = ["queued", "running", "paused"];
 const BUSY_GENERATION = ["intent", "submitting", "submitted", "unknown"];
@@ -201,7 +229,8 @@ function retryable(list: readonly Generation[]): boolean {
   return list.filter((g) => SPENT.includes(g.status)).length < 1 + MAX_REGENERATIONS;
 }
 
-const frameStage = (row: Row, batch: Batch) => stageOf(row.frames, row.video.approvedFrameResultId !== null, retryAfterOf(batch));
+const partFrameStage = (row: Row, batch: Batch) => stageOf(row.frames, row.video.approvedFrameResultId !== null, retryAfterOf(batch));
+const frameStage = (row: Row, batch: Batch): Stage => worstStage(partsOf(row).map((part) => partFrameStage(part, batch)));
 
 /** Intentos de Topaz por clip antes de montar con el de 480p (con aviso). */
 export const MAX_UPSCALE_ATTEMPTS = 3;
@@ -212,8 +241,14 @@ export const MAX_UPSCALE_ATTEMPTS = 3;
  * 480p y un aviso). `done` también si el clip no se hizo aquí (nada que subir).
  */
 export type UpscaleStage = "need" | "busy" | "done" | "given_up" | "waiting";
+const UPSCALE_ORDER: UpscaleStage[] = ["waiting", "need", "busy", "given_up", "done"];
 function upscaleStage(row: Row, batch: Batch): UpscaleStage {
-  if (clipStage(row, batch) !== "done") return "waiting";
+  return partsOf(row)
+    .map((part) => partUpscaleStage(part, batch))
+    .reduce((a, b) => (UPSCALE_ORDER.indexOf(b) < UPSCALE_ORDER.indexOf(a) ? b : a));
+}
+function partUpscaleStage(row: Row, batch: Batch): UpscaleStage {
+  if (partClipStage(row, batch) !== "done") return "waiting";
   const last = row.upscales.at(-1);
   if (!last) return "need";
   if (BUSY_GENERATION.includes(last.status)) return "busy";
@@ -243,7 +278,8 @@ const blockedClips = (row: Row) => {
 export const MAX_BLOCKED_RETRIES = 2;
 
 /** Un clip bloqueado con reintentos libres vuelve a pedirse (con el prompt saneado) en vez de parar el lote. */
-const clipStage = (row: Row, batch: Batch): Stage => {
+const clipStage = (row: Row, batch: Batch): Stage => worstStage(partsOf(row).map((part) => partClipStage(part, batch)));
+const partClipStage = (row: Row, batch: Batch): Stage => {
   const stage = stageOf(row.clips, false, retryAfterOf(batch));
   const last = row.clips.at(-1);
   if (stage !== "failed" || !last || last.error !== BLOCKED) return stage;
@@ -284,7 +320,12 @@ async function sanitizeAfterBlock(user: AuthUser, row: Row): Promise<boolean> {
   if (row.video.approvedFrameResultId !== null && !row.video.ownerAnswers.some((answer) => answer.key === frameKey)) {
     await saveAnswer(row.video.id, { key: frameKey, question: "Higgsfield bloqueó el clip", answer: BLOCKED_FRAME_NOTE, inBrief: true });
     try {
-      await rejectFrame(user, row.video.id, "Higgsfield bloqueó el clip: la imagen lleva un cuadro o póster con una persona o una figura reconocible; se rehace sin él.");
+      await rejectFrame(
+        user,
+        row.video.id,
+        "Higgsfield bloqueó el clip: la imagen lleva un cuadro o póster con una persona o una figura reconocible; se rehace sin él.",
+        tramoKind("frame", row.tramo ?? 0),
+      );
       await requestAnalysis(user, row.video.id);
     } catch (error) {
       if (!(error instanceof HttpError)) throw error;
@@ -733,10 +774,22 @@ async function quoteRows(user: AuthUser, rows: Row[], deps: GenDeps): Promise<Ba
       const frame = await quoteGeneration(user, row.video.id, "frame", deps);
       balance = frame.balance;
       // El clip y su subida a 1080p con Topaz (que Higgsfield no presupuesta: va la previsión).
-      const clip = (await estimateClipCredits(user, row.video, deps)) + upscaleEstimate(Math.round((row.video.segmentDurationMs ?? 15_000) / 1000));
+      const clipOnly = await estimateClipCredits(user, row.video, deps);
+      let clip = clipOnly + upscaleEstimate(Math.round((row.video.segmentDurationMs ?? 15_000) / 1000));
       // El paso del efecto del producto es una ronda de imagen más (una sola candidata): entra en el presupuesto.
       const effect = (await expectsEffectPass(row.video.id)) ? frame.credits : 0;
-      return { videoId: row.video.id, frame: frame.credits + effect, clip, error: null };
+      // Con varios sitios (`tramos.ts`): una apertura por sitio, el tramo de cada uno (lo corto se
+      // congela hasta el mínimo del modelo, y eso también se cobra) y su subida a 1080p.
+      let frames = frame.credits;
+      if (row.parts && row.video.segmentDurationMs) {
+        const segmentMs = row.video.segmentDurationMs;
+        frames = frame.credits * row.parts.length;
+        const sourceMs = row.parts.reduce((sum, part) => sum + sourceMsFor(row.video, part.video.segmentDurationMs ?? 0), 0);
+        clip =
+          Math.ceil((clipOnly * sourceMs) / segmentMs) +
+          row.parts.reduce((sum, part) => sum + upscaleEstimate(Math.round((part.video.segmentDurationMs ?? 0) / 1000)), 0);
+      }
+      return { videoId: row.video.id, frame: frames + effect, clip, error: null };
     } catch (error) {
       if (!(error instanceof HttpError)) throw error;
       return { videoId: row.video.id, frame: null, clip: null, error: error.message };
@@ -887,9 +940,9 @@ async function pauseBatch(batch: Batch, pause: Omit<BatchPause, "from" | "extraC
   throw new Paused(pause.reason);
 }
 
-const KIND_WORD: Record<GenerationKind, string> = { frame: "la imagen", clip: "el clip", upscale: "la subida a 1080p" };
+const KIND_WORD: Record<BaseGenerationKind, string> = { frame: "la imagen", clip: "el clip", upscale: "la subida a 1080p" };
 /** Para la pausa (el tablero solo distingue imagen y clip): la subida a 1080p cuenta como clip. */
-const pauseKind = (kind: GenerationKind): "frame" | "clip" => (kind === "frame" ? "frame" : "clip");
+const pauseKind = (kind: GenerationKind): "frame" | "clip" => (baseKindOf(kind) === "frame" ? "frame" : "clip");
 
 /** «Buscando referencias de Pinterest…» o «se vuelven a buscar»: no es un fallo, se espera (regla fija: nunca sin ellas). */
 const isPinterestWait = (message: string) =>
@@ -985,7 +1038,7 @@ async function onRequestError(user: AuthUser, batch: Batch, row: Row, kind: Gene
     return pauseBatch(batch, { kind: "saldo", reason: message, videoId: row.video.id, kindOf: pauseKind(kind) });
   }
   // La subida a 1080p que no se pudo pedir se vuelve a intentar en el siguiente avance (no para el lote).
-  if (kind === "upscale") {
+  if (baseKindOf(kind) === "upscale") {
     console.warn(`[lotes] Vídeo ${row.video.id}: no se pudo pedir la subida a 1080p: ${message}`);
     return "skip";
   }
@@ -1011,7 +1064,7 @@ async function requestFor(user: AuthUser, batch: Batch, rows: Row[], row: Row, k
     await onRequestError(user, batch, row, kind, error);
     return false;
   }
-  if (kind === "upscale") {
+  if (baseKindOf(kind) === "upscale") {
     // Topaz en todos los clips lo autoriza el dueño (24/11/2026) y Higgsfield no lo presupuesta: solo
     // se comprueba el saldo. Su previsión ya va en la del clip de los lotes nuevos.
     if (quote.balance < quote.credits) {
@@ -1035,7 +1088,7 @@ async function requestFor(user: AuthUser, batch: Batch, rows: Row[], row: Row, k
   // Un precio más alto que lo previsto no para el lote (24/11/2026): cuenta igual contra lo
   // autorizado, que solo para si de verdad se pasa (abajo).
   // Lo que aún queda por pedir del lote (con lo previsto), sin contar lo que se pide ahora.
-  let reserve = kind === "frame" && ["need", "failed"].includes(clipStage(row, batch)) ? own.clip : 0;
+  let reserve = baseKindOf(kind) === "frame" && ["need", "failed"].includes(clipStage(row, batch)) ? own.clip : 0;
   for (const other of rows) {
     if (other.video.id === row.video.id) continue;
     const est = estimates[String(other.video.id)] ?? { frame: 0, clip: 0 };
@@ -1051,7 +1104,7 @@ async function requestFor(user: AuthUser, batch: Batch, rows: Row[], row: Row, k
       reason: `El lote pasaría de lo autorizado (${budget} créditos): hacen falta ${extra} más.`,
       extraCredits: extra,
       videoId: row.video.id,
-      kindOf: kind,
+      kindOf: pauseKind(kind),
     });
   }
   if (quote.balance < quote.credits) {
@@ -1059,7 +1112,7 @@ async function requestFor(user: AuthUser, batch: Batch, rows: Row[], row: Row, k
       kind: "saldo",
       reason: `No tienes créditos suficientes en Higgsfield: hacen falta ${quote.credits} y tienes ${quote.balance}.`,
       videoId: row.video.id,
-      kindOf: kind,
+      kindOf: pauseKind(kind),
     });
   }
   try {
@@ -1219,7 +1272,7 @@ async function advanceGenerations(user: AuthUser, start: Batch, deps: GenDeps): 
   // Sin pausas por un vídeo (regla fija del dueño, 24/11/2026): lo que falla se repite solo dentro de
   // sus rondas; sin rondas, o bloqueado por el filtro también con el prompt reescrito, ese vídeo queda
   // fuera con su motivo y los demás siguen.
-  const skipFor = async (row: Row, kind: GenerationKind, s: Stage) => {
+  const skipFor = async (row: Row, kind: BaseGenerationKind, s: Stage) => {
     const list = kind === "frame" ? row.frames : row.clips;
     if (s === "failed" && !retryable(list)) {
       const blockedAgain = kind === "clip" && list.at(-1)?.error === BLOCKED;
@@ -1239,9 +1292,12 @@ async function advanceGenerations(user: AuthUser, start: Batch, deps: GenDeps): 
   };
   let skipped = false;
   for (const row of rows) {
-    const frame = frameStage(row, batch);
-    if (await skipFor(row, "frame", frame)) skipped = true;
-    else if (frame === "approved" && (await skipFor(row, "clip", clipStage(row, batch)))) skipped = true;
+    for (const part of partsOf(row)) {
+      const frame = partFrameStage(part, batch);
+      if (await skipFor(part, "frame", frame)) skipped = true;
+      else if (frame === "approved" && (await skipFor(part, "clip", partClipStage(part, batch)))) skipped = true;
+      if (skipped) break;
+    }
   }
   if (skipped) rows = await rowsOf(user, batch);
 
@@ -1271,25 +1327,31 @@ async function advanceGenerations(user: AuthUser, start: Batch, deps: GenDeps): 
 
   await startFinishedEdits(user, rows, batch);
 
-  const all = (row: Row) => row.frames.concat(row.clips, row.upscales);
+  const all = (row: Row) => partsOf(row).flatMap((part) => part.frames.concat(part.clips, part.upscales));
   const busy = () => rows.filter((row) => all(row).some((g) => BUSY_GENERATION.includes(g.status))).length;
   let slots = AUTO_PARALLEL - busy();
   // Primero las imágenes que faltan; después los clips de las imágenes ya aprobadas; después la
   // subida a 1080p de los clips hechos (orden de Codex: Topaz antes del montaje y del doblaje).
+  // Con varios sitios en la referencia, cada sitio pide lo suyo (su apertura, su tramo, su 1080p),
+  // de uno en uno por vídeo; los clips esperan a que estén aprobadas las aperturas de todos sus sitios.
   for (const kind of ["frame", "clip", "upscale"] as const) {
-    for (const row of rows) {
-      if (slots <= 0) return;
-      const wants = (s: Stage, list: Generation[]) => s === "need" || (s === "failed" && retryable(list));
-      if (kind === "frame" && (!wants(frameStage(row, batch), row.frames) || waitingAnalysis.has(row.video.id))) continue;
-      if (kind === "clip" && (frameStage(row, batch) !== "approved" || !wants(clipStage(row, batch), row.clips))) continue;
-      if (kind === "upscale" && upscaleStage(row, batch) !== "need") continue;
-      if (all(row).some((g) => BUSY_GENERATION.includes(g.status))) continue;
-      // Un clip bloqueado por el filtro se repite con el prompt reescrito (cuando el desglose esté listo).
-      if (kind === "clip" && (await sanitizeAfterBlock(user, row))) continue;
-      if (await requestFor(user, batch, rows, row, kind, deps)) {
-        slots -= 1;
-        // Lo recién apuntado cuenta para el presupuesto y para los huecos de la siguiente fila.
-        rows = await rowsOf(user, batch);
+    for (let r = 0; r < rows.length; r++) {
+      const row = rows[r];
+      for (const part of partsOf(row)) {
+        if (slots <= 0) return;
+        const wants = (s: Stage, list: Generation[]) => s === "need" || (s === "failed" && retryable(list));
+        if (kind === "frame" && (!wants(partFrameStage(part, batch), part.frames) || waitingAnalysis.has(row.video.id))) continue;
+        if (kind === "clip" && (frameStage(row, batch) !== "approved" || !wants(partClipStage(part, batch), part.clips))) continue;
+        if (kind === "upscale" && partUpscaleStage(part, batch) !== "need") continue;
+        if (all(row).some((g) => BUSY_GENERATION.includes(g.status))) continue;
+        // Un clip bloqueado por el filtro se repite con el prompt reescrito (cuando el desglose esté listo).
+        if (kind === "clip" && (await sanitizeAfterBlock(user, part))) continue;
+        if (await requestFor(user, batch, rows, part, tramoKind(kind, part.tramo ?? 0), deps)) {
+          slots -= 1;
+          // Lo recién apuntado cuenta para el presupuesto y para los huecos de la siguiente fila.
+          rows = await rowsOf(user, batch);
+          break;
+        }
       }
     }
   }
@@ -1304,8 +1366,9 @@ export async function approveAllFrames(user: AuthUser, batchId: number): Promise
   const batch = await ownBatch(user, batchId);
   const rows = await rowsOf(user, batch);
   let approved = 0;
-  for (const row of rows) {
-    if (frameStage(row, batch) !== "done") continue;
+  for (const part of rows.flatMap(partsOf)) {
+    const row = part;
+    if (partFrameStage(row, batch) !== "done") continue;
     const last = row.frames.at(-1)!;
     const [result] = await getDb()
       .select({ id: schema.generationResults.id })
@@ -1315,7 +1378,7 @@ export async function approveAllFrames(user: AuthUser, batchId: number): Promise
       .limit(1);
     if (!result) continue;
     try {
-      await approveFrame(user, row.video.id, result.id);
+      await approveFrame(user, row.video.id, result.id, tramoKind("frame", row.tramo ?? 0));
       approved += 1;
     } catch (error) {
       if (!(error instanceof HttpError)) throw error;

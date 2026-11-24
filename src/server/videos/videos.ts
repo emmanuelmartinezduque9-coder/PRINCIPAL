@@ -105,8 +105,10 @@ export function hookTiming(video: Pick<Video, "kind" | "hookSeconds" | "segmentD
  * calcula, no se apunta: si se deshace el cambio, la referencia vuelve a valer.
  */
 export function referenceOutdated(
-  video: Pick<Video, "kind" | "hookSeconds" | "referenceStatus" | "referenceDurationMs" | "segmentDurationMs">,
+  seen: Pick<Video, "kind" | "hookSeconds" | "referenceStatus" | "referenceDurationMs" | "segmentDurationMs">,
 ): boolean {
+  // Un vídeo visto desde uno de sus sitios (`tramos.ts`) lleva la duración de ese sitio: se mira el de verdad.
+  const video = (seen as { tramo?: { base: Video } }).tramo?.base ?? seen;
   if (video.referenceStatus !== "ready" || video.referenceDurationMs === null || video.segmentDurationMs === null) return false;
   return video.segmentDurationMs !== segmentMsFor(video, video.referenceDurationMs);
 }
@@ -576,6 +578,8 @@ export interface VideoView {
   references: Array<{ sha256: string; role: string; url: string }>;
   /** La imagen inicial: ronda, regeneraciones que quedan, resultado aprobado y la generación más reciente. */
   frame: GenerationView;
+  /** Las aperturas de los sitios extra de la referencia (regla del 24/11/2026, `tramos.ts`); vacío con uno solo. */
+  places?: import("@/server/videos/tramos").PlaceFrameView[];
   /** El clip, igual que `frame`. */
   clip: GenerationView;
   /** Lo que lleva costado el vídeo: créditos de Higgsfield enviados y Claude de todos sus desgloses. */
@@ -598,8 +602,10 @@ export const BRIEF_CHANGED = "Las indicaciones del vídeo cambiaron; repite el d
  * «Automático», `autoAvatarId` es el avatar que eligió (o `null` si no encontró ninguno).
  */
 export async function latestDoneAnalysis(
-  video: Video,
+  seen: Video,
 ): Promise<{ id: number; staleReason: "reference" | "brief" | null; avatarMode: string; autoAvatarId: number | null } | null> {
+  // Un vídeo visto desde uno de sus sitios (`tramos.ts`): el desglose es el del vídeo de verdad.
+  const video = (seen as { tramo?: { base: Video } }).tramo?.base ?? seen;
   const [done] = await getDb()
     .select()
     .from(schema.videoAnalyses)
@@ -640,7 +646,7 @@ export async function manifestRefsFor(user: AuthUser, video: Video, options: { f
   // Las fotos de Pinterest del último desglose (no en el propio desglose: aún no existen).
   const ready = options.forAnalysis
     ? { refs: [], productHidden: false, packagingHidden: false, approvedMethod: false }
-    : await readyPinterest(video.id);
+    : await readyPinterest(video.id, (video as Video & { tramo?: { index: number } }).tramo?.index ?? 0);
   return {
     photos,
     variant,
@@ -762,6 +768,7 @@ export async function videoView(user: AuthUser, videoId: number): Promise<VideoV
     pinterest: video.environmentPhotoId === null ? await pinterestView(video.id) : null,
     references: await referencesView(video.id),
     frame: await generationView(video, "frame", user.id),
+    places: await (await import("@/server/videos/tramos")).placeFrameViews(video, user.id),
     clip: await generationView(video, "clip", user.id),
     costs: await costsOfVideo(video),
     ...(await editParts(user, video)),

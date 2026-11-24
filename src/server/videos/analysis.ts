@@ -105,6 +105,14 @@ export interface Analysis {
   frameUse: FrameUse;
   imagePrompt: string;
   videoPrompt: string;
+  /**
+   * Los sitios de la referencia (regla de Emmanuel, 24/11/2026, réplicas con Genjutsu o Wan): las
+   * tomas consecutivas del mismo lugar agrupadas, cada grupo con su acción y los objetos que esa
+   * acción exige. Solo con dos o más sitios distintos; el primero usa `imagePrompt` y `videoPrompt`
+   * y cada uno de los demás lleva los suyos (su propio frame de apertura y su tramo de Motion
+   * Transfer, que se empalman antes del montaje: ver `tramos.ts`).
+   */
+  places?: AnalysisPlace[] | null;
   /** La persona principal de los fotogramas de la referencia (para elegir el avatar solo). */
   personaRef?: PersonaRef;
   /** El público o ángulo que pide el encargo, si pide uno (manda sobre la referencia). */
@@ -134,6 +142,24 @@ export interface Analysis {
    * vuelven al desglose.
    */
   questions?: AnalysisQuestion[];
+}
+
+/** Un sitio de la referencia (ver `Analysis.places`). */
+export interface AnalysisPlace {
+  startS: number;
+  endS: number;
+  /** El tipo de sitio tal como es en la referencia («supermarket aisle», «city street»), en inglés. */
+  place: string;
+  /** Lo que pasa en este sitio, en español. */
+  action: string;
+  /** Los objetos que exige la acción y se conservan (nevera, caja, puerta…), en inglés. */
+  keepObjects: string[];
+  /** Si la referencia de entorno puesta a mano por el dueño es de este tipo de sitio. */
+  ownerEnvironment: boolean;
+  /** Prompt de la imagen de apertura de este sitio (vacío en el primero: usa `imagePrompt`). */
+  imagePrompt: string;
+  /** Prompt del tramo de este sitio (vacío en el primero: usa `videoPrompt`). */
+  videoPrompt: string;
 }
 
 /** Una pregunta antes de generar. */
@@ -179,6 +205,22 @@ export const analysisSchema: z.ZodType<Analysis> = z.object({
   frameUse: z.enum(["start_image", "contextual_reference"]),
   imagePrompt: filled.describe("Prompt de la imagen inicial, en inglés."),
   videoPrompt: filled.describe("Prompt del clip, en inglés, citando las referencias con las etiquetas del manifiesto del clip."),
+  places: z
+    .array(
+      z.object({
+        startS: seconds,
+        endS: seconds,
+        place: filled.describe("Tipo de sitio de la referencia, en inglés."),
+        action: z.string().describe("Qué pasa en este sitio, en español."),
+        keepObjects: z.array(z.string()).describe("Objetos que exige la acción y se conservan, en inglés."),
+        ownerEnvironment: z.boolean().describe("Si la referencia de entorno del dueño es de este tipo de sitio."),
+        imagePrompt: z.string().describe("Prompt de la apertura de este sitio, en inglés; vacío en el primero."),
+        videoPrompt: z.string().describe("Prompt del tramo de este sitio, en inglés; vacío en el primero."),
+      }),
+    )
+    .nullable()
+    .optional()
+    .describe("Los sitios distintos de la referencia, en orden; null si todo pasa en un solo sitio."),
   personaRef: z
     .object({
       present: z.boolean().describe("Si en los fotogramas de la referencia sale una persona principal."),
@@ -337,6 +379,7 @@ Ninguno de los dos prompts lleva direcciones, identificadores de archivos ni est
 Las explicaciones (conceptLogic, shots, adaptation, risks) van en español; los dos prompts, en inglés.`,
   ];
   sections.push(`Localización\n${localizationGuide(market)}`);
+  if (usesPlaces(brief.kind, model)) sections.push(PLACES_ITEM);
   if (brief.kind === "adaptacion_concepto") sections.push(ADAPTATION_KIND);
   if (brief.kind === "solo_gancho" && brief.hookSeconds !== null) {
     sections.push(hookOnlyKind(hook ?? { hookMs: brief.hookSeconds * 1000, clipSeconds: clipDurationSeconds(brief.hookSeconds * 1000) }, model));
@@ -345,6 +388,18 @@ Las explicaciones (conceptLogic, shots, adaptation, risks) van en español; los 
   sections.push(brief.answers === null ? QUESTIONS : `${QUESTIONS} ${ANSWERED}`);
   return sections.join("\n\n");
 }
+
+/**
+ * Regla fija de Emmanuel (24/11/2026), el defecto que más le molestaba en Codex: cada toma de la
+ * referencia conserva su sitio y su acción. Con Genjutsu o Wan (el vídeo fuente manda), al replicar
+ * o en «Solo gancho», la referencia se parte por sitios y cada sitio lleva su propia apertura y su
+ * tramo, que después se empalman (como en Codex: «cada clip Genjutsu necesita su apertura»).
+ */
+export function usesPlaces(kind: VideoKind, model: ClipModel): boolean {
+  return model !== SEEDANCE && kind !== "adaptacion_concepto";
+}
+
+const PLACES_ITEM = `places: los sitios de la referencia (regla fija del dueño, 24/11/2026). Cada toma tiene su propio sitio y su propia acción y se respetan: si una toma es sacar algo de la nevera, la nevera se queda (puede cambiar lo de dentro, su color o su estilo), nunca se quita para poner el salón del resto del vídeo y sacar algo de la nada. Agrupa las tomas consecutivas que pasan en el mismo lugar real (no por cortes: dos planos seguidos del mismo pasillo son un sitio). Si todo el tramo pasa en un solo sitio, places es null y no cambia nada. Si hay dos o más sitios, devuelve uno por grupo, en orden, sin huecos ni solapes y cubriendo el tramo entero (el primero empieza en 0 y el último acaba al final del tramo), y no partas un sitio de menos de 1 segundo: júntalo con el de al lado. Por cada sitio: startS y endS; place, el tipo de sitio tal como es en la referencia y en inglés («supermarket aisle», «city street at night», «kitchen with an open fridge»); action, lo que pasa ahí, en español; keepObjects, los objetos que exige esa acción y que se conservan, en inglés («open fridge», «shipping box», «front door»); ownerEnvironment, true solo si el manifiesto de imagen trae una referencia de entorno puesta por el dueño y es de este tipo de sitio (un supermarket del dueño solo vale para las tomas del supermercado; la calle no la usa). El primer sitio usa imagePrompt y videoPrompt y deja los suyos vacíos: esos dos prompts describen solo el primer sitio (su apertura y su tramo), no el vídeo entero. Cada sitio siguiente lleva su propio imagePrompt (la apertura de ese sitio: réplica de su primer fotograma con las mismas reglas que la imagen inicial, el mismo avatar y el mismo producto, su propio entorno localizado al país del anuncio según localization (una calle de EE. UU. pasa a una calle de la ciudad del mercado, una tienda a su cadena equivalente) y los objetos de keepObjects conservados en su sitio; image 1 es el primer fotograma de ese sitio) y su propio videoPrompt (el de su tramo, con las mismas reglas que videoPrompt: su vídeo fuente es solo el tramo de ese sitio, image [1] es la apertura de ese sitio). Ningún sitio toma prestado el entorno de otro.`;
 
 /** Cómo se nombra el producto en los prompts de vídeo (método aprobado: nunca por su marca). */
 const PRODUCT_NAMING = `Cómo se nombra el producto en el prompt del clip: nunca por su nombre de marca ni por el del producto de la referencia; por su papel («the exact selected product» de su imagen) y con palabras genéricas; la marca propia solo como marca física impresa.`;

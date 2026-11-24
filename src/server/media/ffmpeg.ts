@@ -254,18 +254,70 @@ export async function detectCuts(filePath: string, limitMs?: number): Promise<nu
   return cuts;
 }
 
-/** MP4 H.264, sin audio, lado largo ≤ 1280, 30 fps, desde 0 y `durationMs` como mucho. */
-export async function normalizeClip(filePath: string, outPath: string, durationMs: number): Promise<void> {
+/**
+ * MP4 H.264, sin audio, lado largo ≤ 1280, 30 fps, desde 0 (o `startMs`) y `durationMs` como mucho.
+ * Con `padToMs`, si queda más corto, se congela su último fotograma hasta esa duración (el vídeo
+ * fuente de un sitio corto: ver `tramos.ts`).
+ */
+export async function normalizeClip(
+  filePath: string,
+  outPath: string,
+  durationMs: number,
+  options: { startMs?: number; padToMs?: number } = {},
+): Promise<void> {
   const demuxer = await fileDemuxer(filePath);
   assertSafePath(outPath);
+  const start = options.startMs && options.startMs > 0 ? ["-ss", toSeconds(options.startMs)] : [];
+  const padMs = options.padToMs !== undefined ? Math.max(0, options.padToMs - durationMs) : 0;
+  const pad = padMs > 0 ? `,tpad=stop_mode=clone:stop_duration=${toSeconds(padMs)}` : "";
   try {
     await run("ffmpeg", [
       "-v", "error", "-nostdin", "-y", "-threads", "2",
-      ...inputArgs(demuxer, filePath),
+      ...start,
       "-t", toSeconds(durationMs),
+      ...inputArgs(demuxer, filePath),
       "-an",
-      "-vf", `${scaleFilter(1280)},fps=30,format=yuv420p`,
+      "-vf", `${scaleFilter(1280)},fps=30,format=yuv420p${pad}`,
       "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
+      "-movflags", "+faststart",
+      "-f", "mp4",
+      `file:${outPath}`,
+    ], UNREADABLE);
+  } catch (error) {
+    await fs.rm(outPath, { force: true });
+    throw error;
+  }
+}
+
+/**
+ * Empalma los tramos de los sitios de una referencia (ver `tramos.ts`) en un solo MP4 H.264 sin
+ * audio: cada uno desde su principio y `durationMs` (lo que se congeló de más para llegar al mínimo
+ * del modelo se corta), al tamaño del primero (sin deformar), a 24 fps, como el empalme por tomas de
+ * Codex (corte por fotograma y concatenación, crf 16).
+ */
+export async function spliceClips(parts: Array<{ path: string; durationMs: number }>, outPath: string): Promise<void> {
+  if (parts.length === 0) throw new MediaError(UNREADABLE);
+  assertSafePath(outPath);
+  const { width, height } = await probeVideo(parts[0].path);
+  const w = Math.round(width / 2) * 2;
+  const h = Math.round(height / 2) * 2;
+  const inputs: string[] = [];
+  const chains: string[] = [];
+  for (const [i, part] of parts.entries()) {
+    inputs.push(...inputArgs(await fileDemuxer(part.path), part.path));
+    chains.push(
+      `[${i}:v]trim=duration=${toSeconds(part.durationMs)},setpts=PTS-STARTPTS,scale=${w}:${h}:force_original_aspect_ratio=decrease,pad=${w}:${h}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=24,format=yuv420p[v${i}]`,
+    );
+  }
+  const filter = `${chains.join(";")};${parts.map((_, i) => `[v${i}]`).join("")}concat=n=${parts.length}:v=1:a=0[out]`;
+  try {
+    await run("ffmpeg", [
+      "-v", "error", "-nostdin", "-y", "-threads", "2",
+      ...inputs,
+      "-filter_complex", filter,
+      "-map", "[out]",
+      "-an",
+      "-c:v", "libx264", "-preset", "medium", "-crf", "16",
       "-movflags", "+faststart",
       "-f", "mp4",
       `file:${outPath}`,

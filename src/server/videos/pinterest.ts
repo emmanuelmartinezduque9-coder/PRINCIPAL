@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { and, desc, eq, inArray, isNull, lt, ne, or, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, isNull, lt, ne, or, sql } from "drizzle-orm";
 import { z } from "zod";
 import { getDb, schema } from "@/db/client";
 import { enqueueJob } from "@/jobs/boss";
@@ -18,6 +18,7 @@ import { readProductPhoto } from "@/server/photos";
 import { getProductFor } from "@/server/products";
 import { loadRules, RULE_SLUGS } from "@/server/rules";
 import type { ManifestItem } from "@/server/videos/manifest";
+import { placeOf, tramoKind, tramosOf, type Tramo } from "@/server/videos/tramos";
 
 /**
  * Referencias de Pinterest de la imagen inicial. Regla fija del dueño (23/11/2026, pedida tres
@@ -204,8 +205,11 @@ async function latestDoneAnalysisId(videoId: number): Promise<number | null> {
   return row?.id ?? null;
 }
 
-async function runOf(videoId: number, analysisId: number): Promise<Run | null> {
-  const [row] = await getDb().select().from(runs).where(and(eq(runs.videoId, videoId), eq(runs.analysisId, analysisId)));
+async function runOf(videoId: number, analysisId: number, tramo = 0): Promise<Run | null> {
+  const [row] = await getDb()
+    .select()
+    .from(runs)
+    .where(and(eq(runs.videoId, videoId), eq(runs.analysisId, analysisId), eq(runs.tramo, tramo)));
   return row ?? null;
 }
 
@@ -223,20 +227,21 @@ async function enqueue(run: Pick<Run, "id" | "videoId">): Promise<void> {
  * `retry`, una búsqueda fallida vuelve a empezar (con intentos de nuevo). No hace nada si ya está
  * lista o en marcha. Nunca lanza por la cola: el seguimiento la vuelve a encolar.
  */
-export async function ensurePinterestRun(videoId: number, analysisId: number, options: { retry?: boolean } = {}): Promise<Run> {
-  await getDb().insert(runs).values({ videoId, analysisId }).onConflictDoNothing();
-  let run = (await runOf(videoId, analysisId))!;
+export async function ensurePinterestRun(videoId: number, analysisId: number, options: { retry?: boolean; tramo?: number } = {}): Promise<Run> {
+  const tramo = options.tramo ?? 0;
+  await getDb().insert(runs).values({ videoId, analysisId, tramo }).onConflictDoNothing();
+  let run = (await runOf(videoId, analysisId, tramo))!;
   if (run.status === "failed" && options.retry) {
     [run] = await getDb()
       .update(runs)
       .set({ status: "pending", error: null, attempts: 0, scene: null, queries: null, refs: null, updatedAt: new Date() })
       .where(and(eq(runs.id, run.id), eq(runs.status, "failed")))
       .returning();
-    run ??= (await runOf(videoId, analysisId))!;
+    run ??= (await runOf(videoId, analysisId, tramo))!;
   }
   if (run.status === "pending" && instantForTests) {
     await instantForTests(run);
-    return (await runOf(videoId, analysisId))!;
+    return (await runOf(videoId, analysisId, tramo))!;
   }
   if (run.status === "pending") {
     try {
@@ -250,8 +255,20 @@ export async function ensurePinterestRun(videoId: number, analysisId: number, op
 
 /** Al terminar un desglose: si el vídeo no lleva entorno puesto a mano, se buscan sus referencias. */
 export async function startPinterestAfterAnalysis(videoId: number, analysisId: number): Promise<void> {
-  const [video] = await getDb().select({ environmentPhotoId: schema.videos.environmentPhotoId }).from(schema.videos).where(eq(schema.videos.id, videoId));
-  if (!video || video.environmentPhotoId !== null) return;
+  const [video] = await getDb().select().from(schema.videos).where(eq(schema.videos.id, videoId));
+  if (!video) return;
+  // Con varios sitios en la referencia (`tramos.ts`), cada sitio busca las suyas; la referencia de
+  // entorno del dueño solo cubre los sitios de su tipo.
+  const [analysis] = await getDb().select({ result: schema.videoAnalyses.result }).from(schema.videoAnalyses).where(eq(schema.videoAnalyses.id, analysisId));
+  const tramos = await tramosOf(video, (analysis?.result as Record<string, unknown> | null) ?? null);
+  if (tramos) {
+    for (const tramo of tramos) {
+      if (video.environmentPhotoId !== null && tramo.ownerEnvironment) continue;
+      await ensurePinterestRun(videoId, analysisId, { tramo: tramo.index });
+    }
+    return;
+  }
+  if (video.environmentPhotoId !== null) return;
   await ensurePinterestRun(videoId, analysisId);
 }
 
@@ -259,18 +276,19 @@ export async function startPinterestAfterAnalysis(videoId: number, analysisId: n
  * Las huellas de las fotos de Pinterest listas para la imagen inicial del vídeo (su último desglose
  * hecho), en orden. Vacío si aún no hay desglose o no están listas.
  */
-export async function readyPinterestRefs(videoId: number): Promise<string[]> {
-  return (await readyPinterest(videoId)).refs;
+export async function readyPinterestRefs(videoId: number, tramo = 0): Promise<string[]> {
+  return (await readyPinterest(videoId, tramo)).refs;
 }
 
 /** Las fotos listas y si el producto no se ve en la toma (entonces no se adjuntan sus fotos). */
 export async function readyPinterest(
   videoId: number,
+  tramo = 0,
 ): Promise<{ refs: string[]; productHidden: boolean; packagingHidden: boolean; approvedMethod: boolean }> {
   const none = { refs: [], productHidden: false, packagingHidden: false, approvedMethod: false };
   const analysisId = await latestDoneAnalysisId(videoId);
   if (analysisId === null) return none;
-  const run = await runOf(videoId, analysisId);
+  const run = await runOf(videoId, analysisId, tramo);
   if (run?.status !== "ready") return none;
   const refs = ((run.refs as PinterestRef[] | null) ?? []).map((ref) => ref.sha256);
   const approvedMethod = run.framePrompt !== null;
@@ -284,14 +302,14 @@ export async function readyPinterest(
  * lote lo vuelve a intentar solo). Si fallaron todos los intentos, 409 con el motivo y se vuelve a
  * intentar desde cero (no se genera nunca sin ellas).
  */
-export async function requirePinterestRefs(videoId: number): Promise<void> {
+export async function requirePinterestRefs(videoId: number, tramo = 0): Promise<void> {
   const analysisId = await latestDoneAnalysisId(videoId);
   if (analysisId === null) return; // Sin desglose ya lo para `requireAnalysisDone`.
-  const run = await ensurePinterestRun(videoId, analysisId);
+  const run = await ensurePinterestRun(videoId, analysisId, { tramo });
   if (run.status === "ready" && Array.isArray(run.refs) && run.refs.length > 0) return;
   if (run.status === "pending" && run.error === NO_CREDIT) throw new HttpError(409, NO_CREDIT);
   if (run.status === "failed") {
-    await ensurePinterestRun(videoId, analysisId, { retry: true });
+    await ensurePinterestRun(videoId, analysisId, { retry: true, tramo });
     throw new HttpError(409, `${PINTEREST_FAILED}: ${run.error ?? "Pinterest no respondió"}. Se vuelve a buscar.`);
   }
   throw new HttpError(409, PINTEREST_PENDING);
@@ -400,9 +418,22 @@ const localizationItems = (result: Record<string, unknown>) =>
     : [];
 
 /** Los textos del desglose que describen la escena (sin los prompts largos). */
-function analysisText(result: Record<string, unknown> | null): string {
+function analysisText(result: Record<string, unknown> | null, place: Tramo | null = null): string {
   if (!result) return "";
-  const shots = Array.isArray(result.shots) ? (result.shots as Array<Record<string, unknown>>) : [];
+  const all = Array.isArray(result.shots) ? (result.shots as Array<Record<string, unknown>>) : [];
+  // Con varios sitios, solo las tomas de este sitio y su sitio, su acción y sus objetos.
+  const shots = place
+    ? all.filter((shot) => Number(shot.endS) * 1000 > place.startMs + 1 && Number(shot.startS) * 1000 < place.endMs - 1)
+    : all;
+  if (place) {
+    const header = [
+      `Esta búsqueda es SOLO para este sitio de la referencia (de ${(place.startMs / 1000).toFixed(1)} s a ${(place.endMs / 1000).toFixed(1)} s): ${place.place}.`,
+      `Acción en este sitio: ${place.action}.`,
+      place.keepObjects.length > 0 ? `Objetos que exige la acción y tienen que estar en la foto: ${place.keepObjects.join(", ")}.` : "",
+      "Busca el entorno de este sitio, localizado al país del producto; no el de otros sitios del vídeo.",
+    ].filter(Boolean);
+    return [...header, analysisText({ ...result, shots }, null)].join("\n");
+  }
   const adaptation = Array.isArray(result.adaptation) ? (result.adaptation as Array<Record<string, unknown>>) : [];
   return [
     typeof result.conceptLogic === "string" ? `Lógica del concepto: ${result.conceptLogic}` : "",
@@ -696,11 +727,11 @@ export const OWNER_CORRECTION_PREFIX = "Corrección automática: del dueño: ";
  * Lo que el dueño dijo al rechazar la última imagen del vídeo (en la web, o una corrección suya
  * aplicada por la aplicación): la siguiente imagen tiene que corregirlo. `null` si no hay.
  */
-async function lastOwnerRejection(videoId: number): Promise<string | null> {
+async function lastOwnerRejection(videoId: number, tramo = 0): Promise<string | null> {
   const [last] = await getDb()
     .select({ reason: schema.generations.rejectReason })
     .from(schema.generations)
-    .where(and(eq(schema.generations.videoId, videoId), eq(schema.generations.kind, "frame")))
+    .where(and(eq(schema.generations.videoId, videoId), eq(schema.generations.kind, tramoKind("frame", tramo))))
     .orderBy(desc(schema.generations.round))
     .limit(1);
   const reason = last?.reason ?? null;
@@ -825,8 +856,16 @@ async function composeFramePrompt(
   effectVisible: boolean;
   effectPrompt: string | null;
 } | null> {
-  const [video] = await getDb().select({ imagePrompt: schema.videos.imagePrompt }).from(schema.videos).where(eq(schema.videos.id, run.videoId));
-  const base = video?.imagePrompt ?? null;
+  const [video] = await getDb()
+    .select({ imagePrompt: schema.videos.imagePrompt, segmentDurationMs: schema.videos.segmentDurationMs })
+    .from(schema.videos)
+    .where(eq(schema.videos.id, run.videoId));
+  // Un sitio extra de la referencia parte de su propio prompt de apertura (`tramos.ts`).
+  let base = video?.imagePrompt ?? null;
+  if (run.tramo > 0) {
+    const [analysis] = await getDb().select({ result: schema.videoAnalyses.result }).from(schema.videoAnalyses).where(eq(schema.videoAnalyses.id, run.analysisId));
+    base = placeOf((analysis?.result as Record<string, unknown> | null) ?? null, video?.segmentDurationMs ?? null, run.tramo)?.imagePrompt || null;
+  }
   if (!base) {
     await failRun(run, "El vídeo aún no tiene prompt de imagen");
     return null;
@@ -844,7 +883,7 @@ async function composeFramePrompt(
       // Una referencia que no se puede leer no se enseña.
     }
   }
-  const correction = await lastOwnerRejection(run.videoId);
+  const correction = await lastOwnerRejection(run.videoId, run.tramo);
   const content: LlmContent = [
     textPart(`Prompt del desglose (lo que se conserva: acción, identidad, producto):\n${base}`),
     ...(correction
@@ -902,11 +941,11 @@ async function composeFramePrompt(
  * prompt del vídeo no cambió), con los números reales de las fotos; si no, el del desglose con
  * el párrafo de papeles (`withPinterestRoles`).
  */
-export async function framePromptFor(videoId: number, imagePrompt: string, manifest: ManifestItem[]): Promise<string> {
+export async function framePromptFor(videoId: number, imagePrompt: string, manifest: ManifestItem[], tramo = 0): Promise<string> {
   const tags = manifest.filter((item) => item.source.kind === "pinterest").map((item) => item.tag);
   if (tags.length === 0) return imagePrompt;
   const analysisId = await latestDoneAnalysisId(videoId);
-  const run = analysisId === null ? null : await runOf(videoId, analysisId);
+  const run = analysisId === null ? null : await runOf(videoId, analysisId, tramo);
   const sha = crypto.createHash("sha256").update(imagePrompt).digest("hex");
   if (!run?.framePrompt || run.basePromptSha !== sha) return withPinterestRoles(imagePrompt, manifest);
   const number = (item: ManifestItem | undefined) => (item ? String(item.index) : "?");
@@ -972,7 +1011,10 @@ async function runPinterestOnce(runId: number, deps: PinterestDeps): Promise<voi
   const [video] = await getDb().select().from(schema.videos).where(eq(schema.videos.id, run.videoId));
   const [analysis] = await getDb().select().from(schema.videoAnalyses).where(eq(schema.videoAnalyses.id, run.analysisId));
   if (!video || !analysis) return;
-  if (video.environmentPhotoId !== null) {
+  // El sitio de esta búsqueda (regla del 24/11/2026: cada sitio de la referencia busca su entorno).
+  const place = placeOf(analysis.result as Record<string, unknown> | null, video.segmentDurationMs, run.tramo);
+  const manualCovers = video.environmentPhotoId !== null && (place === null ? run.tramo === 0 : place.ownerEnvironment);
+  if (manualCovers) {
     // El dueño puso una referencia de entorno a mano: no se busca (y no se adjunta nada de Pinterest).
     await setRun(run.id, { status: "ready", refs: [], error: null });
     return;
@@ -985,10 +1027,11 @@ async function runPinterestOnce(runId: number, deps: PinterestDeps): Promise<voi
   const gateway = deps.gateway ?? getGateway();
   const product = await getProductFor(user, video.productId);
   const rules = await loadRules([RULE_SLUG]);
+  // El primer fotograma de la referencia (o, en un sitio extra, el primero de ese sitio).
   const [frame] = await getDb()
     .select({ mime: schema.videoFrames.mime, data: schema.videoFrames.data })
     .from(schema.videoFrames)
-    .where(eq(schema.videoFrames.videoId, video.id))
+    .where(and(eq(schema.videoFrames.videoId, video.id), gte(schema.videoFrames.timeMs, place && run.tramo > 0 ? place.startMs : 0)))
     .orderBy(schema.videoFrames.index)
     .limit(1);
   const frameJpeg = frame ? await makeThumbnail(Buffer.from(frame.data), "image", 768) : null;
@@ -1002,7 +1045,7 @@ async function runPinterestOnce(runId: number, deps: PinterestDeps): Promise<voi
           .from(schema.batchProducts)
           .where(and(eq(schema.batchProducts.batchId, video.batchId), eq(schema.batchProducts.productId, video.productId)));
   const batchNotes = batchProduct?.notes ?? null;
-  const correction = await lastOwnerRejection(video.id);
+  const correction = await lastOwnerRejection(video.id, run.tramo);
   // 1. Escena y consultas.
   let scene = run.scene as PinterestScene | null;
   if (!scene) {
@@ -1020,7 +1063,7 @@ async function runPinterestOnce(runId: number, deps: PinterestDeps): Promise<voi
           correction ? `CORRECCIÓN DEL DUEÑO al rechazar la imagen anterior (manda sobre todo lo demás): ${correction}` : "",
           "",
           "Desglose de la referencia:",
-          analysisText(analysis.result as Record<string, unknown> | null),
+          analysisText(analysis.result as Record<string, unknown> | null, place),
         ]
           .filter((line) => line !== null)
           .join("\n"),
@@ -1051,7 +1094,9 @@ async function runPinterestOnce(runId: number, deps: PinterestDeps): Promise<voi
   // Orden del dueño (24/11/2026): se busca siempre en Pinterest. Un fondo subido a mano manda y no se
   // busca nada (lo resuelve `pickFromBank`, que lo pone de sala).
   const manual = await manualReferences(run.videoId);
-  if ((BANK_ONLY && !scene.namedPlace) || manual.some((ref) => ref.role === "fondo")) {
+  // Un fondo subido a mano solo cubre los sitios de su tipo (regla del 24/11/2026): los demás buscan.
+  const manualFondo = manual.some((ref) => ref.role === "fondo") && (place === null ? run.tramo === 0 : place.ownerEnvironment);
+  if ((BANK_ONLY && !scene.namedPlace) || manualFondo) {
     await pickFromBank(run, ctx, gateway, rules, scene, product, frameJpeg);
     return;
   }

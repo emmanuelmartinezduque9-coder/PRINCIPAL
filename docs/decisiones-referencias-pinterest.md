@@ -116,3 +116,7 @@ eso hay un tercer paso: con las candidatas ya vistas, vale un interior real de e
 país, sin rastro de otra cadena ni de otro país (se apunta «último intento»). Además, la escena del vídeo 20
 se inventó «Aldi» como tienda pedida (namedPlace), lo que quitaba el respaldo del banco: namedPlace es solo
 lo que escribe el dueño; lo que exige la escena va en `requiredChain`.
+
+## Una búsqueda por sitio de la referencia (24/11/2026)
+
+Regla fija de Emmanuel: cada toma conserva su sitio. Con varios sitios en la referencia (`Analysis.places`, ver `docs/sitios-de-la-referencia.md`), `video_pinterest_refs` tiene una búsqueda por sitio (columna `tramo`, única con vídeo y desglose). La escena de cada búsqueda la sigue escribiendo Claude con PLAN_INSTRUCTIONS, pero recibe solo ese sitio: su lugar, su acción, sus objetos, sus tomas y el primer fotograma de ese sitio. Los filtros, la cadena, el último intento y el banco de respaldo no cambian. La referencia de entorno del dueño (`environmentPhotoId` o un «fondo» subido) solo cubre los sitios con `ownerEnvironment`. Un rechazo de la apertura de un sitio borra solo la búsqueda de ese sitio.

@@ -18,6 +18,8 @@ El banco crece solo: cuando el dueño aprueba una imagen que llevaba una referen
 
 La aplicación lo hace sola: al terminar el desglose describe la escena, busca en Pinterest, elige con visión y adjunta. La imagen no se pide sin estas referencias. En la tarjeta se ven como «Referencias de Pinterest aprobadas».
 
+**Una búsqueda por sitio de la referencia (regla fija del dueño, 24/11/2026).** Si la referencia pasa en varios sitios (p. ej. primero un supermercado y luego la calle), cada sitio tiene su propia apertura y busca sus propias fotos: la escena de la búsqueda es solo ese sitio, su acción y los objetos que exige (nevera, caja, puerta…), localizado al país del anuncio (calles de Berlín, un Lidl…). La referencia de entorno del dueño solo cubre los sitios de su tipo; un sitio de otro tipo busca en Pinterest aunque el vídeo tenga una a mano. Ningún sitio toma prestado el entorno de otro.
+
 ## 1. Para qué sirve la foto
 
 1. Aporta **lugar, luz y ambiente**: el sitio real, sus muebles, materiales, decoración, objetos de uso y el aspecto natural de una foto vertical de móvil. Su luz observada manda sobre la luz de toda la escena.

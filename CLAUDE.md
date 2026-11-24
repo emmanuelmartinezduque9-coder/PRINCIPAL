@@ -18,8 +18,10 @@ Emmanuel no lee análisis ni avisos: para eso están las reglas del motor (`regl
    prompts: nunca se pintan como tarjetas ni paran nada (como mucho, plegados en «Detalles técnicos»).
 3. **Sin botones de confirmar generación.** Nada de «Generar N imágenes · Esto cuesta X créditos»,
    «Generar clip», «Hacer el desglose», «Montar» o «Confirmar y generar» en el camino normal.
-4. **Una imagen por vídeo por defecto.** Más solo si él lo pide en la tarjeta (`videos.frame_count`)
-   o en el lote (`batches.frame_count`). Un clip por vídeo.
+4. **Una imagen por cada sitio distinto de la referencia** (cambiada el 24/11/2026; antes, una por vídeo).
+   Con un solo sitio, sigue siendo una. Más candidatas solo si él lo pide en la tarjeta
+   (`videos.frame_count`) o en el lote (`batches.frame_count`). Un tramo de clip por sitio, empalmados
+   en el montaje. Las imágenes de un mismo vídeo se revisan juntas, sin pasos ni botones nuevos.
 5. **Solo preguntas obligatorias.** Se para únicamente con **una** pregunta concreta que solo él puede
    decidir (avatar obligatorio sin elegir, variante, canción, falta la foto del artículo, no hay
    saldo o se pasa del tope, Higgsfield sin conectar, un fallo que no se repite solo porque cuesta)
@@ -38,6 +40,23 @@ Kaufland, supermercado → Lidl), moneda ($12.99 → 12,99 €), calles, matríc
 marcas locales. Lo que ponga la tarjeta manda. Es un paso central: el desglose saca `localization` y la
 usan imagen, Pinterest, clip, rótulos y doblaje (`src/server/videos/localization.ts`,
 `reglas/localizacion-por-pais.md`, `tests/localizacion.test.ts`). No lo quites sin una orden suya.
+
+## Regla fija del dueño: cada toma conserva su sitio (Emmanuel, 24/11/2026)
+
+El defecto que más le molestaba en Codex. En las réplicas con Genjutsu o Wan (el vídeo fuente manda):
+
+- Cada toma de la referencia tiene su sitio y su acción, y se respetan. Si una toma es «sacar algo de la
+  nevera», la nevera se queda (puede cambiar lo de dentro, el color o el estilo); nunca se pone el salón
+  del resto del vídeo y se saca algo de la nada.
+- Una referencia de entorno que suba él (p. ej. un supermercado) solo vale para las tomas que en la
+  referencia pasan en ese tipo de sitio. Las demás buscan su propio entorno en Pinterest, localizado al
+  país de destino (calles de Berlín…). Caso real del lote 6: un FalterPfote con súper y calle salió
+  entero en el súper.
+- Cómo (copiado de Codex, «cada clip Genjutsu necesita su apertura»): el desglose agrupa las tomas
+  consecutivas del mismo sitio (`places`); cada sitio lleva su frame de apertura (`frame:N`), sus fotos
+  de Pinterest, su tramo de Motion Transfer con el vídeo fuente recortado (`clip:N`) y su Topaz
+  (`upscale:N`); el montaje los empalma. Código: `src/server/videos/tramos.ts`; diseño en
+  `docs/sitios-de-la-referencia.md`; pruebas en `tests/flujo-automatico.test.ts` y `tests/tramos.test.ts`.
 
 ## Regla fija del dueño: referencias de Pinterest (no olvidar)
 

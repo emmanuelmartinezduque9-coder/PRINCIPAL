@@ -10,6 +10,7 @@ import "@/server/videos/frame";
 import "@/server/videos/clip";
 import { quoteGeneration, requestGeneration, type GenDeps, type GenerationKind } from "@/server/videos/generations";
 import { PROMPT_ERROR } from "@/server/videos/prompt-check";
+import { tramoKind, tramosOf, tramoVideo } from "@/server/videos/tramos";
 import { kickBatchOfVideo, stageOf, type Stage } from "@/server/videos/lote";
 import { getVideoFor, latestDoneAnalysis, referenceOutdated, requireVideoOwner, withProductNotes, type Video } from "@/server/videos/videos";
 
@@ -57,9 +58,22 @@ export type AutoStatus =
 
 type Generation = typeof schema.generations.$inferSelect;
 
-async function generationsOf(videoId: number): Promise<{ frames: Generation[]; clips: Generation[] }> {
+async function generationsOf(videoId: number, tramo = 0): Promise<{ frames: Generation[]; clips: Generation[]; upscales: Generation[] }> {
   const rows = await getDb().select().from(schema.generations).where(eq(schema.generations.videoId, videoId)).orderBy(asc(schema.generations.id));
-  return { frames: rows.filter((g) => g.kind === "frame"), clips: rows.filter((g) => g.kind === "clip") };
+  const of = (base: "frame" | "clip" | "upscale") => rows.filter((g) => g.kind === tramoKind(base, tramo));
+  return { frames: of("frame"), clips: of("clip"), upscales: of("upscale") };
+}
+
+/**
+ * Los sitios del vídeo (regla del 24/11/2026, `tramos.ts`): cada uno con el vídeo visto desde él y
+ * sus generaciones. Con un solo sitio, el vídeo de siempre.
+ */
+async function placesOf(video: Video): Promise<Array<{ index: number; video: Video; frames: Generation[]; clips: Generation[]; upscales: Generation[] }>> {
+  const tramos = await tramosOf(video);
+  const indexes = tramos ? tramos.map((t) => t.index) : [0];
+  return Promise.all(
+    indexes.map(async (index) => ({ index, video: tramos ? tramoVideo(video, tramos, index) : video, ...(await generationsOf(video.id, index)) })),
+  );
 }
 
 /** Un fallo se queda parado hasta «Seguir» (cada intento cuesta): por eso la fecha de corte es el principio de los tiempos. */
@@ -169,27 +183,36 @@ export async function advanceVideo(videoId: number, deps: GenDeps = {}): Promise
     return;
   }
 
-  // 3. Imagen inicial: se pide sola; luego espera la aprobación visual.
-  const { frames, clips } = await generationsOf(video.id);
-  const frame = frameStageOf(video, frames);
-  if (frame === "need") return requestAuto(user, video, "frame", deps);
-  if (frame === "failed" || frame === "maxed") return stop(video.id, frameStopReason(frame, frames));
-  if (frame !== "approved") return;
+  // Con varios sitios en la referencia (`tramos.ts`), cada sitio lleva su apertura, su tramo y su
+  // 1080p; se piden de uno en uno y el montaje los empalma.
+  const places = await placesOf(video);
+  const busy = places.some((p) => p.frames.concat(p.clips, p.upscales).some((g) => ["intent", "submitting", "submitted", "unknown"].includes(g.status)));
 
-  // 4. Clip, en cuanto la imagen está aprobada.
-  const clip = clipStageOf(clips);
-  if (clip === "need") return requestAuto(user, video, "clip", deps);
-  if (clip === "failed" || clip === "maxed") return stop(video.id, clipStopReason(clip, clips));
-  if (clip !== "done") return;
+  // 3. Imagen inicial (una por sitio): se pide sola; luego espera la aprobación visual.
+  for (const place of places) {
+    const frame = frameStageOf(place.video, place.frames);
+    if (frame === "need") return busy ? undefined : requestAuto(user, video, tramoKind("frame", place.index), deps);
+    if (frame === "failed" || frame === "maxed") return stop(video.id, frameStopReason(frame, place.frames));
+  }
+  if (places.some((place) => frameStageOf(place.video, place.frames) !== "approved")) return;
+
+  // 4. Clip (un tramo por sitio), en cuanto las imágenes están aprobadas.
+  for (const place of places) {
+    const clip = clipStageOf(place.clips);
+    if (clip === "need") return busy ? undefined : requestAuto(user, video, tramoKind("clip", place.index), deps);
+    if (clip === "failed" || clip === "maxed") return stop(video.id, clipStopReason(clip, place.clips));
+  }
+  if (places.some((place) => clipStageOf(place.clips) !== "done")) return;
 
   // 5. Subida a 1080p con Topaz (orden de Emmanuel, 24/11/2026, como Codex: antes del montaje). Un
   // fallo se repite solo; tras 3, se monta con el de 480p.
   if (video.editStatus !== null) return;
-  const upscales = (await getDb().select().from(schema.generations).where(and(eq(schema.generations.videoId, video.id), eq(schema.generations.kind, "upscale"))).orderBy(asc(schema.generations.id)));
-  const lastUpscale = upscales.at(-1);
-  if (lastUpscale && ["intent", "submitting", "submitted", "unknown"].includes(lastUpscale.status)) return;
-  const failedUpscales = upscales.filter((g) => g.status === "failed" || g.status === "not_sent").length;
-  if (lastUpscale?.status !== "done" && failedUpscales < 3) return requestAuto(user, video, "upscale", deps);
+  for (const place of places) {
+    const lastUpscale = place.upscales.at(-1);
+    if (lastUpscale && ["intent", "submitting", "submitted", "unknown"].includes(lastUpscale.status)) return;
+    const failedUpscales = place.upscales.filter((g) => g.status === "failed" || g.status === "not_sent").length;
+    if (lastUpscale?.status !== "done" && failedUpscales < 3) return busy ? undefined : requestAuto(user, video, tramoKind("upscale", place.index), deps);
+  }
 
   // 6. Montaje, en cuanto el clip está subido (una vez: «Volver a montar» es cosa de la persona).
   const { startEdit, ALREADY_RUNNING } = await import("@/server/videos/edits");
@@ -278,9 +301,12 @@ export async function resumeVideo(user: AuthUser, videoId: number, deps: GenDeps
   const found = await autoVideo(video.id);
   if (!found) return;
   // Un fallo que ya se dio por visto: se pide otra ronda directamente (el núcleo pone el máximo de rondas).
-  const { frames, clips } = await generationsOf(video.id);
-  if (frameStageOf(found.video, frames) === "failed") return requestAuto(found.user, found.video, "frame", deps);
-  if (found.video.approvedFrameResultId !== null && clipStageOf(clips) === "failed") return requestAuto(found.user, found.video, "clip", deps);
+  for (const place of await placesOf(found.video)) {
+    if (frameStageOf(place.video, place.frames) === "failed") return requestAuto(found.user, found.video, tramoKind("frame", place.index), deps);
+    if (place.video.approvedFrameResultId !== null && clipStageOf(place.clips) === "failed") {
+      return requestAuto(found.user, found.video, tramoKind("clip", place.index), deps);
+    }
+  }
   await advanceVideo(video.id, deps);
 }
 
@@ -339,13 +365,19 @@ export async function autoStatusOf(user: AuthUser, video: Video): Promise<AutoSt
     if (latest?.status === "failed") return { state: "question", text: latest.error ?? "El desglose falló.", retry: false };
     return { state: "working", step: "desglose" };
   }
-  const { frames, clips } = await generationsOf(video.id);
-  const frame = frameStageOf(video, frames);
-  if (frame === "done") return { state: "review" };
-  if (frame === "failed" || frame === "maxed") return { state: "question", text: frameStopReason(frame, frames), retry: frame === "failed" };
-  if (frame !== "approved") return { state: "working", step: "imagen" };
-  const clip = clipStageOf(clips);
-  if (clip === "failed" || clip === "maxed") return { state: "question", text: clipStopReason(clip, clips), retry: clip === "failed" };
-  if (clip !== "done") return { state: "working", step: "clip" };
+  const places = await placesOf(video);
+  for (const place of places) {
+    const frame = frameStageOf(place.video, place.frames);
+    if (frame === "failed" || frame === "maxed") return { state: "question", text: frameStopReason(frame, place.frames), retry: frame === "failed" };
+  }
+  const frames = places.map((place) => frameStageOf(place.video, place.frames));
+  // Las imágenes de todos los sitios se revisan juntas.
+  if (frames.some((f) => f === "done") && frames.every((f) => f === "done" || f === "approved")) return { state: "review" };
+  if (frames.some((f) => f !== "approved")) return { state: "working", step: "imagen" };
+  for (const place of places) {
+    const clip = clipStageOf(place.clips);
+    if (clip === "failed" || clip === "maxed") return { state: "question", text: clipStopReason(clip, place.clips), retry: clip === "failed" };
+  }
+  if (places.some((place) => clipStageOf(place.clips) !== "done")) return { state: "working", step: "clip" };
   return { state: "working", step: "montaje" };
 }

@@ -1,6 +1,7 @@
 "use client";
 
 import { ArrowRight, Check, ImageIcon, ImageOff, Loader2, ThumbsUp } from "lucide-react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -16,6 +17,7 @@ import {
   type VideoViewJson,
 } from "./labels";
 import { PinterestRefs } from "./pinterest-refs";
+import { PlaceFrames } from "./place-frames";
 import { RejectDialog } from "./reject-dialog";
 import { ResultImage } from "./result-image";
 import { useGenerationActions } from "./use-generation";
@@ -199,6 +201,7 @@ export function StepFrame({ view, onGoToClip }: { view: VideoViewJson; onGoToCli
   const { video, frame, clip, mine } = view;
   const current = frame.current;
   const { reject } = useGenerationActions(video.id, "frame");
+  const client = useQueryClient();
   const running = current !== null && RUNNING_STATUSES.includes(current.status);
   const hasResults = current !== null && current.status === "done" && current.results.length > 0;
   // Con un clip apuntado o hecho, la imagen aprobada ya no cambia.
@@ -211,7 +214,18 @@ export function StepFrame({ view, onGoToClip }: { view: VideoViewJson; onGoToCli
 
   return (
     <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,600px)_340px] lg:gap-8">
-      <div className="min-w-0">{hasResults ? <Candidates view={view} generation={frame} canAct={canAct} /> : <Placeholder running={running} count={view.frameCount} />}</div>
+      <div className="flex min-w-0 flex-col gap-4">
+        {hasResults ? <Candidates view={view} generation={frame} canAct={canAct} /> : <Placeholder running={running} count={view.frameCount} />}
+        {/* Con varios sitios en la referencia, la apertura de cada sitio se revisa aquí mismo (regla del 24/11/2026). */}
+        <PlaceFrames
+          videoId={video.id}
+          title={video.title}
+          updatedAt={video.updatedAt}
+          mine={mine}
+          places={view.places ?? []}
+          onChanged={() => client.invalidateQueries({ queryKey: ["video", video.id] })}
+        />
+      </div>
 
       <aside className="flex flex-col gap-4 lg:sticky lg:top-6" aria-label="Imagen inicial">
         <GenerationNotice videoId={video.id} kind="frame" current={current} />

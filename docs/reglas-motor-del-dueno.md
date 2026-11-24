@@ -95,7 +95,7 @@ Añadidas tras los vídeos de prueba del 23/11 (EisWerk, vídeo 2): el paso «De
 
 * **Flujo automático.** Referencia → desglose → imagen → clip → montaje se encadenan solos, dentro de los topes de gasto, el saldo y el presupuesto del lote. El envío del pedido (crear el vídeo o enviar el lote) autoriza los frames necesarios: no hay botones de «¿generar?» ni de «Confirmar» el presupuesto.
 * **Sin avisos.** Los riesgos del desglose son instrucciones internas que el motor aplica en los prompts. No se enseñan como avisos ni paran el flujo; como mucho, plegados en «Detalles técnicos».
-* **Una imagen por vídeo por defecto** (como el motor de Codex: un frame por clip). Más solo si Emmanuel lo especifica en la tarjeta o en el lote.
+* **Una imagen por cada sitio distinto de la referencia** (cambiada el 24/11/2026; antes, una por vídeo). Como el motor de Codex: un frame por clip, y cada sitio es un clip. Con un solo sitio, una. Más candidatas solo si Emmanuel lo especifica en la tarjeta o en el lote. Ver el punto 13.
 * **Solo preguntas obligatorias.** El flujo se para únicamente con una pregunta concreta que solo él puede decidir (avatar obligatorio sin elegir, variante, canción, falta un archivo, no hay saldo o se pasa del presupuesto) y sigue solo en cuanto responde. Nunca preguntas por preguntar.
 * La aprobación visual de la imagen (punto 2) sigue siendo la única parada rutinaria; tras ella, clip y montaje van sin otra ronda. Un rechazo se regenera solo dentro de sus rondas.
 
@@ -108,7 +108,7 @@ no doblar es apagar «Doblar el diálogo» en la tarjeta del vídeo. Gasto aprob
 Regla en `reglas/doblaje-del-dialogo.md`; código en `src/server/videos/doblaje.ts` y `montador/doblar.py`.
 
 
-## 11. Localización al país del producto (Emmanuel, 24/11/2026)
+## 12. Localización al país del producto (Emmanuel, 24/11/2026)
 
 «La automatización tiene siempre muy presentes el producto con el que trabaja y el país al que va dirigido.» Todo lo del vídeo de referencia que sea de otro país se adapta sola y automáticamente a su equivalente más conocido en el país de destino, aunque la tarjeta no lo pida:
 
@@ -120,3 +120,10 @@ Regla en `reglas/doblaje-del-dialogo.md`; código en `src/server/videos/doblaje.
 * Marcas o productos locales que se vean y no sean el suyo → equivalentes locales o neutros (nunca marcas de terceros en primer plano).
 
 Es un paso central: el desglose saca la «localización» (lista origen → destino para el país del producto) y la usan todos (prompt de la imagen, búsqueda en Pinterest, prompt del clip, rótulos y doblaje). Lo que ponga la tarjeta manda sobre esto. Regla en `reglas/localizacion-por-pais.md`; código en `src/server/videos/localization.ts`.
+
+## 13. Cada toma conserva su sitio (Emmanuel, 24/11/2026)
+
+El defecto que más le molestaba en Codex. En las réplicas con Genjutsu o Wan, cada toma de la referencia tiene su sitio y su acción y se respetan: si una toma es sacar algo de la nevera, la nevera se queda (cambia lo de dentro, el color o el estilo), nunca se sustituye por el salón del resto del vídeo. Una referencia de entorno del dueño solo vale para las tomas de ese tipo de sitio; las demás buscan su entorno en Pinterest, localizado al país. Caso real: lote 6, un FalterPfote con supermercado y calle salió entero en el supermercado.
+
+El desglose agrupa las tomas consecutivas del mismo sitio. Cada sitio lleva su apertura, sus referencias, sus objetos de la acción y su tramo de Motion Transfer; después se empalman. Una imagen por sitio distinto (si solo hay uno, una), revisadas juntas.
+

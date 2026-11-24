@@ -95,7 +95,12 @@ export const SUBMIT_JOB = "video.enviar";
 export const FINALIZE_JOB = "video.finalizar";
 
 /** `upscale`: Topaz a 1080p sobre el clip ya hecho (orden de Emmanuel, 24/11/2026, como Codex). */
-export type GenerationKind = "frame" | "clip" | "upscale";
+export type BaseGenerationKind = "frame" | "clip" | "upscale";
+/** `frame:N`, `clip:N`, `upscale:N`: los del sitio N de la referencia (regla del 24/11/2026, `tramos.ts`). */
+export type GenerationKind = BaseGenerationKind | `${BaseGenerationKind}:${number}`;
+
+/** El tipo sin su sitio (`clip:2` → `clip`). */
+export const baseKindOf = (kind: string): BaseGenerationKind => kind.split(":")[0] as BaseGenerationKind;
 export type GenerationStatus = "intent" | "submitting" | "submitted" | "done" | "failed" | "not_sent" | "unknown";
 
 export interface GenDeps {
@@ -176,10 +181,10 @@ const rejectedBy = (reason: string) => `Higgsfield no ha aceptado la petición: 
 
 // ───────────────────────── Constructores de peticiones ─────────────────────────
 
-const builders = new Map<GenerationKind, RequestBuilder>();
+const builders = new Map<BaseGenerationKind, RequestBuilder>();
 
 /** Cómo se construye la petición de un tipo (lo registran la imagen inicial y el clip). */
-export function registerRequestBuilder(kind: GenerationKind, build: RequestBuilder): void {
+export function registerRequestBuilder(kind: BaseGenerationKind, build: RequestBuilder): void {
   builders.set(kind, build);
 }
 
@@ -188,9 +193,16 @@ export function registerRequestBuilder(kind: GenerationKind, build: RequestBuild
  * errores (sin conexión, permiso caducado, Higgsfield caído) se responden igual que al presupuestar.
  */
 async function buildRequest(user: AuthUser, video: Video, kind: GenerationKind, deps: GenDeps) {
-  const build = builders.get(kind);
+  const build = builders.get(baseKindOf(kind));
   if (!build) throw new HttpError(503, NO_BUILDER);
-  return build(user, video, deps).catch(asHttp);
+  // Con varios sitios en la referencia, cada generación se construye con el vídeo visto desde su
+  // sitio (`tramos.ts`); lo que se vuelve a comprobar al apuntar son las columnas del vídeo de verdad.
+  const { videoForKind } = await import("@/server/videos/tramos");
+  const seen = await videoForKind(video, kind, deps).catch(asHttp);
+  const built = await build(user, seen, deps).catch(asHttp);
+  if (seen === video || !built.snapshot) return built;
+  const keys = Object.keys(built.snapshot) as Array<keyof Video>;
+  return { ...built, snapshot: Object.fromEntries(keys.map((key) => [key, video[key]])) as Partial<Video> };
 }
 
 // ───────────────────────── Utilidades ─────────────────────────
@@ -215,7 +227,7 @@ const SPENT: GenerationStatus[] = ["submitted", "done", "failed"];
 
 const clock = (deps: GenDeps) => deps.now?.() ?? new Date();
 const higgsfieldOf = (deps: GenDeps) => deps.higgsfield ?? getHiggsfield();
-const historyType = (kind: string): "image" | "video" => (kind === "frame" ? "image" : "video");
+const historyType = (kind: string): "image" | "video" => (baseKindOf(kind) === "frame" ? "image" : "video");
 const nameOf = (error: unknown) => (error instanceof Error ? error.message : "desconocido");
 
 /** Cerrojo de aviso por vídeo para las generaciones ("VGEN", vídeo). El 0 se usa para adoptar trabajos del historial. */
@@ -249,12 +261,12 @@ export function upscaleEstimate(seconds: number): number {
 }
 
 function price(port: HiggsfieldPort, userId: number, kind: string, request: unknown, count: number): Promise<{ credits: number; quoteRef: string | null }> {
-  if (kind === "upscale") {
+  if (baseKindOf(kind) === "upscale") {
     // Sin presupuesto del proveedor: la previsión (guardada en la petición al construirla).
     const seconds = (request as { estimateSeconds?: number }).estimateSeconds ?? 15;
     return Promise.resolve({ credits: upscaleEstimate(seconds), quoteRef: null });
   }
-  return kind === "frame" ? port.quoteImages(userId, request as HfImageRequest, count) : port.quoteVideo(userId, request as HfVideoRequest);
+  return baseKindOf(kind) === "frame" ? port.quoteImages(userId, request as HfImageRequest, count) : port.quoteVideo(userId, request as HfVideoRequest);
 }
 
 /** ¿Quien creó el vídeo ya no puede seguirlo (cuenta desactivada o producto que ya no ve)? */
@@ -587,7 +599,7 @@ export async function submitGeneration(generationId: number, deps: GenDeps = {})
     return;
   }
   const sending =
-    row.kind === "frame"
+    baseKindOf(row.kind) === "frame"
       ? port.submitImages(row.userId, row.request as HfImageRequest, row.count)
       : port.submitVideo(row.userId, row.request as HfVideoRequest, { quoteRef });
   const outcome = await within(sending, deadline - Date.now());
@@ -616,7 +628,7 @@ export async function submitGeneration(generationId: number, deps: GenDeps = {})
     return;
   }
   if (!(await settleSend(row, outcome, deps))) return;
-  if (row.kind === "frame") {
+  if (baseKindOf(row.kind) === "frame") {
     // Comprobable en los registros: cuántas referencias llevó la imagen y si iban las de Pinterest (regla fija).
     const request = row.request as HfImageRequest;
     const pinterest = /EXACT requested background|approved by the owner as references \(from Pinterest\)/.test(request.prompt);
@@ -745,7 +757,7 @@ async function download(url: string, fetchImpl: typeof fetch): Promise<Buffer> {
 /** La miniatura de un resultado; si no se puede hacer, `null` (el resultado se guarda sin ella). */
 async function thumbnailOf(url: string, kind: string, deps: GenDeps): Promise<Buffer | null> {
   try {
-    return await makeThumbnail(await download(url, deps.fetch ?? fetch), kind === "frame" ? "image" : "video", THUMB_MAX_SIDE);
+    return await makeThumbnail(await download(url, deps.fetch ?? fetch), baseKindOf(kind) === "frame" ? "image" : "video", THUMB_MAX_SIDE);
   } catch (error) {
     console.warn(`[generaciones] Sin miniatura para un resultado: ${nameOf(error)}`);
     return null;
@@ -816,7 +828,7 @@ export async function finalizeGeneration(generationId: number, deps: GenDeps = {
         if (savedOk.has(index)) return null;
         const ok = job.status === "done";
         const thumb = ok ? await thumbnailOf(job.urls[0], row.kind, deps) : null;
-        if (ok && row.kind === "frame") console.log(`[generaciones] Imagen del vídeo ${row.videoId} (ronda ${row.round}) lista: ${job.urls[0]}`);
+        if (ok && baseKindOf(row.kind) === "frame") console.log(`[generaciones] Imagen del vídeo ${row.videoId} (ronda ${row.round}) lista: ${job.urls[0]}`);
         return { generationId: row.id, index, jobId: job.jobId, ok, url: job.urls[0] ?? null, error: jobError(job), thumbMime: thumb ? "image/jpeg" : null, thumb };
       }),
     );
@@ -1220,6 +1232,15 @@ export async function rejectRound(
     const last = finished.reduce((a, b) => (b.round > a.round ? b : a));
     await tx.update(generations).set({ rejectReason: text }).where(eq(generations.id, last.id));
 
+    if (kind.includes(":")) {
+      // Un sitio extra: lo aprobado de ese sitio deja de estarlo si era de esta ronda.
+      const ids = (await tx.select({ id: results.id }).from(results).where(eq(results.generationId, last.id))).map((r) => r.id);
+      await tx
+        .update(schema.videos)
+        .set({ tramoApprovals: sql`${schema.videos.tramoApprovals} - ${kind}::text`, updatedAt: new Date() })
+        .where(and(eq(schema.videos.id, video.id), inArray(sql`(${schema.videos.tramoApprovals} ->> ${kind}::text)::bigint`, ids.length > 0 ? ids : [0])));
+      return;
+    }
     const column = kind === "frame" ? schema.videos.approvedFrameResultId : schema.videos.approvedClipResultId;
     const field = kind === "frame" ? "approvedFrameResultId" : "approvedClipResultId";
     await tx
@@ -1266,6 +1287,13 @@ export async function approveResult(
         ),
       );
     if (!found) throw new HttpError(404, RESULT_NOT_FOUND);
+    if (kind.includes(":")) {
+      await tx
+        .update(schema.videos)
+        .set({ tramoApprovals: sql`${schema.videos.tramoApprovals} || jsonb_build_object(${kind}::text, ${found.id}::bigint)`, updatedAt: new Date() })
+        .where(and(eq(schema.videos.id, video.id), eq(schema.videos.createdBy, user.id)));
+      return;
+    }
     await tx
       .update(schema.videos)
       .set({ ...(kind === "frame" ? { approvedFrameResultId: found.id } : { approvedClipResultId: found.id }), updatedAt: new Date() })
@@ -1313,7 +1341,11 @@ export async function generationView(video: Video, kind: GenerationKind, viewerI
   return {
     round: current?.round ?? 0,
     regenerationsLeft: Math.max(0, 1 + MAX_REGENERATIONS - Math.max(spent, 1)),
-    approvedResultId: kind === "frame" ? video.approvedFrameResultId : video.approvedClipResultId,
+    approvedResultId: kind.includes(":")
+      ? (video.tramoApprovals?.[kind] ?? null)
+      : kind === "frame"
+        ? video.approvedFrameResultId
+        : video.approvedClipResultId,
     current: current
       ? {
           id: current.id,

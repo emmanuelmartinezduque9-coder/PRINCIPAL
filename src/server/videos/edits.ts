@@ -11,6 +11,7 @@ import { dubDialogueOf } from "@/server/videos/doblaje";
 import { localizeText, marketOf } from "@/server/videos/localization";
 import { getObjectStore } from "@/lib/object-store";
 import { downloadableClip, servableClipUrl } from "@/server/videos/clip";
+import { splicePlan } from "@/server/videos/tramos";
 import { canChooseSong, effectiveEditReferenceUrl, getVideoFor, hookTiming, type Video } from "@/server/videos/videos";
 
 /**
@@ -61,7 +62,17 @@ export interface EditSpec {
    * otros tipos, el clip aprobado (`clip`). `jobId` es el trabajo de Higgsfield (su copia en el
    * almacén propio, si ya está); `url`, su dirección de Higgsfield (`servableClipUrl`) por si no.
    */
-  clips: Array<{ role: "hook" | "body" | "clip"; jobId: string | null; url: string }>;
+  clips: Array<{
+    role: "hook" | "body" | "clip";
+    jobId: string | null;
+    url: string;
+    /**
+     * Con varios sitios en la referencia (regla del 24/11/2026, `tramos.ts`): el tramo de cada sitio,
+     * en orden, con lo que dura en la referencia. El montaje los empalma (cortando lo congelado de
+     * más) y ese empalme es el clip. `jobId` y `url` son entonces los del primer sitio.
+     */
+    parts?: Array<{ jobId: string | null; url: string; durationMs: number }>;
+  }>;
   /** Con «Solo gancho», lo que dura de verdad el gancho (el clip generado puede ser más largo). */
   hookMs: number | null;
   /** La canción de la biblioteca (con su drop). `null`: audio original. */
@@ -172,9 +183,20 @@ async function referenceAudioSource(video: Video): Promise<"web" | { link: strin
 async function buildSpec(video: Video, product: Product): Promise<EditSpec> {
   const clip = await downloadableClip(video);
   if (!clip) throw new HttpError(409, NO_CLIP);
+  // Varios sitios: el tramo de cada uno (todos hechos), para empalmarlos en el montaje.
+  const plan = await splicePlan(video);
+  let parts: NonNullable<EditSpec["clips"][number]["parts"]> | undefined;
+  if (plan) {
+    parts = [];
+    for (const part of plan) {
+      const found = await downloadableClip(video, part.index);
+      if (!found) throw new HttpError(409, NO_CLIP);
+      parts.push({ jobId: found.jobId, url: found.url, durationMs: part.durationMs });
+    }
+  }
   const clips: EditSpec["clips"] = [];
   if (video.kind === "solo_gancho") {
-    clips.push({ role: "hook", jobId: clip.jobId, url: clip.url });
+    clips.push({ role: "hook", jobId: clip.jobId, url: clip.url, ...(parts ? { parts } : {}) });
     // Sin cuerpos elegidos en la tarjeta: los del producto (un «Solo gancho» lleva su cuerpo).
     const chosen = video.bodyClipIds.length > 0 ? video : { ...video, bodyClipIds: await productBodyIds(video.productId) };
     for (const body of await bodiesOfVideo(chosen, { raw: true })) {
@@ -182,7 +204,7 @@ async function buildSpec(video: Video, product: Product): Promise<EditSpec> {
       clips.push({ role: "body", jobId: body.jobId, url: body.videoUrl });
     }
   } else {
-    clips.push({ role: "clip", jobId: clip.jobId, url: clip.url });
+    clips.push({ role: "clip", jobId: clip.jobId, url: clip.url, ...(parts ? { parts } : {}) });
   }
   const song = video.songId === null ? null : ((await songSummaries([video.songId])).get(video.songId) ?? null);
   const original = await referenceAudioSource(video);
