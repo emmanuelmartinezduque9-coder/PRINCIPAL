@@ -36,6 +36,24 @@ class Texto06B(unittest.TestCase):
         cls.font = texto06b.Fuente(FONT)
         cls.cues = json.loads((REF / 'cues.json').read_text())
 
+    def test_sin_recuadros(self):
+        """Ningún rótulo lleva el recuadro de «falta»: lo que la fuente de los rótulos no tiene va con la de emojis
+        (también con selector de variante), y lo que no tiene dibujo en ninguna se quita (24/11/2026, vídeo 15)."""
+        f = self.font
+        self.assertEqual(f.clean('kaputt \U000F0000 Ende'), 'kaputt Ende')
+        if not f.emoji_path:
+            return
+        for line in ['Haare \U0001FAE0\u23F0', 'Pfeil \u2197\uFE0F \u25B6\uFE0F \u00A9 \u2122', '\U0001F1E9\U0001F1EA \u2764\uFE0F']:
+            items, _ = f.layout(line, 60)
+            for item in items:
+                if item[0] == 'g':
+                    self.assertNotEqual(item[1], 0, line)
+                else:
+                    self.assertIsNotNone(f.emoji_image(item[1], 55), item[1])
+        # Una unión ZWJ que la fuente no junta: sus piezas, cada una entera (no un emoji encogido).
+        parts = f.emoji_parts('\U0001F469\u200D\u2764\uFE0F\u200D\U0001F468')
+        self.assertTrue(len(parts) in (1, 3), parts)
+
     def gray(self, img):
         a = self.np.asarray(img.convert('RGBA')).astype(float)
         al = a[..., 3:4] / 255

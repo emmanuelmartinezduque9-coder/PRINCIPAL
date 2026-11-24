@@ -467,6 +467,29 @@ export async function relaunchEditsWithoutClaude(now: Date = new Date()): Promis
 }
 
 /**
+ * Una vez por `key`: vuelve a montar los vídeos `videoIds` (estén como estén, salvo con un montaje ya en marcha), p. ej.
+ * tras arreglar algo del montador. No gasta: el doblaje hecho se reutiliza.
+ */
+export async function remountEditsOnce(key: string, videoIds: number[], now: Date = new Date()): Promise<number> {
+  if (await getSetting<string>(key)) return 0;
+  await setSetting(key, now.toISOString());
+  let queued = 0;
+  for (const id of videoIds) {
+    const [video] = await getDb().select().from(videos).where(eq(videos.id, id));
+    const creator = video ? await getActiveUser(video.createdBy) : null;
+    if (!video || !creator) continue;
+    try {
+      await queueEdit(video, await getProductFor(creator, video.productId), creator.id, now);
+      queued += 1;
+    } catch (error) {
+      console.warn(`[montaje] No se pudo volver a montar el vídeo ${id}: ${error instanceof Error ? error.message : error}`);
+    }
+  }
+  console.log(`[montaje] Reparación ${key}: ${queued} vídeo(s) vuelven a montarse.`);
+  return queued;
+}
+
+/**
  * Una vez por `key`: vuelve a poner en cola el montaje de los vídeos `videoIds` que lo tengan fallido
  * (reparaciones puntuales al arrancar, para ver el motivo con el registro de `finishFailed`).
  */

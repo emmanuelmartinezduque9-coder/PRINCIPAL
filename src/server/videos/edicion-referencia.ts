@@ -76,6 +76,8 @@ const answerSchema = z.object({
       }),
     )
     .max(12),
+  /** Marcas, personajes, películas, licencias y colaboraciones de terceros que se leen en los rótulos originales. */
+  ajenos: z.array(z.string().min(1).max(80)).max(30).default([]),
 });
 type Answer = z.infer<typeof answerSchema>;
 
@@ -87,8 +89,27 @@ export const REFERENCE_EDIT_INSTRUCTIONS = `Eres el editor de anuncios en vídeo
 4. franja_superior / franja_inferior: entre qué alturas del fotograma (0 arriba, 1 abajo) está ese rótulo.
 5. texto_adaptado: la versión para nuestro anuncio en alemán natural de Alemania, fiel al original: mismo sentido, intención, tono, estructura, mayúsculas y LOS MISMOS SALTOS DE LÍNEA (| en el mismo sitio; si los emojis van en su propia línea, también aquí). Si el original ya está en alemán, déjalo igual salvo la marca o la palabra clave. Cambia SOLO la marca, el producto o la palabra clave ajenos por los nuestros (nombre del producto que te doy). Conserva la tienda que nombre la referencia si existe en Alemania; no inventes tiendas, ofertas, precios ni beneficios que no estén. Emojis: los MISMOS de la referencia, en el mismo orden; cambia solo uno que no encaje con nuestro producto por uno de su nicho (un emoji de uñas no vale para un producto de pelo).
 6. es_cta: true en el rótulo de llamada a la acción («Comment X…», «Kommentiere…», «Link in bio»…). Su texto_adaptado es la misma llamada con la palabra clave de nuestro producto entre comillas alemanas (p. ej. «Kommentiere, wenn du auch eins willst!» → «Kommentiere „{PRODUCTO}“, wenn du auch eins willst!»), con los emojis y saltos de línea del original tal cual. Si el original no nombra nada, añade solo la palabra clave.
+6b. NUNCA nombres marcas, personajes, películas, series, licencias, famosos ni colaboraciones de terceros que vengan de la referencia (Harry Potter, Disney, Marvel, Pokémon, Barbie, Stanley, Dyson…), aunque el original los nombre: el anuncio es solo de {PRODUCTO}. Una colaboración («X × Harry Potter», «X meets Disney») queda solo con {PRODUCTO}; un personaje o licencia se cambia por una descripción genérica del estilo o el tema (p. ej. «Zauberer-Edition», «magisch»), nunca por el nombre. La tienda que nombre la referencia sí se conserva (regla 5).
 7. traduccion_es: el texto_adaptado en español, para que el dueño lo revise (no se imprime).
+8. ajenos: la lista de esas marcas, personajes, licencias y colaboraciones de terceros que aparecen en los rótulos originales (vacía si no hay). No incluyas {PRODUCTO} ni la tienda.
 Responde solo con el JSON pedido.`;
+
+const escapeRe = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/**
+ * Red de seguridad de la regla 6b: si un nombre ajeno (`ajenos`) se colara en el rótulo adaptado, se cambia por el
+ * producto, y una colaboración que queda «P × P» se deja en «P». Sin distinguir mayúsculas.
+ */
+export function withoutThirdParties(text: string, ajenos: string[], product: string): string {
+  let out = text;
+  for (const name of [...new Set(ajenos.map((a) => a.trim()).filter((a) => a.length >= 2 && a.toLowerCase() !== product.toLowerCase()))].sort((a, b) => b.length - a.length)) {
+    out = out.replace(new RegExp(escapeRe(name), "gi"), product);
+  }
+  const p = escapeRe(product);
+  // «P X P», «P × P», «P x P», «P meets P», también con salto de línea (|) entre medias.
+  out = out.replace(new RegExp(`${p}(\\s*\\|?\\s*(?:[xX×+&]|meets|feat\\.?)\\s*\\|?\\s*${p})+`, "g"), product);
+  return out.replace(/[ \t]{2,}/g, " ").trim();
+}
 
 async function sha256File(file: string): Promise<string> {
   const hash = crypto.createHash("sha256");
@@ -164,7 +185,7 @@ export interface ReferenceEditContext {
 }
 
 const cacheKey = (videoId: number, sha: string, productName: string) =>
-  `ediciones/${videoId}/${crypto.createHash("sha256").update(`${sha}\n${productName}\nv2`).digest("hex").slice(0, 32)}.json`;
+  `ediciones/${videoId}/${crypto.createHash("sha256").update(`${sha}\n${productName}\nv3`).digest("hex").slice(0, 32)}.json`;
 
 /** La edición de la referencia (rótulos adaptados con sus tiempos y cortes). Lanza si Claude no puede. */
 export async function referenceEdit(ctx: ReferenceEditContext): Promise<ReferenceEdit> {
@@ -198,7 +219,7 @@ export async function referenceEdit(ctx: ReferenceEditContext): Promise<Referenc
     let startS = i === 0 && row.desde_s <= 1 / SAMPLES_PER_SECOND ? 0 : Math.min(row.desde_s, durationS);
     if (i > 0 && startS > 0) startS = await refineSwitch(ctx.file, startS - 1 / SAMPLES_PER_SECOND, startS, row.franja_superior, row.franja_inferior);
     if (cues.length > 0 && startS <= cues[cues.length - 1].startS) continue;
-    cues.push({ startS, source: row.texto_original.trim(), text: row.texto_adaptado.trim(), es: row.traduccion_es.trim(), cta: row.es_cta });
+    cues.push({ startS, source: row.texto_original.trim(), text: withoutThirdParties(row.texto_adaptado.trim(), answer.data?.ajenos ?? [], ctx.product.name), es: row.traduccion_es.trim(), cta: row.es_cta });
   }
   const result: ReferenceEdit = { version: 1, durationS, cues, cutsS: await sceneCuts(ctx.file, durationS) };
   if (ctx.store) {

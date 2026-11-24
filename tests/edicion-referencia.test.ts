@@ -12,7 +12,7 @@ import type { LlmCall, LlmGateway, LlmResult } from "@/llm/gateway";
 import { LocalStore, setObjectStoreForTests } from "@/lib/object-store";
 import type { AuthUser } from "@/server/auth";
 import { saveCredential } from "@/server/credentials";
-import { refineSwitch } from "@/server/videos/edicion-referencia";
+import { REFERENCE_EDIT_INSTRUCTIONS, refineSwitch, withoutThirdParties } from "@/server/videos/edicion-referencia";
 import { startEdit, type EditSpec } from "@/server/videos/edits";
 import { processReference } from "@/server/videos/intake";
 import { claimRun, runEdit, type MontajeDeps } from "@/server/videos/montaje-nube";
@@ -209,5 +209,22 @@ describe("el fotograma del cambio de rótulo", () => {
     ]);
     const t = await refineSwitch(file, 1.0, 1.5, 0.1, 0.25);
     expect(Math.abs(t - 1.25)).toBeLessThanOrEqual(1 / 24 + 1e-6);
+  });
+});
+
+describe("marcas y personajes de terceros en los rótulos", () => {
+  it("la instrucción prohíbe nombrarlos y pide la lista de ajenos", () => {
+    expect(REFERENCE_EDIT_INSTRUCTIONS).toMatch(/NUNCA nombres marcas, personajes/);
+    expect(REFERENCE_EDIT_INSTRUCTIONS).toContain("Harry Potter");
+    expect(REFERENCE_EDIT_INSTRUCTIONS).toMatch(/8\. ajenos/);
+  });
+
+  it("si uno se cuela, se cambia por el producto y la colaboración queda solo con el producto (vídeo 22)", () => {
+    expect(withoutThirdParties("FalterPfote|X|HARRY POTTER", ["Harry Potter"], "FalterPfote")).toBe("FalterPfote");
+    expect(withoutThirdParties("FalterPfote × Disney 🎉", ["Disney"], "FalterPfote")).toBe("FalterPfote 🎉");
+    expect(withoutThirdParties("Magisch wie Harry Potter ✨", ["harry potter"], "FalterPfote")).toBe("Magisch wie FalterPfote ✨");
+    expect(withoutThirdParties("LINK IN BIO „FalterPfote“", [], "FalterPfote")).toBe("LINK IN BIO „FalterPfote“");
+    // El propio producto en la lista no se toca.
+    expect(withoutThirdParties("FalterPfote ist da", ["FalterPfote"], "FalterPfote")).toBe("FalterPfote ist da");
   });
 });

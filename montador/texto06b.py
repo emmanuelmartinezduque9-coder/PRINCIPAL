@@ -56,11 +56,12 @@ def is_emoji(ch):
             or 0x1F1E6 <= cp <= 0x1F1FF or 0xE0020 <= cp <= 0xE007F)
 
 
-def runs_of(line):
-    """Trozos seguidos de texto normal y de emoji: [(es_emoji, texto)]."""
+def runs_of(line, classify=None):
+    """Trozos seguidos de texto normal y de emoji: [(es_emoji, texto)]. `classify(ch, siguiente)` decide por carácter
+    (por defecto, `is_emoji`)."""
     out = []
-    for ch in line:
-        kind = is_emoji(ch)
+    for i, ch in enumerate(line):
+        kind = classify(ch, line[i + 1] if i + 1 < len(line) else '') if classify else is_emoji(ch)
         if out and out[-1][0] == kind:
             out[-1] = (kind, out[-1][1] + ch)
         else:
@@ -103,15 +104,73 @@ class Fuente:
         return [(info.codepoint, pos.x_advance / self.upem, pos.x_offset / self.upem, pos.y_offset / self.upem)
                 for info, pos in zip(buf.glyph_infos, buf.glyph_positions)]
 
+    def has_text_glyph(self, ch):
+        """Si la fuente de los rótulos tiene dibujo para `ch` (si no, saldría el recuadro de «falta»)."""
+        return self.ft.get_char_index(ord(ch)) != 0
+
+    def has_emoji_glyph(self, emoji):
+        """Si la fuente de emojis tiene un dibujo para el emoji entero (con sus uniones, variante y tono)."""
+        if not self.emoji_path:
+            return False
+        try:
+            if not hasattr(self, '_emoji_hb'):
+                self._emoji_hb = hb.Font(hb.Face(hb.Blob.from_file_path(self.emoji_path), 0))
+            buf = hb.Buffer()
+            buf.add_str(emoji)
+            buf.guess_segment_properties()
+            hb.shape(self._emoji_hb, buf, {})
+            return len(buf.glyph_infos) > 0 and all(info.codepoint != 0 for info in buf.glyph_infos)
+        except Exception:  # noqa: BLE001
+            return False
+
+    def emoji_parts(self, emoji):
+        """Cómo se dibuja un emoji: él mismo si la fuente lo junta en un solo dibujo; si no (una unión ZWJ que la fuente
+        no junta), sus piezas con dibujo una a una, cada una de 1 em (nunca un emoji encogido); [] si no hay ninguna."""
+        if not self.has_emoji_glyph(emoji):
+            return []
+        try:
+            buf = hb.Buffer()
+            buf.add_str(emoji)
+            buf.guess_segment_properties()
+            hb.shape(self._emoji_hb, buf, {})
+            if not hasattr(self, '_emoji_sbix'):
+                self._emoji_sbix = Sbix(self.emoji_path)
+            visible = [i.codepoint for i in buf.glyph_infos if self._emoji_sbix.png(i.codepoint) is not None]
+        except Exception:  # noqa: BLE001 — sin tabla sbix (otra fuente): tal cual
+            return [emoji]
+        if len(visible) <= 1:
+            return [emoji] if visible else []
+        pieces = [p for p in emoji.replace('️', '').split('‍') if p]
+        return [p for p in pieces if self.has_emoji_glyph(p)]
+
+    def classify(self, ch, nxt):
+        """Emoji si lo es por su código, si lleva selector de variante emoji detrás, o si la fuente de los rótulos no
+        lo tiene (entonces se intenta con la de emojis; si tampoco, se quita en `layout`)."""
+        if is_emoji(ch) or nxt == '️':
+            return True
+        return not self.has_text_glyph(ch) and not ch.isspace()
+
+    def clean(self, line):
+        """La línea tal como se pinta: sin caracteres que no tenga ninguna fuente (nunca un recuadro de «falta») y sin
+        espacios repetidos o sobrantes al quitarlos."""
+        out = []
+        for emoji, text in runs_of(line, self.classify):
+            if emoji:
+                out.extend(p for e in emoji_clusters(text) if e not in ('‍', '️') for p in self.emoji_parts(e))
+            else:
+                out.append(text)
+        cleaned = ''.join(out)
+        return ' '.join(cleaned.split(' ')).replace('  ', ' ').strip() if cleaned != line else line
+
     def layout(self, line, size):
-        """Lo que hay que dibujar de una línea: [('g', gid, x, dy) | ('e', emoji, x)] y su ancho en píxeles."""
+        """Lo que hay que dibujar de una línea: [('g', gid, x, dy) | ('e', emoji, x)] y su ancho en píxeles. Lo que no
+        tenga dibujo en ninguna fuente no se pinta (`clean`)."""
         x = 0.0
         items = []
-        for emoji, text in runs_of(line):
+        line = self.clean(line)
+        for emoji, text in runs_of(line, self.classify):
             if emoji:
-                for e in emoji_clusters(text):
-                    if e in ('‍', '️'):
-                        continue
+                for e in (p for c in emoji_clusters(text) if c not in ('‍', '️') for p in self.emoji_parts(c)):
                     items.append(('e', e, x))
                     x += size  # CoreText: avance de 1 em
             else:

@@ -96,6 +96,22 @@ el Claude Code de su Mac (su suscripción) para todo lo que hace Claude; la web 
   se vuelven a montar (`relaunchEditsWithoutClaude`). El doblaje ya hecho se reutiliza.
 - Las notas del montaje terminado guardan también las de la nube (antes solo los avisos del montador).
 
+## Rótulos sin recuadros ni marcas ajenas (24/11/2026)
+
+- Recuadro con X en el primer rótulo del vídeo 15: un carácter que no estaba en los rangos de emoji del
+  montador se pintó con la fuente de los rótulos, que no lo tiene. Ahora (`montador/texto06b.py`): todo
+  carácter que la fuente de los rótulos no tenga, o que lleve selector de variante (U+FE0F), va con la
+  fuente de emojis de Apple; lo que no tenga dibujo en ninguna se quita antes de pintar (`clean`); una
+  unión ZWJ que la fuente no junta en un solo dibujo se pinta por piezas, cada una de 1 em (antes salía
+  encogida). Prueba: `test_sin_recuadros` en `montador/test_texto06b.py`.
+- La lectura de la edición de la referencia nunca nombra marcas, personajes, licencias ni
+  colaboraciones de terceros (regla 6b de `REFERENCE_EDIT_INSTRUCTIONS`); Claude devuelve además los
+  nombres ajenos que vio (`ajenos`) y `withoutThirdParties` los cambia por el producto si se colaran
+  («FalterPfote X HARRY POTTER» → «FalterPfote»). La clave de su caché pasa a `v3` para que se vuelva a
+  leer.
+- Una vez: el 15 se vuelve a montar (`remountEditsOnce`). El 22 lo monta la sesión del doblaje cuando
+  su doblaje y esto estén listos (un solo montaje final).
+
 ## Pruebas
 
 - `tests/claude-mac.test.ts`: ruta (dueño/colaboradora/modos/apagado/sin sesión), llamada completa
