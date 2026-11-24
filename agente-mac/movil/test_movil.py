@@ -35,6 +35,18 @@ class SafetyTests(unittest.TestCase):
         with patch.object(self.m,'nodes',return_value=nodes), patch.object(self.m,'call') as call:
             with self.assertRaises(PantallaInesperada): self.m.finish_facebook_caption('Test')
             call.assert_not_called()
+    def test_quicklook_recovers_disappearing_control(self):
+        target={'x':'343','y':'825','width':'38','height':'38'}
+        samples=iter([[target], [], [target], [target]])
+        def find(labels,types=None):
+            if labels==['QLPreviewControllerView']: return [{}]
+            if labels==['QLOverlayDefaultActionButtonAccessibilityIdentifier']: return next(samples)
+            if 'Salva video' in labels: return [{}]
+            return []
+        with patch.object(self.m,'find',side_effect=find), patch.object(self.m,'call') as call, patch('movil.time.sleep'):
+            self.m.instant_control('QLOverlayDefaultActionButtonAccessibilityIdentifier')
+            call.assert_called_once_with('POST','/wda/tap',{'x':362.0,'y':844.0})
+
     def test_http_ranges_and_no_listing(self):
         with patch.dict('os.environ',{'MOVIL_HOST_IP':'127.0.0.1'}):
             with servir('pruebas/prueba.mp4') as url:
@@ -73,6 +85,26 @@ class SimulationTests(unittest.TestCase):
         with patch.object(publicar_reel,'importar'):
             publicar_reel.flujo(m,args)
         self.assertFalse(any('share-sheet-share-button' in labels for labels in m.taps))
+        # Only dry runs may acknowledge Instagram's exact five-hashtag rewrite.
+        import pathlib, tempfile
+        with tempfile.TemporaryDirectory() as directory:
+            caption=pathlib.Path(directory)/'caption.txt'
+            caption.write_text('Texto #a #b #c #d #e #f')
+            args.texto=str(caption)
+            for simulate in (True,False):
+                m=Fake(); m.salida=pathlib.Path(directory); args.simular=simulate
+                original_nodes=m.nodes
+                def normalized_nodes():
+                    nodes=original_nodes()
+                    nodes[0].set('value',m.text.replace('#f','f'))
+                    return nodes
+                m.nodes=normalized_nodes
+                with patch.object(publicar_reel,'importar'):
+                    if simulate: publicar_reel.flujo(m,args)
+                    else:
+                        with self.assertRaises(PantallaInesperada): publicar_reel.flujo(m,args)
+                self.assertFalse(any('share-sheet-share-button' in labels or 'Pubblica' in labels for labels in m.taps))
+            args.texto='pruebas/texto.txt'; args.simular=True
         m=Fake(); m.target={'name':'share-sheet-share-button'}
         with patch.object(publicar_reel,'importar'):
             with self.assertRaises(PantallaInesperada): publicar_reel.flujo(m,args)
