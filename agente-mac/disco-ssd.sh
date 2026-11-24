@@ -30,14 +30,19 @@ mkdir -p "$D/tmp" "$D/agente"
 mkdir -p "$APOYO"
 cat > "$APOYO/montar-disco.sh" <<'EOF'
 #!/bin/bash
-IMG=/Volumes/T7/PRINCIPAL-DATOS.sparsebundle
-[ -d /Volumes/PRINCIPAL-DATOS/agente ] && exit 0
-[ -d "$IMG" ] || exit 0
-# Si el T7 parpadea, la imagen puede quedar conectada pero desmontada: entonces `attach` no hace
-# nada. Se suelta y se vuelve a conectar.
-DEV=$(/usr/bin/hdiutil info | /usr/bin/awk -v img="$IMG" '$0 ~ "image-path" && index($0, img) {f=1} f && /^\/dev\/disk[0-9]+[ \t]/ {print $1; exit}')
-[ -n "$DEV" ] && /usr/bin/hdiutil detach -force "$DEV" >/dev/null 2>&1
-/usr/bin/hdiutil attach -nobrowse "$IMG" >/dev/null 2>&1
+# Monta las imágenes APFS del T7: la de datos de PRINCIPAL y la del proyecto (Codex). Si el T7
+# parpadea, una imagen puede quedar conectada pero desmontada: entonces `attach` no hace nada,
+# así que se suelta y se vuelve a conectar.
+montar() {
+  local img="$1" carpeta="$2" opciones="$3" dev
+  [ -d "$carpeta" ] && return 0
+  [ -d "$img" ] || return 0
+  dev=$(/usr/bin/hdiutil info | /usr/bin/awk -v img="$img" '$0 ~ "image-path" && index($0, img) {f=1} f && /^\/dev\/disk[0-9]+[ \t]/ {print $1; exit}')
+  [ -n "$dev" ] && /usr/bin/hdiutil detach -force "$dev" >/dev/null 2>&1
+  /usr/bin/hdiutil attach $opciones "$img" >/dev/null 2>&1
+}
+montar /Volumes/T7/PRINCIPAL-DATOS.sparsebundle /Volumes/PRINCIPAL-DATOS/agente -nobrowse
+montar "/Volumes/T7/Proyecto automatizacion.sparsebundle" "/Volumes/AutomatizacionProyecto/CLAUDE CODE" ""
 exit 0
 EOF
 chmod +x "$APOYO/montar-disco.sh"
