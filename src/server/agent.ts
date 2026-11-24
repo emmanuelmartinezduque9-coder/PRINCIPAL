@@ -1,3 +1,4 @@
+import { claimPhoneTask, appendPhoneChunk, finishPhoneTask, failPhoneTask, type ClaimedPhoneTask } from "@/server/phone-agent";
 import { appendMarketChunk, claimMarketTask, failMarketTask, finishMarketTask, MARKET_TASK, type ClaimedMarketData, type MarketResult } from "@/server/market-data";
 import { appendProfileChunk, claimProfileTask, failProfileTask, finishProfileTask, PROFILE_TASK, type ClaimedProfileFetch, type ProfileFetchResult } from "@/server/link-profiles";
 import {
@@ -82,7 +83,7 @@ export const MAX_LEASE_AGE_MS = 30 * 60_000;
  * productos (1.5.0); `pinterest` = buscar en Pinterest las referencias de una imagen cuando Pinterest
  * no deja a la nube (1.6.0). El montaje en el Mac (`montaje`, 1.3.x) se retiró el 23/11/2026: ahora monta la nube.
  */
-export const OPTIONAL_TASKS = ["enlace_medio", "perfil", "pinterest", "datos"] as const;
+export const OPTIONAL_TASKS = ["enlace_medio", "perfil", "pinterest", "datos", "movil"] as const;
 export type OptionalTask = (typeof OPTIONAL_TASKS)[number];
 /**
  * Lo más que espera una tarea en la cola desde que se pegó el enlace, con el Mac vivo: da para que
@@ -393,6 +394,7 @@ export type ClaimedTask =
       maxBytes: number;
     }
   /** `enlace_medio`: traer el vídeo de un enlace que necesita el montaje en la nube y entregarlo. */
+  | ClaimedPhoneTask
   | ClaimedMediaFetch
   /** `perfil`: leer el perfil de una cuenta (Instagram con Brave, TikTok con yt-dlp) y entregarlo en JSON. */
   | ClaimedProfileFetch
@@ -422,6 +424,8 @@ export async function claimTask(
   // Un Mac que no dice que sabe traer vídeos de enlaces para el montaje (anterior a 1.4.0) no se los lleva.
   const kinds = and(
     ne(agentTasks.kind, CLAUDE_CODE_TASK),
+    ne(agentTasks.kind, "phone_screen"),
+    options.can?.includes("movil") ? undefined : ne(agentTasks.kind, "phone_publish"),
     options.can?.includes("enlace_medio") ? undefined : ne(agentTasks.kind, MEDIA_FETCH_TASK),
     // Ni leer perfiles (anterior a 1.5.0).
     options.can?.includes("perfil") ? undefined : ne(agentTasks.kind, PROFILE_TASK),
@@ -435,6 +439,7 @@ export async function claimTask(
     eq(agentTasks.status, "queued"),
     eq(agentTasks.createdBy, agent.createdBy),
     kinds,
+    sql`(${agentTasks.kind} <> 'phone_publish' or exists (select 1 from publications p join phones m on m.id = p.phone_id where p.agent_task_id = ${agentTasks.id} and not m.paused))`,
     or(isNull(agentTasks.availableAt), lte(agentTasks.availableAt, now)),
   );
   for (let round = 0; round < CLAIM_ROUNDS; round++) {
@@ -445,6 +450,11 @@ export async function claimTask(
       .orderBy(asc(agentTasks.id))
       .limit(1);
     if (!candidate) return null;
+    if (candidate.kind === "phone_publish") {
+      const phone = await claimPhoneTask(candidate.id, queued, leaseValues(agentId, now));
+      if (phone) return phone;
+      return null;
+    }
     if (candidate.kind === MEDIA_FETCH_TASK) {
       const fetched = await claimMediaFetchTask(candidate.id, queued, leaseValues(agentId, now));
       if (fetched) return fetched;
@@ -556,6 +566,11 @@ export async function appendTaskChunk(
   // Primero, que la reserva y su sesión sean las de quien llama; solo entonces se prolonga.
   if (!isId(taskId)) throw taskLost();
   const [held] = await getDb().select({ kind: agentTasks.kind, uploadId: agentTasks.uploadId }).from(agentTasks).where(leasedBy(agentId, taskId));
+  if (held?.kind === "phone_publish") {
+    if (held.uploadId !== uploadId) throw taskLost();
+    await extendLease(agentId, taskId, now);
+    return appendPhoneChunk(taskId, uploadId, index, bytes);
+  }
   if (held?.kind === SONG_TASK || held?.kind === MEDIA_FETCH_TASK || held?.kind === PROFILE_TASK || held?.kind === MARKET_TASK || held?.kind === PINTEREST_TASK) {
     // Una canción, un vídeo de enlace para el montaje o un perfil: su sesión es la de la propia tarea.
     if (held.uploadId !== uploadId) throw taskLost();
@@ -602,6 +617,7 @@ export async function finishTask(agentId: number, taskId: number, result: TaskRe
     .where(eq(agentTasks.id, taskId));
   if (!found || found.agentId !== agentId) throw taskLost();
   // Una llamada a Claude se cierra (y se guarda) en `claude-mac`.
+  if (found.kind === "phone_publish") return finishPhoneTask(agentId, taskId, result, now);
   if (found.kind === CLAUDE_CODE_TASK) return finishClaudeCodeTask(agentId, taskId, result as ClaudeCodeResult, now);
   if (!("totalBytes" in result) && result.ok) throw new HttpError(400, "Resultado no válido.");
   // Un vídeo de enlace para el montaje se cierra (y se guarda) en `link-media`.
@@ -681,6 +697,7 @@ async function retryOrFailLink(tx: Tx, taskId: number, videoId: number, now: Dat
  * una canción no tiene vídeo: se borra lo que hubiera llegado.
  */
 async function failTask(task: { id: number; videoId: number | null; kind: string }, condition: SQL | undefined, reason: string, now: Date): Promise<void> {
+  if (task.kind === "phone_publish") return failPhoneTask(task.id, condition, reason, now);
   const { videoId } = task;
   if (task.kind === CLAUDE_CODE_TASK) return failClaudeCodeTask(task, condition, reason, now);
   if (task.kind === MEDIA_FETCH_TASK) return failMediaFetchTask(task, condition, reason, now);
@@ -720,6 +737,8 @@ export async function expireLeases(now: Date = new Date()): Promise<void> {
   const db = getDb();
   const waitLimit = new Date(now.getTime() - QUEUE_WAIT_MS);
   const expired = and(eq(agentTasks.status, "leased"), lt(agentTasks.leaseExpiresAt, now));
+  const phoneExpired = await db.select({ id: agentTasks.id }).from(agentTasks).where(and(expired, eq(agentTasks.kind, "phone_publish")));
+  for (const task of phoneExpired) await failPhoneTask(task.id, expired, "Se perdió la conexión durante la publicación; comprueba la cuenta antes de repetir.", now);
   const macSeen = db
     .select({ one: sql`1` })
     .from(agents)

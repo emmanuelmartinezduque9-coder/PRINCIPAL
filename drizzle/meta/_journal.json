@@ -428,6 +428,13 @@
       "when": 1795547940491,
       "tag": "0060_comparaciones_mac",
       "breakpoints": true
+    },
+    {
+      "idx": 61,
+      "version": "7",
+      "when": 1795550649036,
+      "tag": "0061_moviles_publicaciones",
+      "breakpoints": true
     }
   ]
 }

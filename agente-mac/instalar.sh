@@ -91,7 +91,9 @@ fi
 
 # 3. El programa.
 mkdir -p "$DESTINO" "$(dirname "$PLIST")" "$(dirname "$REGISTRO")"
-cp "$ORIGEN/agente.mjs" "$ORIGEN/lib.mjs" "$ORIGEN/perfil.mjs" "$ORIGEN/datos.mjs" "$ORIGEN/claude.mjs" "$ORIGEN/codex.mjs" "$ORIGEN/conectar-claude.sh" "$ORIGEN/README.md" "$DESTINO/"
+mkdir -p "$DESTINO/movil"
+cp "$ORIGEN/movil/"*.py "$ORIGEN/movil/README.md" "$DESTINO/movil/"
+cp "$ORIGEN/agente.mjs" "$ORIGEN/lib.mjs" "$ORIGEN/perfil.mjs" "$ORIGEN/datos.mjs" "$ORIGEN/claude.mjs" "$ORIGEN/codex.mjs" "$ORIGEN/telefonos.mjs" "$ORIGEN/conectar-claude.sh" "$ORIGEN/README.md" "$DESTINO/"
 echo "Programa copiado a $DESTINO"
 
 # 4. launchd: rutas completas, sin ~ ni PATH del terminal.

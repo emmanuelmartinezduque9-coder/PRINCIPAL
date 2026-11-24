@@ -630,7 +630,7 @@ export async function saveEdit(
   });
   await tx
     .update(videos)
-    .set({ editStatus: "hecho", editError: null })
+    .set({ editStatus: "hecho", editError: null, editReview: sql`case when exists (select 1 from products where products.id = ${videos.productId} and products.phone_id is not null) then 'pendiente' else null end`, editReviewReason: null })
     .where(and(eq(videos.id, input.videoId), eq(videos.editRunId, input.runId)));
   return { version };
 }

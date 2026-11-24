@@ -179,3 +179,28 @@ Si falta Codex o falla, usa Claude Code; la web conserva la API como último res
 Comparar entrega Claude sin esperar a Codex y guarda después ambas salidas y tiempos. El agente
 mantiene ocupado ese hueco hasta que terminen los dos, con el mismo tope de diez minutos.
 Los detalles de validación y el informe están en `docs/decisiones-claude-code-mac.md` del proyecto.
+
+## 1.10.0: productos delegados al móvil (24/11/2026)
+
+El agente anuncia `movil`, recoge `phone_publish` y ejecuta `python3 -B publicar_reel.py`
+sin `--simular`. Descarga exactamente el montaje aprobado con su ficha de agente; la ficha nunca
+se entrega a WDA ni al proceso Python. La descripción se guarda en UTF-8 y se entrega el resultado
+por trozos con la sesión de la reserva, incluida la captura final o de bloqueo.
+
+Configura cada teléfono en **Móviles** y asígnalo en **Producto → Móvil y cuentas**. Pausar detiene
+las siguientes publicaciones; una que ya se está ejecutando termina. El agente consulta las
+pantallas WDA en paralelo cada cinco segundos, las reduce a JPEG y conserva solo la última en la
+web. No consulta la pantalla de un teléfono mientras publica.
+
+El instalador copia también los scripts existentes de `movil/`. Para usar otra ubicación, define
+`PRINCIPAL_MOVIL_DIR` al lanzar el agente. La dirección WDA se toma de la ficha del móvil; sin
+ella, el publicador usa su configuración habitual (`WDA_URL` o su valor por defecto).
+
+Las cuentas configuradas identifican el calendario. El publicador existente utiliza **la cuenta
+abierta en cada aplicación**; no cambia de cuenta. Deja abiertas las cuentas indicadas antes de
+delegar un producto. La interfaz admite varias cuentas y teléfonos, pero el cambio automático de
+cuenta requiere ampliar el publicador en otra tarea.
+
+Un fallo, una reserva caducada o una entrega perdida no vuelven a ejecutar la publicación.
+Comprueba la cuenta antes de volver a pedir un envío: podría haberse publicado aunque no llegara
+el resultado. No se ha realizado ninguna publicación real durante el desarrollo.

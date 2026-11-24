@@ -10,6 +10,8 @@
 // Configuración: ~/.principal-agente.json  { "url": "https://…", "token": "pra_…" }
 // (o las variables PRINCIPAL_URL y PRINCIPAL_AGENTE_TOKEN). Ver README.md.
 
+import { phoneScreens } from "./telefonos.mjs";
+import { call } from "./lib.mjs";
 import { spawn } from "node:child_process";
 import { readFileSync, rmSync } from "node:fs";
 import fs from "node:fs/promises";
@@ -125,7 +127,8 @@ async function waitForTools() {
 // Desde 1.6.0 busca en Pinterest las referencias de las imágenes cuando Pinterest no deja a la nube.
 // Desde 1.7.0 busca datos de mercado reales (Amazon, anuncios de Meta, TikTok, YouTube) para
 // «Buscar nicho / ángulo / audiencia».
-config.puede = ["enlace_medio", "perfil", "pinterest", "datos"];
+config.puede = ["enlace_medio", "perfil", "pinterest", "datos", "movil"];
+void phoneScreens(config, deps, call);
 log("Listo para traer enlaces (también los que pide el montaje en la nube).");
 
 // Desde 1.8.0 hace las llamadas a Claude del dueño con el Claude Code de este Mac (su plan, no la

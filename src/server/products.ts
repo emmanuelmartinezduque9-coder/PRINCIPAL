@@ -272,3 +272,20 @@ export async function productOwnerId(productId: number): Promise<number | null> 
   const [row] = await getDb().select({ createdBy: schema.products.createdBy }).from(schema.products).where(eq(schema.products.id, productId));
   return row?.createdBy ?? null;
 }
+
+/** Móvil y cuentas de un producto (productos delegados al móvil). Sin comprobar acceso: quien llama ya lo hizo. */
+export async function productDelegation(productId: number): Promise<{ phoneId: number | null; instagramAccount: string | null; facebookAccount: string | null; publishGapHours: number } | null> {
+  const [row] = await getDb()
+    .select({ phoneId: schema.products.phoneId, instagramAccount: schema.products.instagramAccount, facebookAccount: schema.products.facebookAccount, publishGapHours: schema.products.publishGapHours })
+    .from(schema.products)
+    .where(eq(schema.products.id, productId));
+  return row ?? null;
+}
+
+/** Guarda el móvil y las cuentas de un producto (ya comprobados por `phones.ts`). */
+export async function saveProductDelegation(
+  productId: number,
+  input: { phoneId: number | null; instagramAccount: string | null; facebookAccount: string | null; publishGapHours: number },
+): Promise<void> {
+  await getDb().update(schema.products).set(input).where(eq(schema.products.id, productId));
+}

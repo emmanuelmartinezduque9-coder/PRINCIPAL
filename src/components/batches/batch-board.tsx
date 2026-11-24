@@ -532,6 +532,8 @@ export function BatchBoard({ batchId }: { batchId: number }) {
   /** «Por revisar»: solo las filas con algo que mirar. */
   const [onlyReview, setOnlyReview] = useState(false);
 
+  const videoReview = useQuery({queryKey:["review-videos",batchId],queryFn:()=>api<{videos:{editReview:string}[]}>(`/api/lotes/${batchId}/revisar-videos`),refetchInterval:5000});
+  const videoReviewCount = videoReview.data?.videos.filter(v=>v.editReview === "pendiente").length ?? 0;
   const back = { href: "/lotes", label: "Lotes" };
   if (query.isLoading) return <BoardSkeleton />;
   const data = query.data;
@@ -627,8 +629,9 @@ export function BatchBoard({ batchId }: { batchId: number }) {
       <PageHeader
         back={back}
         title={data.batch.name}
-        actions={
-          data.batch.mine && rows.length > 0 && (anyBulk || toReview.length > 0 || onlyReview) ? (
+        actions={<>
+          {videoReviewCount > 0 ? <Link href={`/lotes/${batchId}/revisar-videos`} className={buttonVariants()}>Revisar vídeos ({videoReviewCount})</Link> : null}
+          {data.batch.mine && rows.length > 0 && (anyBulk || toReview.length > 0 || onlyReview) ? (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button variant="outline" className="h-9 gap-1.5 px-3" aria-label="Más acciones" disabled={running !== null}>
@@ -665,8 +668,8 @@ export function BatchBoard({ batchId }: { batchId: number }) {
                 ) : null}
               </DropdownMenuContent>
             </DropdownMenu>
-          ) : null
-        }
+          ) : null}
+        </>}
       >
         <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground tabular-nums">
           <span className="inline-flex h-7 items-center gap-1.5 rounded-full bg-muted px-2.5" title="Vídeos">

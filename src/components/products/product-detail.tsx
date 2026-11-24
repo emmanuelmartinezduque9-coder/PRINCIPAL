@@ -1,4 +1,5 @@
 "use client";
+import { ProductPhone } from "./product-phone";
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Archive, ArchiveRestore, Clapperboard, CircleAlert, Compass, Ellipsis, Images, Languages, Loader2, MapPin, PackageX, Pencil } from "lucide-react";
@@ -251,6 +252,7 @@ export function ProductDetail({ id, initialTab = "fotos" }: { id: string; initia
       </PageHeader>
 
       <IntakePanel productId={product.id} />
+      <ProductPhone key={product.id} product={product} />
 
       <Tabs
         value={tab}

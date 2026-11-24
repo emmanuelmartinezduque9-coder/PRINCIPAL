@@ -1,3 +1,4 @@
+import { sweepPublications } from "@/server/videos/publications";
 import { and, eq, inArray, lt } from "drizzle-orm";
 import { getDb, schema } from "@/db/client";
 import { expireLeases } from "@/server/agent";
@@ -48,6 +49,7 @@ async function failStaleAnalyses(now: Date): Promise<number> {
 }
 
 export async function videoSweep(now: Date = new Date(), deps: GenDeps = {}): Promise<void> {
+  try { await sweepPublications(now); } catch (error) { console.error("[moviles] No se pudo avanzar la cola:", error); }
   try {
     await sweepGenerations({ now: () => now, ...deps });
   } catch (error) {

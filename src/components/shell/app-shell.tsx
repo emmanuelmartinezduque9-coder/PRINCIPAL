@@ -1,7 +1,7 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { BookOpen, Film, Layers, LogOut, Music, Package, Settings, TrendingUp, UserRound, Users, Wallet, type LucideIcon } from "lucide-react";
+import { Smartphone, BookOpen, Film, Layers, LogOut, Music, Package, Settings, TrendingUp, UserRound, Users, Wallet, type LucideIcon } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef } from "react";
@@ -25,6 +25,7 @@ const NAV: NavItem[] = [
   { href: "/productos", label: "Productos", icon: Package },
   { href: "/lotes", label: "Lotes", icon: Layers },
   { href: "/biblioteca", label: "Biblioteca", icon: Film },
+  { href: "/moviles", label: "Móviles", icon: Smartphone },
   { href: "/canciones", label: "Canciones", icon: Music },
   { href: "/avatares", label: "Avatares", icon: UserRound },
   { href: "/mejoras", label: "Mejoras", icon: TrendingUp },

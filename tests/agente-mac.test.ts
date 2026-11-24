@@ -517,8 +517,8 @@ describe("canciones", () => {
     };
   }
 
-  it("el Mac es de la versión 1.9.0 (trae enlaces, lee perfiles, busca en Pinterest, mide datos de mercado y hace las llamadas del dueño con Claude Code o Codex)", () => {
-    expect(VERSION).toBe("1.9.0");
+  it("el Mac es de la versión 1.10.0 (publica en el móvil, trae enlaces, lee perfiles, busca en Pinterest, mide datos de mercado y hace las llamadas del dueño con Claude Code o Codex)", () => {
+    expect(VERSION).toBe("1.10.0");
   });
 
   it("saca el audio como MP3 con una lista de argumentos fija y el enlace detrás de `--`", () => {
@@ -636,7 +636,7 @@ describe("enlaces del montaje en la nube", () => {
 
   it("el programa del Mac pide siempre `enlace_medio` y ya no monta", () => {
     const source = fsSync.readFileSync(path.resolve(__dirname, "..", "agente-mac", "agente.mjs"), "utf8");
-    expect(source).toContain('config.puede = ["enlace_medio", "perfil", "pinterest", "datos"]');
+    expect(source).toContain('config.puede = ["enlace_medio", "perfil", "pinterest", "datos", "movil"]');
     expect(source).not.toMatch(/montaje"|checkMontaje|montar_auto/);
   });
 
@@ -930,7 +930,7 @@ describe("instalar.sh", () => {
     const first = run();
     expect(first.status, first.stderr).toBe(0);
     const dest = path.join(home, ".principal-tools", "agente-mac");
-    expect(fsSync.readdirSync(dest).sort()).toEqual(["README.md", "agente.mjs", "claude.mjs", "codex.mjs", "conectar-claude.sh", "datos.mjs", "lib.mjs", "perfil.mjs"]);
+    expect(fsSync.readdirSync(dest).sort()).toEqual(["README.md", "agente.mjs", "claude.mjs", "codex.mjs", "conectar-claude.sh", "datos.mjs", "lib.mjs", "movil", "perfil.mjs", "telefonos.mjs"]);
     expect(fsSync.readFileSync(path.join(dest, "lib.mjs"), "utf8")).toBe(fsSync.readFileSync(path.join(ROOT, "agente-mac", "lib.mjs"), "utf8"));
 
     const plistPath = path.join(home, "Library", "LaunchAgents", "com.principal.agente.plist");

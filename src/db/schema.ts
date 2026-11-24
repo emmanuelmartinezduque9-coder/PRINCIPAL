@@ -70,6 +70,11 @@ export const invites = pgTable("invites", {
  */
 export const products = pgTable("products", {
   id: bigserial("id", { mode: "number" }).primaryKey(),
+  phoneId: bigint("phone_id", { mode: "number" }).references((): AnyPgColumn => phones.id),
+  instagramAccount: text("instagram_account"),
+  facebookAccount: text("facebook_account"),
+  /** Horas entre un vídeo publicado y el siguiente en la misma cuenta (3 por defecto; máximo 2 al día). */
+  publishGapHours: integer("publish_gap_hours").notNull().default(3),
   name: text("name").notNull(),
   /** La frase de qué hace el producto. */
   summary: text("summary").notNull(),
@@ -696,6 +701,8 @@ export const videos = pgTable(
      * Claude (`pendiente`), los rótulos de la referencia ya cambiados que usan los montajes siguientes (`rotulos`) y
      * lo que se pidió antes (`cambios`).
      */
+    editReview: text("edit_review").$type<"pendiente" | "aprobado" | "rechazado">(),
+    editReviewReason: text("edit_review_reason"),
     editOverride: jsonb("edit_override").$type<EditOverride>(),
     /**
      * Imágenes iniciales por ronda que pidió el dueño en la tarjeta (1–4). `null`: las del lote o,
@@ -1155,7 +1162,7 @@ export const agentTasks = pgTable(
     uniqueIndex("agent_tasks_one_active_pinterest_search")
       .on(t.url)
       .where(sql`${t.kind} = 'pinterest_search' and ${t.status} in ('queued', 'leased')`),
-    check("agent_tasks_kind_valid", sql`${t.kind} in ('link_download', 'song_download', 'montaje', 'media_fetch', 'profile_fetch', 'pinterest_search', 'market_data', 'claude_code')`),
+    check("agent_tasks_kind_valid", sql`${t.kind} in ('link_download', 'song_download', 'montaje', 'media_fetch', 'profile_fetch', 'pinterest_search', 'market_data', 'claude_code', 'phone_publish', 'phone_screen')`),
     // Una referencia y un montaje son siempre de un vídeo; una canción, de ninguno.
     check("agent_tasks_target_valid", sql`(${t.kind} in ('link_download', 'montaje')) = (${t.videoId} is not null)`),
     check("agent_tasks_status_valid", sql`${t.status} in ('queued', 'leased', 'done', 'failed')`),
@@ -1776,3 +1783,41 @@ export const llmComparisons = pgTable("llm_comparisons", {
   codexTruncated: boolean("codex_truncated").notNull().default(false),
   createdAt: instant("created_at").notNull().defaultNow(),
 });
+
+/** Móviles compartidos; solo se conserva su última pantalla. */
+export const phones = pgTable("phones", {
+  id: bigserial("id", { mode: "number" }).primaryKey(),
+  name: text("name").notNull(),
+  wdaUrl: text("wda_url"),
+  paused: boolean("paused").notNull().default(false),
+  activity: text("activity").notNull().default("Esperando"),
+  lastSeenAt: instant("last_seen_at"),
+  screenshot: bytea("screenshot"),
+  screenshotAt: instant("screenshot_at"),
+});
+
+export const publications = pgTable("publications", {
+  id: bigserial("id", { mode: "number" }).primaryKey(),
+  videoId: bigint("video_id", { mode: "number" }).notNull().references(() => videos.id),
+  editId: bigint("edit_id", { mode: "number" }).notNull().references(() => edits.id),
+  phoneId: bigint("phone_id", { mode: "number" }).notNull().references(() => phones.id),
+  network: text("network").$type<"instagram" | "facebook">().notNull(),
+  account: text("account").notNull(),
+  description: text("description").notNull(),
+  status: text("status").$type<"en_cola" | "publicando" | "publicada" | "fallida" | "cancelada">().notNull().default("en_cola"),
+  scheduledFor: instant("scheduled_for").notNull(),
+  /** Separación del producto al aprobar (horas): se respeta también al reprogramar. */
+  gapHours: integer("gap_hours").notNull().default(3),
+  startedAt: instant("started_at"),
+  finishedAt: instant("finished_at"),
+  resultUrl: text("result_url"),
+  screenshot: bytea("screenshot"),
+  error: text("error"),
+  agentTaskId: bigint("agent_task_id", { mode: "number" }).references(() => agentTasks.id),
+  createdAt: instant("created_at").notNull().defaultNow(),
+}, (t) => [
+  unique("publications_edit_network").on(t.editId, t.network),
+  index("publications_queue").on(t.phoneId, t.status, t.scheduledFor),
+  check("publications_network_valid", sql`${t.network} in ('instagram', 'facebook')`),
+  check("publications_status_valid", sql`${t.status} in ('en_cola', 'publicando', 'publicada', 'fallida', 'cancelada')`),
+]);
