@@ -33,12 +33,17 @@ cat > "$APOYO/montar-disco.sh" <<'EOF'
 IMG=/Volumes/T7/PRINCIPAL-DATOS.sparsebundle
 [ -d /Volumes/PRINCIPAL-DATOS/agente ] && exit 0
 [ -d "$IMG" ] || exit 0
+# Si el T7 parpadea, la imagen puede quedar conectada pero desmontada: entonces `attach` no hace
+# nada. Se suelta y se vuelve a conectar.
+DEV=$(/usr/bin/hdiutil info | /usr/bin/awk -v img="$IMG" '$0 ~ "image-path" && index($0, img) {f=1} f && /^\/dev\/disk[0-9]+[ \t]/ {print $1; exit}')
+[ -n "$DEV" ] && /usr/bin/hdiutil detach -force "$DEV" >/dev/null 2>&1
 /usr/bin/hdiutil attach -nobrowse "$IMG" >/dev/null 2>&1
 exit 0
 EOF
 chmod +x "$APOYO/montar-disco.sh"
 PLIST_DISCO="$HOME/Library/LaunchAgents/com.principal.disco.plist"
-if [ ! -f "$PLIST_DISCO" ]; then
+if ! grep -q StartInterval "$PLIST_DISCO" 2>/dev/null; then
+  launchctl bootout "gui/$(id -u)/com.principal.disco" 2>/dev/null || true
   cat > "$PLIST_DISCO" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -48,6 +53,7 @@ if [ ! -f "$PLIST_DISCO" ]; then
   <key>ProgramArguments</key><array><string>$APOYO/montar-disco.sh</string></array>
   <key>RunAtLoad</key><true/>
   <key>WatchPaths</key><array><string>/Volumes</string></array>
+  <key>StartInterval</key><integer>60</integer>
   <key>ProcessType</key><string>Background</string>
 </dict>
 </plist>
