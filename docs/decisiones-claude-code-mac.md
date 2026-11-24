@@ -128,6 +128,24 @@ el Claude Code de su Mac (su suscripción) para todo lo que hace Claude; la web 
 - Una vez: reporte en Mejoras ligado al montaje 67, de tipo rótulos, con el arreglo de código aplicado
   (`recordAppliedFixOnce`), y el 24 se vuelve a montar.
 
+## «¿Qué quieres cambiar?» en el montaje (24/11/2026)
+
+- En el diálogo del montaje (tablero del lote) y en el paso «Montaje» del vídeo: un campo con dictado y
+  «Volver a montar con este cambio». Sin preguntas ni confirmaciones de coste (el montaje es barato). Lo puede
+  pedir cualquiera que vea el vídeo (colaboradores incluidos); Claude va con el tope de quien lo pide (el dueño,
+  al Mac).
+- `POST /api/videos/<id>/montaje/cambio` (`cambio-montaje.ts`): crea el reporte en «Mejoras» ligado a la versión
+  que se vio (así una corrección general se aprende para los demás), guarda el cambio en
+  `videos.edit_override.pendiente` y pone el montaje en la cola.
+- En el montaje, después de leer los rótulos de la referencia, Claude aplica el cambio a la ficha (rótulos, orden
+  y tiempos, emojis, CTA, música de la biblioteca, doblaje sí/no) y solo a lo que pide. Los rótulos cambiados
+  quedan en `edit_override.rotulos` y mandan en los montajes siguientes; el historial en `cambios`. Si cambia la
+  música o el doblaje, la ficha se rehace y el montaje vuelve a empezar con ella. Sin Claude, espera como la lectura.
+- Los avisos del montaje ya no se pintan en amarillo (regla 2): van plegados en «Detalles técnicos».
+- El diálogo enseñaba una versión vieja («Versión 1» con «in den USA» cuando ya estaba el montaje 68): el lote no
+  se vuelve a pedir si no hay nada en marcha, y un remontaje hecho por el servidor no se veía hasta recargar.
+  Ahora, al abrir el diálogo se pide el lote otra vez.
+
 ## 1.8.2 (24/11/2026): «no tiene sesión» y el disco de datos del SSD
 
 - A las 13:31 la imagen de datos del SSD (`/Volumes/PRINCIPAL-DATOS`, ver `docs/datos-en-ssd.md`) se

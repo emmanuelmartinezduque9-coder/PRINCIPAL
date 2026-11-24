@@ -23,7 +23,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { avatarImageUrl } from "@/components/avatars/labels";
 import { AVATAR_MODE_LABELS, KIND_LABELS } from "@/components/videos/brief-labels";
 import { creditsLabel, formatCredits } from "@/components/videos/labels";
-import { EditDownload, editDownloadUrl, EditNotice, EditPlayer, SelfCheck, StartEditButton, useStartEdit } from "@/components/videos/edit-parts";
+import { EditChange, EditDownload, editDownloadUrl, EditNotice, EditPlayer, SelfCheck, StartEditButton, useStartEdit } from "@/components/videos/edit-parts";
 import { useReferenceUploads } from "@/components/videos/upload-provider";
 import { requestLink, useMac } from "@/components/videos/use-mac";
 import { api, ApiError } from "@/lib/api";
@@ -418,7 +418,8 @@ function EditCell({ row, state, onDone }: { row: BatchRowJson; state: StepState;
   const start = useStartEdit(row.id, onDone);
   if (row.edit.latest) {
     return (
-      <Dialog>
+      // Al abrirlo se pide el lote otra vez: un montaje hecho en el servidor (sin sondeo) no se queda en la versión vieja.
+      <Dialog onOpenChange={(open) => (open ? onDone() : undefined)}>
         <DialogTrigger asChild>
           <button
             type="button"
@@ -439,6 +440,7 @@ function EditCell({ row, state, onDone }: { row: BatchRowJson; state: StepState;
               <EditNotice edit={row.edit} />
               <EditDownload videoId={row.id} edit={row.edit} />
               <StartEditButton videoId={row.id} edit={row.edit} onDone={onDone} />
+              <EditChange videoId={row.id} edit={row.edit} onDone={onDone} />
               <SelfCheck edit={row.edit} />
             </div>
           </div>

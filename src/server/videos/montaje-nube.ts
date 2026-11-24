@@ -18,8 +18,9 @@ import { storedOriginalKey } from "@/server/videos/archive";
 import { openClipStream } from "@/server/videos/clip";
 import { dubbedAudio } from "@/server/videos/doblaje";
 import { referenceEdit, targetPlace, withLocalPlaces, type ReferenceEdit } from "@/server/videos/edicion-referencia";
+import { applyEditChange, saveEditChange, type EditChangeResult } from "@/server/videos/cambio-montaje";
 import { localizeText, marketOf } from "@/server/videos/localization";
-import { batchOfVideo, cleanSelfCheck, failEdit, MAX_EDIT_BYTES, readReferenceAudio, saveEdit, settleBatch, type EditSpec } from "@/server/videos/edits";
+import { batchOfVideo, cleanSelfCheck, currentSpec, failEdit, MAX_EDIT_BYTES, readReferenceAudio, saveEdit, settleBatch, type EditSpec } from "@/server/videos/edits";
 
 /**
  * El montaje en la nube: el proceso en segundo plano de Railway monta los vídeos de la cola
@@ -436,6 +437,7 @@ export async function runEdit(run: Run, deps: MontajeDeps = {}): Promise<"done" 
         note: schema.videos.note,
         adaptation: schema.videos.adaptation,
         batchId: schema.videos.batchId,
+        editOverride: schema.videos.editOverride,
       })
       .from(schema.videos)
       .where(eq(schema.videos.id, spec.videoId));
@@ -480,6 +482,51 @@ export async function runEdit(run: Run, deps: MontajeDeps = {}): Promise<"done" 
       }
     } else if (!spec.editReferenceUrl) {
       notes.push("No está el vídeo de referencia de la réplica: se monta con el patrón de siempre");
+    }
+
+    // «¿Qué quieres cambiar?» (`cambio-montaje.ts`): los rótulos ya cambiados antes mandan sobre la lectura, y un
+    // cambio pedido se aplica ahora con Claude, solo a lo que pide.
+    const override = owner?.editOverride ?? null;
+    if (override?.rotulos && edicion) {
+      edicion = { ...edicion, cues: override.rotulos.map((r) => ({ startS: r.desde_s, source: "", text: r.texto, es: "", cta: r.cta })) };
+    }
+    if (override?.pendiente) {
+      let changed: EditChangeResult;
+      try {
+        changed = await applyEditChange({
+          videoId: spec.videoId,
+          runId: run.id,
+          userId: override.pendiente.por,
+          productId: owner?.productId ?? 0,
+          product: spec.product,
+          instruction: override.pendiente.texto,
+          cues: edicion?.cues ?? [],
+          texts: spec.texts,
+          song: spec.song ? { id: spec.song.id, title: spec.song.title } : null,
+          dub: spec.dubDialogue === true,
+          gateway: deps.gateway,
+        });
+      } catch (error) {
+        if (error instanceof LlmCapReachedError && nowOf(deps).getTime() - run.createdAt.getTime() < CLAUDE_WAIT_MS) {
+          console.warn(`[montaje] Vídeo ${spec.videoId}: Claude no está disponible para el cambio pedido (${error.message}); el montaje espera.`);
+          await getDb().update(runs).set({ error: WAITING_CLAUDE }).where(eq(runs.id, run.id));
+          await defer(run, CLAUDE_RETRY_MS, nowOf(deps));
+          return "deferred";
+        }
+        await finishFailed(run, "No se pudo aplicar el cambio pedido: vuelve a montar para intentarlo otra vez.", messageOf(error), nowOf(deps), notes);
+        return "failed";
+      }
+      await saveEditChange(spec.videoId, override, changed, edicion !== null, nowOf(deps));
+      console.log(`[montaje] Vídeo ${spec.videoId}: cambio pedido aplicado (montaje ${run.id}): ${changed.summary}`);
+      if (changed.songId !== undefined || changed.dub !== undefined) {
+        // Otra música u otro doblaje: la ficha se rehace y el montaje vuelve a empezar con ella (el cambio ya está guardado).
+        await getDb().update(runs).set({ spec: await currentSpec(spec.videoId) }).where(eq(runs.id, run.id));
+        await defer(run, 0, nowOf(deps));
+        return "deferred";
+      }
+      if (edicion) edicion = { ...edicion, cues: changed.cues };
+      spec.texts = changed.texts;
+      notes.push(`Cambio pedido aplicado: ${changed.summary}`);
     }
 
     // Ningún montaje sale mudo (orden del 24/11/2026): sin canción ni audio de la referencia guardado, el audio del

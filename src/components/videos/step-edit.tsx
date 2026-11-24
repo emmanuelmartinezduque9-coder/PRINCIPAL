@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { api } from "@/lib/api";
-import { EditDownload, EditNotice, EditPlayer, SelfCheck, StartEditButton } from "./edit-parts";
+import { EditChange, EditDownload, EditNotice, EditPlayer, SelfCheck, StartEditButton } from "./edit-parts";
 import type { VideoViewJson } from "./labels";
 import { ReportButton } from "@/components/mejoras/report-button";
 
@@ -72,6 +72,7 @@ export function StepEdit({ view }: { view: VideoViewJson }) {
         <EditDownload videoId={video.id} edit={edit} />
         {/* El primer montaje se pide solo al terminar el clip: aquí solo «Volver a montar». */}
         {edit.latest !== null || edit.status === "fallido" ? <StartEditButton videoId={video.id} edit={edit} /> : null}
+        <EditChange videoId={video.id} edit={edit} />
         <SelfCheck edit={edit} />
         <EditTexts key={`${view.editTexts.main}|${view.editTexts.cta}`} view={view} />
         <ReportButton target={{ stage: "montaje", videoId: video.id }} className="self-start" />

@@ -1,10 +1,12 @@
 "use client";
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { CircleAlert, Download, Loader2, RotateCcw, Scissors, VideoOff } from "lucide-react";
+import { CircleAlert, Download, Loader2, RotateCcw, Scissors, Sparkles, VideoOff } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { Button, buttonVariants } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
+import { DictateButton } from "@/components/videos/dictate-button";
 import { api } from "@/lib/api";
 import type { Serialized } from "@/lib/api";
 import { cn } from "@/lib/utils";
@@ -55,6 +57,61 @@ export function StartEditButton({ videoId, edit, onDone, className }: { videoId:
       {start.isPending ? <Loader2 className="animate-spin" data-icon="inline-start" /> : again ? <RotateCcw data-icon="inline-start" /> : <Scissors data-icon="inline-start" />}
       {again ? "Volver a montar" : "Montar"}
     </Button>
+  );
+}
+
+/** Lo más largo que se acepta en «¿Qué quieres cambiar?» (el servidor, `MAX_CHANGE_CHARS`). */
+const MAX_CHANGE_CHARS = 2_000;
+
+/**
+ * «¿Qué quieres cambiar?» (texto o dictado) y «Volver a montar con este cambio»: Claude lo aplica al montaje
+ * (rótulos, orden y tiempos, emojis, CTA, música, doblaje) y el vídeo se vuelve a montar. Sin confirmaciones.
+ * Lo puede pedir cualquiera que vea el vídeo; queda como reporte en «Mejoras».
+ */
+export function EditChange({ videoId, edit, onDone, className }: { videoId: number; edit: EditJson; onDone?: () => void; className?: string }) {
+  const client = useQueryClient();
+  const [text, setText] = useState("");
+  const send = useMutation({
+    mutationFn: () => api(`/api/videos/${videoId}/montaje/cambio`, { method: "POST", body: JSON.stringify({ instruccion: text.trim() }) }),
+    onSuccess: () => {
+      setText("");
+      toast.success("Volviendo a montar con tu cambio.");
+    },
+    onError: (error) => toast.error(error instanceof Error ? error.message : "No se pudo pedir el cambio."),
+    onSettled: () => {
+      void client.invalidateQueries({ queryKey: ["video", videoId] });
+      onDone?.();
+    },
+  });
+  if (!edit.latest || editRunning(edit)) return null;
+  const ready = text.trim().length > 0 && !send.isPending;
+  return (
+    <form
+      className={cn("flex flex-col gap-2", className)}
+      onSubmit={(event) => {
+        event.preventDefault();
+        if (ready) send.mutate();
+      }}
+    >
+      <label htmlFor={`cambio-${videoId}`} className="text-sm font-medium">
+        ¿Qué quieres cambiar?
+      </label>
+      <div className="relative">
+        <Textarea
+          id={`cambio-${videoId}`}
+          value={text}
+          maxLength={MAX_CHANGE_CHARS}
+          placeholder="P. ej. «el primer rótulo que diga Berlin en vez de USA»"
+          onChange={(event) => setText(event.target.value)}
+          className="min-h-20 pr-10"
+        />
+        <DictateButton iconOnly className="absolute top-1.5 right-1.5" onText={(spoken) => setText((prev) => (prev ? `${prev} ${spoken}` : spoken))} />
+      </div>
+      <Button type="submit" className="h-11 gap-2" disabled={!ready}>
+        {send.isPending ? <Loader2 className="animate-spin" data-icon="inline-start" /> : <Sparkles data-icon="inline-start" />}
+        Volver a montar con este cambio
+      </Button>
+    </form>
   );
 }
 
@@ -146,15 +203,16 @@ export function SelfCheck({ edit }: { edit: EditJson }) {
           <dd className="font-medium">{edit.latest.version}</dd>
         </div>
       </dl>
+      {/* Sin avisos a la vista (regla fija 2 del dueño): lo que anotó el montaje queda plegado. */}
       {check && check.avisos.length > 0 ? (
-        <ul className="flex flex-col gap-1 text-xs text-muted-foreground">
-          {check.avisos.map((aviso, index) => (
-            <li key={index} className="flex items-start gap-1.5">
-              <CircleAlert className="mt-px size-3.5 shrink-0 text-warning-ink" aria-hidden />
-              {aviso}
-            </li>
-          ))}
-        </ul>
+        <details className="text-xs text-muted-foreground">
+          <summary className="cursor-pointer select-none">Detalles técnicos</summary>
+          <ul className="mt-1.5 flex flex-col gap-1">
+            {check.avisos.map((aviso, index) => (
+              <li key={index}>{aviso}</li>
+            ))}
+          </ul>
+        </details>
       ) : null}
     </div>
   );

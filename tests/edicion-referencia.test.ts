@@ -13,6 +13,8 @@ import { LocalStore, setObjectStoreForTests } from "@/lib/object-store";
 import type { AuthUser } from "@/server/auth";
 import { saveCredential } from "@/server/credentials";
 import { REFERENCE_EDIT_INSTRUCTIONS, refineSwitch, targetPlace, withLocalPlaces, withoutThirdParties } from "@/server/videos/edicion-referencia";
+import { setAssignments } from "@/server/access";
+import { requestEditChange } from "@/server/videos/cambio-montaje";
 import { startEdit, type EditSpec } from "@/server/videos/edits";
 import { processReference } from "@/server/videos/intake";
 import { claimRun, runEdit, type MontajeDeps } from "@/server/videos/montaje-nube";
@@ -54,10 +56,15 @@ let fontPath: string;
 let store: LocalStore;
 let ana: AuthUser;
 const calls: Array<LlmCall<unknown>> = [];
+/** Lo que contesta Claude al «¿Qué quieres cambiar?» del montaje (`cambio-montaje.ts`). */
+let changeAnswer: Record<string, unknown> = {};
 
 const gateway: LlmGateway = {
   async call<T>(request: LlmCall<T>): Promise<LlmResult<T>> {
     calls.push(request as LlmCall<unknown>);
+    if (request.stepKey.includes(":cambio:")) {
+      return { text: "", data: changeAnswer as T, model: "prueba", usage: { inputTokens: 0, outputTokens: 0 } as never, costMicros: 0, spendEntryId: 0, ruleVersions: {}, webSources: [] };
+    }
     const data = {
       rotulos: [
         { desde_s: 0, texto_original: "Frozen fans RUN to H&M ❄️🥺", texto_adaptado: "Eisfans, RENNT zu|EisWerk ❄️🍦", traduccion_es: "Fans del helado, corred", es_cta: false, franja_superior: 0.15, franja_inferior: 0.25 },
@@ -302,5 +309,88 @@ describe("lugares de la referencia en los rótulos (regla 6c, vídeo 24)", () =>
     // Nada que tocar: palabras que contienen las siglas, el propio destino y la tienda.
     expect(withLocalPlaces("MUSS PLUS USB in Berlin bei dm", [], "Berlin")).toBe("MUSS PLUS USB in Berlin bei dm");
     expect(withLocalPlaces("Hamburg ist schön", ["Hamburg"], "Hamburg")).toBe("Hamburg ist schön");
+  });
+});
+
+describe("«¿Qué quieres cambiar?» en el montaje", () => {
+  const cueTexts = (row: { notes: string[] | null }) =>
+    JSON.parse(String(row.notes!.find((n) => n.startsWith("edicion:"))).slice("edicion:".length)).rotulos.map((r: { texto: string }) => r.texto);
+
+  async function runNext() {
+    const outcome = await runEdit((await claimRun(new Date()))!, deps());
+    return outcome;
+  }
+
+  it("Claude aplica el cambio a los rótulos, se vuelve a montar ese vídeo, queda en Mejoras y los siguientes montajes lo conservan", async () => {
+    await store.putBuffer("referencias/x/ref.mp4", mp4, { contentType: "video/mp4" });
+    const video = await videoWithClip({ referenceStorageKey: "referencias/x/ref.mp4" });
+    expect((await mount(video.id)).outcome).toBe("done");
+    changeAnswer = {
+      rotulos: [
+        { desde_s: 0, texto: "Eisfans in Berlin, RENNT zu|EisWerk ❄️🍦", cta: false },
+        { desde_s: 1.2, texto: "Kommentiere „EisWerk“ für den Link 😅", cta: true },
+      ],
+      texto_principal: "EISWERK 😍",
+      cta: "Kommentiere „EisWerk“",
+      cambia_cancion: false,
+      cancion_id: null,
+      doblar: "igual",
+      resumen: "El primer rótulo dice Berlin.",
+    };
+    const { runId, reportId } = await requestEditChange(ana, video.id, "  que el primer rótulo diga que es en Berlín  ");
+    expect(await runNext()).toBe("done");
+    const [row] = await getDb().select().from(schema.editRuns).where(eq(schema.editRuns.id, runId));
+    expect(cueTexts(row)).toEqual(["Eisfans in Berlin, RENNT zu|EisWerk ❄️🍦", "Kommentiere „EisWerk“ für den Link 😅"]);
+    expect(row.notes).toContain("Cambio pedido aplicado: El primer rótulo dice Berlin.");
+    // A Claude le llega la ficha actual (los rótulos leídos) y el cambio tal cual.
+    const change = calls.find((c) => c.stepKey.includes(":cambio:"))!;
+    expect(JSON.stringify(change.content)).toContain("Eisfans, RENNT zu|EisWerk");
+    expect(JSON.stringify(change.content)).toContain("que el primer rótulo diga que es en Berlín");
+    expect(change.userId).toBe(ana.id);
+    // El vídeo guarda los rótulos cambiados y el historial; nada pendiente.
+    const after = await getVideoFor(ana, video.id);
+    expect(after.editOverride?.pendiente).toBeNull();
+    expect(after.editOverride?.rotulos?.[0].texto).toBe("Eisfans in Berlin, RENNT zu|EisWerk ❄️🍦");
+    expect(after.editOverride?.cambios.map((c) => c.texto)).toEqual(["que el primer rótulo diga que es en Berlín"]);
+    // Reporte en «Mejoras» ligado a la versión que se vio (la primera).
+    const [report] = await getDb().select().from(schema.problemReports).where(eq(schema.problemReports.id, reportId));
+    expect(report).toMatchObject({ stage: "montaje", videoId: video.id, createdBy: ana.id });
+    expect(report.body).toContain("que el primer rótulo diga que es en Berlín");
+    expect(report.versionLabel).toBe("montaje v1");
+    // Volver a montar sin cambio: los rótulos cambiados se quedan y no se vuelve a llamar a Claude para el cambio.
+    const before = calls.length;
+    const again = await mount(video.id);
+    expect(cueTexts(again.row)[0]).toBe("Eisfans in Berlin, RENNT zu|EisWerk ❄️🍦");
+    expect(calls.length).toBe(before);
+  });
+
+  it("otra música: se guarda en el vídeo, la ficha se rehace y el montaje sale con la canción", async () => {
+    const video = await videoWithClip();
+    expect((await mount(video.id)).outcome).toBe("done");
+    const { song } = await uploadSong(ana, fs.readFileSync(await makeSampleAudio(dir, "mp3", { seconds: 8 })), { title: "Fiesta", dropMs: 2000 });
+    changeAnswer = { rotulos: [], texto_principal: "EISWERK 😍", cta: "Kommentiere „EisWerk“", cambia_cancion: true, cancion_id: song.id, doblar: "igual", resumen: "Música: Fiesta." };
+    const { runId } = await requestEditChange(ana, video.id, "pon la canción Fiesta");
+    expect(await runNext()).toBe("deferred");
+    expect((await getVideoFor(ana, video.id)).songId).toBe(song.id);
+    expect(await runNext()).toBe("done");
+    const [row] = await getDb().select().from(schema.editRuns).where(eq(schema.editRuns.id, runId));
+    expect((row.spec as EditSpec).song?.id).toBe(song.id);
+    expect(row.status).toBe("done");
+  });
+
+  it("lo puede pedir una colaboradora que ve el vídeo; con un montaje en marcha, 409; sin texto, 400", async () => {
+    await store.putBuffer("referencias/x/ref.mp4", mp4, { contentType: "video/mp4" });
+    const video = await videoWithClip({ referenceStorageKey: "referencias/x/ref.mp4" });
+    expect((await mount(video.id)).outcome).toBe("done");
+    const samuel = await makeUser("colaborador", { name: "Samuel" });
+    await setAssignments(ana, samuel.id, [video.productId]);
+    await expect(requestEditChange(samuel, video.id, "   ")).rejects.toMatchObject({ status: 400 });
+    changeAnswer = { rotulos: [{ desde_s: 0, texto: "Ohne Emoji", cta: false }], texto_principal: "EISWERK", cta: "Kommentiere „EisWerk“", cambia_cancion: false, cancion_id: null, doblar: "igual", resumen: "Sin emojis." };
+    await requestEditChange(samuel, video.id, "quita los emojis");
+    await expect(requestEditChange(samuel, video.id, "otro cambio")).rejects.toMatchObject({ status: 409 });
+    expect(await runNext()).toBe("done");
+    expect(calls.find((c) => c.stepKey.includes(":cambio:"))!.userId).toBe(samuel.id);
+    const [report] = await getDb().select().from(schema.problemReports).where(eq(schema.problemReports.videoId, video.id));
+    expect(report.createdBy).toBe(samuel.id);
   });
 });

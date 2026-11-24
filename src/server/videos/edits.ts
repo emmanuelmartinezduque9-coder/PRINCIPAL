@@ -212,6 +212,14 @@ async function buildSpec(video: Video, product: Product): Promise<EditSpec> {
   };
 }
 
+/** La ficha de montaje de un vídeo tal como está ahora (tras un cambio de música o doblaje en pleno montaje). */
+export async function currentSpec(videoId: number): Promise<EditSpec> {
+  const [video] = await getDb().select().from(videos).where(eq(videos.id, videoId));
+  const creator = video ? await getActiveUser(video.createdBy) : null;
+  if (!video || !creator) throw new HttpError(404, "Vídeo no encontrado.");
+  return buildSpec(video, await getProductFor(creator, video.productId));
+}
+
 /** Bloquea la fila del vídeo hasta el final de la transacción (orden de cerrojos: el vídeo, después la tarea). */
 async function lockVideo(tx: Tx, videoId: number): Promise<Video | null> {
   const [row] = await tx.select().from(videos).where(eq(videos.id, videoId)).for("update");
@@ -223,7 +231,7 @@ async function lockVideo(tx: Tx, videoId: number): Promise<Video | null> {
  * rótulos que no estaban guardados quedan guardados en el vídeo (para que se puedan cambiar). 409
  * si ya hay uno en marcha o si falta algún clip.
  */
-async function queueEdit(video: Video, product: Product, requestedBy: number, now: Date): Promise<{ runId: number }> {
+export async function queueEdit(video: Video, product: Product, requestedBy: number, now: Date): Promise<{ runId: number }> {
   const spec = await buildSpec(video, product);
   return getDb().transaction(async (tx) => {
     const locked = await lockVideo(tx, video.id);

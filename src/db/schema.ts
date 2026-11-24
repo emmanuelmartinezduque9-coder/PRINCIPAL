@@ -686,6 +686,12 @@ export const videos = pgTable(
     editMainText: text("edit_main_text"),
     editCtaText: text("edit_cta_text"),
     /**
+     * «¿Qué quieres cambiar?» del montaje (`cambio-montaje.ts`): el cambio pedido que el próximo montaje aplica con
+     * Claude (`pendiente`), los rótulos de la referencia ya cambiados que usan los montajes siguientes (`rotulos`) y
+     * lo que se pidió antes (`cambios`).
+     */
+    editOverride: jsonb("edit_override").$type<EditOverride>(),
+    /**
      * Imágenes iniciales por ronda que pidió el dueño en la tarjeta (1–4). `null`: las del lote o,
      * sin lote, 1 (regla fija del dueño: una imagen por vídeo salvo que pida más).
      */
@@ -1597,6 +1603,13 @@ export const videoReferences = pgTable(
     check("video_references_role_valid", sql`${t.role} in ('fondo', 'ambiente', 'ropa', 'realismo', 'otro')`),
   ],
 );
+
+/** Ver `videos.edit_override`. */
+export interface EditOverride {
+  pendiente: { texto: string; por: number; reportId: number | null; at: string } | null;
+  rotulos: Array<{ desde_s: number; texto: string; cta: boolean }> | null;
+  cambios: Array<{ texto: string; por: number; reportId: number | null; at: string; resumen: string }>;
+}
 
 /**
  * Reportes de un problema («Reportar un problema», `src/server/videos/mejoras/`): lo que vio una persona,

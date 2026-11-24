@@ -400,6 +400,13 @@
       "when": 1795534343486,
       "tag": "0056_mejoras_montaje_doblaje",
       "breakpoints": true
+    },
+    {
+      "idx": 57,
+      "version": "7",
+      "when": 1795535476794,
+      "tag": "0057_cambio_montaje",
+      "breakpoints": true
     }
   ]
 }
