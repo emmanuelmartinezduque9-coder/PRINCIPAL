@@ -657,4 +657,31 @@ describe("tienda concreta pedida en la tarjeta", () => {
     expect(pickText).toContain("País del anuncio:");
     expect(JSON.stringify(calls[1])).toContain("No te quedes con «lo más cercano»");
   });
+
+  it("si tras las dos búsquedas no se reconoce la cadena, último intento: un interior real del país sin otra cadena", async () => {
+    await requirePinterestRefs(v.id).catch(() => {});
+    const run = await runOfVideo(v.id);
+    const scene = { ...SCENE, place: "droguería dm en Alemania", namedPlace: "dm Drogeriemarkt, Alemania", requiredChain: "dm", queries: ["dm Regal innen", "dm store"], retryQueries: ["dm Filiale Berlin"] };
+    const none = { text: JSON.stringify({ picks: [], rejected: "No se reconoce dm." }) };
+    const { client, calls } = fakeMessages([
+      { text: JSON.stringify(scene) },
+      none,
+      none,
+      { text: JSON.stringify({ picks: [{ n: 2, reason: "Droguería alemana real, sin otra cadena." }], rejected: "" }) },
+      { text: JSON.stringify(COMPOSED) },
+    ]);
+    let n = 0;
+    const search: PinterestDeps["search"] = async () => ({ status: "ready", via: "servidor", candidates: candidatesOf(pinterestResponse(2, `s${++n}-`)) });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    await runPinterest(run.id, pinterestDeps({ gateway: createGateway({ client }), search }));
+    expect(warn.mock.calls.flat().join(" ")).toContain("último intento");
+    warn.mockRestore();
+    const done = await runOfVideo(v.id);
+    expect(done.status).toBe("ready");
+    expect((done.refs as Array<{ pinId: string }>)[0].pinId).toBe("s1-2");
+    const lastText = (calls[3].messages[0].content as Array<{ type: string; text?: string }>).map((b) => b.text ?? "").join("\n");
+    expect(lastText).toContain("Último intento");
+    expect(lastText).not.toContain("El dueño pide este sitio concreto");
+    expect((calls[3].messages[0].content as Array<{ type: string }>).filter((b) => b.type === "image")).toHaveLength(7);
+  });
 });

@@ -108,3 +108,11 @@ colores o mobiliario) y que rótulos, precios e idioma sean del país del anunci
 cercano». Si en la primera búsqueda ninguna vale, se busca otra vez con `retryQueries` (cadena + ciudad o
 país, en el idioma local) y el registro lo dice («se busca otra vez»). Solo después se reintenta (tienda
 pedida) o se usa el banco de respaldo (sin tienda).
+
+Prueba real (vídeos 15 y 20): con la exigencia estricta, ninguna foto valió ni en la segunda búsqueda
+(Pinterest casi no tiene fotos de móvil del interior de dm o de Aldi en Alemania: salían dm de Eslovaquia,
+Aldi de EE. UU., collages, fachadas). Fallar ahí pararía el lote, contra la regla del flujo automático. Por
+eso hay un tercer paso: con las candidatas ya vistas, vale un interior real de ese tipo de tienda en ese
+país, sin rastro de otra cadena ni de otro país (se apunta «último intento»). Además, la escena del vídeo 20
+se inventó «Aldi» como tienda pedida (namedPlace), lo que quitaba el respaldo del banco: namedPlace es solo
+lo que escribe el dueño; lo que exige la escena va en `requiredChain`.
