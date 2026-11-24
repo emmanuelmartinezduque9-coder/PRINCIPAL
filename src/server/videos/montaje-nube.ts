@@ -503,6 +503,8 @@ export async function runEdit(run: Run, deps: MontajeDeps = {}): Promise<"done" 
     // «¿Qué quieres cambiar?» (`cambio-montaje.ts`): los rótulos ya cambiados antes mandan sobre la lectura, y un
     // cambio pedido se aplica ahora con Claude, solo a lo que pide.
     const override = owner?.editOverride ?? null;
+    // Rótulos que vienen de un cambio que dictó el dueño: la localización automática no los toca (él manda).
+    let ownerTexts = false;
     if (override?.rotulos && edicion) {
       edicion = { ...edicion, cues: override.rotulos.map((r) => ({ startS: r.desde_s, source: "", text: r.texto, es: "", cta: r.cta })) };
     }
@@ -542,6 +544,7 @@ export async function runEdit(run: Run, deps: MontajeDeps = {}): Promise<"done" 
       }
       if (edicion) edicion = { ...edicion, cues: changed.cues };
       spec.texts = changed.texts;
+      ownerTexts = true;
       notes.push(`Cambio pedido aplicado: ${changed.summary}`);
     }
 
@@ -637,8 +640,8 @@ export async function runEdit(run: Run, deps: MontajeDeps = {}): Promise<"done" 
         // Regla 6c también en los rótulos del desglose o de la tarjeta: nada de lugares de otro mercado.
         // Y la localización al país (tiendas, moneda): Target → Action, $ → €.
         texts: {
-          main: localizeText(withLocalPlaces(spec.texts.main, [], place), marketOf(spec.product)),
-          cta: localizeText(withLocalPlaces(spec.texts.cta, [], place), marketOf(spec.product)),
+          main: ownerTexts ? spec.texts.main : localizeText(withLocalPlaces(spec.texts.main, [], place), marketOf(spec.product)),
+          cta: ownerTexts ? spec.texts.cta : localizeText(withLocalPlaces(spec.texts.cta, [], place), marketOf(spec.product)),
         },
         clips,
         // Con la canción de respaldo si el vídeo se quedaba mudo.
