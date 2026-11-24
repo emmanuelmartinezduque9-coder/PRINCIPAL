@@ -94,3 +94,11 @@ reportes con su recorrido: Recibido → Causa → Cambio aplicado → Comprobado
   vídeo 22 (diálogo tomado por canción, sin doblar). El de lote 7, vídeo 24 («in den USA» → «in Berlin») no se siembra:
   la sesión del Mac lo arregló como código (regla 6c de `REFERENCE_EDIT_INSTRUCTIONS` y `withLocalPlaces`) y lo dejó en
   Mejoras como reporte con su arreglo (`recordAppliedFixOnce`), que se mide como arreglo de código.
+
+## Cambios pedidos desde el montaje (24/11/2026)
+
+«¿Qué quieres cambiar?» del montaje (`cambio-montaje.ts`, sesión del Mac) crea un reporte que empieza por «Cambio
+pedido en el montaje:» (`CHANGE_REQUEST_PREFIX`). Ese cambio ya se aplica solo en su vídeo, así que Haiku lo clasifica
+por defecto como `uso`: no cuenta como problema en las cifras ni crea una regla para todos. Solo es `regla` si describe
+un error que se repetiría (un lugar o una marca de terceros que no tocaba, un rótulo mal traducido, un diálogo sin
+doblar), y `codigo` si falló el programa. Así un gusto de un vídeo no cambia los demás.

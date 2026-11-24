@@ -18,6 +18,8 @@ import { SYSTEM_REJECT_PREFIX } from "@/server/videos/generations";
  */
 
 export const SWEEP_NAME = "mejoras.barrido";
+/** Así empiezan los reportes que crea «¿Qué quieres cambiar?» del montaje (`cambio-montaje.ts`). */
+export const CHANGE_REQUEST_PREFIX = "Cambio pedido en el montaje:";
 /** Tras un fallo (tope de gasto, sin clave…), cuándo se vuelve a intentar. */
 const RETRY_MS = 30 * 60 * 1000;
 /** Tras tantos fallos, se deja sin clasificar (el dueño lo puede pedir otra vez). */
@@ -59,6 +61,7 @@ ${typeList}
 - directive: si fix_kind es "regla", UNA instrucción imperativa, concreta y general (que valga para próximos vídeos, sin nombres de archivo ni números de vídeo), de como mucho ${MAX_DIRECTIVE_CHARS} caracteres: en inglés para "frame" y "clip" (va al final de su prompt) y en español para "montaje" y "doblaje" (va a las instrucciones de Claude). Si no, null.
 - existing_correction_id: si una de las correcciones activas que te paso ya cubre exactamente este problema, su id (y directive null); si no, null.
 - product_specific: true si la instrucción solo tiene sentido para este producto.
+Si el reporte empieza por «${CHANGE_REQUEST_PREFIX}», es un cambio que la persona pidió para ESE vídeo desde el montaje y que ya se aplica solo en él: por defecto es "uso" (un gusto de ese vídeo, no un fallo). Solo es "regla" si describe un error que se repetiría en otros vídeos (p. ej. un lugar o una marca de terceros que no tocaba, un rótulo mal traducido, un diálogo sin doblar); y "codigo" si algo del programa falló.
 No inventes: si no está claro, elige el tipo más probable y explica la duda en cause.`;
 
 export const REJECTION_INSTRUCTIONS = `Clasifica cada motivo de rechazo (de una imagen inicial o un clip de un anuncio) en uno de estos tipos:

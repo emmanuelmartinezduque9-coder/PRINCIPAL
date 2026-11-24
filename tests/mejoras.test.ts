@@ -3,7 +3,7 @@ import { getPool } from "@/db/client";
 import { stopWorker } from "@/jobs/boss";
 import { createGateway } from "@/llm/gateway";
 import type { AuthUser } from "@/server/auth";
-import { classifyRejections, classifyReport, mejorasSweep } from "@/server/videos/mejoras/classify";
+import { CHANGE_REQUEST_PREFIX, classifyRejections, classifyReport, mejorasSweep, REPORT_INSTRUCTIONS } from "@/server/videos/mejoras/classify";
 import { cleanDirective, directivesSuffix, learnedSuffix } from "@/server/videos/mejoras/corrections";
 import { buildEditRecords, buildStageRecords } from "@/server/videos/mejoras/evidence";
 import { evaluateCodeFix, evaluateCorrection, MIN_AFTER, type StageRecord } from "@/server/videos/mejoras/metrics";
@@ -140,6 +140,11 @@ describe("cuentas de evidencia (sin base de datos)", () => {
     expect(evaluation.after.videoIds).toEqual([10, 11, 12, 13, 14]);
     expect(evaluation.before.typeRate).toBeCloseTo(0.75);
     expect(evaluation.verdict).toBe("mejora");
+  });
+
+  it("los cambios pedidos en el montaje son por defecto «uso» (no cuentan como problema ni crean reglas) salvo un error que se repetiría", () => {
+    expect(REPORT_INSTRUCTIONS).toContain(`«${CHANGE_REQUEST_PREFIX}»`);
+    expect(REPORT_INSTRUCTIONS).toContain("por defecto es \"uso\"");
   });
 
   it("la instrucción se limpia (una línea, tope, punto final) y se añade literal al final del prompt", () => {
