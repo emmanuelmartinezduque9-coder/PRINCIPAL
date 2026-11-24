@@ -77,7 +77,7 @@ function isWait(error: HttpError): boolean {
   if (error.status !== 409) return false;
   // «Buscando referencias de Pinterest…» / «No se encontraron referencias de Pinterest…»: se están
   // buscando (regla fija: la imagen nunca va sin ellas); en la siguiente pasada ya estarán.
-  return ["Ya hay", "Estamos comprobando", "El precio ha cambiado", "El vídeo ha cambiado", "Buscando referencias de Pinterest", "No se encontraron referencias de Pinterest"].some(
+  return ["Ya hay", "Estamos comprobando", "El precio ha cambiado", "El vídeo ha cambiado", "Buscando referencias de Pinterest", "No se encontraron referencias de Pinterest", "Sin saldo en la API de Claude"].some(
     (start) => error.message.startsWith(start),
   );
 }

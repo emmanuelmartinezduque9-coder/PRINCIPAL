@@ -531,3 +531,25 @@ describe("imágenes de referencia subidas a mano", () => {
     expect(effectiveRefs(group, { refs: [{ sha256: "b".repeat(64), role: "ropa" }] })).toEqual([{ sha256: "b".repeat(64), role: "ropa" }]);
   });
 });
+
+describe("sin saldo en la API de Claude", () => {
+  it("un 400 por créditos no es «no válida»: queda en espera con aviso claro, sin gastar intentos, y una búsqueda atascada se relanza", async () => {
+    const { isNoCredit, NO_CREDIT } = await import("@/llm/gateway");
+    expect(isNoCredit(new Error('400 {"type":"error","error":{"type":"invalid_request_error","message":"Your credit balance is too low to access the Anthropic API."}}'), 400)).toBe(true);
+    expect(isNoCredit(new Error("400 messages: field required"), 400)).toBe(false);
+
+    await requirePinterestRefs(v.id).catch(() => {});
+    const run = await runOfVideo(v.id);
+    const { JobPausedError } = await import("@/jobs/steps");
+    const broke = { call: async () => Promise.reject(new JobPausedError("saldo")) } as unknown as PinterestDeps["gateway"];
+    await expect(runPinterest(run.id, pinterestDeps({ gateway: broke }))).rejects.toBeInstanceOf(JobPausedError);
+    const waiting = await runOfVideo(v.id);
+    expect(waiting).toMatchObject({ status: "pending", error: NO_CREDIT, attempts: 0 });
+    await expect(requirePinterestRefs(v.id)).rejects.toMatchObject({ status: 409, message: NO_CREDIT });
+
+    // Una búsqueda que se quedó «buscando» (pasos agotados) se relanza con un intento nuevo.
+    await getDb().update(schema.videoPinterestRefs).set({ status: "searching", error: null, updatedAt: new Date(Date.now() - 60 * 60_000) }).where(eq(schema.videoPinterestRefs.id, run.id));
+    await sweepPinterest(new Date());
+    expect(await runOfVideo(v.id)).toMatchObject({ status: "pending", attempts: 1 });
+  });
+});

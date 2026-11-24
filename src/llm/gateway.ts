@@ -130,7 +130,8 @@ export class LlmNotConfiguredError extends Error {
  */
 export class LlmCapReachedError extends Error {
   constructor(
-    public scope: "global" | "persona",
+    /** `saldo`: la cuenta de la API de Claude se quedó sin créditos (se reanuda sola al recargar). */
+    public scope: "global" | "persona" | "saldo",
     message: string,
   ) {
     super(message);
@@ -144,6 +145,15 @@ const INVALID_REQUEST_STATUSES = new Set([400, 403, 404, 413, 422]);
 const RETRY_LATER = "Claude no ha respondido. Inténtalo de nuevo dentro de unos minutos.";
 const INVALID_REQUEST = "La petición a Claude no es válida; avisa al dueño.";
 const UNREADABLE_ANSWER = "Claude ha devuelto una respuesta que no se entiende; avisa al dueño.";
+
+export const NO_CREDIT = "Sin saldo en la API de Claude: se sigue solo en cuanto se recargue.";
+
+/** ¿La API de Claude rechazó la llamada por falta de créditos? */
+export function isNoCredit(error: unknown, status: number | null): boolean {
+  if (status !== 400 && status !== 402) return false;
+  const text = error instanceof Error ? error.message : String(error);
+  return status === 402 || /credit balance|billing|purchase credits/i.test(text);
+}
 
 /** Mensaje para quien usa la aplicación. Solo invita a reintentar cuando el fallo puede ser pasajero. */
 function failureMessage(error: unknown, status: number | null): string {
@@ -629,6 +639,9 @@ export function createGateway(deps: { client?: MessagesClient; now?: () => Date 
             // Si no se puede liberar, la reserva sigue contando: es lo prudente.
             await releaseSpend(entryId).catch(() => undefined);
           }
+          // Sin créditos en la API (Anthropic responde 400 «credit balance is too low»): no es una
+          // petición mal hecha. Pausa como un tope, sin gastar intentos, y se reanuda sola.
+          if (!unknownOutcome && isNoCredit(error, status)) throw new LlmCapReachedError("saldo", NO_CREDIT);
           throw new LlmCallError(unknownOutcome ? "desconocido" : "no", status, failureMessage(error, status), error);
         }
 

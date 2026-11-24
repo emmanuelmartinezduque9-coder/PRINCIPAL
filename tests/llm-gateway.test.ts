@@ -348,7 +348,7 @@ describe("pasarela a Claude: reserva antes de llamar", () => {
 
 describe("pasarela a Claude: cuando la llamada falla", () => {
   it("si la API rechaza la petición sin procesarla, la reserva se libera y no se cobra", async () => {
-    for (const status of [400, 401, 402, 403, 404, 413, 422]) {
+    for (const status of [400, 401, 403, 404, 413, 422]) {
       await truncateAll();
       ana = await makeUser("colaborador", { name: "Ana" });
       const { client, calls } = fakeMessages([{ error: fakeApiError(status) }]);
@@ -358,6 +358,20 @@ describe("pasarela a Claude: cuando la llamada falla", () => {
       expect(calls).toHaveLength(1);
       expect(await onlyEntry()).toMatchObject({ status: "released", costMicros: null });
       expect((await spendSummary(ana)).spentMicros).toBe(0);
+    }
+  });
+
+  it("sin créditos en la API (402, o 400 «credit balance is too low») no es un fallo: pausa como un tope, sin cobrar", async () => {
+    const { NO_CREDIT } = await import("@/llm/gateway");
+    for (const status of [402, 400]) {
+      await truncateAll();
+      ana = await makeUser("colaborador", { name: "Ana" });
+      const error = fakeApiError(status);
+      if (status === 400) error.message = "400 Your credit balance is too low to access the Anthropic API.";
+      const { client } = fakeMessages([{ error }]);
+      const attempt = createGateway({ client }).call(req(ana, null));
+      await expect(attempt).rejects.toMatchObject({ name: "LlmCapReachedError", scope: "saldo", message: NO_CREDIT });
+      expect(await onlyEntry()).toMatchObject({ status: "released", costMicros: null });
     }
   });
 
@@ -446,7 +460,6 @@ describe("pasarela a Claude: cuando la llamada falla", () => {
       [413, INVALID_REQUEST],
       [422, INVALID_REQUEST],
       [401, "Claude no acepta la clave configurada (ANTHROPIC_API_KEY); avisa al dueño."],
-      [402, "La cuenta de Claude no tiene saldo; avisa al dueño."],
     ];
     for (const [status, message] of messages) {
       const { client } = fakeMessages([{ error: fakeApiError(status) }]);

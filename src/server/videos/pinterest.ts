@@ -2,13 +2,13 @@ import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { and, desc, eq, inArray, lt, or, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, lt, ne, or, sql } from "drizzle-orm";
 import { z } from "zod";
 import { getDb, schema } from "@/db/client";
 import { enqueueJob } from "@/jobs/boss";
-import { runStep, stepKey, StepFailedError, type JobContext } from "@/jobs/steps";
+import { JobPausedError, runStep, stepKey, StepFailedError, type JobContext } from "@/jobs/steps";
 import { imagePart, textPart, type LlmContent } from "@/llm/content";
-import { getGateway, type LlmGateway } from "@/llm/gateway";
+import { getGateway, NO_CREDIT, type LlmGateway } from "@/llm/gateway";
 import { getObjectStore } from "@/lib/object-store";
 import { getActiveUser, type AuthUser } from "@/server/auth";
 import { HttpError } from "@/server/http";
@@ -276,6 +276,7 @@ export async function requirePinterestRefs(videoId: number): Promise<void> {
   if (analysisId === null) return; // Sin desglose ya lo para `requireAnalysisDone`.
   const run = await ensurePinterestRun(videoId, analysisId);
   if (run.status === "ready" && Array.isArray(run.refs) && run.refs.length > 0) return;
+  if (run.status === "pending" && run.error === NO_CREDIT) throw new HttpError(409, NO_CREDIT);
   if (run.status === "failed") {
     await ensurePinterestRun(videoId, analysisId, { retry: true });
     throw new HttpError(409, `${PINTEREST_FAILED}: ${run.error ?? "Pinterest no respondió"}. Se vuelve a buscar.`);
@@ -857,6 +858,25 @@ async function failRun(run: Run, message: string): Promise<void> {
  * contesta. Repetirla no cobra dos veces a Claude (cada llamada va en su paso).
  */
 export async function runPinterest(runId: number, deps: PinterestDeps = {}): Promise<void> {
+  try {
+    await runPinterestOnce(runId, deps);
+  } catch (error) {
+    const [run] = await getDb().select().from(runs).where(eq(runs.id, runId));
+    if (run && run.status !== "ready" && run.status !== "failed") {
+      if (error instanceof JobPausedError) {
+        // Sin saldo en la API de Claude (o el tope de gasto): espera sin gastar intentos y la
+        // tarjeta lo dice; el seguimiento la vuelve a intentar sola.
+        await setRun(run.id, { status: "pending", error: error.scope === "saldo" ? NO_CREDIT : "En pausa: se ha alcanzado el tope de gasto." });
+      } else {
+        // Otro fallo (Claude, la red…): otro intento con pasos nuevos, hasta rendirse y decirlo.
+        await failRun(run, error instanceof Error ? error.message : "La búsqueda falló");
+      }
+    }
+    throw error;
+  }
+}
+
+async function runPinterestOnce(runId: number, deps: PinterestDeps): Promise<void> {
   const [run] = await getDb().select().from(runs).where(eq(runs.id, runId));
   if (!run || run.status === "ready" || run.status === "failed") return;
   const [video] = await getDb().select().from(schema.videos).where(eq(schema.videos.id, run.videoId));
@@ -1088,7 +1108,9 @@ export async function sweepPinterest(now: Date = new Date()): Promise<number> {
     .from(runs)
     .where(
       or(
-        and(eq(runs.status, "pending"), lt(runs.updatedAt, new Date(now.getTime() - REQUEUE_MS))),
+        // Sin saldo en la API de Claude, cada 10 minutos (no cada 2).
+        and(eq(runs.status, "pending"), lt(runs.updatedAt, new Date(now.getTime() - REQUEUE_MS)), or(isNull(runs.error), ne(runs.error, NO_CREDIT))),
+        and(eq(runs.status, "pending"), lt(runs.updatedAt, new Date(now.getTime() - STALE_SEARCH_MS)), eq(runs.error, NO_CREDIT)),
         eq(runs.status, "waiting_mac"),
         and(eq(runs.status, "searching"), lt(runs.updatedAt, new Date(now.getTime() - STALE_SEARCH_MS))),
       ),
@@ -1106,8 +1128,14 @@ export async function sweepPinterest(now: Date = new Date()): Promise<number> {
         : [];
       if (waiting.length > 0) continue;
     }
-    if (run.status === "searching") await setRun(run.id, { status: "pending" });
-    else await setRun(run.id, {});
+    if (run.status === "searching") {
+      // Se quedó a medias (el proceso se paró o sus pasos se agotaron): otro intento con pasos nuevos.
+      if (run.attempts + 1 >= MAX_PINTEREST_ATTEMPTS) {
+        await setRun(run.id, { status: "failed", attempts: run.attempts + 1, error: run.error ?? "La búsqueda se quedó a medias varias veces" });
+        continue;
+      }
+      await setRun(run.id, { status: "pending", attempts: run.attempts + 1, scene: null, queries: null, refs: null });
+    } else await setRun(run.id, {});
     try {
       await enqueue(run);
       queued += 1;

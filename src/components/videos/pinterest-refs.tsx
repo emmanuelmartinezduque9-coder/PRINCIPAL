@@ -44,7 +44,7 @@ export function PinterestRefs({ pinterest, compact = false }: { pinterest: Pinte
       ) : waiting ? (
         <p className="flex items-center gap-2 text-xs text-muted-foreground">
           <Loader2 className="size-3.5 animate-spin" aria-hidden />
-          {waiting}
+          {pinterest.status === "pending" && pinterest.error?.startsWith("Sin saldo") ? pinterest.error : waiting}
         </p>
       ) : pinterest.status === "failed" ? (
         <p className="text-xs text-pretty text-muted-foreground">{pinterest.error ?? "No se eligió ninguna."} Se vuelve a intentar sola.</p>

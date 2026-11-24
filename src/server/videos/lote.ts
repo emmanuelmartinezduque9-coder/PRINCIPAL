@@ -886,7 +886,8 @@ const KIND_WORD: Record<GenerationKind, string> = { frame: "la imagen", clip: "e
 const pauseKind = (kind: GenerationKind): "frame" | "clip" => (kind === "frame" ? "frame" : "clip");
 
 /** «Buscando referencias de Pinterest…» o «se vuelven a buscar»: no es un fallo, se espera (regla fija: nunca sin ellas). */
-const isPinterestWait = (message: string) => message === PINTEREST_PENDING || message.startsWith("No se encontraron referencias de Pinterest");
+const isPinterestWait = (message: string) =>
+  message === PINTEREST_PENDING || message.startsWith("No se encontraron referencias de Pinterest") || message.startsWith("Sin saldo en la API de Claude");
 
 /** Desgloses que se rehacen solos por un prompt con errores antes de parar (cada uno cuesta en Claude). */
 export const MAX_PROMPT_REDOS = 2;

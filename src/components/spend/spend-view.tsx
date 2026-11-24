@@ -26,7 +26,7 @@ interface PausedRow {
   productId: number | null;
   productName: string | null;
   since: string;
-  reason: "global" | "persona" | null;
+  reason: "global" | "persona" | "saldo" | null;
 }
 
 interface SpendData {
@@ -122,7 +122,7 @@ function PausedNotice({ paused, capMicros, spentMicros }: { paused: PausedRow[];
             </span>
             <span className="truncate">{job.label}</span>
             <span className="text-xs text-muted-foreground md:text-right">
-              {job.reason === "global" ? "Tope global" : job.reason === "persona" ? "Tope de la persona" : "Esperando saldo"} · hace {formatDistanceToNowStrict(new Date(job.since), { locale: es })}
+              {job.reason === "global" ? "Tope global" : job.reason === "persona" ? "Tope de la persona" : job.reason === "saldo" ? "Sin saldo en la API de Claude" : "Esperando saldo"} · hace {formatDistanceToNowStrict(new Date(job.since), { locale: es })}
             </span>
           </li>
         ))}

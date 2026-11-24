@@ -40,7 +40,7 @@ const DELETED_PERSON = "Persona borrada";
 /** No queda saldo para lo que se quiere gastar. El mensaje es apto para mostrarse. */
 export class SpendCapError extends Error {
   constructor(
-    public scope: "global" | "persona",
+    public scope: "global" | "persona" | "saldo",
     public capMicros: number,
     public spentMicros: number,
   ) {

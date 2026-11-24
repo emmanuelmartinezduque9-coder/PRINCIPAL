@@ -66,7 +66,7 @@ const WAITING: StepStatus[] = ["pending", "queued", "paused_cap"];
 
 /** El trabajo queda en pausa por tope de gasto: no es un fallo y se reanuda cuando haya saldo. */
 export class JobPausedError extends Error {
-  constructor(public scope: "global" | "persona") {
+  constructor(public scope: "global" | "persona" | "saldo") {
     super("El trabajo queda en pausa hasta que haya saldo.");
     this.name = "JobPausedError";
   }
@@ -587,8 +587,8 @@ export interface PausedJob {
   productId: number | null;
   userId: number;
   since: Date;
-  /** Qué tope lo detuvo, si se sabe. */
-  scope: "global" | "persona" | null;
+  /** Qué tope lo detuvo, si se sabe (`saldo`: la API de Claude sin créditos). */
+  scope: "global" | "persona" | "saldo" | null;
 }
 
 /**
@@ -624,5 +624,5 @@ export async function listPausedJobs(user: AuthUser): Promise<PausedJob[]> {
   }
   return rows
     .filter((row) => active.get(row.userId))
-    .map(({ cause, ...job }) => ({ ...job, scope: cause === "global" || cause === "persona" ? cause : null }));
+    .map(({ cause, ...job }) => ({ ...job, scope: cause === "global" || cause === "persona" || cause === "saldo" ? cause : null }));
 }
