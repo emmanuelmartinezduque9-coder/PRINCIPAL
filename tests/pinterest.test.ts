@@ -308,6 +308,10 @@ describe("la imagen inicial lleva siempre referencias de Pinterest", () => {
     }
     await finalizeGeneration(first.generationId, deps);
     await rejectFrame(ana, v.id, "Se ve falsa, poco realista");
+    // El rechazo del dueño rehace la escena (con su motivo como corrección).
+    expect(await getDb().select().from(schema.videoPinterestRefs).where(eq(schema.videoPinterestRefs.videoId, v.id))).toHaveLength(0);
+    await requirePinterestRefs(v.id).catch(() => {});
+    await runPinterest((await runOfVideo(v.id)).id, pinterestDeps());
 
     const second = await requestGeneration(ana, v.id, "frame", { expectedCredits: 999 }, deps);
     const [row] = await getDb().select().from(schema.generations).where(eq(schema.generations.id, second.generationId));

@@ -33,6 +33,17 @@ startWorker().then(
   () => {
     console.log("[worker] en marcha");
     startEditLoop();
+    // Una vez (24/11/2026): correcciones de Emmanuel a imágenes del lote 6.
+    void import("@/server/videos/importar-imagen")
+      .then(({ applyOwnerCorrections }) =>
+        applyOwnerCorrections(6, [
+          { videoId: 9, text: "Tiene que empezar igual que el fotograma de la referencia: el producto agarrado como si estuviera debajo del árbol de Navidad, que se entienda que es un regalo de Navidad." },
+          { videoId: 18, text: "La mano agarra la nada. Como en la referencia: frente al escaparate con las cajas del producto, agarrando el producto, el cepillo rosa." },
+          { videoId: 17, text: "El fondo no tiene nada que ver con el producto: tiene que ser dentro de una tienda Sephora de Alemania, con el cepillo rosa de verdad en la mano y sin franjas blancas." },
+          { videoId: 16, text: "Tiene una franja blanca abajo y el cepillo sale oscuro: el cepillo tiene que ser el rosa del producto, imagen completa sin franjas, dentro de la tienda Sephora." },
+        ]),
+      )
+      .catch((error) => console.error("[imagen] No se pudieron aplicar las correcciones del lote 6:", error));
     // Una vez (24/11/2026): en el lote 6, las imágenes que pedían una tienda concreta (dm, Sephora,
     // Lidl) salieron con un fondo del banco; se regeneran con el interior real de esa tienda.
     void import("@/server/videos/importar-imagen")

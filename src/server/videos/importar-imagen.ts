@@ -182,3 +182,61 @@ export async function bringBackBlocked(videoId: number, marker: string): Promise
   await getDb().update(schema.videos).set({ autoSkipped: false, autoStop: null, updatedAt: new Date() }).where(eq(schema.videos.id, videoId));
   console.log(`[imagen] Vídeo ${videoId}: vuelve al lote; su prompt con sala se rehace sin nombres de marca (${marker}).`);
 }
+
+/**
+ * Una vez (24/11/2026): correcciones de Emmanuel a imágenes del lote `batchId`, por producto y
+ * número de tarjeta dentro del producto (los vídeos se numeran en el orden en que se crearon), o
+ * por id. Cada una rechaza la última imagen con sus palabras («Corrección automática: del dueño:»,
+ * no gasta regeneraciones) y la siguiente imagen las aplica (escena, tienda y prompt con sala).
+ */
+export async function applyOwnerCorrections(
+  batchId: number,
+  corrections: Array<{ product?: string; card?: number; videoId?: number; text: string }>,
+): Promise<void> {
+  const { OWNER_CORRECTION_PREFIX } = await import("@/server/videos/pinterest");
+  const videos = await getDb()
+    .select({ id: schema.videos.id, productId: schema.videos.productId, createdBy: schema.videos.createdBy })
+    .from(schema.videos)
+    .where(eq(schema.videos.batchId, batchId))
+    .orderBy(schema.videos.id);
+  const owner = videos.length > 0 ? await getActiveUser(videos[0].createdBy) : null;
+  if (!owner) return;
+  const { listProductsFor } = await import("@/server/products");
+  const products = await listProductsFor(owner, "todos");
+  const nameOf = (productId: number) => products.find((p) => p.id === productId)?.name.toLowerCase() ?? "";
+  for (const c of corrections) {
+    const target =
+      c.videoId !== undefined
+        ? videos.find((v) => v.id === c.videoId)
+        : videos.filter((v) => nameOf(v.productId) === c.product!.toLowerCase())[c.card! - 1];
+    if (!target) {
+      console.warn(`[imagen] Corrección sin vídeo: ${c.product ?? ""} ${c.card ?? c.videoId}`);
+      continue;
+    }
+    const reason = `${OWNER_CORRECTION_PREFIX}${c.text}`.slice(0, 300);
+    const [done] = await getDb()
+      .select({ id: schema.generations.id })
+      .from(schema.generations)
+      .where(and(eq(schema.generations.videoId, target.id), eq(schema.generations.rejectReason, reason)))
+      .limit(1);
+    if (done) continue;
+    const [last] = await getDb()
+      .select({ status: schema.generations.status, rejectReason: schema.generations.rejectReason })
+      .from(schema.generations)
+      .where(and(eq(schema.generations.videoId, target.id), eq(schema.generations.kind, "frame")))
+      .orderBy(desc(schema.generations.round))
+      .limit(1);
+    if (!last || last.status !== "done" || last.rejectReason !== null) {
+      console.warn(`[imagen] Vídeo ${target.id}: su última imagen no está para rechazar (${last?.status ?? "sin imagen"}).`);
+      continue;
+    }
+    const { rejectFrame } = await import("@/server/videos/frame");
+    try {
+      // Rechazar también la deja de aprobar (si su clip aún no se ha pedido).
+      await rejectFrame(owner, target.id, reason);
+      console.log(`[imagen] Vídeo ${target.id} (${c.product ?? "id"} ${c.card ?? ""}): corrección del dueño aplicada, se regenera: ${c.text}`);
+    } catch (error) {
+      console.error(`[imagen] Vídeo ${target.id}: no se pudo aplicar la corrección del dueño:`, error);
+    }
+  }
+}

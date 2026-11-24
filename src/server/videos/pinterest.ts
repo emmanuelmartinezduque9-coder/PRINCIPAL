@@ -367,7 +367,7 @@ Vale una foto que:
 - es el mismo tipo de sitio que pide la toma y deja que la acción quepa (superficies, aparatos, altura y dirección de cámara compatibles con el primer fotograma de la referencia);
 - respeta la época y la luz pedidas.
 
-Rechaza la foto que: no es un lugar (producto, textura, collage, plano de detalle); es un render, una imagen hecha con IA, un showroom, un catálogo o una foto de interiorismo demasiado perfecta; lleva texto, rótulos, frases o marcas de agua encima; está dominada por una persona con la cara visible; es otro tipo de sitio; tiene una perspectiva imposible para el encuadre o se ve mal.
+Rechaza la foto que: tiene franjas, bordes o márgenes blancos o negros, o es un montaje de varias fotos; no es un lugar (producto, textura, collage, plano de detalle); es un render, una imagen hecha con IA, un showroom, un catálogo o una foto de interiorismo demasiado perfecta; lleva texto, rótulos, frases o marcas de agua encima; está dominada por una persona con la cara visible; es otro tipo de sitio; tiene una perspectiva imposible para el encuadre o se ve mal.
 
 Elige como mucho ${MAX_PINTEREST_REFS}, de mejor a peor, por su número de candidata. Si ninguna vale, no elijas ninguna.`;
 
@@ -520,7 +520,7 @@ async function bankThumb(hash: string, cached: Buffer | null): Promise<Buffer | 
 
 const BANK_INSTRUCTIONS = `Eliges, del banco de referencias que el dueño ya eligió a mano y aprobó en lotes anteriores, las fotos que acompañarán a la imagen inicial de un anuncio como referencia de entorno y realismo (no aportan personas, producto ni encuadre: eso sale de otras referencias). Todas son válidas para él; tu trabajo es elegir la que mejor encaja con la escena.
 
-Elige por este orden: el mismo tipo de sitio que la toma y que la acción quepa (salón con sofá y árbol para una escena de sofá navideña; cocina para preparar; congelador para sacar algo del congelador; tienda para comprar); la época y la decoración (si la escena es navideña, una con decoración navideña clara); la luz y el momento del día del primer fotograma; el punto de vista (un POV desde el sofá si la toma lo es); y, a igualdad, una usada en la misma cuenta. Elige como mucho ${MAX_PINTEREST_REFS}, de mejor a peor, por su número: la primera será el fondo EXACTO de la imagen (la sala que se reproduce entera), así que tiene que ser del mismo tipo de sitio y dejar sitio a la acción; la segunda, si la eliges, solo aporta textura de foto real (realismo), así que basta con que sea una foto real cotidiana de luz parecida. Si de verdad ninguna es del mismo tipo de sitio, elige la más cercana y dilo en el motivo.`;
+El sitio tiene que encajar con el tipo de producto y su uso (un cepillo de pelo no va en un supermercado ni en un salón cualquiera: peluquería, tienda de belleza, baño o tocador). Elige por este orden: el mismo tipo de sitio que la toma y que la acción quepa (salón con sofá y árbol para una escena de sofá navideña; cocina para preparar; congelador para sacar algo del congelador; tienda para comprar); la época y la decoración (si la escena es navideña, una con decoración navideña clara); la luz y el momento del día del primer fotograma; el punto de vista (un POV desde el sofá si la toma lo es); y, a igualdad, una usada en la misma cuenta. Elige como mucho ${MAX_PINTEREST_REFS}, de mejor a peor, por su número: la primera será el fondo EXACTO de la imagen (la sala que se reproduce entera), así que tiene que ser del mismo tipo de sitio y dejar sitio a la acción; la segunda, si la eliges, solo aporta textura de foto real (realismo), así que basta con que sea una foto real cotidiana de luz parecida. Si de verdad ninguna es del mismo tipo de sitio, elige la más cercana y dilo en el motivo.`;
 
 /** Elige del banco con visión y deja lista la búsqueda (sin bajar nada: las fotos ya están en el almacén). */
 async function pickFromBank(
@@ -641,6 +641,26 @@ async function finishWithRefs(
 
 // ───────────────────────── Prompt con la sala (método aprobado) ─────────────────────────
 
+/** Prefijo de las correcciones del dueño que la aplicación aplica sin gastar una regeneración. */
+export const OWNER_CORRECTION_PREFIX = "Corrección automática: del dueño: ";
+
+/**
+ * Lo que el dueño dijo al rechazar la última imagen del vídeo (en la web, o una corrección suya
+ * aplicada por la aplicación): la siguiente imagen tiene que corregirlo. `null` si no hay.
+ */
+async function lastOwnerRejection(videoId: number): Promise<string | null> {
+  const [last] = await getDb()
+    .select({ reason: schema.generations.rejectReason })
+    .from(schema.generations)
+    .where(and(eq(schema.generations.videoId, videoId), eq(schema.generations.kind, "frame")))
+    .orderBy(desc(schema.generations.round))
+    .limit(1);
+  const reason = last?.reason ?? null;
+  if (!reason) return null;
+  if (reason.startsWith(OWNER_CORRECTION_PREFIX)) return reason.slice(OWNER_CORRECTION_PREFIX.length);
+  return reason.startsWith("Corrección automática:") ? null : reason;
+}
+
 /** Las fotos del producto que Claude mira al escribir el prompt (artículo, funcionamiento, caja), con su marca de cita. */
 async function productPhotosFor(videoId: number): Promise<Array<{ tag: string; label: string; jpeg: Buffer }>> {
   const [video] = await getDb().select({ productId: schema.videos.productId }).from(schema.videos).where(eq(schema.videos.id, videoId));
@@ -684,7 +704,7 @@ export const LIGHTING_POLICY =
 const realismParagraph = (tag: string) =>
   `${tag[0].toUpperCase()}${tag.slice(1)} is realism reference only for texture. The scene-specific light in the previous paragraph controls all lighting; do not import the style photograph lighting or setting. If an environment reference is supplied, this style reference supplies texture only and must not override that environment lighting. Everyday phone-video softness varies with subject distance, light and movement; do not give skin, fabric and background identical fine detail. Do not copy its person, pose, face, clothing, product, logos or overlays. Preserve the identity and action already specified. No artificial HDR or cosmetic skin smoothing.`;
 export const NEGATIVE_PARAGRAPH =
-  "NEGATIVE: no source captions, watermarks, interface, extra fingers, fused hands, floating objects, pasted edges, redesigned products, mixed identities, isolated portrait light or artificial background blur.";
+  "NEGATIVE: no source captions, watermarks, interface, extra fingers, fused hands, floating objects, pasted edges, redesigned products, mixed identities, isolated portrait light or artificial background blur, no white or black bands, borders or empty strips at any edge.";
 export const FORMAT_PARAGRAPH =
   "Vertical 9:16 mobile frame. No captions, subtitles, emojis, overlays, play controls or interface. Only authentic physical package or storefront print belongs in the scene.";
 /** Marcas de los números de las dos fotos en el prompt guardado (se sustituyen al pedir la imagen). */
@@ -718,6 +738,8 @@ Escribe en inglés, en prosa corrida, cinco párrafos (cada uno de un solo bloqu
 3. product: el producto como en el desglose (si aún no se ve, no se anticipa ni se añade la caja).
 4. environment: «Reference image {ROOM} is the EXACT requested background, not an inspiration. Preserve its …» y entre 6 y 12 elementos que VES en esa foto, cada uno con su posición (LEFT, RIGHT, centre, foreground, background). Mete la cámara dentro de esa sala desde el punto de vista del fotograma original («Camera is … looking into this same room»), «Preserve recognizable architecture, furniture, ornaments and natural spatial depth.», «Do not add …» con lo que no debe aparecer, y «Never raise the camera just to fit the whole room.». Mantén la acción, las manos y el momento intactos.
 5. lighting: «Match the actual … light in reference image {ROOM}» con las fuentes, direcciones y temperatura que se ven en esa foto, y cómo comparten esa luz las manos, la persona y el objeto (sombras de contacto). Sin la frase fija de luz: la añade la aplicación.
+
+LA IMAGEN EMPIEZA IGUAL QUE EL FOTOGRAMA ORIGINAL (regla fija del dueño, 24/11/2026): copia la pose, la acción y el momento de image 1 (qué hace cada mano, dónde está cada persona, qué se ve en primer plano). Si en image 1 una mano agarra o sostiene un objeto, en la imagen esa mano agarra EL PRODUCTO DEL ENCARGO (o su caja, si eso es lo que se sostiene), nunca una mano vacía que agarra la nada: entonces productVisible es true y el párrafo product lo dice con su número. Si en image 1 se ve un escaparate o una estantería con cajas, se llena con las cajas del producto del encargo (image {PACKAGING}). El fondo encaja con el tipo de producto y su uso (un cepillo de pelo: peluquería, tienda de belleza, baño o tocador; un aparato de cocina: cocina; un regalo de Navidad: bajo el árbol), y si la toma es un regalo de Navidad, se entiende que lo es.
 
 Primero decide productVisible (si el artículo o su efecto se ven en esta toma) y packagingVisible (si se ve la caja). Lo que no se ve no se adjunta, como en el método aprobado: no lo cites.
 
@@ -774,8 +796,12 @@ async function composeFramePrompt(
       // Una referencia que no se puede leer no se enseña.
     }
   }
+  const correction = await lastOwnerRejection(run.videoId);
   const content: LlmContent = [
     textPart(`Prompt del desglose (lo que se conserva: acción, identidad, producto):\n${base}`),
+    ...(correction
+      ? [textPart(`CORRECCIÓN DEL DUEÑO al rechazar la imagen anterior: «${correction}». Manda sobre el prompt del desglose: aplícala de forma visible en los párrafos que toque.`)]
+      : []),
     ...productPhotos.flatMap((photo) => [textPart(`image ${photo.tag} — ${photo.label}:`), imagePart(photo.jpeg, "image/jpeg")]),
     ...(frameJpeg ? [textPart("image 1 — fotograma original (composición):"), imagePart(frameJpeg, "image/jpeg")] : []),
     textPart(
@@ -928,6 +954,7 @@ async function runPinterestOnce(runId: number, deps: PinterestDeps): Promise<voi
           .from(schema.batchProducts)
           .where(and(eq(schema.batchProducts.batchId, video.batchId), eq(schema.batchProducts.productId, video.productId)));
   const batchNotes = batchProduct?.notes ?? null;
+  const correction = await lastOwnerRejection(video.id);
   // 1. Escena y consultas.
   let scene = run.scene as PinterestScene | null;
   if (!scene) {
@@ -942,6 +969,7 @@ async function runPinterestOnce(runId: number, deps: PinterestDeps): Promise<voi
           video.note ? `Cambios pedidos para este vídeo: ${video.note}` : "",
           video.adaptation ? `Adaptación pedida: ${video.adaptation}` : "",
           batchNotes ? `Indicaciones del lote para este producto: ${batchNotes}` : "",
+          correction ? `CORRECCIÓN DEL DUEÑO al rechazar la imagen anterior (manda sobre todo lo demás): ${correction}` : "",
           "",
           "Desglose de la referencia:",
           analysisText(analysis.result as Record<string, unknown> | null),

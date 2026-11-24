@@ -69,3 +69,13 @@ Petición del dueño: en cada tarjeta de «Nuevo lote», en su grupo y en la pan
 - **En la imagen:** un **fondo** a mano es la sala del método aprobado y no se elige nada del banco; Claude empieza el párrafo de entorno con «Image N is the user-selected room background only, not product identity.» (frase de los prompts aprobados del sistema anterior) y lo describe elemento a elemento. Un **ambiente** o **realismo** a mano ocupa el hueco de realismo. **Ropa** y **otra** van adjuntas después del avatar con su papel (`{MANUAL1}`…). Cambiar las imágenes rehace el prompt con sala.
 - **Aprendizaje:** al aprobar la imagen, los fondos y ambientes subidos a mano entran en el banco de aprobadas (`addApprovedToBank`).
 - Sin fondo a mano (solo ropa, por ejemplo) la sala sigue saliendo del banco.
+
+## La imagen empieza igual que el fotograma (24/11/2026)
+
+Emmanuel rechazó cuatro imágenes del lote 6 (EisWerk 4, HaarZauber 6 y 7, vídeo 16): mano que no agarra
+nada, fondo que no pega con el producto, franja blanca abajo, producto que no era el real. Causa: el prompt
+con sala no obligaba a copiar la acción del fotograma ni a poner el producto en la mano, y el motivo del
+rechazo del dueño no llegaba a la siguiente imagen. Ahora: `COMPOSE_INSTRUCTIONS` copia pose, acción y
+momento de image 1 y pone el producto del encargo en la mano (o sus cajas en el escaparate); el banco y la
+composición eligen un fondo del tipo de producto; el NEGATIVE prohíbe franjas y bordes; el motivo del rechazo
+del dueño (`OWNER_CORRECTION_PREFIX`) pasa a la escena y al prompt, y al rechazarse se rehace la sala.

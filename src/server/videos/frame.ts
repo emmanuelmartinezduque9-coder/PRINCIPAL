@@ -246,4 +246,9 @@ export async function approveFrame(user: AuthUser, videoId: number, resultId: nu
 /** Rechaza la última ronda de la imagen inicial con un motivo de una línea (y deja de estar aprobada). */
 export async function rejectFrame(user: AuthUser, videoId: number, reason: string): Promise<void> {
   await rejectRound(user, videoId, "frame", reason, { guard: noClip });
+  // Un rechazo del dueño (no un paso automático) rehace la referencia y el prompt con sala con su
+  // motivo como corrección (ver `lastOwnerRejection` en `pinterest.ts`).
+  if (!reason.startsWith("Corrección automática:") || reason.startsWith("Corrección automática: del dueño: ")) {
+    await getDb().delete(schema.videoPinterestRefs).where(eq(schema.videoPinterestRefs.videoId, videoId));
+  }
 }
