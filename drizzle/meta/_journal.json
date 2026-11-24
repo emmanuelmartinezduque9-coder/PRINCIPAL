@@ -365,6 +365,13 @@
       "when": 1795478217461,
       "tag": "0051_modelo_por_video_sin_grupo",
       "breakpoints": true
+    },
+    {
+      "idx": 52,
+      "version": "7",
+      "when": 1795478720770,
+      "tag": "0052_topaz_1080p",
+      "breakpoints": true
     }
   ]
 }

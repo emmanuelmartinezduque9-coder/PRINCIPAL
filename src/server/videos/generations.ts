@@ -94,7 +94,8 @@ const THUMB_MAX_SIDE = 540;
 export const SUBMIT_JOB = "video.enviar";
 export const FINALIZE_JOB = "video.finalizar";
 
-export type GenerationKind = "frame" | "clip";
+/** `upscale`: Topaz a 1080p sobre el clip ya hecho (orden de Emmanuel, 24/11/2026, como Codex). */
+export type GenerationKind = "frame" | "clip" | "upscale";
 export type GenerationStatus = "intent" | "submitting" | "submitted" | "done" | "failed" | "not_sent" | "unknown";
 
 export interface GenDeps {
@@ -239,7 +240,20 @@ export function asHttp(error: unknown): never {
   throw error;
 }
 
-function price(port: HiggsfieldPort, userId: number, kind: string, request: unknown, count: number) {
+/**
+ * Lo que se prevé que cuesta Topaz a 1080p (Higgsfield no lo presupuesta): unos 0,33 créditos por
+ * segundo, a partir de sus movimientos (3 y 5 créditos por clip), con un mínimo de 2.
+ */
+export function upscaleEstimate(seconds: number): number {
+  return Math.max(2, Math.ceil(seconds / 3));
+}
+
+function price(port: HiggsfieldPort, userId: number, kind: string, request: unknown, count: number): Promise<{ credits: number; quoteRef: string | null }> {
+  if (kind === "upscale") {
+    // Sin presupuesto del proveedor: la previsión (guardada en la petición al construirla).
+    const seconds = (request as { estimateSeconds?: number }).estimateSeconds ?? 15;
+    return Promise.resolve({ credits: upscaleEstimate(seconds), quoteRef: null });
+  }
   return kind === "frame" ? port.quoteImages(userId, request as HfImageRequest, count) : port.quoteVideo(userId, request as HfVideoRequest);
 }
 

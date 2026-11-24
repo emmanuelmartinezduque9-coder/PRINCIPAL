@@ -76,7 +76,24 @@ export interface HfWanRequest {
   medias: HfMediaRef[];
 }
 
-export type HfVideoRequest = HfSeedanceRequest | HfGenjutsuRequest | HfWanRequest;
+/**
+ * Topaz a 1080p sobre el clip ya generado, con la configuración exacta de Codex (pedido 54,
+ * `upscale-transport`): `--resolution 1080p --aspect_ratio auto --enhancement
+ * {"model":"thd-3","astra_params":null,"params":null} --frame_interpolation null`. La entrada es el
+ * trabajo del clip (`video_references`). Higgsfield no lo presupuesta (`estimate_video_cost` dice
+ * que no admite `topaz_video`).
+ */
+export interface HfUpscaleRequest {
+  model: "topaz_video";
+  prompt: "";
+  resolution: "1080p";
+  aspectRatio: "auto";
+  enhancement: { model: "thd-3"; astra_params: null; params: null };
+  frameInterpolation: null;
+  medias: HfMediaRef[];
+}
+
+export type HfVideoRequest = HfSeedanceRequest | HfGenjutsuRequest | HfWanRequest | HfUpscaleRequest;
 
 /**
  * Doblaje del diálogo (modelo `dubbing` de Higgsfield, el que usó Codex el 19/11/2026): un vídeo

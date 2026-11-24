@@ -33,6 +33,7 @@ import {
   stageOf,
 } from "@/server/videos/lote";
 import { getVideoFor, type Video } from "@/server/videos/videos";
+import { downloadableClip } from "@/server/videos/clip";
 import { POST as enviarRoute } from "@/app/api/lotes/[id]/enviar/route";
 import { fakeMessages, type FakeCall } from "./helpers/fake-llm";
 import { makeProduct, makeUser, TEST_PASSWORD, seedanceByDefault } from "./helpers/fixtures";
@@ -55,6 +56,9 @@ vi.mock("next/headers", () => ({
 
 const FRAME = 4;
 const CLIP = 18;
+/** La previsión de Topaz a 1080p de un clip de 6 s (`upscaleEstimate`): va en la previsión del clip. */
+const UPSCALE = 2;
+const CLIP_EST = CLIP + UPSCALE;
 
 const REPLY: Analysis = {
   conceptLogic: "El producto resuelve en un gesto lo que antes costaba un rato.",
@@ -179,7 +183,7 @@ async function sendAndFinish(): Promise<void> {
     if (g.status !== "submitted") continue;
     const { rows } = await getPool().query("select job_ids as \"jobIds\" from generations where id = $1", [g.id]);
     for (const jobId of rows[0].jobIds as string[]) {
-      const url = g.kind === "clip" ? `https://d8j0ntlcm91z4.cloudfront.net/${jobId}.mp4` : `https://cdn.test/${jobId}.png`;
+      const url = g.kind === "frame" ? `https://cdn.test/${jobId}.png` : `https://d8j0ntlcm91z4.cloudfront.net/${jobId}.mp4`;
       fake.state.jobs[jobId] = { jobId, status: "done", failure: null, error: null, urls: [url] };
     }
     await finalizeGeneration(g.id, deps);
@@ -273,11 +277,11 @@ describe("estados del envío", () => {
     expect(auto).toMatchObject({ readyToConfirm: true, questions: 0, total: 3 });
 
     const quote = await quoteBatch(ana, batchId, deps);
-    expect(quote).toMatchObject({ frames: 3 * FRAME, clips: 3 * CLIP, total: 3 * (FRAME + CLIP), balance: 1000 });
+    expect(quote).toMatchObject({ frames: 3 * FRAME, clips: 3 * CLIP_EST, total: 3 * (FRAME + CLIP_EST), balance: 1000 });
     await confirmBatch(ana, batchId, { expectedCredits: quote.total }, deps);
     const confirmed = await getBatchFor(ana, batchId);
-    expect(confirmed).toMatchObject({ status: "imagenes", budgetCredits: 66 });
-    expect(confirmed.estimates![String(videos[0].id)]).toEqual({ frame: FRAME, clip: CLIP });
+    expect(confirmed).toMatchObject({ status: "imagenes", budgetCredits: 3 * (FRAME + CLIP_EST) });
+    expect(confirmed.estimates![String(videos[0].id)]).toEqual({ frame: FRAME, clip: CLIP_EST });
 
     // Imágenes: todas a la vez.
     await advanceBatch(batchId, deps);
@@ -295,12 +299,18 @@ describe("estados del envío", () => {
     expect((await active()).map((g) => g.kind)).toEqual(["clip", "clip", "clip"]);
     await sendAndFinish();
     await advanceBatch(batchId, deps);
+    // Con los clips hechos, la subida a 1080p de los 3 (Topaz) antes de dar el lote por listo.
+    expect(await statusOf(batchId)).toBe("clips");
+    expect((await active()).map((g) => g.kind)).toEqual(["upscale", "upscale", "upscale"]);
+    await sendAndFinish();
+    await advanceBatch(batchId, deps);
     // `listo` y enseguida el montaje (`onBatchReady`): cada vídeo entra en la cola de la nube (sin Mac).
     expect(await statusOf(batchId)).toBe("listo");
     expect(ready).toEqual([batchId]);
     for (const video of videos) expect((await getVideoFor(ana, video.id)).editStatus).toBe("en_marcha");
     expect((await generations()).filter((g) => g.kind === "clip" && g.status === "done")).toHaveLength(3);
-    expect(await committed(batchId)).toBe(66);
+    // 3 imágenes, 3 clips y 3 subidas a 1080p: justo lo autorizado.
+    expect(await committed(batchId)).toBe(3 * (FRAME + CLIP_EST));
   });
 
   it("enviar: solo quien creó el lote, una vez y con vídeos", async () => {
@@ -314,7 +324,7 @@ describe("estados del envío", () => {
     await expect(sendBatch(ana, empty.id)).rejects.toMatchObject({ status: 400 });
     // Ya presupuestado no admite vídeos nuevos.
     await runQueuedAnalyses();
-    await confirmBatch(ana, batchId, { expectedCredits: 22 }, deps);
+    await confirmBatch(ana, batchId, { expectedCredits: FRAME + CLIP_EST }, deps);
     await expect(addVideoToBatch(ana, batchId, { productId: producto.id, avatarPhotoId: avatar, avatarMode: "elegido" })).rejects.toMatchObject({ status: 409 });
   });
 
@@ -368,7 +378,7 @@ describe("preguntas del lote", () => {
     await runQueuedAnalyses();
     expect(await batchQuestions(ana, batchId)).toEqual([]);
     expect((await autoView(ana, await getBatchFor(ana, batchId))).readyToConfirm).toBe(true);
-    expect((await quoteBatch(ana, batchId, deps)).total).toBe(2 * (FRAME + CLIP));
+    expect((await quoteBatch(ana, batchId, deps)).total).toBe(2 * (FRAME + CLIP_EST));
   });
 
   it("un desglose que falla no se repite solo: se pregunta", async () => {
@@ -393,9 +403,9 @@ describe("presupuesto y dinero", () => {
     const { batchId } = await batchWith(1);
     await sendBatch(ana, batchId);
     await runQueuedAnalyses();
-    await expect(confirmBatch(ana, batchId, { expectedCredits: FRAME + CLIP - 1 }, deps)).rejects.toMatchObject({
+    await expect(confirmBatch(ana, batchId, { expectedCredits: FRAME + CLIP_EST - 1 }, deps)).rejects.toMatchObject({
       status: 409,
-      message: `El precio ha cambiado: ahora son ${FRAME + CLIP} créditos. Revísalo y confirma de nuevo.`,
+      message: `El precio ha cambiado: ahora son ${FRAME + CLIP_EST} créditos. Revísalo y confirma de nuevo.`,
     });
     expect(await statusOf(batchId)).toBe("preguntas");
   });
@@ -416,7 +426,7 @@ describe("presupuesto y dinero", () => {
 
     await expect(resumeBatch(ana, batchId, {})).rejects.toMatchObject({ status: 400 });
     await resumeBatch(ana, batchId, { extraCredits: 2 });
-    expect(await getBatchFor(ana, batchId)).toMatchObject({ status: "imagenes", budgetCredits: 44 + 2 });
+    expect(await getBatchFor(ana, batchId)).toMatchObject({ status: "imagenes", budgetCredits: 2 * (FRAME + CLIP_EST) + 2 });
     await advanceBatch(batchId, deps);
     // El primero ya con su precio nuevo; el segundo sube igual y vuelve a pausar.
     expect((await generations()).map((g) => [g.videoId, g.quotedCredits])).toEqual([[videos[0].id, 6]]);
@@ -442,7 +452,8 @@ describe("presupuesto y dinero", () => {
     await cycle(batchId, 3);
     // Clips hechos: los montajes esperan en la cola de la nube.
     expect(await statusOf(batchId)).toBe("listo");
-    expect(await committed(batchId)).toBe(48);
+    // Más la subida a 1080p de cada clip.
+    expect(await committed(batchId)).toBe(48 + 2 * UPSCALE);
     expect(await committed(batchId)).toBeLessThanOrEqual((await getBatchFor(ana, batchId)).budgetCredits!);
   });
 
@@ -555,10 +566,26 @@ describe("clips", () => {
     expect((await active()).map((g) => [g.videoId, g.kind, g.quotedCredits])).toEqual([[videos[0].id, "clip", CLIP]]);
     expect(await statusOf(batchId)).toBe("revision_imagenes");
 
-    // Terminado su clip, se monta en la nube sin esperar a que el lote esté «listo».
+    // Terminado su clip, se sube a 1080p con Topaz (configuración de Codex) y no se monta todavía.
+    await sendAndFinish();
+    await advanceBatch(batchId, deps);
+    expect((await getVideoFor(ana, videos[0].id)).editStatus).toBeNull();
+    const [upscale] = (await getPool().query("select kind, request from generations where kind = 'upscale'")).rows;
+    expect(upscale.request).toMatchObject({
+      model: "topaz_video",
+      resolution: "1080p",
+      aspectRatio: "auto",
+      enhancement: { model: "thd-3", astra_params: null, params: null },
+      frameInterpolation: null,
+      medias: [{ role: "video_references" }],
+    });
+    // Subido, se monta en la nube sin esperar a que el lote esté «listo», con el clip a 1080p.
     await sendAndFinish();
     await advanceBatch(batchId, deps);
     expect((await getVideoFor(ana, videos[0].id)).editStatus).toBe("en_marcha");
+    const clip = await downloadableClip(await getVideoFor(ana, videos[0].id));
+    const { rows: upscaled } = await getPool().query("select r.job_id as \"jobId\" from generation_results r join generations g on g.id = r.generation_id where g.kind = 'upscale'");
+    expect(clip?.jobId).toBe(upscaled[0].jobId);
     expect((await getPool().query("select video_id as \"videoId\" from edit_runs")).rows).toEqual([{ videoId: videos[0].id }]);
     expect((await getVideoFor(ana, videos[1].id)).editStatus).toBeNull();
 

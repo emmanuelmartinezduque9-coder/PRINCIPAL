@@ -3,6 +3,7 @@ import {
   getHiggsfield,
   higgsfieldFakeMode,
   type HfMediaRef,
+  type HfUpscaleRequest,
   type HfVideoRequest,
 } from "@/connectors/higgsfield";
 import { getDb, schema } from "@/db/client";
@@ -133,6 +134,7 @@ export const buildClipRequest: RequestBuilder = async (user, video, deps) => {
   if (problem) throw new HttpError(409, problem);
   const manifest = clipManifest(video, await manifestRefsFor(user, video), undefined, model);
   if (manifest.some((item) => item.source.kind === "avatar_pending")) throw new HttpError(409, NO_AUTO_AVATAR);
+  // Correcciones aprendidas de los reportes («Mejoras», `src/server/mejoras/`): van literales al final.
   const prompt = clipPromptFor(video.videoPrompt ?? "", manifest);
   const error = checkVideoPrompt(prompt, manifest).find((issue) => issue.level === "error");
   if (error) throw new HttpError(400, error.message, PROMPT_ERROR);
@@ -191,6 +193,44 @@ function clipRequest(model: ClipModel, video: Video, prompt: string, medias: HfM
 }
 
 registerRequestBuilder("clip", buildClipRequest);
+
+/** El clip hecho que se sube a 1080p: el aprobado o, si no hay, el último bueno; `null` si no hay. */
+async function finishedClip(video: Video): Promise<{ jobId: string } | null> {
+  const results = await getDb()
+    .select({ id: schema.generationResults.id, jobId: schema.generationResults.jobId })
+    .from(schema.generationResults)
+    .innerJoin(schema.generations, eq(schema.generations.id, schema.generationResults.generationId))
+    .where(and(eq(schema.generations.videoId, video.id), eq(schema.generations.kind, "clip"), eq(schema.generations.status, "done"), eq(schema.generationResults.ok, true)))
+    .orderBy(desc(schema.generations.id), asc(schema.generationResults.index));
+  return results.find((result) => result.id === video.approvedClipResultId) ?? results[0] ?? null;
+}
+
+const NO_FINISHED_CLIP = "Todavía no hay clip que subir a 1080p.";
+
+/**
+ * Topaz a 1080p sobre el clip hecho (orden de Emmanuel, 24/11/2026: todos los clips a 480p y luego
+ * a 1080p, como en Codex, pedido 54): `topaz_video`, 1080p, `aspect_ratio: auto`, mejora `thd-3`,
+ * sin interpolación. La entrada es el trabajo del clip. Higgsfield no lo presupuesta: va la
+ * previsión (`estimateSeconds` → `upscaleEstimate`).
+ */
+export const buildUpscaleRequest: RequestBuilder = async (user, video) => {
+  requireVideoOwner(user, video);
+  const clip = await finishedClip(video);
+  if (!clip) throw new HttpError(409, NO_FINISHED_CLIP);
+  const request: HfUpscaleRequest & { estimateSeconds: number } = {
+    model: "topaz_video",
+    prompt: "",
+    resolution: "1080p",
+    aspectRatio: "auto",
+    enhancement: { model: "thd-3", astra_params: null, params: null },
+    frameInterpolation: null,
+    medias: [{ role: "video_references", value: clip.jobId }],
+    estimateSeconds: Math.round((video.segmentDurationMs ?? 15_000) / 1000),
+  };
+  return { request, count: 1 };
+};
+
+registerRequestBuilder("upscale", buildUpscaleRequest);
 
 /**
  * Estimación del clip ANTES de tener la imagen aprobada (para el presupuesto de «Enviar lote»):
@@ -274,7 +314,31 @@ export async function downloadableClip(video: Video): Promise<{ url: string; job
     .orderBy(desc(schema.generations.id), asc(schema.generationResults.index));
   const approved = results.find((result) => result.id === video.approvedClipResultId);
   const chosen = [approved, ...results].find((result) => result && servableClipUrl(result.url));
-  return chosen?.url ? { url: chosen.url, jobId: chosen.jobId } : null;
+  if (!chosen?.url) return null;
+  // El montaje y la descarga van con el clip subido a 1080p con Topaz, si ya está (orden de Emmanuel,
+  // 24/11/2026); si Topaz no pudo, con el de 480p.
+  return (await upscaledOf(video, chosen.jobId)) ?? { url: chosen.url, jobId: chosen.jobId };
+}
+
+/** La subida a 1080p (Topaz) terminada de ese clip, o `null`. */
+async function upscaledOf(video: Video, clipJobId: string): Promise<{ url: string; jobId: string } | null> {
+  const rows = await getDb()
+    .select({ url: schema.generationResults.url, jobId: schema.generationResults.jobId, request: schema.generations.request })
+    .from(schema.generationResults)
+    .innerJoin(schema.generations, eq(schema.generations.id, schema.generationResults.generationId))
+    .where(
+      and(
+        eq(schema.generations.videoId, video.id),
+        eq(schema.generations.kind, "upscale"),
+        eq(schema.generations.status, "done"),
+        eq(schema.generationResults.ok, true),
+      ),
+    )
+    .orderBy(desc(schema.generations.id));
+  const found = rows.find(
+    (row) => servableClipUrl(row.url) && (row.request as { medias?: Array<{ value: string }> } | null)?.medias?.[0]?.value === clipJobId,
+  );
+  return found?.url ? { url: found.url, jobId: found.jobId } : null;
 }
 
 /** Tope para que Higgsfield empiece a responder. */

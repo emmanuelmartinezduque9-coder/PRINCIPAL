@@ -17,7 +17,7 @@ import { PINTEREST_PENDING } from "@/server/videos/pinterest";
 import { expectsEffectPass } from "@/server/videos/efecto";
 // Registra el constructor de la imagen inicial (`frame`) en las generaciones.
 import { approveFrame, rejectFrame } from "@/server/videos/frame";
-import { BLOCKED, MAX_REGENERATIONS, quoteGeneration, SYSTEM_REJECT_PREFIX, requestGeneration, type GenDeps, type GenerationKind } from "@/server/videos/generations";
+import { BLOCKED, MAX_REGENERATIONS, upscaleEstimate, quoteGeneration, SYSTEM_REJECT_PREFIX, requestGeneration, type GenDeps, type GenerationKind } from "@/server/videos/generations";
 import { clipModelProblem, getVideoFor, setVideoSong, referenceOutdated, REFERENCE_OUTDATED, staleness, updateVideoChoices, withProductNotes, type Video } from "@/server/videos/videos";
 import { CLIP_MODEL_LABEL, CLIP_MODELS, resolveClipModel, SEEDANCE, sourceProblem } from "@/lib/clip-models";
 import { isPromptProblem, PROMPT_ERROR } from "@/server/videos/prompt-check";
@@ -98,6 +98,8 @@ interface Row {
   video: Video;
   frames: Generation[];
   clips: Generation[];
+  /** La subida a 1080p con Topaz del clip hecho. */
+  upscales: Generation[];
   /** Del más reciente al más antiguo. */
   analyses: AnalysisRow[];
 }
@@ -135,6 +137,7 @@ async function rowsOf(user: AuthUser, batch: Batch, options: { withSkipped?: boo
     video,
     frames: gens.filter((g) => g.videoId === video.id && g.kind === "frame"),
     clips: gens.filter((g) => g.videoId === video.id && g.kind === "clip"),
+    upscales: gens.filter((g) => g.videoId === video.id && g.kind === "upscale"),
     analyses: analyses.filter((a) => a.videoId === video.id),
   }));
 }
@@ -182,6 +185,26 @@ function retryAfterOf(batch: Batch): Date {
 }
 
 const frameStage = (row: Row, batch: Batch) => stageOf(row.frames, row.video.approvedFrameResultId !== null, retryAfterOf(batch));
+
+/** Intentos de Topaz por clip antes de montar con el de 480p (con aviso). */
+export const MAX_UPSCALE_ATTEMPTS = 3;
+
+/**
+ * La subida a 1080p de una fila (orden de Emmanuel, 24/11/2026): `need` en cuanto el clip está
+ * hecho; un fallo se repite solo; tras `MAX_UPSCALE_ATTEMPTS` fallos, `given_up` (se monta con el de
+ * 480p y un aviso). `done` también si el clip no se hizo aquí (nada que subir).
+ */
+export type UpscaleStage = "need" | "busy" | "done" | "given_up" | "waiting";
+function upscaleStage(row: Row, batch: Batch): UpscaleStage {
+  if (clipStage(row, batch) !== "done") return "waiting";
+  const last = row.upscales.at(-1);
+  if (!last) return "need";
+  if (BUSY_GENERATION.includes(last.status)) return "busy";
+  if (last.status === "done") return "done";
+  const failed = row.upscales.filter((g) => g.status === "failed" || g.status === "not_sent").length;
+  return failed >= MAX_UPSCALE_ATTEMPTS ? "given_up" : "need";
+}
+const upscaleSettled = (row: Row, batch: Batch) => ["done", "given_up"].includes(upscaleStage(row, batch));
 
 /** Clips que Higgsfield bloqueó por su filtro de contenido o de marcas (los devuelve: no cobra). */
 /** El modelo con el que se pidió una generación (su petición guardada). */
@@ -692,7 +715,8 @@ async function quoteRows(user: AuthUser, rows: Row[], deps: GenDeps): Promise<Ba
     try {
       const frame = await quoteGeneration(user, row.video.id, "frame", deps);
       balance = frame.balance;
-      const clip = await estimateClipCredits(user, row.video, deps);
+      // El clip y su subida a 1080p con Topaz (que Higgsfield no presupuesta: va la previsión).
+      const clip = (await estimateClipCredits(user, row.video, deps)) + upscaleEstimate(Math.round((row.video.segmentDurationMs ?? 15_000) / 1000));
       // El paso del efecto del producto es una ronda de imagen más (una sola candidata): entra en el presupuesto.
       const effect = (await expectsEffectPass(row.video.id)) ? frame.credits : 0;
       return { videoId: row.video.id, frame: frame.credits + effect, clip, error: null };
@@ -846,7 +870,9 @@ async function pauseBatch(batch: Batch, pause: Omit<BatchPause, "from" | "extraC
   throw new Paused(pause.reason);
 }
 
-const KIND_WORD: Record<GenerationKind, string> = { frame: "la imagen", clip: "el clip" };
+const KIND_WORD: Record<GenerationKind, string> = { frame: "la imagen", clip: "el clip", upscale: "la subida a 1080p" };
+/** Para la pausa (el tablero solo distingue imagen y clip): la subida a 1080p cuenta como clip. */
+const pauseKind = (kind: GenerationKind): "frame" | "clip" => (kind === "frame" ? "frame" : "clip");
 
 /** «Buscando referencias de Pinterest…» o «se vuelven a buscar»: no es un fallo, se espera (regla fija: nunca sin ellas). */
 const isPinterestWait = (message: string) => message === PINTEREST_PENDING || message.startsWith("No se encontraron referencias de Pinterest");
@@ -938,14 +964,19 @@ async function onRequestError(user: AuthUser, batch: Batch, row: Row, kind: Gene
   // El precio subió entre el presupuesto y el apunte: el siguiente avance vuelve a presupuestar.
   if (status === 409 && message.startsWith("El precio ha cambiado")) return "skip";
   if (status === 409 && message.startsWith("No tienes créditos suficientes")) {
-    return pauseBatch(batch, { kind: "saldo", reason: message, videoId: row.video.id, kindOf: kind });
+    return pauseBatch(batch, { kind: "saldo", reason: message, videoId: row.video.id, kindOf: pauseKind(kind) });
+  }
+  // La subida a 1080p que no se pudo pedir se vuelve a intentar en el siguiente avance (no para el lote).
+  if (kind === "upscale") {
+    console.warn(`[lotes] Vídeo ${row.video.id}: no se pudo pedir la subida a 1080p: ${message}`);
+    return "skip";
   }
   const general = error.code === HIGGSFIELD_CONNECT || status === 503;
   return pauseBatch(batch, {
     kind: "fallo",
     reason: general ? message : `${row.video.title}: ${message}`,
     videoId: general ? null : row.video.id,
-    kindOf: kind,
+    kindOf: pauseKind(kind),
   });
 }
 
@@ -963,6 +994,25 @@ async function requestFor(user: AuthUser, batch: Batch, rows: Row[], row: Row, k
     await onRequestError(user, batch, row, kind, error);
     return false;
   }
+  if (kind === "upscale") {
+    // Topaz en todos los clips lo autoriza el dueño (24/11/2026) y Higgsfield no lo presupuesta: solo
+    // se comprueba el saldo. Su previsión ya va en la del clip de los lotes nuevos.
+    if (quote.balance < quote.credits) {
+      await pauseBatch(batch, {
+        kind: "saldo",
+        reason: `No tienes créditos suficientes en Higgsfield: hacen falta ${quote.credits} y tienes ${quote.balance}.`,
+        videoId: row.video.id,
+        kindOf: "clip",
+      });
+    }
+    try {
+      await requestGeneration(user, row.video.id, kind, { expectedCredits: quote.credits }, deps);
+      return true;
+    } catch (error) {
+      await onRequestError(user, batch, row, kind, error);
+      return false;
+    }
+  }
   const estimates = batch.estimates ?? {};
   const own = estimates[String(row.video.id)] ?? { frame: quote.credits, clip: 0 };
   if (quote.credits > own[kind]) {
@@ -971,7 +1021,7 @@ async function requestFor(user: AuthUser, batch: Batch, rows: Row[], row: Row, k
       reason: `${row.video.title}: ${KIND_WORD[kind]} cuesta ${quote.credits} créditos (previsto ${own[kind]}).`,
       extraCredits: quote.credits - own[kind],
       videoId: row.video.id,
-      kindOf: kind,
+      kindOf: pauseKind(kind),
       quoted: quote.credits,
     });
   }
@@ -1072,7 +1122,8 @@ async function advanceGenerations(user: AuthUser, start: Batch, deps: GenDeps): 
   if (batch.status === "revision_imagenes" && frames().every((s) => s === "approved")) {
     batch = (await moveBatch(batch, "clips")) ?? batch;
   }
-  if (batch.status === "clips" && rows.every((row) => clipStage(row, batch) === "done")) {
+  // «Listo» cuando cada clip está hecho y subido a 1080p (o Topaz falló del todo: se monta con el de 480p).
+  if (batch.status === "clips" && rows.every((row) => clipStage(row, batch) === "done" && upscaleSettled(row, batch))) {
     const done = await moveBatch(batch, "listo");
     if (done) await runReadyHooks(done.id);
     return;
@@ -1091,7 +1142,7 @@ async function advanceGenerations(user: AuthUser, start: Batch, deps: GenDeps): 
           ? `${row.video.title}: Higgsfield bloquea el clip por su filtro de contenido o de marcas también con el prompt reescrito sin marcas (${MAX_BLOCKED_RETRIES} reintentos, sin coste). Lo bloquea el vídeo de referencia o la imagen: cambia la referencia o salta este vídeo.`
           : `${row.video.title}: ${list.at(-1)?.error ?? "Higgsfield no ha podido generarlo."}`,
         videoId: row.video.id,
-        kindOf: kind,
+        kindOf: pauseKind(kind),
       });
     }
     if (s === "maxed") {
@@ -1099,7 +1150,7 @@ async function advanceGenerations(user: AuthUser, start: Batch, deps: GenDeps): 
         kind: "fallo",
         reason: `${row.video.title}: ${KIND_WORD[kind]} ha llegado al máximo de ${MAX_REGENERATIONS} regeneraciones.`,
         videoId: row.video.id,
-        kindOf: kind,
+        kindOf: pauseKind(kind),
       });
     }
   };
@@ -1111,15 +1162,18 @@ async function advanceGenerations(user: AuthUser, start: Batch, deps: GenDeps): 
 
   await startFinishedEdits(user, rows, batch);
 
-  const busy = () => rows.filter((row) => row.frames.concat(row.clips).some((g) => BUSY_GENERATION.includes(g.status))).length;
+  const all = (row: Row) => row.frames.concat(row.clips, row.upscales);
+  const busy = () => rows.filter((row) => all(row).some((g) => BUSY_GENERATION.includes(g.status))).length;
   let slots = AUTO_PARALLEL - busy();
-  // Primero las imágenes que faltan; después los clips de las imágenes ya aprobadas.
-  for (const kind of ["frame", "clip"] as const) {
+  // Primero las imágenes que faltan; después los clips de las imágenes ya aprobadas; después la
+  // subida a 1080p de los clips hechos (orden de Codex: Topaz antes del montaje y del doblaje).
+  for (const kind of ["frame", "clip", "upscale"] as const) {
     for (const row of rows) {
       if (slots <= 0) return;
       if (kind === "frame" && frameStage(row, batch) !== "need") continue;
       if (kind === "clip" && (frameStage(row, batch) !== "approved" || clipStage(row, batch) !== "need")) continue;
-      if (row.frames.concat(row.clips).some((g) => BUSY_GENERATION.includes(g.status))) continue;
+      if (kind === "upscale" && upscaleStage(row, batch) !== "need") continue;
+      if (all(row).some((g) => BUSY_GENERATION.includes(g.status))) continue;
       // Un clip bloqueado por el filtro se repite con el prompt reescrito (cuando el desglose esté listo).
       if (kind === "clip" && (await sanitizeAfterBlock(user, row))) continue;
       if (await requestFor(user, batch, rows, row, kind, deps)) {
@@ -1164,7 +1218,11 @@ export async function approveAllFrames(user: AuthUser, batchId: number): Promise
 
 /** Monta cada vídeo del lote cuyo clip ya está hecho y que aún no tiene montaje (ni en marcha). */
 async function startFinishedEdits(user: AuthUser, rows: Row[], batch: Batch): Promise<void> {
-  const ready = rows.filter((row) => row.video.editStatus === null && clipStage(row, batch) === "done");
+  // Se monta con el clip a 1080p: espera a que Topaz termine (o falle del todo; entonces con el de 480p).
+  const ready = rows.filter((row) => row.video.editStatus === null && clipStage(row, batch) === "done" && upscaleSettled(row, batch));
+  for (const row of ready) {
+    if (upscaleStage(row, batch) === "given_up") console.warn(`[lotes] Vídeo ${row.video.id}: Topaz falló ${MAX_UPSCALE_ATTEMPTS} veces; se monta con el clip de 480p.`);
+  }
   if (ready.length === 0) return;
   const { startEdit, ALREADY_RUNNING } = await import("@/server/videos/edits");
   for (const row of ready) {

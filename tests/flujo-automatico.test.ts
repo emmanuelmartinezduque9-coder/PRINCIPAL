@@ -147,7 +147,7 @@ async function sendAndFinish(): Promise<void> {
     if (g.status !== "submitted") continue;
     const { rows } = await getPool().query("select job_ids as \"jobIds\" from generations where id = $1", [g.id]);
     for (const jobId of rows[0].jobIds as string[]) {
-      const url = g.kind === "clip" ? `https://d8j0ntlcm91z4.cloudfront.net/${jobId}.mp4` : `https://cdn.test/${jobId}.png`;
+      const url = g.kind === "frame" ? `https://cdn.test/${jobId}.png` : `https://d8j0ntlcm91z4.cloudfront.net/${jobId}.mp4`;
       fake.state.jobs[jobId] = { jobId, status: "done", failure: null, error: null, urls: [url] };
     }
     await finalizeGeneration(g.id, deps);
@@ -245,6 +245,10 @@ describe("vídeo suelto: va solo", () => {
       ["clip", "intent"],
     ]);
     await sendAndFinish();
+    // Con el clip hecho, la subida a 1080p con Topaz; después, el montaje.
+    await advanceVideo(id, deps);
+    expect((await generations()).map((g) => g.kind)).toEqual(["frame", "clip", "upscale"]);
+    await sendAndFinish();
     await advanceVideo(id, deps);
     expect((await getPool().query("select status from edit_runs where video_id = $1", [id])).rows).toEqual([{ status: "queued" }]);
     expect((await getVideoFor(ana, id)).editStatus).toBe("en_marcha");
@@ -314,7 +318,8 @@ describe("flujo automático del lote", () => {
     expect(batch.status).toBe("imagenes");
     // 2 imágenes (1 por vídeo, 2 créditos) + 2 clips de Genjutsu Motion Transfer (el simulado cuenta 10 s: 30).
     // Con el margen de las 2 regeneraciones permitidas (rechazar no para el lote).
-    expect(batch.budgetCredits).toBe(2 * (2 + 30) * 3);
+    // Imagen, clip y su subida a 1080p con Topaz (2 de previsión), con el margen del lote.
+    expect(batch.budgetCredits).toBe(2 * (2 + 30 + 2) * 3);
     expect((await autoView(ana, batch)).readyToConfirm).toBe(false);
     await advanceBatch(batchId, deps);
     expect((await generations()).map((g) => [g.videoId, g.kind, g.count])).toEqual([

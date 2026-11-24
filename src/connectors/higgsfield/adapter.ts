@@ -168,6 +168,18 @@ export function videoParams(request: HfVideoRequest): Record<string, unknown> {
       medias,
     };
   }
+  if (request.model === "topaz_video") {
+    // Exactamente lo que enviaba Codex.
+    return {
+      model: request.model,
+      resolution: request.resolution,
+      aspect_ratio: request.aspectRatio,
+      enhancement: request.enhancement,
+      frame_interpolation: request.frameInterpolation,
+      use_unlim: false,
+      medias,
+    };
+  }
   if (request.model === "wan3_0_prime") {
     // Los mismos parámetros que Codex (`genjutsu.parametros`, rama Wan).
     return {

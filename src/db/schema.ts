@@ -916,7 +916,7 @@ export const generations = pgTable(
     index("generations_status").on(t.status),
     index("generations_video_kind").on(t.videoId, t.kind, t.id),
     index("generations_job_ids").using("gin", t.jobIds),
-    check("generations_kind_valid", sql`${t.kind} in ('frame', 'clip')`),
+    check("generations_kind_valid", sql`${t.kind} in ('frame', 'clip', 'upscale')`),
     check(
       "generations_status_valid",
       sql`${t.status} in ('intent', 'submitting', 'submitted', 'done', 'failed', 'not_sent', 'unknown')`,

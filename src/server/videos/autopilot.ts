@@ -182,8 +182,16 @@ export async function advanceVideo(videoId: number, deps: GenDeps = {}): Promise
   if (clip === "failed" || clip === "maxed") return stop(video.id, clipStopReason(clip, clips));
   if (clip !== "done") return;
 
-  // 5. Montaje, en cuanto el clip está hecho (una vez: «Volver a montar» es cosa de la persona).
+  // 5. Subida a 1080p con Topaz (orden de Emmanuel, 24/11/2026, como Codex: antes del montaje). Un
+  // fallo se repite solo; tras 3, se monta con el de 480p.
   if (video.editStatus !== null) return;
+  const upscales = (await getDb().select().from(schema.generations).where(and(eq(schema.generations.videoId, video.id), eq(schema.generations.kind, "upscale"))).orderBy(asc(schema.generations.id)));
+  const lastUpscale = upscales.at(-1);
+  if (lastUpscale && ["intent", "submitting", "submitted", "unknown"].includes(lastUpscale.status)) return;
+  const failedUpscales = upscales.filter((g) => g.status === "failed" || g.status === "not_sent").length;
+  if (lastUpscale?.status !== "done" && failedUpscales < 3) return requestAuto(user, video, "upscale", deps);
+
+  // 6. Montaje, en cuanto el clip está subido (una vez: «Volver a montar» es cosa de la persona).
   const { startEdit, ALREADY_RUNNING } = await import("@/server/videos/edits");
   try {
     await startEdit(user, video.id);
