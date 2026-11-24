@@ -1,3 +1,6 @@
+import type { z } from "zod";
+import { bindMacSchema } from "@/server/mac-comparisons";
+import { DEFAULT_MAC_ENGINES, MAC_STEPS, macStepOf, type MacEngines } from "@/llm/mac-engines";
 import crypto from "node:crypto";
 import { and, asc, eq, gte, inArray, isNull, lt, sql, type SQL } from "drizzle-orm";
 import type { PgUpdateSetSource } from "drizzle-orm/pg-core";
@@ -70,6 +73,20 @@ export async function setMacMode(owner: AuthUser, mode: unknown): Promise<MacMod
   return mode as MacMode;
 }
 
+export const MAC_ENGINES_SETTING = "claude.mac.engines";
+export async function getMacEngines(): Promise<MacEngines> {
+  const saved = await getSetting<Partial<MacEngines>>(MAC_ENGINES_SETTING);
+  const out = { ...DEFAULT_MAC_ENGINES };
+  for (const step of MAC_STEPS) if (["claude", "codex", "comparar"].includes(saved?.[step] ?? "")) out[step] = saved![step]!;
+  return out;
+}
+export async function setMacEngines(owner: AuthUser, value: unknown): Promise<void> {
+  if (owner.role !== "dueno") throw new HttpError(403, "Solo el dueño puede hacer esto.");
+  if (!value || typeof value !== "object" || Array.isArray(value) || Object.keys(value).length !== MAC_STEPS.length ||
+    !MAC_STEPS.every((step) => ["claude", "codex", "comparar"].includes((value as MacEngines)[step]))) throw new HttpError(400, "Motores no válidos.");
+  await setSetting(MAC_ENGINES_SETTING, value);
+}
+
 async function limitedUntil(now: Date): Promise<Date | null> {
   const value = await getSetting<string>(MAC_LIMIT_SETTING);
   const until = typeof value === "string" ? new Date(value) : null;
@@ -77,14 +94,14 @@ async function limitedUntil(now: Date): Promise<Date | null> {
 }
 
 /** El último latido de un Mac (ficha en vigor) de `userId`, o `null` si no tiene ninguno. */
-async function lastSeenOf(userId: number): Promise<{ has: boolean; lastSeenAt: Date | null; claude: string | null }> {
+async function lastSeenOf(userId: number): Promise<{ has: boolean; lastSeenAt: Date | null; claude: string | null; codex: string | null }> {
   const rows = await getDb()
     .select({ lastSeenAt: agents.lastSeenAt, info: agents.info })
     .from(agents)
     .where(and(eq(agents.createdBy, userId), isNull(agents.revokedAt)))
     .orderBy(sql`${agents.lastSeenAt} desc nulls last`)
     .limit(1);
-  return { has: rows.length > 0, lastSeenAt: rows[0]?.lastSeenAt ?? null, claude: rows[0]?.info?.claude ?? null };
+  return { has: rows.length > 0, lastSeenAt: rows[0]?.lastSeenAt ?? null, claude: rows[0]?.info?.claude ?? null, codex: rows[0]?.info?.codex ?? null };
 }
 
 const isOnline = (lastSeenAt: Date | null, now: Date) => lastSeenAt !== null && now.getTime() - lastSeenAt.getTime() <= MAC_ONLINE_MS;
@@ -100,15 +117,16 @@ async function isOwner(userId: number): Promise<boolean> {
  * Por dónde va una llamada de `userId`: `null` si va a la API como siempre (no es el dueño, no tiene
  * Mac o eligió «Solo API»). Si no, el modo y si el Mac se puede usar ahora (o por qué no).
  */
-export async function macRoute(userId: number, now: Date = new Date()): Promise<MacRoute | null> {
+export async function macRoute(userId: number, now: Date = new Date(), stepKey = ""): Promise<MacRoute | null> {
   if (!(await isOwner(userId))) return null;
   const mac = await lastSeenOf(userId);
   if (!mac.has) return null;
   const mode = await getMacMode();
   if (mode === "api") return null;
-  if (await limitedUntil(now)) return { mode, usable: false, reason: "limite" };
-  // Apagado, o encendido pero sin Claude Code con sesión (agente anterior a 1.8.0 o sin conectar).
-  if (!isOnline(mac.lastSeenAt, now) || !mac.claude) return { mode, usable: false, reason: "apagado" };
+  const engine = (await getMacEngines())[macStepOf(stepKey)];
+  if (engine === "claude" && await limitedUntil(now)) return { mode, usable: false, reason: "limite" };
+  // Codex/comparar admite cualquiera de los dos; Claude conserva su requisito de sesión.
+  if (!isOnline(mac.lastSeenAt, now) || (!mac.claude && (engine === "claude" || !mac.codex))) return { mode, usable: false, reason: "apagado" };
   return { mode, usable: true };
 }
 
@@ -122,7 +140,7 @@ type Stored = { job: MacJob } | { result: MacAnswer } | { failure: { limit: bool
  * tuviera se entera en su siguiente latido y corta).
  */
 export async function runOnMac(
-  input: { userId: number; stepKey: string; job: MacJob },
+  input: { userId: number; stepKey: string; job: MacJob; schema?: z.ZodType },
   deps: { now?: () => Date; sleep?: (ms: number) => Promise<void> } = {},
 ): Promise<MacOutcome> {
   const now = deps.now ?? (() => new Date());
@@ -144,6 +162,7 @@ export async function runOnMac(
     })
     .returning({ id: agentTasks.id });
   const taskId = task.id;
+  if (input.job.engine === "comparar") bindMacSchema(taskId, input.schema);
 
   const giveUp = async (reason: "apagado" | "fallo", detail: string): Promise<MacOutcome> => {
     await db
@@ -174,7 +193,7 @@ export async function runOnMac(
     if (waited > MAX_WAIT_MS) return giveUp("fallo", "El Mac tardó demasiado en contestar.");
     if (row.status === "queued") {
       const seen = await lastSeenOf(input.userId);
-      if (!isOnline(seen.lastSeenAt, current) || !seen.claude) return giveUp("apagado", "El Mac se apagó (o Claude Code perdió la sesión) antes de recoger la llamada.");
+      if (!isOnline(seen.lastSeenAt, current) || (!seen.claude && !seen.codex)) return giveUp("apagado", "El Mac se apagó (o Claude Code perdió la sesión) antes de recoger la llamada.");
       if (waited > UNCLAIMED_MS && !(await busyWithClaude(input.userId, current))) {
         return giveUp("fallo", "El Mac no recoge llamadas de Claude (¿agente sin actualizar a 1.8.0?).");
       }
@@ -239,6 +258,11 @@ export async function claimClaudeCodeTask(createdBy: number, lease: PgUpdateSetS
       return null;
     }
     const uploadId = crypto.randomBytes(16).toString("hex");
+    if (stored.job.engine === "comparar") {
+      const stepKey = task.url.replace(/^claude-code:/, "");
+      await tx.insert(schema.llmComparisons).values({ agentTaskId: task.id, uploadId, stepKey, paso: macStepOf(stepKey) })
+        .onConflictDoUpdate({ target: schema.llmComparisons.agentTaskId, set: { uploadId, claudeMs: null, codexMs: null, claudeText: null, codexText: null, codexError: null, codexValid: null, codexTruncated: false } });
+    }
     await tx.update(agentTasks).set({ ...lease, uploadId }).where(eq(agentTasks.id, task.id));
     return { taskId: task.id, kind: "claude_code", url: task.url, uploadId, chunkBytes: 0, maxBytes: 0, job: stored.job };
   });
@@ -313,6 +337,7 @@ export async function failClaudeCodeTask(task: { id: number }, condition: SQL | 
 // ───────────────────────── Ajustes: lo hecho en el Mac este mes ─────────────────────────
 
 export interface MacClaudeSummary {
+  engines: MacEngines;
   mode: MacMode;
   /** Hasta cuándo descansa el Mac por el límite del plan (ISO), o `null`. */
   limitUntil: string | null;
@@ -341,6 +366,7 @@ export async function macClaudeSummary(owner: AuthUser, now: Date = new Date()):
     .where(and(inMonth, sql`${entries.detail} ? 'macFallback'`));
   const until = await limitedUntil(now);
   return {
+    engines: await getMacEngines(),
     mode: await getMacMode(),
     limitUntil: until?.toISOString() ?? null,
     month: range.start.toISOString().slice(0, 7),
@@ -352,6 +378,6 @@ export async function macClaudeSummary(owner: AuthUser, now: Date = new Date()):
 
 /** El puente real que usa la pasarela. */
 export const macBridge: MacBridge = {
-  route: (userId) => macRoute(userId),
+  route: (userId, stepKey) => macRoute(userId, new Date(), stepKey),
   run: (input) => runOnMac(input),
 };

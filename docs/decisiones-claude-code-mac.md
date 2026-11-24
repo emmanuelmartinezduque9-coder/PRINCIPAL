@@ -199,3 +199,94 @@ Programado con Codex (`codex exec`) y revisado aquí: se cambió el orden de cri
 partir en rótulos; «las más parejas» en vez de «cada línea más corta que la siguiente», que dejaba «„Wir haben»
 sola arriba) y se arregló un fallo real («Das kommt auf meinen Weihnachtswunschzettel 🍦🎄🤭» hacía caer el
 montaje). Pruebas: `montador/test_texto06b.py` y `test_montar_auto.py`.
+
+## Codex como ejecutor del Mac y modo comparar
+
+Agente **1.9.0** (24/11/2026). El contrato `claude_code` sigue siendo el mismo; `MacJob.engine`
+añade `claude`, `codex` o `comparar`. Un agente anterior ignora ese campo y sigue haciendo Claude.
+`instalar.sh` copia también `codex.mjs`; hay que actualizar el agente para ejecutar Codex.
+El latido incorpora `codex` opcional: con sesión de ChatGPT puede recoger llamadas aunque Claude
+no esté listo. «Solo API» y los permisos del dueño se conservan.
+
+### Ajuste por paso
+
+`claude.mac.engines` guarda un objeto completo en `settings`. Solo el dueño lo cambia mediante
+`PUT /api/ajustes/claude` (`engines`); Ajustes → Mac ofrece un selector por paso. Por defecto:
+
+| Paso | Claves reales | Motor |
+| --- | --- | --- |
+| Desglose | `video.desglose:*:desglose:*` | comparar |
+| Fotos de Pinterest | `video.pinterest:*:banco/consultas/eleccion:*` | comparar |
+| Sala e imagen inicial | `video.pinterest:*:prompt-sala:*` | comparar |
+| Rótulos y cambios de montaje | `montaje:*:edicion-referencia/cambio:*` | comparar |
+| Habla, canto y doblaje | `montaje:*:habla-o-canto:*` | comparar |
+| Otros | Alta e investigación de productos, mejoras, comprobación del sistema/efecto, claves futuras | claude |
+
+`macStepOf` es pura y sus pruebas enumeran todas las llamadas actuales. Las consultas para buscar
+fotos pertenecen a Pinterest; el prompt de sala se decide aparte aunque viva en el mismo trabajo.
+
+### Ejecución y caídas
+
+- Codex se busca en `PRINCIPAL_CODEX_BIN`, `~/.local/npm-global/bin/codex`, `/opt/homebrew/bin/codex`
+  y `/usr/local/bin/codex`. `codex login status` debe indicar **ChatGPT**; una sesión con API key
+  se rechaza. Si falta sesión, el dueño ejecuta `codex login` en su Mac. No se instala nada.
+- Se eliminan `OPENAI_*`, `CODEX_*`, `AZURE_OPENAI_*` y `ANTHROPIC_*` del entorno del proceso.
+  `model_provider="openai"` y `forced_login_method="chatgpt"` fijan el proveedor y la autenticación.
+  `--ignore-user-config` conserva la autenticación del dueño sin cargar su configuración;
+  `--ignore-rules`, plugins/apps y herramientas de ejecución desactivadas evitan su MCP y su perfil.
+- `codex exec --sandbox read-only --skip-git-repo-check --ephemeral -C <vacío>` recibe sistema y
+  texto por stdin, cada foto como archivo privado con `-i`, el esquema con `--output-schema` si
+  existe y la última respuesta con `-o`. Los archivos van fuera de la carpeta de trabajo vacía y
+  se borran al terminar. Se usa el modelo por defecto de la CLI, sin pasarle un nombre de Claude;
+  el resultado lleva `codex:<modelo>` si aparece en los eventos, o `codex:desconocido`.
+- **Búsqueda:** comprobados localmente `codex exec --help`, `codex --help` y `codex features list`.
+  `--search` se anuncia en la ayuda general, pero no en la de `exec`: se configura
+  `-c web_search="live"` cuando `job.web` lo pide y `"disabled"` en el resto. No se promete el
+  mismo número de búsquedas/lecturas que Claude ni se reconstruyen fuentes: `webSources: []`.
+  Una CLI antigua que no admita los argumentos falla y cae a Claude.
+- Mismo latido y tope de diez minutos, incluida la comprobación de sesión de Codex. El agente
+  comprueba JSON y su estructura local; Zod en la pasarela sigue siendo la validación definitiva.
+  Uso según eventos JSONL o ceros; coste equivalente desconocido (`null`).
+- `codex`: si falla el programa, la sesión, el tiempo o el JSON, prueba Claude en la misma tarea.
+  Si Codex entrega algo que no pasa el Zod original, la pasarela encola **una** repetición forzada
+  con `engine: "claude"`. Si tampoco sirve, sigue por la API (o falla/pausa en «Solo Mac», como
+  antes). El límite de Claude no bloquea una elección Codex/comparar.
+- `comparar`: ambos arrancan a la vez. Entrega Claude en cuanto termina; si falla, entrega Codex
+  si pudo responder. El hueco sigue ocupado hasta que terminen ambos y se envíe la comparación:
+  `CLAUDE_SLOTS` cuenta tareas, no procesos. El registro dice qué motor respondió.
+
+### Comparaciones y validación
+
+`llm_comparisons` conserva una fila por tarea, creada al reclamar una comparación: id de tarea,
+paso/clave, tiempos, ambos textos (máximo **200.000 bytes UTF-8** cada uno), error de Codex, fecha y
+`codexValid` nullable. Se guarda también la reserva (`uploadId`, para rechazar entregas de otro
+intento) y si el texto de Codex se recortó. El endpoint autenticado
+`POST /api/agente/comparaciones` exige ese Mac y esa reserva; la clave del paso sale de la tarea,
+nunca de lo que declare el agente. No conserva las fotos ni el prompt original.
+
+La pasarela pasa el **Zod original**, solo dentro del servidor, al puente. Se liga al id de tarea
+con una caducidad de una hora: llamadas simultáneas no comparten su validador. Normalmente la llamada
+vive en el worker y el POST llega al proceso web. Por eso el worker observa la fila cada 1,5 s sin
+bloquear la respuesta de Claude y escribe `codexValid` cuando llega Codex. Si todo corre en el mismo
+proceso, el endpoint puede validarlo directamente. Incluye refinamientos Zod que no caben en JSON
+Schema; se usa el mismo extractor del JSON final que la pasarela para las respuestas con búsqueda.
+
+`true` significa que pasó ese Zod; `false`, que falló o Codex tuvo error. **NULL significa sin
+validar**: comparación pendiente, reinicio/cambio de proceso del worker, caducidad o texto recortado
+(ya no se puede validar la respuesta entera). No se inventa un aprobado usando solo JSON Schema.
+La comparación queda guardada aunque el worker se reinicie; el informe señala esa incertidumbre.
+No es un canal de recuperación del resultado: si se corta la red al mandar el POST, el agente lo
+anota y la fila sigue pendiente.
+
+### Informe manual
+
+Con `DATABASE_URL` de este proyecto:
+
+```sh
+npx tsx scripts/informe-comparacion.ts --desde 2026-11-24 --salida /tmp/comparacion.md
+```
+
+Sin `--desde`, incluye todo; sin `--salida`, escribe `informe-comparacion.md` en la carpeta actual.
+Agrupa por paso y muestra cada llamada, las dos salidas lado a lado (principio y final si son
+largas), los milisegundos, si Codex pasó Zod y una columna **veredicto** vacía para rellenarla a mano.
+Las comparaciones pendientes y las salidas sin validar se distinguen de un fallo de esquema.

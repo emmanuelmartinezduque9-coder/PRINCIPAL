@@ -1,3 +1,4 @@
+import { executeCodex } from "./codex.mjs";
 // Llamadas a Claude del dueño hechas con el Claude Code de este Mac (agente 1.8.0).
 //
 // La web deja en la cola del Mac las llamadas a Claude del dueño (desglose, prompts, elegir
@@ -260,12 +261,12 @@ export async function runClaude(deps, bin, args, input, { env, cwd, beat, timeou
     await Promise.race([exited, deps.sleep(KILL_WAIT_MS)]);
   };
   for (let waited = 0; ; ) {
-    const done = await Promise.race([exited, deps.sleep(CLAUDE_BEAT_MS).then(() => null)]);
+    const done = await Promise.race([exited, deps.sleep(Math.min(CLAUDE_BEAT_MS, timeoutMs - waited)).then(() => null)]);
     if (done) {
       if (done.error) return { local: true, error: done.error instanceof Error ? done.error.message : String(done.error) };
       return { code: done.code, out, err };
     }
-    waited += CLAUDE_BEAT_MS;
+    waited += Math.min(CLAUDE_BEAT_MS, timeoutMs - waited);
     if (waited >= timeoutMs) {
       await stop();
       return { timedOut: true };
@@ -398,43 +399,72 @@ export async function runClaudeOnce(config, deps, claude) {
   const job = task.job;
   if (typeof job.model !== "string" || typeof job.effort !== "string" || typeof job.system !== "string") return fail("La llamada no trae modelo, esfuerzo o instrucciones.");
 
+  let delivered = false;
+  const beat = async () => {
+    // Tras entregar Claude la reserva se cierra; Codex sigue con su propio tope.
+    if (delivered) return "ok";
+    const response = await call(config, deps, "POST", `/api/agente/tareas/${task.taskId}/latido`).catch(() => null);
+    return response?.status === 409 ? "lost" : "ok";
+  };
+  const timed = async (run) => {
+    const start = Date.now();
+    try { return { ...await run(), ms: Date.now() - start }; }
+    catch (error) { return { ok: false, error: String(error), ms: Date.now() - start }; }
+  };
+  const runC = () => timed(() => executeClaude(config, deps, claude, job, beat));
+  const runX = () => timed(() => executeCodex(config, deps, job, beat));
+  const deliver = async (result, engine) => {
+    if (result.lost) return "failed";
+    if (!result.ok) {
+      await fail(result.error, result.limit ? { limite: true } : {});
+      return result.auth ? "auth" : "failed";
+    }
+    const done = await finish({ ok: true, resultado: result.answer }).catch(() => null);
+    if (!done?.ok) return "failed";
+    delivered = true;
+    log(`${engine}: ${task.url} hecho en ${result.ms} ms.`);
+    return "done";
+  };
+  if (job.engine === "codex") {
+    const codex = await runX();
+    if (codex.ok || codex.lost) return deliver(codex, "Codex");
+    log(`Codex: ${task.url} no salió: ${codex.error}; se prueba Claude Code.`);
+    return deliver(await runC(), "Claude (respaldo de Codex)");
+  }
+  if (job.engine === "comparar") {
+    const codexPromise = runX();
+    const claudeResult = await runC();
+    // La web recibe Claude inmediatamente; el hueco sigue ocupado hasta acabar ambos motores.
+    let outcome;
+    if (claudeResult.ok) outcome = await deliver(claudeResult, "Claude (comparación)");
+    const codex = await codexPromise;
+    if (!claudeResult.ok) outcome = await deliver(codex.ok ? codex : claudeResult, codex.ok ? "Codex (respaldo de Claude)" : "Claude");
+    const clip = (text) => Buffer.from(text ?? "").subarray(0, 200_000).toString("utf8").replace(/\uFFFD$/, "");
+    const comparison = { taskId: task.taskId, uploadId: task.uploadId, stepKey: task.url.replace(/^claude-code:/, ""), claudeMs: claudeResult.ms, codexMs: codex.ms,
+      claudeText: clip(claudeResult.answer?.structured != null ? JSON.stringify(claudeResult.answer.structured) : claudeResult.answer?.text ?? claudeResult.error),
+      codexText: clip(codex.answer?.text ?? codex.text), codexTruncated: Buffer.byteLength(codex.answer?.text ?? codex.text ?? "") > 200_000, codexError: codex.ok ? null : clip(codex.error) };
+    const saved = await call(config, deps, "POST", "/api/agente/comparaciones", { json: comparison }).catch(() => null);
+    if (!saved?.ok) log(`No se pudo guardar la comparación de ${task.url}.`);
+    return outcome;
+  }
+  return deliver(await runC(), "Claude");
+}
+
+/** Ejecuta sin entregar: así ambos motores comparten la reserva y una sola decisión de respuesta. */
+export async function executeClaude(config, deps, claude, job, beat) {
+  if (!claude?.bin) return { ok: false, error: "Claude Code no está listo en este Mac." };
   const dir = await workDir(deps.fs, config.tmpDir);
-  const started = Date.now();
   try {
     const system = path.join(dir, "sistema.txt");
     await deps.fs.writeFile(system, job.system, { mode: 0o600 });
     const run = await runClaude(deps, claude.bin, claudeArgs(job, { system }), claudeInput(job), {
-      env: claudeEnv(deps.env ?? process.env, claude.token, job),
-      cwd: dir,
-      timeoutMs: deps.claudeTimeoutMs ?? CLAUDE_TIMEOUT_MS,
-      beat: async () => {
-        const beat = await call(config, deps, "POST", `/api/agente/tareas/${task.taskId}/latido`).catch(() => null);
-        return beat?.status === 409 ? "lost" : "ok";
-      },
+      env: claudeEnv(deps.env ?? process.env, claude.token, job), cwd: dir,
+      timeoutMs: deps.claudeTimeoutMs ?? CLAUDE_TIMEOUT_MS, beat,
     });
-    if (run.lost) {
-      log(`Claude: la web retiró la llamada ${task.url}.`);
-      return "failed";
-    }
-    if (run.local) return fail(`No se pudo lanzar Claude Code: ${run.error}`);
-    if (run.timedOut) return fail(`Claude Code tardó más de ${Math.round((deps.claudeTimeoutMs ?? CLAUDE_TIMEOUT_MS) / 60_000)} minutos y se cortó.`);
-    const parsed = parseClaudeOutput(run.out);
-    if (!parsed.ok) {
-      log(`Claude: ${task.url} no salió (${parsed.limit ? "límite del plan" : parsed.auth ? "sin sesión" : "error"}): ${parsed.error}`);
-      await fail(parsed.error, parsed.limit ? { limite: true } : {});
-      return parsed.auth ? "auth" : "failed";
-    }
-    const done = await finish({ ok: true, resultado: parsed.answer }).catch(() => null);
-    if (done?.status === 409) {
-      log(`Claude: la web ya no esperaba ${task.url}.`);
-      return "failed";
-    }
-    if (!done?.ok) {
-      log(`Claude: la web no aceptó la respuesta de ${task.url} (${done?.status ?? "sin respuesta"}).`);
-      return "failed";
-    }
-    log(`Claude: ${task.url} hecho en ${Math.round((Date.now() - started) / 1000)} s.`);
-    return "done";
+    if (run.lost) return { ok: false, lost: true };
+    if (run.local) return { ok: false, error: `No se pudo lanzar Claude Code: ${run.error}` };
+    if (run.timedOut) return { ok: false, error: `Claude Code tardó más de ${Math.round((deps.claudeTimeoutMs ?? CLAUDE_TIMEOUT_MS) / 60_000)} minutos y se cortó.` };
+    return parseClaudeOutput(run.out);
   } finally {
     await deps.fs.rm(dir, { recursive: true, force: true }).catch(() => {});
   }

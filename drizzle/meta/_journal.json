@@ -421,6 +421,13 @@
       "when": 1795540752736,
       "tag": "0059_colaboradores_sin_tope",
       "breakpoints": true
+    },
+    {
+      "idx": 60,
+      "version": "7",
+      "when": 1795547940491,
+      "tag": "0060_comparaciones_mac",
+      "breakpoints": true
     }
   ]
 }

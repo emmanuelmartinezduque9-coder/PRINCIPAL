@@ -1,3 +1,6 @@
+import { trailingJson } from "@/llm/json-text";
+export { trailingJson } from "@/llm/json-text";
+import { macStepOf, type MacEngine } from "@/llm/mac-engines";
 import Anthropic from "@anthropic-ai/sdk";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import type { z } from "zod";
@@ -11,7 +14,7 @@ import {
   type ModelTier,
   type Usage,
 } from "@/llm/models";
-import { macBridge } from "@/server/claude-mac";
+import { getMacEngines, macBridge } from "@/server/claude-mac";
 import type { RuleSnapshot } from "@/server/rules";
 import { recordMacSpend, releaseSpend, reserveSpend, settleSpend, SpendCapError } from "@/server/spend";
 
@@ -127,6 +130,7 @@ export interface LlmGateway {
 
 /** Lo que se manda al Mac: lo mismo que se mandaría a la API, ya montado. Nunca secretos. */
 export interface MacJob {
+  engine: MacEngine;
   /** Reglas + instrucciones del paso (+ el aviso del JSON final con búsqueda). */
   system: string;
   /** El mensaje de la persona, tal cual (texto y fotos en base64). */
@@ -159,8 +163,9 @@ export type MacRoute = { mode: "mac_primero" | "solo_mac"; usable: true } | { mo
 /** El puente con el Mac (el real está en `src/server/claude-mac.ts`; en pruebas, uno de mentira). */
 export interface MacBridge {
   /** `null`: esta llamada va a la API como siempre. */
-  route(userId: number): Promise<MacRoute | null>;
-  run(input: { userId: number; stepKey: string; job: MacJob }): Promise<MacOutcome>;
+  route(userId: number, stepKey?: string): Promise<MacRoute | null>;
+  /** `schema` vive solo en el servidor: nunca se serializa en el MacJob. */
+  run(input: { userId: number; stepKey: string; job: MacJob; schema?: z.ZodType }): Promise<MacOutcome>;
 }
 
 const MAC_PAUSED: Record<MacFailure, string> = {
@@ -372,12 +377,13 @@ function buildParams(request: LlmCall<unknown>, schemaInText = false): CreatePar
 }
 
 /** La llamada tal como se manda al Claude Code del Mac. */
-export function macJobOf(request: LlmCall<unknown>): MacJob {
+export function macJobOf(request: LlmCall<unknown>, engine: MacEngine = "claude"): MacJob {
   const params = buildParams(request);
   const system = (params.system as Anthropic.Beta.Messages.BetaTextBlockParam[]).map((block) => block.text);
   if (request.web?.country) system.push(`Busca y lee como alguien que está en el país ${request.web.country}.`);
   const format = params.output_config?.format as { schema?: Record<string, unknown> } | undefined;
   return {
+    engine,
     system: system.join("\n\n"),
     content: request.content,
     jsonSchema: format?.schema ?? null,
@@ -563,13 +569,6 @@ export function webSourcesOf(content: unknown): string[] {
  * El JSON del final de una respuesta con búsqueda: el último bloque \`\`\`json, o si no hay, del
  * primer «{» al último «}» del texto que sigue a la última herramienta.
  */
-export function trailingJson(text: string): string {
-  const fences = [...text.matchAll(/```(?:json)?\s*([\s\S]*?)```/g)];
-  if (fences.length > 0) return fences[fences.length - 1][1].trim();
-  const start = text.indexOf("{");
-  const end = text.lastIndexOf("}");
-  return start >= 0 && end > start ? text.slice(start, end + 1) : text;
-}
 
 interface Reading {
   model: string;
@@ -726,12 +725,27 @@ export function createGateway(deps: { client?: MessagesClient; now?: () => Date;
 
       // El dueño con Mac: primero su Claude Code (0 $). Si no puede, la API (o pausa con «solo Mac»).
       let macFallback: MacFailure | null = null;
-      const route = mac ? await mac.route(request.userId) : null;
+      const route = mac ? await mac.route(request.userId, request.stepKey) : null;
       if (route && mac) {
-        const outcome: MacOutcome = route.usable
-          ? await mac.run({ userId: request.userId, stepKey: request.stepKey, job: macJobOf(request) })
+        const engine = (await getMacEngines())[macStepOf(request.stepKey)];
+        let outcome: MacOutcome = route.usable
+          ? await mac.run({ userId: request.userId, stepKey: request.stepKey, schema: request.schema, job: macJobOf(request, engine) })
           : { ok: false, reason: route.reason, detail: MAC_PAUSED[route.reason] };
-        if (outcome.ok) return macResult(request, outcome, ruleVersions);
+        if (outcome.ok) {
+          try { return await macResult(request, outcome, ruleVersions); }
+          catch (error) {
+            if (!(error instanceof LlmInvalidOutputError)) throw error;
+            // Codex puede entregar JSON bien formado que incumple Zod: se prueba Claude una sola vez.
+            if (engine === "codex") {
+              outcome = await mac.run({ userId: request.userId, stepKey: request.stepKey, schema: request.schema, job: macJobOf(request, "claude") });
+              if (outcome.ok) {
+                try { return await macResult(request, outcome, ruleVersions); }
+                catch (retryError) { if (!(retryError instanceof LlmInvalidOutputError)) throw retryError; }
+              }
+            }
+            outcome = { ok: false, reason: "fallo", detail: "El Mac devolvió una salida que no pasa el esquema." };
+          }
+        }
         if (route.mode === "solo_mac") {
           if (outcome.reason === "apagado" || outcome.reason === "limite") throw new LlmCapReachedError("persona", MAC_PAUSED[outcome.reason]);
           throw new LlmCallError("no", null, MAC_PAUSED[outcome.reason], new Error(outcome.detail));

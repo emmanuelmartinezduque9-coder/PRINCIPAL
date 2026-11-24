@@ -30,6 +30,8 @@ import {
 } from "./lib.mjs";
 import { CLAUDE_CHECK_MS, CLAUDE_CONFIG_DIR, CLAUDE_SLOTS, checkClaude, runClaudeOnce } from "./claude.mjs";
 
+import { checkCodex } from "./codex.mjs";
+
 const CONFIG_RETRY_MS = 30_000;
 const LOCK_FILE = path.join(os.tmpdir(), "principal-agente.lock");
 
@@ -143,14 +145,21 @@ async function refreshClaude() {
   if (claude.bin && !before) log(`Claude Code ${claude.version} listo: las llamadas a Claude del dueño se hacen en este Mac.`);
   if (!claude.bin) log(claude.reason);
 }
-await refreshClaude();
+let codex = { bin: null };
+async function refreshCodex() {
+  codex = await checkCodex(deps);
+  if (codex.bin) log("Codex listo con la sesión de ChatGPT del dueño.");
+  else log(codex.reason);
+}
+await Promise.all([refreshClaude(), refreshCodex()]);
+setInterval(() => void refreshCodex(), CLAUDE_CHECK_MS);
 setInterval(() => void refreshClaude(), CLAUDE_CHECK_MS);
 
 let connected = null;
 async function beat() {
   let state;
   try {
-    const response = await heartbeat(config, deps, { ytDlp: tools.ytDlp, claude: claude.bin ? claude.version : null, claudeMotivo: claude.bin ? null : claude.reason });
+    const response = await heartbeat(config, deps, { ytDlp: tools.ytDlp, claude: claude.bin ? claude.version : null, codex: codex.bin ? "ChatGPT" : null, claudeMotivo: claude.bin ? null : claude.reason });
     state = response.ok ? "conectado" : response.status === 401 ? "ficha" : "error";
   } catch {
     state = "error";
@@ -168,7 +177,7 @@ setInterval(beat, HEARTBEAT_MS);
 /** Un hueco de llamadas a Claude: recoge una, la hace, y a por la siguiente. */
 async function claudeSlot() {
   for (let wait = 0; ; ) {
-    if (!claude.bin) {
+    if (!claude.bin && !codex.bin) {
       await sleep(15_000);
       continue;
     }

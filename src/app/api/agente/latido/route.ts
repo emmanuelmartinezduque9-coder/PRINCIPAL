@@ -6,10 +6,11 @@ export async function POST(request: Request) {
   return handle(
     async () => {
       const { agentId } = await requireAgent(request);
-      const body = (await request.json().catch(() => null)) as { version?: unknown; ytDlp?: unknown; claude?: unknown; claudeMotivo?: unknown } | null;
+      const body = (await request.json().catch(() => null)) as { version?: unknown; ytDlp?: unknown; claude?: unknown; claudeMotivo?: unknown; codex?: unknown } | null;
       await agentHeartbeat(agentId, {
         version: typeof body?.version === "string" ? body.version : "",
         ytDlp: typeof body?.ytDlp === "string" ? body.ytDlp : null,
+        codex: typeof body?.codex === "string" ? body.codex : null,
         claude: typeof body?.claude === "string" ? body.claude : null,
         claudeMotivo: typeof body?.claudeMotivo === "string" ? body.claudeMotivo : null,
       });

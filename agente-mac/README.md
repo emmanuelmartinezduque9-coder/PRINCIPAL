@@ -164,3 +164,18 @@ en `~/.principal-agente-claude.json`, solo legible por ti, y nunca va a la web.
 - Las llamadas de las demás personas siguen por la API con sus topes.
 - Si Claude Code dice que llegaste al límite del plan, el Mac descansa 30 minutos y mientras tanto va
   por la API (o espera, con «Solo Mac»).
+
+## 1.9.0: Codex y comparar los dos planes
+
+En Ajustes → Mac, el dueño elige Claude Code, Codex o Comparar para cada paso. El próximo lote
+compara por defecto el desglose, Pinterest, sala, rótulos y voz; el resto sigue con Claude.
+Actualiza los archivos del agente con el instalador habitual para que incluya `codex.mjs`.
+
+Codex debe estar ya instalado y tener sesión de **ChatGPT** (`codex login`, `codex login status`).
+El agente busca `PRINCIPAL_CODEX_BIN`, `~/.local/npm-global/bin/codex`, `/opt/homebrew/bin/codex`
+y `/usr/local/bin/codex`. No acepta una sesión de API key ni pasa claves de API al ejecutor.
+Si falta Codex o falla, usa Claude Code; la web conserva la API como último respaldo.
+
+Comparar entrega Claude sin esperar a Codex y guarda después ambas salidas y tiempos. El agente
+mantiene ocupado ese hueco hasta que terminen los dos, con el mismo tope de diez minutos.
+Los detalles de validación y el informe están en `docs/decisiones-claude-code-mac.md` del proyecto.

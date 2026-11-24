@@ -14,6 +14,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { MAC_KEY, useMac, type MacStatus } from "@/components/videos/use-mac";
 import { api, type Serialized } from "@/lib/api";
+import { MAC_STEPS, MAC_STEP_LABELS, type MacEngine } from "@/llm/mac-engines";
 import type { MacClaudeSummary, MacMode } from "@/server/claude-mac";
 import { cn } from "@/lib/utils";
 
@@ -68,7 +69,7 @@ function AgentRow({ agent, onRevoke }: { agent: Agent; onRevoke: () => void }) {
           {agent.lastSeenAt === null
             ? "Aún sin conectar"
             : agent.online
-              ? [agent.ytDlp ? `yt-dlp ${agent.ytDlp}` : "Sin yt-dlp", agent.claude ? `Claude Code ${agent.claude}` : "Claude Code sin sesión"].join(" · ")
+              ? [agent.ytDlp ? `yt-dlp ${agent.ytDlp}` : "Sin yt-dlp", agent.claude ? `Claude Code ${agent.claude}` : "Claude Code sin sesión", ...(agent.codex ? ["Codex con ChatGPT"] : [])].join(" · ")
               : seenAgo(agent.lastSeenAt)}
         </span>
         {agent.online && !agent.claude && agent.claudeMotivo ? <span className="text-xs text-warning-ink">{agent.claudeMotivo}</span> : null}
@@ -109,6 +110,18 @@ function ClaudeOnMac() {
       setSaving(false);
     }
   }
+  async function changeEngine(step: typeof MAC_STEPS[number], engine: MacEngine) {
+    if (!query.data) return;
+    setSaving(true);
+    try {
+      const next = await api<Serialized<MacClaudeSummary>>("/api/ajustes/claude", {
+        method: "PUT", body: JSON.stringify({ engines: { ...query.data.engines, [step]: engine } }),
+      });
+      client.setQueryData(CLAUDE_KEY, next);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "No se pudo cambiar el motor.");
+    } finally { setSaving(false); }
+  }
   const data = query.data;
   if (!data) return null;
   return (
@@ -131,6 +144,21 @@ function ClaudeOnMac() {
             : "Con el Claude Code de este Mac (tu plan). Si el Mac no puede, va por la API, dentro del tope."}
         {data.limitUntil ? ` Ha llegado al límite del plan: vuelve a probar a las ${new Date(data.limitUntil).toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" })}.` : ""}
       </p>
+      <fieldset disabled={saving} className="flex flex-col gap-3 py-2">
+        <legend className="mb-2 text-sm font-medium">Motor por paso</legend>
+        <p className="text-xs text-muted-foreground">Comparar usa los dos planes y entrega la respuesta de Claude mientras guarda la comparación.</p>
+        {MAC_STEPS.map((step) => (
+          <label key={step} className="flex flex-wrap items-center justify-between gap-2 text-sm">
+            {MAC_STEP_LABELS[step]}
+            <select value={data.engines[step]} onChange={(event) => void changeEngine(step, event.target.value as MacEngine)}
+              className="h-9 rounded-md border bg-background px-3 text-sm focus-visible:outline-2 focus-visible:outline-ring disabled:opacity-50">
+              <option value="claude">Claude Code</option>
+              <option value="codex">Codex</option>
+              <option value="comparar">Comparar los dos</option>
+            </select>
+          </label>
+        ))}
+      </fieldset>
       <p className="text-xs" role="status">
         Este mes: {data.macCalls} {data.macCalls === 1 ? "llamada" : "llamadas"} en el Mac · ahorro {dollars(data.savedMicros)}
         {data.apiFallbacks > 0 ? ` · ${data.apiFallbacks} por la API` : ""}

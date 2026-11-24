@@ -27,7 +27,7 @@ export function cookieArgs(file = COOKIES_FILE, exists = existsSync) {
   return exists(file) ? ["--cookies", file] : ["--cookies-from-browser", "brave"];
 }
 
-export const VERSION = "1.8.2";
+export const VERSION = "1.9.0";
 
 /** Sitios de los que se descarga, con sus subdominios. La misma lista que el servidor. */
 export const LINK_HOSTS = ["instagram.com", "tiktok.com", "youtube.com", "youtu.be", "facebook.com", "fb.watch"];
@@ -235,7 +235,7 @@ export function call(config, deps, method, route, { json, body, timeout = REQUES
 /** Latido del programa: está vivo, y con qué versiones. Devuelve la respuesta de la web. */
 export function heartbeat(config, deps, info) {
   // `claude`: la versión de Claude Code si tiene sesión y puede hacer las llamadas del dueño; si no, `null`.
-  return call(config, deps, "POST", "/api/agente/latido", { json: { version: VERSION, ytDlp: info?.ytDlp ?? null, claude: info?.claude ?? null, claudeMotivo: info?.claudeMotivo ?? null } });
+  return call(config, deps, "POST", "/api/agente/latido", { json: { version: VERSION, ytDlp: info?.ytDlp ?? null, claude: info?.claude ?? null, codex: info?.codex ?? null, claudeMotivo: info?.claudeMotivo ?? null } });
 }
 
 /**

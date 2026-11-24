@@ -1,10 +1,10 @@
 import { eq } from "drizzle-orm";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { getDb, getPool, getSetting, schema } from "@/db/client";
 import { createGateway, LlmCapReachedError, type LlmCall, type MacBridge } from "@/llm/gateway";
 import { agentHeartbeat, claimTask, createAgentToken } from "@/server/agent";
-import type { AuthUser } from "@/server/auth";
+import { login, type AuthUser } from "@/server/auth";
 import {
   CLAUDE_CODE_TASK,
   MAC_LIMIT_SETTING,
@@ -17,13 +17,18 @@ import { POST as heartbeatRoute } from "@/app/api/agente/latido/route";
 import { POST as claimRoute } from "@/app/api/agente/tareas/reclamar/route";
 import { POST as finishRoute } from "@/app/api/agente/tareas/[taskId]/terminar/route";
 import { fakeMessages } from "./helpers/fake-llm";
-import { makeUser } from "./helpers/fixtures";
+import { makeUser, TEST_PASSWORD } from "./helpers/fixtures";
 import { truncateAll } from "./helpers/global-setup";
 
 /**
  * Las llamadas a Claude del dueño van al Claude Code de su Mac (0 $); si el Mac no puede, a la API.
  * El Mac es de mentira: reclama y entrega por las mismas rutas que el agente de verdad.
  */
+
+const cookie = vi.hoisted(() => ({ value: undefined as string | undefined }));
+vi.mock("next/headers", () => ({
+  cookies: async () => ({ get: () => cookie.value ? { value: cookie.value } : undefined }),
+}));
 
 let dueno: AuthUser;
 let ana: AuthUser;
@@ -110,6 +115,7 @@ async function ledger() {
 }
 
 beforeEach(async () => {
+  cookie.value = undefined;
   await truncateAll();
   dueno = await makeUser("dueno");
   ana = await makeUser("colaborador");
@@ -300,5 +306,91 @@ describe("cuando el Mac no puede", () => {
     expect((await finishAsMac(task!.taskId, { uploadId: "otra", ok: true, resultado: goodAnswer.resultado })).status).toBe(409);
     expect((await finishAsMac(task!.taskId, { uploadId: task!.uploadId, ...goodAnswer })).status).toBe(200);
     expect((await pending).data).toEqual({ angulo: "Ahorra tiempo" });
+  });
+});
+
+describe("motor por paso y comparación", () => {
+  it("los ajustes tienen los valores por defecto y solo el dueño puede cambiarlos", async () => {
+    const { getMacEngines, setMacEngines } = await import("@/server/claude-mac");
+    const { DEFAULT_MAC_ENGINES } = await import("@/llm/mac-engines");
+    expect(await getMacEngines()).toEqual(DEFAULT_MAC_ENGINES);
+    await expect(setMacEngines(ana, DEFAULT_MAC_ENGINES)).rejects.toMatchObject({ status: 403 });
+    await expect(setMacEngines(dueno, { ...DEFAULT_MAC_ENGINES, sala: "otro" })).rejects.toMatchObject({ status: 400 });
+    const engines = { ...DEFAULT_MAC_ENGINES, sala: "codex" as const };
+    await setMacEngines(dueno, engines);
+    expect((await macClaudeSummary(dueno)).engines).toEqual(engines);
+  });
+
+  it("la API de ajustes rechaza a la colaboradora y acepta al dueño", async () => {
+    const { PUT } = await import("@/app/api/ajustes/claude/route");
+    const { DEFAULT_MAC_ENGINES } = await import("@/llm/mac-engines");
+    const request = () => new Request("http://web.test/api/ajustes/claude", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ engines: { ...DEFAULT_MAC_ENGINES, sala: "codex" } }) });
+    cookie.value = (await login(ana.email, TEST_PASSWORD))!.token;
+    expect((await PUT(request())).status).toBe(403);
+    cookie.value = (await login(dueno.email, TEST_PASSWORD))!.token;
+    const response = await PUT(request());
+    expect(response.status).toBe(200);
+    expect((await response.json()).engines.sala).toBe("codex");
+  });
+
+  it("Codex con sesión puede trabajar sin Claude y sin quedar bloqueado por su límite", async () => {
+    await agentHeartbeat(agentId, { version: "1.9.0", ytDlp: null, claude: null, codex: "ChatGPT" });
+    const { MAC_LIMIT_SETTING } = await import("@/server/claude-mac");
+    const { setSetting } = await import("@/db/client");
+    await setSetting(MAC_LIMIT_SETTING, new Date(Date.now() + 60_000).toISOString());
+    expect(await macRoute(dueno.id, new Date(), "video.desglose:1:desglose:hash")).toMatchObject({ usable: true });
+    expect(await macRoute(dueno.id)).toMatchObject({ usable: false, reason: "limite" });
+  });
+
+  it("manda engine comparar y el endpoint guarda el resultado validado con el Zod original", async () => {
+    const { POST: comparisonRoute } = await import("@/app/api/agente/comparaciones/route");
+    const gateway = createGateway({ client: fakeMessages([]).client, mac: fastBridge });
+    const key = "video.desglose:1:desglose:hash";
+    const [result, task] = await Promise.all([
+      gateway.call(req(dueno, { stepKey: key })),
+      macAnswers((task) => { expect(task.job.engine).toBe("comparar"); return goodAnswer; }),
+    ]);
+    expect(result.data).toEqual({ angulo: "Ahorra tiempo" });
+    const [pending] = await getDb().select().from(schema.llmComparisons);
+    expect(pending).toMatchObject({ agentTaskId: task.taskId, paso: "desglose", codexValid: null });
+    const post = (body: unknown, headers = auth()) => comparisonRoute(new Request("http://web.test/api/agente/comparaciones", { method: "POST", headers, body: JSON.stringify(body) }));
+    const comparison = { taskId: task.taskId, uploadId: pending.uploadId, stepKey: "una clave manipulada", claudeMs: 12, codexMs: 34, claudeText: result.text, codexText: '{"angulo":"Codex"}', codexError: null };
+    expect((await post(comparison, { "content-type": "application/json" } as ReturnType<typeof auth>)).status).toBe(401);
+    expect((await post({ ...comparison, uploadId: "otra reserva" })).status).toBe(409);
+    expect((await post(comparison)).status).toBe(200);
+    const [stored] = await getDb().select().from(schema.llmComparisons);
+    expect(stored).toMatchObject({ stepKey: key, claudeMs: 12, codexMs: 34, codexText: comparison.codexText, codexValid: true });
+    expect((await post({ ...comparison, codexText: '{"angulo":123}' })).status).toBe(200);
+    expect((await getDb().select().from(schema.llmComparisons))[0].codexValid).toBe(false);
+  });
+
+  it("Codex que no pasa Zod se repite una vez en el Mac con Claude", async () => {
+    const { setMacEngines, getMacEngines } = await import("@/server/claude-mac");
+    await setMacEngines(dueno, { ...await getMacEngines(), otros: "codex" });
+    const api = fakeMessages([]);
+    const gateway = createGateway({ client: api.client, mac: fastBridge });
+    const answering = async () => {
+      await macAnswers((task) => {
+        expect(task.job.engine).toBe("codex");
+        return { ok: true, resultado: { ...goodAnswer.resultado, model: "codex:test", structured: { angulo: 123 } } };
+      });
+      await macAnswers((task) => { expect(task.job.engine).toBe("claude"); return goodAnswer; });
+    };
+    const [result] = await Promise.all([gateway.call(req(dueno)), answering()]);
+    expect(result.data).toEqual({ angulo: "Ahorra tiempo" });
+    expect(api.calls).toHaveLength(0);
+    expect(await getDb().select().from(schema.agentTasks)).toHaveLength(2);
+  });
+
+  it("si ambos motores incumplen Zod, sigue por la API sin volver a encolar", async () => {
+    const { setMacEngines, getMacEngines } = await import("@/server/claude-mac");
+    await setMacEngines(dueno, { ...await getMacEngines(), otros: "codex" });
+    const api = fakeMessages([{ text: '{"angulo":"API"}' }]);
+    const gateway = createGateway({ client: api.client, mac: fastBridge });
+    const bad = () => ({ ok: true, resultado: { ...goodAnswer.resultado, structured: { angulo: 123 } } });
+    const [result] = await Promise.all([gateway.call(req(dueno)), (async () => { await macAnswers(bad); await macAnswers(bad); })()]);
+    expect(result.data).toEqual({ angulo: "API" });
+    expect(api.calls).toHaveLength(1);
+    expect(await getDb().select().from(schema.agentTasks)).toHaveLength(2);
   });
 });

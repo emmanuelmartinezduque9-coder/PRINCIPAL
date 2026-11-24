@@ -1074,7 +1074,7 @@ export const agents = pgTable(
     lastSeenAt: instant("last_seen_at"),
     /** Lo que el programa dice de sí mismo en cada latido. */
     /** `claude`: la versión de Claude Code si tiene sesión y hace las llamadas del dueño (1.8.0); si no, `null`. */
-    info: jsonb("info").$type<{ version: string; ytDlp: string | null; claude?: string | null; claudeMotivo?: string | null }>(),
+    info: jsonb("info").$type<{ version: string; ytDlp: string | null; claude?: string | null; claudeMotivo?: string | null; codex?: string | null }>(),
     revokedAt: instant("revoked_at"),
   },
   (t) => [index("agents_created_by").on(t.createdBy)],
@@ -1759,3 +1759,20 @@ export const productBrandAssets = pgTable(
     uniqueIndex("product_brand_assets_one").on(t.productId, t.kind, sql`coalesce(${t.variantId}, 0)`),
   ],
 );
+
+/** Una fila por reserva de comparación; los pendientes sobreviven a un reinicio de la web. */
+export const llmComparisons = pgTable("llm_comparisons", {
+  id: bigserial("id", { mode: "number" }).primaryKey(),
+  agentTaskId: bigint("agent_task_id", { mode: "number" }).notNull().unique(),
+  uploadId: text("upload_id").notNull(),
+  stepKey: text("step_key").notNull(),
+  paso: text("paso").notNull(),
+  claudeMs: integer("claude_ms"),
+  codexMs: integer("codex_ms"),
+  claudeText: text("claude_text"),
+  codexText: text("codex_text"),
+  codexError: text("codex_error"),
+  codexValid: boolean("codex_valid"),
+  codexTruncated: boolean("codex_truncated").notNull().default(false),
+  createdAt: instant("created_at").notNull().defaultNow(),
+});

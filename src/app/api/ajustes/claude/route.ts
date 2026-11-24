@@ -1,4 +1,4 @@
-import { macClaudeSummary, setMacMode } from "@/server/claude-mac";
+import { macClaudeSummary, setMacMode, setMacEngines } from "@/server/claude-mac";
 import { handle } from "@/server/http";
 
 /**
@@ -14,8 +14,9 @@ export async function GET() {
 export async function PUT(request: Request) {
   return handle(
     async (owner) => {
-      const body = (await request.json().catch(() => null)) as { mode?: unknown } | null;
-      await setMacMode(owner!, body?.mode);
+      const body = (await request.json().catch(() => null)) as { mode?: unknown; engines?: unknown } | null;
+      if (body?.engines !== undefined) await setMacEngines(owner!, body.engines);
+      else await setMacMode(owner!, body?.mode);
       return Response.json(await macClaudeSummary(owner!));
     },
     { role: "dueno" },

@@ -188,6 +188,7 @@ export interface AgentInfo {
   ytDlp: string | null;
   /** Claude Code con sesión en ese Mac (versión), o `null`. */
   claude: string | null;
+  codex: string | null;
   /** Por qué Claude Code no está listo (sin sesión, ficha rechazada…), apto para el dueño; `null` si lo está. */
   claudeMotivo: string | null;
 }
@@ -206,6 +207,7 @@ export async function listAgents(owner: AuthUser, now: Date = new Date()): Promi
     version: info?.version || null,
     ytDlp: info?.ytDlp ?? null,
     claude: info?.claude ?? null,
+    codex: info?.codex ?? null,
     claudeMotivo: info?.claude ? null : (info?.claudeMotivo ?? null),
   }));
 }
@@ -241,19 +243,20 @@ export async function requireAgent(request: Request, now: Date = new Date()): Pr
 /** Latido del programa (cada 30 s): está vivo, y con qué versiones. */
 export async function agentHeartbeat(
   agentId: number,
-  info: { version: string; ytDlp: string | null; claude?: string | null; claudeMotivo?: string | null },
+  info: { version: string; ytDlp: string | null; claude?: string | null; claudeMotivo?: string | null; codex?: string | null },
   now: Date = new Date(),
 ): Promise<{ claudeReady: boolean }> {
   const claude = clip(info.claude, MAX_INFO) || null;
+  const codex = clip(info.codex, MAX_INFO) || null;
   const [before] = await getDb().select({ info: agents.info }).from(agents).where(eq(agents.id, agentId));
   await getDb()
     .update(agents)
-    .set({ lastSeenAt: now, info: { version: clip(info.version, MAX_INFO), ytDlp: clip(info.ytDlp, MAX_INFO) || null, claude, claudeMotivo: claude ? null : clip(info.claudeMotivo, 300) || null } })
+    .set({ lastSeenAt: now, info: { version: clip(info.version, MAX_INFO), ytDlp: clip(info.ytDlp, MAX_INFO) || null, claude, codex, claudeMotivo: claude ? null : clip(info.claudeMotivo, 300) || null } })
     .where(eq(agents.id, agentId));
   // Claude Code acaba de tener sesión en el Mac (primera vez, o tras volver a conectarlo): los
   // trabajos en pausa (sin saldo en la API, «Solo Mac»…) se reanudan ya y van al Mac, sin esperar a
   // la pasada de cada hora.
-  const claudeReady = claude !== null && !before?.info?.claude;
+  const claudeReady = (claude !== null || codex !== null) && !before?.info?.claude && !before?.info?.codex;
   if (claudeReady) {
     try {
       const { resumePausedJobs } = await import("@/jobs/boss");
