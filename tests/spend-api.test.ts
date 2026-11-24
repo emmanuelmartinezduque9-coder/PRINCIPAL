@@ -3,7 +3,7 @@ import type { PgBoss } from "pg-boss";
 import { enqueueJob, getBoss, startWorker, stopWorker } from "@/jobs/boss";
 import { defineJob } from "@/jobs/registry";
 import { requestSystemCheck } from "@/jobs/system-check"; // el proceso de trabajos solo atiende lo definido al arrancar
-import { getDb, schema } from "@/db/client";
+import { getDb, getPool, schema } from "@/db/client";
 import { like } from "drizzle-orm";
 import { listPausedJobs, runStep, stepKey, type JobContext } from "@/jobs/steps";
 import { setAssignments } from "@/server/access";
@@ -72,6 +72,8 @@ beforeEach(async () => {
   await truncateAll();
   dueno = await makeUser("dueno", { name: "Dueña" });
   ana = await makeUser("colaborador", { name: "Ana" });
+  // Estas pruebas parten de un colaborador al que el dueño le puso 10 USD en «Personas» (por defecto no tienen tope).
+  await getPool().query("update users set spend_cap_micros = 10000000 where role = 'colaborador'");
 });
 
 describe("API de gasto", () => {

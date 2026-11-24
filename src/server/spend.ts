@@ -13,6 +13,7 @@ import { listProductsFor, productNamesByIds } from "@/server/products";
  */
 
 export const DEFAULT_GLOBAL_CAP_MICROS = 30_000_000;
+/** Antiguo tope por defecto de un colaborador (hasta el 24/11/2026). Desde entonces, sin tope propio salvo que el dueño se lo ponga. */
 export const DEFAULT_COLLABORATOR_CAP_MICROS = 10_000_000;
 /** Tope máximo que acepta la pantalla: protege de un cero de más al escribir el importe. */
 export const MAX_GLOBAL_CAP_MICROS = 10_000 * 1_000_000;
@@ -104,9 +105,14 @@ interface Spender {
   disabled: boolean;
 }
 
+/**
+ * Orden del dueño (24/11/2026): los colaboradores trabajan con sus mismas reglas y toda su confianza.
+ * Por defecto no tienen tope propio (solo cuenta el global, como para él); si el dueño les pone uno en
+ * «Personas», ese manda.
+ */
 function effectiveCap(row: { role: string; spendCapMicros: number | null }): number | null {
   if (row.role === "dueno") return null;
-  return row.spendCapMicros ?? DEFAULT_COLLABORATOR_CAP_MICROS;
+  return row.spendCapMicros;
 }
 
 /** Quién gasta. El dueño en el propio ordenador (id 0) solo existe con el inicio de sesión apagado. */
@@ -405,7 +411,8 @@ export async function spendSummary(user: AuthUser, now: Date = new Date()): Prom
       .select({ name: schema.users.name, role: schema.users.role, spendCapMicros: schema.users.spendCapMicros })
       .from(schema.users)
       .where(eq(schema.users.id, user.id));
-    const capMicros = person ? effectiveCap(person) ?? DEFAULT_COLLABORATOR_CAP_MICROS : DEFAULT_COLLABORATOR_CAP_MICROS;
+    // Sin tope propio, su referencia es el global (el que de verdad le afecta).
+    const capMicros = (person ? effectiveCap(person) : null) ?? (await getGlobalCap());
     return {
       month,
       capMicros,

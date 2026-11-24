@@ -1518,7 +1518,7 @@ export async function reincludeClaudeSkips(): Promise<number> {
     .where(and(eq(schema.videos.autoSkipped, true), inArray(schema.batches.status, [...RUNNING, "pausado"])));
   // También los que salieron porque su referencia aún no había llegado y ya la tienen lista (lote 8).
   const arrived = (row: (typeof rows)[number]) =>
-    row.referenceStatus === "ready" && row.autoStop !== null && /Falta el vídeo de referencia|La subida no terminó/.test(row.autoStop);
+    row.referenceStatus === "ready" && row.autoStop !== null && /Falta el vídeo de referencia|La subida no terminó|La subida se ha interrumpido|No se pudo preparar el vídeo de referencia/.test(row.autoStop);
   const back = rows.filter((row) => isClaudeSideFailure(row.autoStop) || arrived(row));
   for (const row of back) {
     const [batch] = await db.select().from(schema.batches).where(eq(schema.batches.id, row.batchId!));

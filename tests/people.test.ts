@@ -37,6 +37,8 @@ beforeEach(async () => {
   cookieToken = undefined;
   dueno = await makeUser("dueno", { name: "Dueña" });
   ana = await makeUser("colaborador", { name: "Ana", email: "ana@example.com" });
+  // Estas pruebas parten de un colaborador al que el dueño le puso 10 USD en «Personas» (por defecto no tienen tope).
+  await getPool().query("update users set spend_cap_micros = 10000000 where role = 'colaborador'");
 });
 
 describe("contraseña nueva para quien ya tiene cuenta", () => {

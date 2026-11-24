@@ -40,6 +40,8 @@ beforeEach(async () => {
   dueno = await makeUser("dueno", { name: "Dueña" });
   ana = await makeUser("colaborador", { name: "Ana" });
   luis = await makeUser("colaborador", { name: "Luis" });
+  // Estas pruebas parten de un colaborador al que el dueño le puso 10 USD en «Personas» (por defecto no tienen tope).
+  await getPool().query("update users set spend_cap_micros = 10000000 where role = 'colaborador'");
 });
 
 describe("monthRange", () => {
@@ -51,10 +53,14 @@ describe("monthRange", () => {
 });
 
 describe("libro de gasto", () => {
-  it("sin tope configurado, el global es 30 USD y el de un colaborador 10 USD", async () => {
+  it("sin tope configurado, el global es 30 USD y un colaborador no tiene tope propio (solo el global, como el dueño)", async () => {
+    await getPool().query("update users set spend_cap_micros = null where role = 'colaborador'");
     expect(await getGlobalCap()).toBe(30_000_000);
-    expect((await spendSummary(ana)).capMicros).toBe(10_000_000);
+    // Su referencia es el global; puede gastar por encima de los antiguos 10 USD.
+    expect((await spendSummary(ana)).capMicros).toBe(30_000_000);
     expect((await spendSummary(dueno)).capMicros).toBe(30_000_000);
+    expect((await spendSummary(dueno)).byUser.find((row) => row.userId === ana.id)?.capMicros ?? null).toBeNull();
+    await reserveSpend({ ...base(ana), estimateMicros: 12_000_000 });
   });
 
   it("reservar por encima del tope personal lanza SpendCapError y no deja rastro", async () => {

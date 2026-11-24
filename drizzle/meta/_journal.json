@@ -414,6 +414,13 @@
       "when": 1795537011082,
       "tag": "0058_tramos_por_sitio",
       "breakpoints": true
+    },
+    {
+      "idx": 59,
+      "version": "7",
+      "when": 1795540752736,
+      "tag": "0059_colaboradores_sin_tope",
+      "breakpoints": true
     }
   ]
 }
