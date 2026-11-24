@@ -148,6 +148,9 @@ async function finishFailed(run: Run, shown: string, detail: string, now: Date, 
  * el Mac del dueño apagado o sin sesión). Pasado este tiempo se monta con el patrón de siempre.
  */
 export const CLAUDE_WAIT_MS = 3 * 60 * 60_000;
+/** TEMPORAL: vídeos del lote 6 cuyo montaje final se comprueba a mano (enlace firmado en el registro). */
+const VERIFY_VIDEOS = new Set([11, 15, 16, 19, 20, 21, 22]);
+const VERIFY_UNTIL = new Date("2026-11-25T12:00:00Z");
 /** Cada cuánto vuelve a probar un montaje que espera a Claude (y al momento cuando el Mac está listo). */
 export const CLAUDE_RETRY_MS = 5 * 60_000;
 
@@ -578,6 +581,11 @@ export async function runEdit(run: Run, deps: MontajeDeps = {}): Promise<"done" 
       return true;
     });
     if (!finished && store && key) await store.delete(key).catch(() => {});
+    // TEMPORAL (hasta el 25/11/2026): para comprobar a mano sonido y rótulos de los montajes reparados del lote 6.
+    if (finished && store && key && VERIFY_VIDEOS.has(spec.videoId) && nowOf(deps) < VERIFY_UNTIL) {
+      const link = await store.signedUrl(key, { expiresIn: 2 * 3600 }).catch(() => null);
+      console.log(`[montaje] Vídeo ${spec.videoId} montado (montaje ${run.id}); comprobación: ${link ?? "sin enlace"}`);
+    }
     await settleBatch(await batchOfVideo(spec.videoId));
     return finished ? "done" : "failed";
   } catch (error) {

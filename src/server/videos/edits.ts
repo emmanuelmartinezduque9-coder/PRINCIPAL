@@ -431,6 +431,29 @@ export async function relaunchEditsWithoutClaude(now: Date = new Date()): Promis
 }
 
 /**
+ * Una vez por `key`: vuelve a poner en cola el montaje de los vídeos `videoIds` que lo tengan fallido
+ * (reparaciones puntuales al arrancar, para ver el motivo con el registro de `finishFailed`).
+ */
+export async function relaunchFailedEditsOnce(key: string, videoIds: number[], now: Date = new Date()): Promise<number> {
+  if (await getSetting<string>(key)) return 0;
+  await setSetting(key, now.toISOString());
+  let queued = 0;
+  for (const id of videoIds) {
+    const [video] = await getDb().select().from(videos).where(eq(videos.id, id));
+    const creator = video ? await getActiveUser(video.createdBy) : null;
+    if (!video || !creator || video.editStatus !== "fallido") continue;
+    try {
+      await queueEdit(video, await getProductFor(creator, video.productId), creator.id, now);
+      queued += 1;
+    } catch (error) {
+      console.warn(`[montaje] No se pudo volver a montar el vídeo ${id}: ${error instanceof Error ? error.message : error}`);
+    }
+  }
+  console.log(`[montaje] Reparación ${key}: ${queued} montaje(s) fallido(s) vuelven a la cola.`);
+  return queued;
+}
+
+/**
  * Un lote `listo` cuyos vídeos han terminado todos su montaje (hecho o fallido con su motivo)
  * pasa a `montado`. Se llama al cerrar cada montaje y en el seguimiento.
  */
