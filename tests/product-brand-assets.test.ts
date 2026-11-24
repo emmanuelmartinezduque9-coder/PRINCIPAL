@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { createFakeHiggsfield, SAMPLE_IMAGE_URL, type FakeHiggsfield } from "@/connectors/higgsfield/fake";
+import { eq } from "drizzle-orm";
+import { getDb, schema } from "@/db/client";
 import type { AuthUser } from "@/server/auth";
 import { addProductPhoto, listProductPhotos } from "@/server/photos";
 import { advanceBrandAssets, brandAssetsOf, brandAssetsSweep, cajaPrompt, marcaPrompt, requestBrandAssets } from "@/server/product-brand-assets";
@@ -67,6 +69,17 @@ describe("recursos de marca al crear un producto (logo, logo web y una caja por 
     expect(roles).toEqual(["articulo", "articulo", "embalaje", "embalaje", "logo_web", "marca"]);
     const variants = await listVariants(dueno, product.id);
     for (const v of variants) expect(v.packagingPhotoId).toBe(rows.find((r) => r.kind === "caja" && r.variantId === v.id)!.photoId);
+  });
+
+  it("un envío que se quedó sin número de trabajo (reinicio) se repite pasados 10 minutos", async () => {
+    const product = await makeProduct(dueno);
+    await addProductPhoto(dueno, product.id, PNG, "articulo");
+    await requestBrandAssets(product.id, dueno.id);
+    const [marca] = (await brandAssetsOf(product.id)).filter((r) => r.kind === "marca");
+    await getDb().update(schema.productBrandAssets).set({ status: "enviado", jobId: null, updatedAt: new Date(Date.now() - 11 * 60_000) }).where(eq(schema.productBrandAssets.id, marca.id));
+    await advanceBrandAssets(product.id, deps());
+    expect(submits()).toHaveLength(1);
+    expect((await brandAssetsOf(product.id)).find((r) => r.kind === "marca")?.status).toBe("enviado");
   });
 
   it("una variante nueva recibe su caja sola", async () => {

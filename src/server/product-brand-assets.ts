@@ -193,8 +193,14 @@ async function submit(row: Row, owner: AuthUser, product: Product, brief: BrandB
   }
 }
 
+/** Un envío que se quedó sin número de trabajo (el proceso se reinició al enviarlo) se repite pasado esto. */
+export const STUCK_SUBMIT_MS = 10 * 60_000;
+
 async function poll(row: Row, owner: AuthUser, product: Product, hf: HiggsfieldPort, deps: BrandDeps): Promise<void> {
-  if (!row.jobId) return;
+  if (!row.jobId) {
+    if (Date.now() - row.updatedAt.getTime() >= STUCK_SUBMIT_MS) await save(row.id, { status: "pendiente", error: "El envío se cortó; se repite." });
+    return;
+  }
   const [job] = await hf.jobs(owner.id, [row.jobId], 0);
   if (job?.status === "failed") {
     return void (await save(row.id, row.attempts < MAX_ATTEMPTS ? { status: "pendiente", jobId: null, error: "Higgsfield no pudo; se repite una vez." } : { status: "fallido", error: "Higgsfield no pudo generarlo." }));
