@@ -293,6 +293,10 @@ export function clipPromptFor(prompt: string, manifest: ManifestItem[]): string 
     .filter((item) => item.tag !== SOURCE_VIDEO_TAG && !cites(prompt, item.index))
     .map(roleSentence)
     .filter((sentence): sentence is string => sentence !== null);
+  // Regla fija (lote 6, 24/11/2026): la caja que se ve, también al abrirla, es la impresa de la
+  // variante; Motion Transfer si no copia la caja lisa de la fuente.
+  const box = manifest.find((item) => item.role === "embalaje");
+  if (box) missing.push(`Every box that appears, including while it is being opened, is the exact printed retail box of ${box.tag}: its printed design is visible on all outer walls and flaps; never a plain unprinted carton.`);
   if (missing.length === 0) return prompt;
   // Antes del cierre de textos de Codex («No text overlays, no captions.»), si lo lleva.
   const text = prompt.trim();

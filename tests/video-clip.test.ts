@@ -319,7 +319,7 @@ describe("modelo del clip: las opciones de Codex", () => {
     expect(request.prompt).toBe(
       sinCaja.replace(
         " No text overlays, no captions.",
-        " Replace every visible instance of the closed retail packaging with image [4], preserving realistic size relative to the hands and surroundings. No text overlays, no captions.",
+        " Replace every visible instance of the closed retail packaging with image [4], preserving realistic size relative to the hands and surroundings. Every box that appears, including while it is being opened, is the exact printed retail box of image [4]: its printed design is visible on all outer walls and flaps; never a plain unprinted carton. No text overlays, no captions.",
       ),
     );
     // La vista del vídeo tampoco lo enseña como error.
