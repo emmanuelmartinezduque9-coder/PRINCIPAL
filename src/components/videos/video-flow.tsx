@@ -188,19 +188,23 @@ function FlowBody({
   const followed = firstStep(data, referenceDone);
   const wanted = chosen ?? followed;
   const current = reachable.includes(wanted) ? wanted : reachable[reachable.length - 1];
-  const allSteps: Step<FlowStep>[] = [
-    { key: "referencia", label: "Referencia", icon: Film, done: referenceDone },
-    { key: "desglose", label: "Desglose", icon: ScanSearch, done: breakdownDone },
-    { key: "imagen", label: "Imagen", icon: ImageIcon, done: data.frame.approvedResultId !== null },
-    { key: "clip", label: "Clip", icon: Clapperboard, done: data.clip.approvedResultId !== null },
-    { key: "montaje", label: "Vídeo listo", icon: Scissors, done: data.edit.latest !== null },
-  ];
-  // Solo dos pasos a la vista (regla del dueño, 24/11/2026): «Imagen» y «Vídeo listo». «Referencia»
-  // solo mientras falta poner la referencia; «Desglose» y «Clip» van por dentro y solo se abren a
-  // propósito con `?paso=` (el clip en bruto está en «Detalles» de «Vídeo listo»).
-  const visible = (key: FlowStep) =>
-    key === "imagen" || key === "montaje" || key === current || (key === "referencia" && !referenceDone);
-  const steps = allSteps.filter((step) => reachable.includes(step.key) && visible(step.key));
+  // Solo dos pasos a la vista (regla del dueño, 24/11/2026): «Imagen» y «Vídeo listo» (el clip en
+  // bruto, en «Detalles» de «Vídeo listo»). «Referencia», solo mientras falta ponerla. «Desglose» y
+  // «Clip» van por dentro: solo aparecen si se abren a propósito con `?paso=`.
+  const imageStep: Step<FlowStep> = { key: "imagen", label: "Imagen", icon: ImageIcon, done: data.frame.approvedResultId !== null };
+  const videoStep: Step<FlowStep> = { key: "montaje", label: "Vídeo listo", icon: Scissors, done: data.edit.latest !== null };
+  const hidden: Partial<Record<FlowStep, Step<FlowStep>>> = {
+    referencia: { key: "referencia", label: "Referencia", icon: Film, done: referenceDone },
+    desglose: { key: "desglose", label: "Desglose", icon: ScanSearch, done: breakdownDone },
+    clip: { key: "clip", label: "Clip", icon: Clapperboard, done: data.clip.approvedResultId !== null },
+  };
+  const steps: Step<FlowStep>[] = [
+    ...(!referenceDone || current === "referencia" ? [hidden.referencia!] : []),
+    ...(current === "desglose" ? [hidden.desglose!] : []),
+    imageStep,
+    ...(current === "clip" ? [hidden.clip!] : []),
+    videoStep,
+  ].filter((step) => reachable.includes(step.key));
   const spent = data.costs.higgsfieldCredits > 0 || data.costs.claudeMicros > 0;
 
   return (
