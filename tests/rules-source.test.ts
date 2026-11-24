@@ -14,7 +14,7 @@ const indice = JSON.parse(text("reglas/indice.json")) as Array<{
   sources?: string[];
 }>;
 const filesFromIndice = () => indice.map((entry) => `reglas/${entry.file}`);
-const NUEVAS = ["adaptacion-de-conceptos", "imagen-nano-banana", "video-seedance", "video-genjutsu", "alta-de-producto", "nichos-con-datos", "referencias-pinterest", "doblaje-del-dialogo"];
+const NUEVAS = ["adaptacion-de-conceptos", "imagen-nano-banana", "video-seedance", "video-genjutsu", "alta-de-producto", "nichos-con-datos", "referencias-pinterest", "doblaje-del-dialogo", "localizacion-por-pais"];
 
 describe("reglas sembradas: la copia limpia está limpia y conserva el criterio", () => {
   it("el índice lista las doce reglas y todos sus originales existen", () => {
@@ -31,6 +31,7 @@ describe("reglas sembradas: la copia limpia está limpia y conserva el criterio"
       "nichos-con-datos",
       "referencias-pinterest",
       "doblaje-del-dialogo",
+      "localizacion-por-pais",
     ]);
     for (const entry of indice) {
       expect(entry.title && entry.description).toBeTruthy();

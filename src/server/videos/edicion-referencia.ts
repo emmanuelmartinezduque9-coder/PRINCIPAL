@@ -9,6 +9,7 @@ import { getGateway, type LlmGateway } from "@/llm/gateway";
 import { learnedFor } from "@/server/videos/mejoras/corrections";
 import type { ObjectStore } from "@/lib/object-store";
 import { probeVideo } from "@/server/media/ffmpeg";
+import { localizeText, marketOf } from "@/server/videos/localization";
 import { ffmpegLog, ffmpegOutput } from "@/server/media/ffmpeg-crudo";
 
 /**
@@ -171,7 +172,11 @@ const US_NAMES = new Set(FOREIGN_NAMES.slice(0, FOREIGN_NAMES.indexOf("Kanada"))
 export function targetPlace(indications: string, countries: string[], language: string): string {
   const lang: AdLanguage = language === "it" || language === "en" ? language : "de";
   for (const city of CITIES) if (city.match.test(indications)) return city[lang] ?? city.de;
-  const country = COUNTRIES[(countries[0] ?? DEFAULT_COUNTRY[lang]).toUpperCase()] ?? COUNTRIES[DEFAULT_COUNTRY[lang]];
+  // Sin ciudad en las indicaciones: la ciudad más reconocible del país del producto (regla de localización
+  // del dueño, 24/11/2026: «in den USA» → «in Berlin»), como en `localization.ts`.
+  const market = marketOf({ countries, language });
+  for (const city of CITIES) if (city.match.test(market.city)) return city[lang] ?? city.de;
+  const country = COUNTRIES[market.code] ?? COUNTRIES[DEFAULT_COUNTRY[lang]];
   return country[lang];
 }
 
@@ -319,7 +324,7 @@ export async function referenceEdit(ctx: ReferenceEditContext): Promise<Referenc
     let startS = i === 0 && row.desde_s <= 1 / SAMPLES_PER_SECOND ? 0 : Math.min(row.desde_s, durationS);
     if (i > 0 && startS > 0) startS = await refineSwitch(ctx.file, startS - 1 / SAMPLES_PER_SECOND, startS, row.franja_superior, row.franja_inferior);
     if (cues.length > 0 && startS <= cues[cues.length - 1].startS) continue;
-    cues.push({ startS, source: row.texto_original.trim(), text: withLocalPlaces(withoutThirdParties(row.texto_adaptado.trim(), answer.data?.ajenos ?? [], ctx.product.name), answer.data?.lugares ?? [], place), es: row.traduccion_es.trim(), cta: row.es_cta });
+    cues.push({ startS, source: row.texto_original.trim(), text: localizeText(withLocalPlaces(withoutThirdParties(row.texto_adaptado.trim(), answer.data?.ajenos ?? [], ctx.product.name), answer.data?.lugares ?? [], place), marketOf(ctx.product)), es: row.traduccion_es.trim(), cta: row.es_cta });
   }
   const result: ReferenceEdit = { version: 1, durationS, cues, cutsS: await sceneCuts(ctx.file, durationS) };
   if (ctx.store) {

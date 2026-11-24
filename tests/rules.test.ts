@@ -46,6 +46,7 @@ describe("reglas versionadas", () => {
       ["nichos-con-datos", 1],
       ["referencias-pinterest", 1],
       ["doblaje-del-dialogo", 1],
+      ["localizacion-por-pais", 1],
     ]);
   });
 
@@ -125,7 +126,7 @@ describe("reglas versionadas", () => {
 
   it("el dueño lee, ve una versión antigua y guarda por la API", async () => {
     cookie.value = await tokenOf(dueno);
-    expect((await (await getReglasRoute()).json()).rules).toHaveLength(12);
+    expect((await (await getReglasRoute()).json()).rules).toHaveLength(13);
     const post = new Request(`http://localhost/api/reglas/${A}`, {
       method: "POST",
       body: JSON.stringify({ body: "por la API", note: "prueba" }),

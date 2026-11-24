@@ -18,6 +18,7 @@ import { storedOriginalKey } from "@/server/videos/archive";
 import { openClipStream } from "@/server/videos/clip";
 import { dubbedAudio } from "@/server/videos/doblaje";
 import { referenceEdit, targetPlace, withLocalPlaces, type ReferenceEdit } from "@/server/videos/edicion-referencia";
+import { localizeText, marketOf } from "@/server/videos/localization";
 import { batchOfVideo, cleanSelfCheck, failEdit, MAX_EDIT_BYTES, readReferenceAudio, saveEdit, settleBatch, type EditSpec } from "@/server/videos/edits";
 
 /**
@@ -571,7 +572,11 @@ export async function runEdit(run: Run, deps: MontajeDeps = {}): Promise<"done" 
       JSON.stringify({
         ...spec,
         // Regla 6c también en los rótulos del desglose o de la tarjeta: nada de lugares de otro mercado.
-        texts: { main: withLocalPlaces(spec.texts.main, [], place), cta: withLocalPlaces(spec.texts.cta, [], place) },
+        // Y la localización al país (tiendas, moneda): Target → Action, $ → €.
+        texts: {
+          main: localizeText(withLocalPlaces(spec.texts.main, [], place), marketOf(spec.product)),
+          cta: localizeText(withLocalPlaces(spec.texts.cta, [], place), marketOf(spec.product)),
+        },
         clips,
         // Con la canción de respaldo si el vídeo se quedaba mudo.
         song,

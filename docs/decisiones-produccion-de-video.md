@@ -925,3 +925,11 @@ doblaje, que va en el montaje).
   botones). «Referencia» solo mientras falta ponerla; desglose y clip van por dentro (el clip en
   bruto, en «Detalles» plegado). En el tablero del lote, columnas «Imagen» y «Vídeo»; «Descargar»
   baja el vídeo editado.
+- **Localización al país del producto** (24/11/2026, regla de Emmanuel): `src/server/videos/localization.ts`
+  tiene, por mercado, la ciudad más reconocible, la moneda y las cadenas por tipo de tienda (Alemania como
+  Codex: Lidl, Action, Aldi, MediaMarkt; además Kaufland, dm, OBI, Fressnapf…). El desglose recibe la guía
+  y la regla `localizacion-por-pais` y devuelve `localization` (origen → destino), que aplica en los
+  prompts de imagen y clip y en los rótulos; Pinterest la recibe con el resto del desglose. Los rótulos
+  (los del desglose y los de la edición de referencia) pasan además por `localizeText` (tiendas, lugares,
+  $ → €); sin ciudad en la tarjeta, el lugar es la ciudad del país («in den USA» → «in Berlin»). El
+  doblaje de Higgsfield (`dubbing`) no admite glosario: dice lo que se dice en la referencia, traducido.
