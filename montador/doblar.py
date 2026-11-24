@@ -126,6 +126,7 @@ def mono16k(x):
 
 
 MAX_NO_HABLA = 0.6  # `no_speech_prob` de Whisper por encima de esto: no es habla
+UMBRAL_CANDIDATA = 0.3  # idioma de una frase de la música para ofrecérsela a Claude (habla o canto)
 
 
 def frases(modelo, x, vad=True):
@@ -282,7 +283,9 @@ def separar(fuente, carpeta, video=None, destino=None):
         for i, nombre in ((1, 'music'), (2, 'sfx')):
             voces, _ = voces_mdx(pistas[i])  # Whisper oye mejor las voces aisladas que la música entera
             for f in frases(w, voces):
-                if f['idioma'] and f['idioma'] != destino and f['prob'] >= UMBRAL_IDIOMA and f['no_habla'] <= MAX_NO_HABLA:
+                # Umbral bajo a propósito: en frases cortas Whisper duda del idioma (la cuenta atrás del vídeo 22 salió
+                # «en» al 0,50 una vez y por debajo otra, y se quedó sin doblar). Quien decide es Claude (habla/canto).
+                if f['idioma'] and f['idioma'] != destino and f['prob'] >= UMBRAL_CANDIDATA and f['no_habla'] <= MAX_NO_HABLA:
                     a, b = ampliar(voces, f['desde'], f['hasta'])
                     candidatas.append(dict(f, pista=nombre, desde=a, hasta=b))
     dialogo = carpeta / 'dialogue-only.mp4'
