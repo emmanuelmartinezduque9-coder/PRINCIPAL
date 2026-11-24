@@ -88,6 +88,8 @@ export interface DubContext {
   now?: () => Date;
   /** Lo que `jobs_wait` espera en cada pregunta a Higgsfield (0–15 s; por defecto 15). */
   pollSeconds?: number;
+  /** El dueño encendió «Doblar el diálogo» a propósito en la tarjeta: es diálogo, se dobla todo sin clasificar. */
+  forced?: boolean;
   /** Claude (pruebas: uno simulado) para decidir si la voz es habla o una canción. */
   gateway?: LlmGateway;
 }
@@ -123,14 +125,15 @@ export interface Phrase {
 
 export const SPEECH_INSTRUCTIONS = [
   "Decides si cada frase que oyó Whisper en el audio de un vídeo corto de redes es HABLA (una persona hablando: diálogo, exclamación, narración a cámara) o CANTO (la letra de una canción, aunque la cante alguien del vídeo o sea un audio de moda).",
-  "Regla fija del dueño: se dobla solo el diálogo; una canción no se traduce nunca.",
+  "Regla fija del dueño: se dobla el diálogo; una canción no se traduce nunca. Y otra orden suya (24/11/2026): ante la duda entre habla y canto, gana HABLA cuando la frase es conversacional y no es la letra de una canción.",
   "Por frase te doy la pista de la que sale («voz», o «music»/«sfx»: lo que quedó en la música), el texto, cuánto dura y dos datos de Whisper: no_habla (probabilidad de que no sea habla, 0–1) y confianza (logprob medio; muy bajo suele ser canto o música).",
-  "Señales de canto: rima, versos o estribillo repetidos, palabras alargadas, frase que suena a letra de canción, texto poco natural para una conversación, no_habla alto, confianza muy baja.",
-  "Señales de habla: pregunta o respuesta natural, exclamación espontánea, explicación, habla dirigida a alguien.",
-  "Son anuncios de producto: lo típico es una persona que reacciona, cuenta o enseña algo, con un villancico o un audio de moda de fondo. Whisper transcribe con errores (palabras cambiadas): juzga la intención, no la ortografía.",
-  "Ejemplos de HABLA: una cuenta atrás dicha antes de abrir algo («Three, two, one, let's go!», «3, 2, 1…» aunque Whisper cambie las últimas palabras); una exclamación de reacción («Oh my God! Look at her wings!», «No way!», «Wow, look at this!»); una pregunta a alguien («Ma'am, where did you even get this?»).",
-  "Ejemplos de CANTO: letras de canciones conocidas («Last Christmas, I gave you my heart…», «Rockin' around the Christmas tree…», «I don't want a lot for Christmas…», «All I want for Christmas is you») y versos con métrica o rima de canción.",
-  "Responde por cada frase (n desde 1) tipo «habla», «canto» o «duda» y un motivo corto. «duda» solo si de verdad no se puede saber: en caso de duda no se dobla.",
+  "CANTO solo si es la letra de una canción: una canción que reconoces, versos con rima o métrica de canción, un estribillo repetido o palabras alargadas como al cantar.",
+  "HABLA todo lo demás que suene a persona hablando: pregunta o respuesta, exclamación, comentario, frase de un sketch o de un audio de moda hablado, aunque Whisper la transcriba rara o sin sentido completo (cambia palabras: juzga la intención, no la ortografía). Que la frase salga de la pista «music» no la convierte en canto: el separador mete a veces todo el diálogo en la música.",
+  "Son anuncios de producto: lo típico es una persona que reacciona, cuenta o enseña algo, con un villancico o un audio de moda de fondo.",
+  "Ejemplos de HABLA: una cuenta atrás («Three, two, one, let's go!», «3, 2, 1…» aunque Whisper cambie las últimas palabras); una exclamación («Oh my God! Look at her wings!», «No way!»); una pregunta («Ma'am, where did you even get this?»); frases conversacionales de un audio hablado aunque salgan raras («Because that's what frustrates the imagination», «What's happening, chamber?», «Be to the boss, let's not…», «We're just drinking and drinking…»).",
+  "Ejemplos de CANTO: letras de canciones conocidas («Last Christmas, I gave you my heart…», «Rockin' around the Christmas tree…», «I don't want a lot for Christmas…», «All I want for Christmas is you», «Let it snow…») y versos con métrica o rima de canción.",
+  "Mira todas las frases juntas antes de decidir: Whisper transcribe mal las letras («I don't want a lot of things with this… There is just one I-» es «All I want for Christmas is you»; «Let's shine on the way» puede ser un verso). Si varias frases son trozos de una misma canción, todas son CANTO, también las cortas que caen dentro de ella («Listen.», «I'm good.», «You don't stink»). Las frases de un vídeo donde nada suena a canción conocida y se habla con naturalidad (una cuenta atrás, un comentario, una pregunta) son HABLA.",
+  "Responde por cada frase (n desde 1) tipo «habla», «canto» o «duda» y un motivo corto. «duda» solo si parece letra de canción pero no lo puedes asegurar (una «duda» no se dobla).",
 ].join("\n");
 
 const speechSchema = z.object({
@@ -199,9 +202,15 @@ async function analyse(ctx: DubContext, stems: string, userId: number, target: {
     return { kind: "skip", record: true, why: `el diálogo ya está en ${target.name}`, note: `El diálogo de la referencia ya está en ${target.name}: no se dobla`, raw: voz };
   }
   const [owner] = await getDb().select({ productId: schema.videos.productId }).from(schema.videos).where(eq(schema.videos.id, ctx.videoId));
-  const kinds = await classifySpeech(ctx, userId, owner?.productId ?? null, foreign);
+  // Con «Doblar el diálogo» encendido a propósito en la tarjeta, el dueño ya ha dicho que es diálogo: se dobla todo.
+  const kinds = ctx.forced ? foreign.map(() => "habla" as const) : await classifySpeech(ctx, userId, owner?.productId ?? null, foreign);
   if (kinds === null) return { kind: "skip", record: false, why: "sin Claude", note: "No se pudo decidir si la voz es habla o una canción: no se dobla", raw: null };
-  const classified = foreign.map((f, i) => ({ ...f, tipo: kinds[i] }));
+  // Una frase de «habla» que se solapa en el tiempo con una de canto está dentro de la canción: canto (vídeo 20).
+  const overlaps = (a: Phrase, b: Phrase) => a.desde < b.hasta && b.desde < a.hasta;
+  const classified = foreign.map((f, i) => ({
+    ...f,
+    tipo: kinds[i] === "habla" && foreign.some((g, j) => j !== i && kinds[j] === "canto" && overlaps(f, g)) ? ("canto" as const) : kinds[i],
+  }));
   const speech = classified.filter((f) => f.tipo === "habla");
   if (speech.length === 0) {
     return {

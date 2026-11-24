@@ -493,6 +493,7 @@ export async function runEdit(run: Run, deps: MontajeDeps = {}): Promise<"done" 
           requestedAt: run.createdAt,
           audio: referenceAudio.path,
           language: spec.product.language,
+          forced: spec.dubForced === true,
           referenceVideo: audioLink?.file ?? null,
           dir,
           store,

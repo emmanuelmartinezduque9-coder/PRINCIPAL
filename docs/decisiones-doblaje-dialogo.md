@@ -80,7 +80,14 @@ cuando una persona habla; una canción no se traduce nunca; en caso de duda, no.
    se retira y vuelve el audio original; era habla → se reutiliza sin pagar; marcado «sin diálogo» con habla en la
    música → ahora se dobla. Al publicar, sus vídeos se vuelven a montar una vez (`reclassifyDubbedEdits`, marca
    `doblaje.habla-o-canto-v2-20261124`).
-5. «Solo gancho» sin cuerpos elegidos en la tarjeta: el montaje lleva los cuerpos del producto (el vídeo 22 salió solo
+5. Orden del dueño sobre FalterPfote 5 (vídeo 22, 24/11/2026): «el diálogo tiene que estar traducido al alemán»; el
+   clasificador lo dejó sin doblar (la cuenta atrás no llegó a Claude por un umbral de idioma de 0,5 —ahora 0,3— y la
+   otra frase salió «duda»). Ahora: ante la duda gana HABLA si la frase es conversacional y no es letra de canción
+   (ejemplos reales en el prompt); varias frases que son trozos de una misma canción mal transcrita son todas CANTO; una
+   frase de habla que se solapa en el tiempo con una de canto cuenta como canto. Probado con Claude real sobre las
+   frases del lote 6: 22 y 6 → habla; 8, 11, 13, 20 y 21 → canto o duda. Y si el dueño enciende a propósito «Doblar el
+   diálogo» en la tarjeta (`videos.dub_dialogue = true`, no el valor por defecto), se dobla todo sin clasificar.
+6. «Solo gancho» sin cuerpos elegidos en la tarjeta: el montaje lleva los cuerpos del producto (el vídeo 22 salió solo
    con el gancho porque nadie eligió su cuerpo «bury»).
 
 No hay nada parecido en Codex: allí el doblaje se pedía a mano por vídeo y su V6 tradujo letras de la canción.

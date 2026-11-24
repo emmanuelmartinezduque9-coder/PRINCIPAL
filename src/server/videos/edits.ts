@@ -84,6 +84,8 @@ export interface EditSpec {
    * música y los efectos quedan los originales). Sin canción y con audio de la referencia; si no, aviso.
    */
   dubDialogue?: boolean;
+  /** El dueño encendió «Doblar el diálogo» a propósito en la tarjeta (no el valor por defecto): se dobla sin clasificar. */
+  dubForced?: boolean;
 }
 
 /** El CTA de siempre del dueño, en el idioma del anuncio. */
@@ -199,6 +201,7 @@ async function buildSpec(video: Video, product: Product): Promise<EditSpec> {
           ? { source: "enlace", url: video.referenceUrl }
           : null,
     dubDialogue: await dubDialogueOf(video),
+    dubForced: video.dubDialogue === true,
   };
 }
 

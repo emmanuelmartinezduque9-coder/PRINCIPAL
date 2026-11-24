@@ -77,6 +77,10 @@ if args[0] == 'separar':
         voz = {'hay': False, 'idioma': None, 'probabilidad': None, 'texto': '', 'motivo': 'voz casi muda', 'frases': []}
         candidatas = [{'desde': 0.0, 'hasta': 3.5, 'texto': "Three, two, one, let's go!", 'idioma': 'en', 'prob': 0.7, 'no_habla': 0.07, 'confianza': -0.8, 'pista': 'music'},
                       {'desde': 4.0, 'hasta': 11.0, 'texto': 'CANTO: Last Christmas, I gave you my heart', 'idioma': 'en', 'prob': 0.8, 'no_habla': 0.4, 'confianza': -0.5, 'pista': 'music'}]
+    elif audio.startswith(b'MUSICA-SOLAPE'):
+        voz = {'hay': False, 'idioma': None, 'probabilidad': None, 'texto': '', 'motivo': 'voz casi muda', 'frases': []}
+        candidatas = [{'desde': 5.0, 'hasta': 8.0, 'texto': "CANTO: I don't want a lot for Christmas", 'idioma': 'en', 'prob': 0.6, 'no_habla': 0.1, 'confianza': -1.0, 'pista': 'music'},
+                      {'desde': 7.0, 'hasta': 9.0, 'texto': "What do you think it's gonna be?", 'idioma': 'en', 'prob': 0.6, 'no_habla': 0.1, 'confianza': -1.0, 'pista': 'music'}]
     elif audio.startswith(b'MUSICA-CANTO'):
         voz = {'hay': False, 'idioma': None, 'probabilidad': None, 'texto': '', 'motivo': 'voz casi muda', 'frases': []}
         candidatas = [{'desde': 2.8, 'hasta': 11.1, 'texto': 'CANTO: Last Christmas, I gave you my heart', 'idioma': 'en', 'prob': 0.73, 'no_habla': 0.43, 'confianza': -0.47, 'pista': 'music'}]
@@ -416,6 +420,22 @@ describe("una canción no se traduce nunca (orden del 24/11/2026)", () => {
     expect(await runEdit(run, deps())).toBe("done");
     expect(dubCalls()).toHaveLength(1);
     expect((await dubRows()).map((r) => r.status)).toEqual(["failed", "done"]);
+  });
+
+  it("una frase de habla que se solapa con una de canto está dentro de la canción: no se dobla", async () => {
+    const video = await withAudio(Buffer.from("MUSICA-SOLAPE"));
+    const { row } = await mount(video.id);
+    expect(row.notes).toContain("audio:MUSICA-SOLAPE");
+    expect(hf.calls).toEqual([]);
+  });
+
+  it("con «Doblar el diálogo» encendido a propósito en la tarjeta se dobla sin clasificar (orden del dueño)", async () => {
+    const video = await withAudio(Buffer.from("MUSICA-CANTO"), { dubDialogue: true });
+    const { row, spec } = await mount(video.id);
+    expect(spec.dubForced).toBe(true);
+    expect(row.notes).toContain("audio:MEZCLA-ALEMANA");
+    expect(speech.calls).toBe(0);
+    expect(dubCalls()).toHaveLength(1);
   });
 
   it("solo canción en la música (voz muda): no se dobla", async () => {
