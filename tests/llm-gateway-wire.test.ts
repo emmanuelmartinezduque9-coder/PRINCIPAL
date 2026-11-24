@@ -204,8 +204,14 @@ describe("pasarela a Claude con el cliente real contra un servidor local", () =>
     respond = (res) => reply(res, 500, apiError("api_error"));
     await expect(getGateway().call({ ...req("small"), stepKey: "prueba:cable:2" })).rejects.toBeInstanceOf(LlmCallError);
     expect(seen).toHaveLength(2);
-    // Con el nivel fijado en «warn» el SDK no escribe ni el detalle ni los avisos de cada petición.
-    expect(consoleOutput()).toBe("");
+    // Con el nivel fijado en «warn» el SDK no escribe ni el detalle ni los avisos de cada petición. Solo
+    // queda la línea de la pasarela con el motivo que dio la API (24/11/2026), sin nada de la petición.
+    const output = consoleOutput();
+    expect(output).not.toContain(PROMPT);
+    expect(output).not.toContain("instrucciones del paso");
+    expect(output).not.toContain(OTHER_KEY);
+    expect(output).toContain("[claude] prueba:cable:2: la API respondió 500");
+    expect(output.match(/\[claude\]/g)).toHaveLength(1);
   });
 
   it("si la clave del entorno cambia, la siguiente llamada ya usa la nueva", async () => {

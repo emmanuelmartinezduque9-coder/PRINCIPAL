@@ -353,6 +353,33 @@ describe("flujo automático del lote", () => {
     expect((await getBatchFor(ana, batchId)).status).toBe("imagenes");
   });
 
+  it("un desglose que falla nunca es una pregunta: se repite solo y, agotados los intentos, espera y vuelve a intentarlo", async () => {
+    const { batchId, ids } = await automaticBatch(1);
+    await sendBatch(ana, batchId);
+    const failQueued = async () => {
+      const { rows } = await getPool().query("select id from video_analyses where status = 'queued' order by id");
+      for (const row of rows as Array<{ id: number }>) {
+        const { client } = fakeMessages([{ text: "esto no es JSON", usage: { inputTokens: 10, outputTokens: 10 } }]);
+        await runAnalysis(row.id, { gateway: createGateway({ client }) }).catch(() => {});
+      }
+    };
+    for (let i = 0; i < 4; i++) {
+      await failQueued();
+      await advanceBatch(batchId, deps);
+      // Ni pregunta, ni «Repetir desglose», ni «Saltar este vídeo».
+      expect(await batchQuestions(ana, batchId)).toEqual([]);
+      expect((await autoView(ana, await getBatchFor(ana, batchId))).questions).toBe(0);
+    }
+    const queued = async () => (await getPool().query("select count(*)::int as n from video_analyses where status = 'queued'")).rows[0].n as number;
+    // Agotados los intentos: espera (no sale del lote) y no pide otro enseguida.
+    expect((await getVideoFor(ana, ids[0])).autoSkipped).toBe(false);
+    expect(await queued()).toBe(0);
+    // Pasado el rato de espera, se vuelve a intentar solo.
+    await getPool().query("update video_analyses set updated_at = now() - interval '31 minutes' where video_id = $1", [ids[0]]);
+    await advanceBatch(batchId, deps);
+    expect(await queued()).toBe(1);
+  });
+
   it("sin saldo para todo el lote se para con ese único motivo", async () => {
     const { batchId } = await automaticBatch(1);
     await sendBatch(ana, batchId);

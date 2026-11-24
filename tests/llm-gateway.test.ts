@@ -1,9 +1,11 @@
+import Anthropic from "@anthropic-ai/sdk";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { z } from "zod";
 import { getPool } from "@/db/client";
 import {
   createGateway,
   getGateway,
+  isGrammarTooLarge,
   LlmCallError,
   LlmCapReachedError,
   LlmInvalidOutputError,
@@ -33,9 +35,9 @@ let ana: AuthUser;
 let producto: Product;
 
 const RETRY_LATER = "Claude no ha respondido. Inténtalo de nuevo dentro de unos minutos.";
-const INVALID_REQUEST = "La petición a Claude no es válida; avisa al dueño.";
-const UNREADABLE_ANSWER = "Claude ha devuelto una respuesta que no se entiende; avisa al dueño.";
-const UNEXPECTED_FAILURE = "La llamada a Claude ha fallado de forma inesperada; avisa al dueño.";
+const INVALID_REQUEST = "La petición a Claude no es válida; se repite sola.";
+const UNREADABLE_ANSWER = "Claude ha devuelto una respuesta que no se entiende; se repite sola.";
+const UNEXPECTED_FAILURE = "La llamada a Claude ha fallado de forma inesperada; se repite sola.";
 const SUGGESTS_RETRY = /int[eé]ntalo|de nuevo/i;
 
 const reglas: RuleSnapshot[] = [
@@ -459,7 +461,7 @@ describe("pasarela a Claude: cuando la llamada falla", () => {
       [404, INVALID_REQUEST],
       [413, INVALID_REQUEST],
       [422, INVALID_REQUEST],
-      [401, "Claude no acepta la clave configurada (ANTHROPIC_API_KEY); avisa al dueño."],
+      [401, "Claude no acepta la clave configurada (ANTHROPIC_API_KEY)."],
     ];
     for (const [status, message] of messages) {
       const { client } = fakeMessages([{ error: fakeApiError(status) }]);
@@ -697,5 +699,27 @@ describe("pasarela a Claude: la clave", () => {
     delete process.env.ANTHROPIC_API_KEY;
     const { client } = fakeMessages([{ text: "ok" }]);
     await expect(createGateway({ client }).call(req(ana, producto))).resolves.toMatchObject({ text: "ok" });
+  });
+});
+
+describe("esquema demasiado grande para la API (lote 8, 24/11/2026)", () => {
+  it("si la API rechaza la gramática del esquema, se repite con el esquema en el texto y se valida igual", async () => {
+    const grammar = new Anthropic.BadRequestError(
+      400,
+      { type: "error", error: { type: "invalid_request_error", message: "The compiled grammar is too large, which would cause performance issues. Simplify your tool schemas or reduce the number of strict tools." } },
+      "400 The compiled grammar is too large, which would cause performance issues.",
+      new Headers(),
+    );
+    const { client, calls } = fakeMessages([{ error: grammar }, { text: 'Aquí va:\n```json\n{"idea":"ok","planos":2}\n```', usage: { inputTokens: 100, outputTokens: 20 } }]);
+    const schema = z.object({ idea: z.string(), planos: z.number() });
+    const result = await createGateway({ client, mac: null }).call({ ...req(ana, producto), schema });
+    expect(result.data).toEqual({ idea: "ok", planos: 2 });
+    expect(calls).toHaveLength(2);
+    // La primera con la gramática; la segunda sin ella y con el esquema en las instrucciones.
+    expect(calls[0].output_config?.format).toBeTruthy();
+    expect(calls[1].output_config?.format).toBeUndefined();
+    expect(JSON.stringify(calls[1].system)).toContain("cumpla este esquema JSON");
+    expect(isGrammarTooLarge(new Error("x", { cause: grammar }))).toBe(true);
+    expect(isGrammarTooLarge(new Error("Claude no ha respondido"))).toBe(false);
   });
 });

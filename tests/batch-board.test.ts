@@ -230,10 +230,10 @@ describe("createLimiter", () => {
 });
 
 describe("lote v2: «Por revisar» y nombre automático", () => {
-  it("por revisar: error, desglose que ya no vale, candidatas sin aprobar o generación en duda", () => {
+  it("por revisar: error, candidatas sin aprobar o generación en duda (el desglose va por dentro: nunca cuenta)", () => {
     expect(needsReview(row())).toBe(false);
-    expect(needsReview(row({ analysis: { status: "failed", error: "x", stale: false, staleReason: null } }))).toBe(true);
-    expect(needsReview(row({ analysis: { status: "done", error: null, stale: true, staleReason: "brief" } }))).toBe(true);
+    expect(needsReview(row({ analysis: { status: "failed", error: "x", stale: false, staleReason: null } }))).toBe(false);
+    expect(needsReview(row({ analysis: { status: "done", error: null, stale: true, staleReason: "brief" } }))).toBe(false);
     expect(needsReview(row({ frame: gen({}) }))).toBe(true);
     expect(needsReview(row({ frame: gen({ status: "unknown" }) }))).toBe(true);
     expect(needsReview(row({ clip: gen({ status: "failed" }) }))).toBe(true);

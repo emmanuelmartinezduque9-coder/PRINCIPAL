@@ -54,7 +54,7 @@ export function RegeneratePicker({ productId, disabled, onPick }: { productId: n
         <DialogContent className="sm:max-w-2xl">
           <DialogHeader>
             <DialogTitle>Regenerar un vídeo</DialogTitle>
-            <DialogDescription>Usa la misma referencia y el mismo desglose; la imagen, el clip y el montaje salen nuevos.</DialogDescription>
+            <DialogDescription>Usa la misma referencia; la imagen, el clip y el montaje salen nuevos.</DialogDescription>
           </DialogHeader>
           {videos.isLoading ? (
             <p className="flex items-center gap-2 py-8 text-sm text-muted-foreground">

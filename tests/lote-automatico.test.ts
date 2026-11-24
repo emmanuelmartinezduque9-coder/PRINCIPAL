@@ -354,31 +354,35 @@ describe("estados del envío", () => {
 // ───────────────────────── Preguntas ─────────────────────────
 
 describe("preguntas del lote", () => {
-  it("solo pregunta lo que el dueño decide (quién sale); nunca preguntas libres de Claude ni riesgos", async () => {
+  it("nunca enseña preguntas que el lote resuelve solo (quién sale, las de Claude, riesgos): solo las obligatorias", async () => {
     const { batchId, videos } = await batchWith(2, { avatar: false });
     await sendBatch(ana, batchId);
-    // El primero no tiene avatar: no se desglosa y se pregunta quién sale.
-    let questions = await batchQuestions(ana, batchId);
-    expect(questions).toEqual([
-      expect.objectContaining({ videoId: videos[0].id, key: "sys:avatar", kind: "avatar", options: expect.arrayContaining([expect.objectContaining({ value: `foto:${avatar}`, photoId: avatar })]) }),
-    ]);
-    // Aunque Claude devuelva preguntas o riesgos que bloquean, no se le preguntan al dueño.
+    // Aunque Claude devuelva preguntas o riesgos, y aunque falte elegir quién sale, no se pregunta nada.
     await runQueuedAnalyses(() => ({
       ...REPLY,
       questions: [{ id: "luz", text: "¿Cocina de día o de noche?", options: ["día", "noche"] }],
       risks: [{ kind: "funcion_inexistente", detail: "El producto no pulveriza." }],
     }));
-    questions = await batchQuestions(ana, batchId);
-    expect(questions.map((q) => [q.videoId, q.kind])).toEqual([[videos[0].id, "avatar"]]);
-    await expect(quoteBatch(ana, batchId, deps)).rejects.toMatchObject({ status: 409 });
-
-    await answerQuestion(ana, batchId, { videoId: videos[0].id, key: "sys:avatar", value: `foto:${avatar}` });
-    expect((await getVideoFor(ana, videos[0].id)).avatarPhotoId).toBe(avatar);
-    await advanceBatch(batchId, deps);
-    await runQueuedAnalyses();
     expect(await batchQuestions(ana, batchId)).toEqual([]);
-    expect((await autoView(ana, await getBatchFor(ana, batchId))).readyToConfirm).toBe(true);
-    expect((await quoteBatch(ana, batchId, deps)).total).toBe(2 * (FRAME + CLIP_EST));
+    await advanceBatch(batchId, deps);
+    expect(await batchQuestions(ana, batchId)).toEqual([]);
+    // Quién sale se resolvió solo.
+    expect(["automatico", "sin_sustitucion"]).toContain((await getVideoFor(ana, videos[0].id)).avatarMode);
+  });
+
+  it("un vídeo cuya referencia aún no ha llegado espera (no sale del lote); al llegar, sigue", async () => {
+    const { batchId, videos } = await batchWith(2, { automatic: true });
+    await getPool().query("update videos set reference_status = 'none', reference_media_id = null where id = $1", [videos[1].id]);
+    await sendBatch(ana, batchId);
+    await runQueuedAnalyses();
+    await advanceBatch(batchId, deps);
+    expect((await getVideoFor(ana, videos[1].id)).autoSkipped).toBe(false);
+    expect(await statusOf(batchId)).toBe("preguntas");
+    // Uno que salió así antes de este arreglo vuelve solo en cuanto su referencia está lista.
+    await getPool().query("update videos set auto_skipped = true, auto_stop = 'Falta el vídeo de referencia.' where id = $1", [videos[1].id]);
+    await getPool().query("update videos set reference_status = 'ready', reference_media_id = $2 where id = $1", [videos[1].id, `ref-${videos[1].id}`]);
+    await advanceRunningBatches(deps);
+    expect((await getVideoFor(ana, videos[1].id)).autoSkipped).toBe(false);
   });
 
   it("los vídeos que salieron por un fallo de la API de Claude vuelven solos y su imagen se suma a la revisión; un «Saltar» a mano no", async () => {
@@ -410,7 +414,7 @@ describe("preguntas del lote", () => {
     expect((await getBatchFor(ana, batchId)).pause).toBeNull();
   });
 
-  it("un desglose que falla se repite solo (sin preguntar) y, si sigue fallando, el vídeo queda fuera", async () => {
+  it("un desglose que falla se repite solo (sin preguntar) y, agotados los intentos, espera sin sacar el vídeo", async () => {
     const { batchId, videos } = await batchWith(2, { automatic: true });
     await sendBatch(ana, batchId);
     const fail = async () => {
@@ -430,12 +434,10 @@ describe("preguntas del lote", () => {
       await fail();
       await advanceBatch(batchId, deps);
     }
-    const out = await getVideoFor(ana, videos[0].id);
-    expect(out.autoSkipped).toBe(true);
-    expect(out.autoStop).toContain("El desglose falló");
-    // El otro sigue: el lote pasa a las imágenes.
-    await advanceBatch(batchId, deps);
-    expect(await statusOf(batchId)).toBe("imagenes");
+    // Agotados: sigue en el lote, esperando; nada de preguntas.
+    expect((await getVideoFor(ana, videos[0].id)).autoSkipped).toBe(false);
+    expect(await batchQuestions(ana, batchId)).toEqual([]);
+    expect(await statusOf(batchId)).toBe("preguntas");
   });
 });
 

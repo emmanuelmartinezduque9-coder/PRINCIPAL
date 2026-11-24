@@ -48,3 +48,16 @@ propio tope de 20 intentos). Los vídeos que ya salieron por eso vuelven solos a
 seguimiento de cada minuto (`reincludeClaudeSkips`): se rehace su desglose, se pide su imagen y se
 suma a la revisión; lo autorizado sube lo de un vídeo medio del lote con el margen de regeneraciones.
 Un «Saltar» hecho a mano (sin motivo guardado) no se toca.
+
+## El desglose nunca se pregunta (24/11/2026, lote 8)
+
+- Un desglose que falla se repite solo; agotados los intentos (2 del vídeo, 20 de la API de Claude),
+  espera 30 minutos y se vuelve a intentar, también solo. Nunca saca el vídeo ni sale como pregunta.
+- «Preguntas del lote» solo enseña lo obligatorio de verdad: falta la foto del artículo o la
+  adaptación. Sin ninguna pendiente, esa pantalla devuelve al lote; ni «Repetir desglose» ni «Saltar
+  este vídeo». El desglose tampoco cuenta como «Por revisar» en el tablero.
+- Una referencia que aún no ha llegado (el navegador o el Mac la suben) se espera; los vídeos que
+  salieron así vuelven solos en cuanto la tienen.
+- La pasarela de Claude: si la API rechaza la gramática del esquema por grande («The compiled grammar
+  is too large»), repite sola con el esquema en el texto y valida igual; todo error de la API deja su
+  motivo real en el registro (`[claude] paso: la API respondió N: …`). Sin «avisa al dueño».

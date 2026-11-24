@@ -755,7 +755,7 @@ async function stepAnalyze(row: Intake, owner: AuthUser, deps: IntakeDeps): Prom
 /** Mensaje para la persona de un fallo de Claude; `null` si no es de la pasarela. */
 function gatewayMessage(error: unknown): string | null {
   if (error instanceof LlmCapReachedError) return error.message;
-  if (error instanceof LlmNotConfiguredError) return "Falta la clave de Claude en la web; avisa al dueño.";
+  if (error instanceof LlmNotConfiguredError) return "Falta la clave de Claude en la web.";
   if (error instanceof LlmCallError || error instanceof LlmRefusalError || error instanceof LlmTruncatedError || error instanceof LlmInvalidOutputError) {
     return "No se pudo terminar el análisis. Pulsa «Volver a analizar».";
   }

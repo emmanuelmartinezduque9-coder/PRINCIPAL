@@ -499,7 +499,7 @@ async function askRow(user: AuthUser, row: Row, photos: PhotoInfo[], linkFailed:
       key: "sys:articulo",
       kind: "articulo",
       text: "Falta una foto del artículo.",
-      options: [skipOption],
+      options: [],
       freeText: false,
       href: `/productos/${video.productId}`,
     });
@@ -525,10 +525,9 @@ async function askRow(user: AuthUser, row: Row, photos: PhotoInfo[], linkFailed:
   if (questions.length > 0) return ask(questions);
 
   const [latest] = row.analyses;
-  if (latest && ACTIVE_ANALYSIS.includes(latest.status)) {
-    if (latest.status !== "paused") return { state: "waiting" };
-    return ask([{ key: "sys:desglose", kind: "desglose", text: latest.error ?? "El desglose está en pausa.", options: [skipOption], freeText: false, href: null }]);
-  }
+  // El desglose nunca se pregunta (orden del dueño, 24/11/2026): en marcha o en pausa por el tope, se espera
+  // (la pausa se reanuda sola).
+  if (latest && ACTIVE_ANALYSIS.includes(latest.status)) return { state: "waiting" };
   const done = row.analyses.find((a) => a.status === "done");
   const notes = await withProductNotes(video);
   const doneStale = done ? staleness(done, notes).staleReason : "reference";
@@ -538,19 +537,8 @@ async function askRow(user: AuthUser, row: Row, photos: PhotoInfo[], linkFailed:
     if (open.length > 0) return { state: "questions", questions: open };
   }
   if (done && doneStale === null) return { state: "ready" };
-  // Un desglose que falló no se repite solo (cada intento cuesta): lo decide el dueño.
-  if (latest?.status === "failed") {
-    return ask([
-      {
-        key: "sys:desglose",
-        kind: "desglose",
-        text: latest.error ?? "El desglose falló.",
-        options: [{ value: RETRY, label: "Repetir desglose" }, skipOption],
-        freeText: false,
-        href: null,
-      },
-    ]);
-  }
+  // Un desglose que falló se repite solo; agotados los intentos, espera y lo vuelve a intentar más tarde.
+  if (latest?.status === "failed" && !analysisRetryDue(row)) return { state: "waiting" };
   return { state: "needsAnalysis" };
 }
 
@@ -585,8 +573,16 @@ export async function batchQuestions(user: AuthUser, batchId: number): Promise<B
   const batch = await ownBatch(user, batchId);
   if (batch.status !== "preguntas") return [];
   const asks = await askRows(user, await rowsOf(user, batch));
-  return [...asks.values()].flatMap((ask) => (ask.state === "questions" ? ask.questions : []));
+  return [...asks.values()].flatMap((ask) => (ask.state === "questions" ? ask.questions.filter(isOwnerQuestion) : []));
 }
+
+/**
+ * Las únicas preguntas que se enseñan (CLAUDE.md, regla 5; orden del 24/11/2026): las que solo el dueño o el
+ * colaborador pueden resolver (falta la foto del artículo, qué adaptación quiere). Todo lo demás (desglose,
+ * avatar, variante, modelo, referencia) lo resuelve el lote solo y nunca se ve.
+ */
+const OWNER_QUESTION_KINDS = new Set<BatchQuestion["kind"]>(["articulo", "adaptacion"]);
+export const isOwnerQuestion = (question: Pick<BatchQuestion, "kind">) => OWNER_QUESTION_KINDS.has(question.kind);
 
 function cleanAnswer(value: unknown): string {
   if (typeof value !== "string") throw new HttpError(400, BAD_ANSWER);
@@ -1167,6 +1163,20 @@ const MAX_ANALYSIS_RETRIES = 2;
 const CLAUDE_SIDE = /petición a Claude no es válida|API de Claude|cuenta de Claude no tiene saldo|Claude no ha respondido|Claude no acepta la clave|tope (mensual )?de gasto/i;
 const MAX_CLAUDE_SIDE_RETRIES = 20;
 export const isClaudeSideFailure = (error: string | null) => error !== null && CLAUDE_SIDE.test(error);
+/** Agotados los intentos seguidos, el desglose espera esto y se vuelve a intentar solo (nunca se pregunta). */
+export const ANALYSIS_BACKOFF_MS = 30 * 60_000;
+
+/**
+ * ¿Toca volver a pedir el desglose de un vídeo cuyo último desglose falló? Enseguida mientras queden
+ * intentos (los fallos de la API de Claude tienen su propio tope); agotados, cada `ANALYSIS_BACKOFF_MS`.
+ */
+function analysisRetryDue(row: Row, now: Date = new Date()): boolean {
+  const failedHere = row.analyses.filter((a) => a.status === "failed" && a.referenceMediaId === row.video.referenceMediaId);
+  const failed = failedHere.filter((a) => !isClaudeSideFailure(a.error)).length;
+  if (failed <= MAX_ANALYSIS_RETRIES && failedHere.length <= MAX_CLAUDE_SIDE_RETRIES) return true;
+  const last = failedHere[0];
+  return !last || now.getTime() - last.updatedAt.getTime() >= ANALYSIS_BACKOFF_MS;
+}
 
 /** Deja un vídeo fuera del envío con su motivo (lo enseñan el tablero y el registro), sin parar el lote. */
 async function skipVideo(video: Video, reason: string): Promise<void> {
@@ -1195,6 +1205,11 @@ async function autoAnswer(user: AuthUser, batch: Batch, rows: Row[], asks: Map<n
       const values = question.options.map((o) => o.value);
       let value: string | null = null;
       if (question.kind === "referencia") {
+        // Una referencia que aún no ha llegado (el navegador o el Mac la están subiendo o la subirán) se
+        // espera: solo queda fuera la que falló de verdad o ya no vale (lote 8, 24/11/2026: se sacaban
+        // vídeos enviados antes de empezar su subida).
+        const arriving = row.video.referenceStatus === "none" || row.video.referenceStatus === "uploading";
+        if (arriving && !referenceOutdated(row.video)) continue;
         await skipVideo(row.video, question.text);
         changed = true;
         break;
@@ -1311,12 +1326,8 @@ async function advanceGenerations(user: AuthUser, start: Batch, deps: GenDeps): 
     waitingAnalysis.add(row.video.id);
     const [latest] = row.analyses;
     if (latest && ACTIVE_ANALYSIS.includes(latest.status)) continue;
-    const failedHere = row.analyses.filter((a) => a.status === "failed" && a.referenceMediaId === row.video.referenceMediaId);
-    const failed = failedHere.filter((a) => !isClaudeSideFailure(a.error)).length;
-    if (failed > MAX_ANALYSIS_RETRIES || failedHere.length > MAX_CLAUDE_SIDE_RETRIES) {
-      await skipVideo(row.video, `El desglose falló ${failedHere.length} veces: ${latest?.error ?? ""}`);
-      continue;
-    }
+    // Agotados los intentos, espera y se vuelve a intentar más tarde (nunca se saca el vídeo por esto).
+    if (latest?.status === "failed" && !analysisRetryDue(row)) continue;
     try {
       await requestAnalysis(user, row.video.id);
     } catch (error) {
@@ -1501,11 +1512,14 @@ async function logBatchStates(): Promise<void> {
 export async function reincludeClaudeSkips(): Promise<number> {
   const db = getDb();
   const rows = await db
-    .select({ id: schema.videos.id, batchId: schema.videos.batchId, autoStop: schema.videos.autoStop })
+    .select({ id: schema.videos.id, batchId: schema.videos.batchId, autoStop: schema.videos.autoStop, referenceStatus: schema.videos.referenceStatus })
     .from(schema.videos)
     .innerJoin(schema.batches, eq(schema.batches.id, schema.videos.batchId))
     .where(and(eq(schema.videos.autoSkipped, true), inArray(schema.batches.status, [...RUNNING, "pausado"])));
-  const back = rows.filter((row) => isClaudeSideFailure(row.autoStop));
+  // También los que salieron porque su referencia aún no había llegado y ya la tienen lista (lote 8).
+  const arrived = (row: (typeof rows)[number]) =>
+    row.referenceStatus === "ready" && row.autoStop !== null && /Falta el vídeo de referencia|La subida no terminó/.test(row.autoStop);
+  const back = rows.filter((row) => isClaudeSideFailure(row.autoStop) || arrived(row));
   for (const row of back) {
     const [batch] = await db.select().from(schema.batches).where(eq(schema.batches.id, row.batchId!));
     const estimates = batch.estimates ?? {};
@@ -1595,7 +1609,7 @@ export async function autoView(user: AuthUser, batch: Batch): Promise<AutoView> 
       clips: countIf((row) => clipStage(row, batch) === "done"),
       montaje: countIf((row) => row.video.editStatus === "hecho"),
     },
-    questions: asked.reduce((n, a) => n + (a.state === "questions" ? a.questions.length : 0), 0),
+    questions: asked.reduce((n, a) => n + (a.state === "questions" ? a.questions.filter(isOwnerQuestion).length : 0), 0),
     readyToConfirm: !batch.autoConfirm && batch.status === "preguntas" && rows.length > 0 && asked.every((a) => a.state === "ready"),
     autoConfirm: batch.autoConfirm,
   };

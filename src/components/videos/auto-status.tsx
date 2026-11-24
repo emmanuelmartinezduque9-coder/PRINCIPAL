@@ -16,7 +16,7 @@ import type { VideoViewJson } from "./labels";
  */
 
 const WORKING: Record<"desglose" | "imagen" | "clip" | "montaje", string> = {
-  desglose: "Haciendo el desglose…",
+  desglose: "Preparando la imagen…",
   imagen: "Generando la imagen… puedes salir y volver.",
   clip: "Generando el clip… puedes salir y volver.",
   montaje: "Montando el vídeo… puedes salir y volver.",

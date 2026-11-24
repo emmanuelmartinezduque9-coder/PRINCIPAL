@@ -245,7 +245,8 @@ export function needsReview(row: BatchRowJson, upload: LocalUpload = { kind: "id
   if (ready.review(row)) return true;
   if (failedLink(row) && row.referenceStatus !== "ready" && upload.kind !== "uploading") return true;
   if ([row.frame.current?.status, row.clip.current?.status].includes("unknown")) return true;
-  const states = [referenceState(row, upload), analysisState(row), generationState(row.frame, "frame"), generationState(row.clip, "clip")];
+  // Sin el desglose: un fallo suyo se repite solo y no es nada que mirar (orden del 24/11/2026).
+  const states = [referenceState(row, upload), generationState(row.frame, "frame"), generationState(row.clip, "clip")];
   return states.some((state) => state.tone === "error" && !state.quiet);
 }
 

@@ -197,8 +197,10 @@ export class LlmCapReachedError extends Error {
 const INVALID_REQUEST_STATUSES = new Set([400, 403, 404, 413, 422]);
 
 const RETRY_LATER = "Claude no ha respondido. Inténtalo de nuevo dentro de unos minutos.";
-const INVALID_REQUEST = "La petición a Claude no es válida; avisa al dueño.";
-const UNREADABLE_ANSWER = "Claude ha devuelto una respuesta que no se entiende; avisa al dueño.";
+// Sin «avisa al dueño» (orden del 24/11/2026: los colaboradores trabajan con sus mismas reglas). Los
+// pasos que usan Claude repiten solos; el motivo real de la API queda en el registro.
+const INVALID_REQUEST = "La petición a Claude no es válida; se repite sola.";
+const UNREADABLE_ANSWER = "Claude ha devuelto una respuesta que no se entiende; se repite sola.";
 
 export const NO_CREDIT = "Sin saldo en la API de Claude: se sigue solo en cuanto se recargue.";
 
@@ -211,14 +213,14 @@ export function isNoCredit(error: unknown, status: number | null): boolean {
 
 /** Mensaje para quien usa la aplicación. Solo invita a reintentar cuando el fallo puede ser pasajero. */
 function failureMessage(error: unknown, status: number | null): string {
-  if (status === 401) return "Claude no acepta la clave configurada (ANTHROPIC_API_KEY); avisa al dueño.";
-  if (status === 402) return "La cuenta de Claude no tiene saldo; avisa al dueño.";
+  if (status === 401) return "Claude no acepta la clave configurada (ANTHROPIC_API_KEY).";
+  if (status === 402) return "La cuenta de Claude no tiene saldo.";
   if (status !== null) return INVALID_REQUEST_STATUSES.has(status) ? INVALID_REQUEST : RETRY_LATER;
   // Sin estado HTTP: fallo de conexión, tiempo agotado o petición cancelada.
   if (error instanceof Anthropic.APIError) return RETRY_LATER;
   // El propio SDK paró la petición antes de enviarla: está mal hecha.
   if (error instanceof Anthropic.AnthropicError) return INVALID_REQUEST;
-  return "La llamada a Claude ha fallado de forma inesperada; avisa al dueño.";
+  return "La llamada a Claude ha fallado de forma inesperada; se repite sola.";
 }
 
 /**
@@ -307,7 +309,22 @@ function rulesBlock(rules: RuleSnapshot[]): string {
     .join("\n\n");
 }
 
-function buildParams(request: LlmCall<unknown>): CreateParams {
+/**
+ * La API rechaza el esquema de la respuesta (con `output_config.format`) cuando su gramática compilada
+ * es demasiado grande (24/11/2026, desglose: «The compiled grammar is too large»). No se cobra.
+ */
+export function isGrammarTooLarge(error: unknown): boolean {
+  const cause = error instanceof Error && error.cause instanceof Error ? error.cause.message : "";
+  const own = error instanceof Error ? error.message : String(error);
+  return /grammar is too large|grammar.*too large|reduce the number of strict tools|schema is too complex/i.test(`${cause} ${own}`);
+}
+
+/**
+ * Los parámetros de la llamada. Con `schemaInText`, el esquema JSON va en las instrucciones y la
+ * respuesta se lee del final del texto (como con búsqueda), sin `output_config.format`: es el
+ * respaldo cuando la API rechaza la gramática del esquema por grande. Se valida igual con zod.
+ */
+function buildParams(request: LlmCall<unknown>, schemaInText = false): CreateParams {
   const system: Anthropic.Beta.Messages.BetaTextBlockParam[] = [];
   if (request.rules.length > 0) {
     system.push({ type: "text", text: rulesBlock(request.rules), cache_control: { type: "ephemeral" } });
@@ -315,7 +332,7 @@ function buildParams(request: LlmCall<unknown>): CreateParams {
   system.push({ type: "text", text: request.instructions });
 
   const outputConfig: NonNullable<CreateParams["output_config"]> = { effort: EFFORT[request.tier] };
-  if (request.schema && request.web) {
+  if (request.schema && (request.web || schemaInText)) {
     // Con búsqueda, el texto lleva citas y resultados intercalados: el JSON va al final del texto.
     const { schema } = zodOutputFormat(request.schema);
     system.push({
@@ -725,7 +742,9 @@ export function createGateway(deps: { client?: MessagesClient; now?: () => Date;
 
       const client = resolveClient();
       const model = MODELS[request.tier];
-      const params = buildParams(request);
+      let params = buildParams(request);
+      // Respaldo: el esquema en el texto, si la API rechaza su gramática por grande.
+      let schemaInText = false;
       const baseDetail = { tier: request.tier, ruleVersions, ...(macFallback ? { macFallback } : {}) };
 
       /**
@@ -768,6 +787,12 @@ export function createGateway(deps: { client?: MessagesClient; now?: () => Date;
           // Sin créditos en la API (Anthropic responde 400 «credit balance is too low»): no es una
           // petición mal hecha. Pausa como un tope, sin gastar intentos, y se reanuda sola.
           if (!unknownOutcome && isNoCredit(error, status)) throw new LlmCapReachedError("saldo", NO_CREDIT);
+          // El motivo real de la API queda en el registro (sus mensajes no llevan datos de la petición):
+          // «La petición a Claude no es válida» sola no deja saber qué pasó (lote 8, 24/11/2026).
+          if (status !== null) {
+            const detail = error instanceof Error ? error.message.replace(/\s+/g, " ").slice(0, 500) : String(error).slice(0, 500);
+            console.warn(`[claude] ${request.stepKey}: la API respondió ${status}: ${detail}`);
+          }
           throw new LlmCallError(unknownOutcome ? "desconocido" : "no", status, failureMessage(error, status), error);
         }
 
@@ -813,7 +838,21 @@ export function createGateway(deps: { client?: MessagesClient; now?: () => Date;
       const sources = new Set<string>();
       const usage: Usage = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 };
       for (let continuation = 0; ; continuation += 1) {
-        const done = await round(roundParams);
+        let done: Awaited<ReturnType<typeof round>>;
+        try {
+          done = await round(roundParams);
+        } catch (error) {
+          // La API rechazó la gramática del esquema (no se cobra): se repite con el esquema en el texto.
+          if (!schemaInText && request.schema && !request.web && continuation === 0 && isGrammarTooLarge(error)) {
+            console.warn(`[claude] ${request.stepKey}: la API rechaza la gramática del esquema por grande; se repite con el esquema en el texto.`);
+            schemaInText = true;
+            params = buildParams(request, true);
+            roundParams = params;
+            continuation = -1;
+            continue;
+          }
+          throw error;
+        }
         text += done.reading.text;
         costMicros += done.costMicros;
         for (const url of webSourcesOf(done.response.content)) sources.add(url);
@@ -837,7 +876,7 @@ export function createGateway(deps: { client?: MessagesClient; now?: () => Date;
           continue;
         }
 
-        const raw = request.web && request.schema ? trailingJson(text) : text;
+        const raw = (request.web || schemaInText) && request.schema ? trailingJson(text) : text;
         const data = request.schema ? parseData(request.schema, raw) : null;
         return {
           text,

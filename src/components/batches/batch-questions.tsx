@@ -5,7 +5,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowUpRight, Check, Coins, CornerDownLeft, Loader2, PartyPopper, SearchX, Sparkles } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { EmptyState } from "@/components/shell/empty-state";
 import { PageHeader } from "@/components/shell/page-header";
@@ -180,7 +180,7 @@ function BudgetPanel({ batchId, ready, waiting }: { batchId: number; ready: bool
       {!ready ? (
         <p className="flex items-center gap-2 text-sm text-muted-foreground">
           {waiting > 0 ? <Loader2 className="size-4 animate-spin" aria-hidden /> : null}
-          {waiting > 0 ? `Desglosando ${waiting}…` : "Responde las preguntas."}
+          {waiting > 0 ? `Preparando ${waiting}…` : "Responde las preguntas."}
         </p>
       ) : quote.isLoading ? (
         <div className="flex flex-col gap-2" aria-label="Calculando">
@@ -244,6 +244,16 @@ export function BatchQuestions({ batchId }: { batchId: number }) {
     enabled: auto?.status === "preguntas",
   });
   const back = { href: `/lotes/${batchId}`, label: board.data?.batch.name ?? "Lote" };
+  // Esta pantalla solo existe para las preguntas obligatorias (falta la foto del artículo, la adaptación):
+  // sin ninguna pendiente, de vuelta al lote, que sigue solo (orden del dueño, 24/11/2026).
+  const router = useRouter();
+  const nothingToAnswer =
+    auto !== undefined &&
+    auto.autoConfirm &&
+    (auto.status !== "preguntas" || (questions.data !== undefined && questions.data.questions.length === 0));
+  useEffect(() => {
+    if (nothingToAnswer) router.replace(`/lotes/${batchId}`);
+  }, [nothingToAnswer, router, batchId]);
 
   if (board.isLoading) {
     return (
@@ -306,7 +316,7 @@ export function BatchQuestions({ batchId }: { batchId: number }) {
             ))}
           </ul>
         ) : (
-          <EmptyState icon={auto.readyToConfirm ? PartyPopper : Loader2} tone={auto.readyToConfirm ? "success" : "busy"} title={auto.readyToConfirm ? "Sin preguntas" : "Desglosando…"} />
+          <EmptyState icon={auto.readyToConfirm ? PartyPopper : Loader2} tone={auto.readyToConfirm ? "success" : "busy"} title={auto.readyToConfirm ? "Sin preguntas" : "Preparando…"} />
         )}
         {/* Lotes nuevos: con todo respondido se autoriza solo y empieza a generar (sin «Confirmar»). */}
         {auto.autoConfirm ? null : <BudgetPanel batchId={batchId} ready={auto.readyToConfirm} waiting={Math.max(0, waiting)} />}

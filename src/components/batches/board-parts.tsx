@@ -241,7 +241,7 @@ export function AutoAnalyzeSwitch({ batchId, value, editable }: { batchId: numbe
   return (
     <label htmlFor={id} className={cn("flex h-9 items-center gap-2.5 px-1 text-sm text-muted-foreground", editable && "cursor-pointer")}>
       <Switch id={id} checked={value} disabled={!editable || saving} onCheckedChange={(next) => void change(next)} />
-      Desglosar al subir
+      Preparar al subir
     </label>
   );
 }
