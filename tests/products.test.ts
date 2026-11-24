@@ -16,8 +16,8 @@ beforeEach(async () => {
 
 describe("productos", () => {
   it("idiomas y países disponibles", () => {
-    expect(LANGUAGES).toEqual(["de", "it"]);
-    expect(COUNTRIES).toEqual(["DE", "AT", "CH", "IT"]);
+    expect(LANGUAGES).toEqual(["de", "it", "en"]);
+    expect(COUNTRIES).toEqual(["DE", "AT", "CH", "IT", "US"]);
   });
 
   it("un producto nuevo nace en alemán para DE, AT y CH", async () => {

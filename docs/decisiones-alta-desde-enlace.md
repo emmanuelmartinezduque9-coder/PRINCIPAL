@@ -257,3 +257,30 @@ actualizada (versión nueva automática).
     horizontal tenía el nombre casi invisible; los prompts piden «only the box: no people, no ghost
     figures» y el nombre «dark enough to read on white».
   - Más de 6 créditos por imagen no se envía solo (lo normal son 2).
+
+## ZielAlarm y TargetAlarm para Samuel; inglés y Estados Unidos (24/11/2026)
+
+Encargo de Emmanuel: «da de alta en la app TargetAlarm y ZielAlarm, se los delegaré a Samuel».
+
+- **Mismo producto, dos mercados** (Codex, `CEREBRO/cuentas/ZIELALARM.md` y `TARGETALARM.md`): el
+  despertador con diana y el blaster de juguete. ZielAlarm = Alemania en alemán; TargetAlarm =
+  Estados Unidos en inglés americano. En Codex compartían **una** caja, impresa en inglés y con el
+  nombre ZielAlarm.
+- **ZielAlarm (54)** estaba archivado: se desarchiva. El logo de Codex (159) pasa de «Otra» a «Logo».
+  La caja de Codex se copia y se **traduce al alemán** con Nano Banana (regla del texto impreso en el
+  idioma del país): foto 185 como «Embalaje»; la inglesa (158) queda como «Otra». El logo vertical lo
+  hace la tarea automática.
+- **TargetAlarm**: alta nueva con la foto del producto de Codex, su logo de Codex tal cual y la caja de
+  Codex con el nombre cambiado a TargetAlarm (el texto ya estaba en inglés; «1x Gun» → «1x Toy
+  Blaster», como pide la ficha de Codex). Logo vertical automático.
+- **La app admite ahora inglés (`en`) y Estados Unidos (`US`)**: etiquetas, alta, investigación (Amazon
+  .com), recursos de marca («American English»), CTA estándar en inglés, lugar del anuncio «the US»
+  (los rótulos con lugares de EE. UU. no se cambian en un anuncio que pasa allí). El doblaje ya tenía
+  `eng`.
+- **Samuel (id 3)** recibe los dos productos con las asignaciones de siempre (`product_assignments`,
+  las mismas que pone el dueño en «Personas»).
+- Dos fallos encontrados al hacerlo:
+  - Un corte pasajero de Higgsfield («no responde») dejaba el recurso «fallido» para siempre. Ahora se
+    reintenta hasta 4 veces; si el envío pudo llegar (resultado incierto) no, para no pagar dos veces.
+  - Subir un PNG con un nombre «.jpg» daba 403 en la subida firmada de Higgsfield. El adaptador pone
+    siempre la extensión que corresponde al tipo (`filenameFor`).

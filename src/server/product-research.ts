@@ -50,8 +50,8 @@ const KIND_TEXT: Record<ResearchKind, string> = {
   angulo: "ÁNGULOS diferentes: otros motivos de compra para el mismo producto",
   audiencia: "AUDIENCIAS diferentes: otra gente que lo compraría por el mismo mecanismo",
 };
-const COUNTRY_NAME: Record<string, string> = { DE: "Alemania", AT: "Austria", CH: "Suiza", IT: "Italia" };
-const LANGUAGE_NAME: Record<string, string> = { de: "alemán", it: "italiano" };
+const COUNTRY_NAME: Record<string, string> = { DE: "Alemania", AT: "Austria", CH: "Suiza", IT: "Italia", US: "Estados Unidos" };
+const LANGUAGE_NAME: Record<string, string> = { de: "alemán", it: "italiano", en: "inglés (americano)" };
 
 const query = z.object({ texto: z.string(), anuncios: z.string() });
 const candidatesSchema = z.object({

@@ -53,9 +53,9 @@ export const INTAKE_JOB = "producto.alta";
 export const INTAKE_SWEEP = "producto.altas";
 
 /** Países que se pueden elegir y su idioma. */
-export const COUNTRY_LANGUAGE: Record<string, string> = { DE: "de", AT: "de", CH: "de", IT: "it" };
-const LANGUAGE_NAME: Record<string, string> = { de: "alemán", it: "italiano" };
-const COUNTRY_NAME: Record<string, string> = { DE: "Alemania", AT: "Austria", CH: "Suiza", IT: "Italia" };
+export const COUNTRY_LANGUAGE: Record<string, string> = { DE: "de", AT: "de", CH: "de", IT: "it", US: "en" };
+const LANGUAGE_NAME: Record<string, string> = { de: "alemán", it: "italiano", en: "inglés (americano)" };
+const COUNTRY_NAME: Record<string, string> = { DE: "Alemania", AT: "Austria", CH: "Suiza", IT: "Italia", US: "Estados Unidos" };
 
 /** Cuánto se espera al Mac por un vídeo de Instagram antes de seguir sin él. */
 export const MAC_WAIT_MS = 10 * 60_000;

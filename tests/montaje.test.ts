@@ -256,6 +256,7 @@ describe("ficha de montaje", () => {
     expect(editTextsFor({ ...none, note: "Texto: otro" }, product, analysis)).toEqual(analysis.editTexts);
     expect(editTextsFor({ ...none, editMainText: "Mío", editCtaText: "CTA mío" }, product, analysis)).toEqual({ main: "Mío", cta: "CTA mío" });
     expect(standardCta("Lumi", "it")).toContain("Lumi");
+    expect(standardCta("TargetAlarm", "en")).toBe("Comment “TargetAlarm” if you want one too! 🤩");
   });
 
   it("los rótulos los cambia quien creó el vídeo o el dueño; con 1–200 caracteres", async () => {

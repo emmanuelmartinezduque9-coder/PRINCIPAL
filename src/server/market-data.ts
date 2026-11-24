@@ -35,7 +35,7 @@ export interface MarketSpec {
 }
 
 /** Dirección (única por búsqueda) de la tarea: la tienda del país, marcada con la búsqueda. */
-export const marketTaskUrl = (researchId: number, country: string) => `https://${country === "IT" ? "www.amazon.it" : "www.amazon.de"}/?principal=${researchId}`;
+export const marketTaskUrl = (researchId: number, country: string) => `https://${country === "IT" ? "www.amazon.it" : country === "US" ? "www.amazon.com" : "www.amazon.de"}/?principal=${researchId}`;
 
 /** Pide los datos al Mac del dueño. `false` si no hay Mac. */
 export async function requestMarketData(researchId: number, spec: MarketSpec, now: Date = new Date()): Promise<boolean> {

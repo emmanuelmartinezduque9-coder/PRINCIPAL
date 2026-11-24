@@ -8,8 +8,8 @@ import { HttpError } from "@/server/http";
 
 export type Product = typeof schema.products.$inferSelect;
 
-export const LANGUAGES = ["de", "it"] as const;
-export const COUNTRIES = ["DE", "AT", "CH", "IT"] as const;
+export const LANGUAGES = ["de", "it", "en"] as const;
+export const COUNTRIES = ["DE", "AT", "CH", "IT", "US"] as const;
 
 const MAX_NAME = 200;
 const MAX_SUMMARY = 1000;

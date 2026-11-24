@@ -587,7 +587,7 @@ export function createHiggsfieldPort(
     async uploadMedia(userId, file) {
       return withCaller(userId, async (caller) => {
         const requested = await caller.callTool("media_upload", {
-          files: [{ filename: file.filename, content_type: file.contentType }],
+          files: [{ filename: filenameFor(file.filename, file.contentType), content_type: file.contentType }],
           method: "upload_url",
         });
         const target = requested.isError ? null : readUploadTarget(requested.data);
@@ -691,4 +691,16 @@ export function createHiggsfieldPort(
       });
     },
   };
+}
+
+const EXTENSIONS: Record<string, string> = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "video/mp4": "mp4", "audio/mpeg": "mp3" };
+/**
+ * El nombre lleva la extensión de su tipo: la subida firmada de Higgsfield da 403 si «.jpg» llega con
+ * `image/png` (pasó con un logo PNG de Codex, 24/11/2026).
+ */
+export function filenameFor(filename: string, contentType: string): string {
+  const ext = EXTENSIONS[contentType.toLowerCase()];
+  if (!ext) return filename;
+  const base = filename.replace(/\.[A-Za-z0-9]{2,4}$/, "");
+  return `${base}.${ext}`;
 }

@@ -1,6 +1,6 @@
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { getHiggsfield } from "@/connectors/higgsfield";
-import { HiggsfieldNotConnectedError, type HfImageRequest, type HiggsfieldPort } from "@/connectors/higgsfield/port";
+import { HiggsfieldNotConnectedError, HiggsfieldUnknownOutcomeError, type HfImageRequest, type HiggsfieldPort } from "@/connectors/higgsfield/port";
 import { getDb, schema } from "@/db/client";
 import { getActiveUser, type AuthUser } from "@/server/auth";
 import { ensureMedia } from "@/server/higgsfield";
@@ -29,7 +29,7 @@ export const BRAND_SWEEP = "producto.recursos";
 export const BRAND_NORMAL_CREDITS = 6;
 const MAX_ATTEMPTS = 2;
 const MAX_RESULT_BYTES = 40 * 1024 * 1024;
-const LANGUAGE_NAME: Record<string, string> = { de: "German", it: "Italian" };
+const LANGUAGE_NAME: Record<string, string> = { de: "German", it: "Italian", en: "American English" };
 
 const assets = schema.productBrandAssets;
 type Row = typeof assets.$inferSelect;
@@ -189,11 +189,19 @@ async function submit(row: Row, owner: AuthUser, product: Product, brief: BrandB
     await save(row.id, { jobId: sent.jobIds[0], error: null });
   } catch (error) {
     if (error instanceof HiggsfieldNotConnectedError) return void (await save(row.id, { status: "pendiente", error: "Higgsfield sin conectar." }));
-    await save(row.id, { status: "fallido", error: error instanceof Error ? error.message.slice(0, 300) : "Error al enviar." });
+    const message = error instanceof Error ? error.message.slice(0, 300) : "Error al enviar.";
+    // Un corte pasajero (subida o Higgsfield que no responde) se repite en la siguiente pasada; si el envío
+    // pudo llegar (resultado incierto), no: se marca fallido para no pagar dos veces.
+    const tries = row.attempts + 1;
+    if (!(error instanceof HiggsfieldUnknownOutcomeError) && tries < MAX_SUBMIT_TRIES) return void (await save(row.id, { status: "pendiente", attempts: tries, error: `${message} Se reintenta.` }));
+    await save(row.id, { status: "fallido", attempts: tries, error: message });
   }
 }
 
 /** Un envío que se quedó sin número de trabajo (el proceso se reinició al enviarlo) se repite pasado esto. */
+/** Envíos que fallan por un corte pasajero antes de darlo por fallido. */
+export const MAX_SUBMIT_TRIES = 4;
+
 export const STUCK_SUBMIT_MS = 10 * 60_000;
 
 async function poll(row: Row, owner: AuthUser, product: Product, hf: HiggsfieldPort, deps: BrandDeps): Promise<void> {

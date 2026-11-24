@@ -299,8 +299,8 @@ describe("importar productos", () => {
 
   it("omite el producto que la app no admite (idioma o país) y el que no tiene frase", async () => {
     writePackage([
-      product({ slug: "ingles", name: "English", language: "en", countries: ["US"], photos: [{ role: "articulo", label: "a", bytes: image("png") }] }),
-      product({ slug: "eeuu", name: "Amerika", countries: ["DE", "US"] }),
+      product({ slug: "frances", name: "Français", language: "fr", countries: ["FR"], photos: [{ role: "articulo", label: "a", bytes: image("png") }] }),
+      product({ slug: "francia", name: "Frankreich", countries: ["DE", "FR"] }),
       product({ slug: "muda", name: "Muda", summary: null, photos: [{ role: "articulo", label: "a", bytes: image("png") }] }),
       product({ slug: "sinidioma", name: "Ohne Sprache", language: null }),
     ]);
@@ -308,8 +308,8 @@ describe("importar productos", () => {
     expect([...(await byName()).keys()]).toEqual(["Ohne Sprache"]);
     expect((await byName()).get("Ohne Sprache")!.language).toBe("de");
     const text = out.join("\n");
-    expect(text).toMatch(/OMITIDO\s+English.*Idioma no disponible/);
-    expect(text).toMatch(/OMITIDO\s+Amerika.*País no disponible/);
+    expect(text).toMatch(/OMITIDO\s+Français.*Idioma no disponible/);
+    expect(text).toMatch(/OMITIDO\s+Frankreich.*País no disponible/);
     expect(text).toMatch(/OMITIDO\s+Muda.*frase/);
   });
 

@@ -82,6 +82,18 @@ describe("recursos de marca al crear un producto (logo, logo web y una caja por 
     expect((await brandAssetsOf(product.id)).find((r) => r.kind === "marca")?.status).toBe("enviado");
   });
 
+  it("un corte pasajero al subir (Higgsfield no responde) se reintenta; no se queda fallido (ZielAlarm, 24/11/2026)", async () => {
+    const product = await makeProduct(dueno);
+    await addProductPhoto(dueno, product.id, PNG, "articulo");
+    await requestBrandAssets(product.id, dueno.id);
+    hf.failNext("quoteImages", new Error("Higgsfield no responde. Inténtalo dentro de unos minutos."));
+    await advanceBrandAssets(product.id, deps());
+    const marca = (await brandAssetsOf(product.id)).find((r) => r.kind === "marca");
+    expect(marca).toMatchObject({ status: "pendiente", attempts: 1 });
+    await advanceBrandAssets(product.id, deps());
+    expect((await brandAssetsOf(product.id)).find((r) => r.kind === "marca")?.status).toBe("enviado");
+  });
+
   it("una variante nueva recibe su caja sola", async () => {
     const product = await makeProduct(dueno);
     const foto = await addProductPhoto(dueno, product.id, PNG, "articulo");

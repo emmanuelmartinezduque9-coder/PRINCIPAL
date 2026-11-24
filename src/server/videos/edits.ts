@@ -92,6 +92,7 @@ export interface EditSpec {
 /** El CTA de siempre del dueño, en el idioma del anuncio. */
 export function standardCta(productName: string, language: string): string {
   if (language === "it") return `Commenta “${productName}” se ne vuoi uno anche tu! 🤩`;
+  if (language === "en") return `Comment “${productName}” if you want one too! 🤩`;
   return `Kommentiere „${productName}“, wenn du auch eine willst! 🤩`;
 }
 
