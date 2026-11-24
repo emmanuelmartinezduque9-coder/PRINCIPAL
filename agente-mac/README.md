@@ -132,3 +132,7 @@ busca primero desde la nube; si Pinterest no la deja, pide la búsqueda a este M
 misma petición al buscador de pines de Pinterest desde tu conexión (sin sesión, sin abrir Brave) y
 entrega la respuesta. Solo pide direcciones de `www.pinterest.com/resource/BaseSearchResource/get/`.
 Para tenerlo, vuelve a lanzar `bash agente-mac/instalar.sh`.
+
+## Datos en el SSD
+
+En el Mac de Emmanuel todo va al T7: ver `docs/datos-en-ssd.md` y `disco-ssd.sh`.
