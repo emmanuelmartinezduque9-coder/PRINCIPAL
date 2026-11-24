@@ -4,7 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import "@/jobs/video-jobs";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { createFakeHiggsfield, type FakeHiggsfield } from "@/connectors/higgsfield/fake";
 import { getDb, getPool, schema } from "@/db/client";
 import { stopWorker } from "@/jobs/boss";
@@ -24,6 +24,7 @@ import {
   readyPinterestRefs,
   requirePinterestRefs,
   addApprovedToBank,
+  phoneShapedFirst,
   runPinterest,
   seedReferenceBank,
   storePinterestImage,
@@ -226,27 +227,29 @@ describe("el papel de las fotos en el prompt", () => {
 });
 
 describe("la imagen inicial lleva siempre referencias de Pinterest", () => {
-  it("sin referencia a mano: espera, elige sola del banco de aprobadas (sin buscar en Pinterest) y las adjunta", async () => {
+  it("sin referencia a mano: espera, busca en Pinterest con los filtros del dueño, elige sola con visión y las adjunta", async () => {
     // Antes de tenerlas, la imagen no se pide.
     await expect(buildFrameRequest(ana, v, deps)).rejects.toMatchObject({ status: 409, message: PINTEREST_PENDING });
     const run = await runOfVideo(v.id);
     expect(run.status).toBe("pending");
 
-    let searched = false;
+    const searched: string[] = [];
     const { gateway, calls } = gatewayFor();
-    await runPinterest(run.id, pinterestDeps({ gateway, search: async () => ((searched = true), { status: "failed", error: "no" }) }));
-    expect(searched).toBe(false); // orden del dueño: de momento no se busca en Pinterest
+    const base = pinterestDeps().search!;
+    await runPinterest(run.id, pinterestDeps({ gateway, search: async (query, opts) => (searched.push(query), base(query, opts)) }));
+    expect(searched).toEqual(SCENE.queries); // orden del dueño (24/11): se busca siempre en Pinterest
     const done = await runOfVideo(v.id);
     expect(done.status).toBe("ready");
     const refs = done.refs as Array<{ pinId: string; reason: string; sha256: string }>;
-    // Referencias 3 y 1 del banco, en ese orden.
-    expect(refs.map((r) => r.pinId)).toEqual(["R36", "R01"]);
-    expect(refs.map((r) => r.sha256)).toEqual([bank[2], bank[0]]);
+    // Candidatas 3 y 1 (las 4 de la primera búsqueda y después las de la segunda), en ese orden.
+    expect(refs.map((r) => r.pinId)).toEqual(["de3", "de1"]);
     expect(refs[0].reason).toBe("Salón real de móvil con árbol.");
-    // Claude miró todo el banco con visión (3 fotos y el fotograma), con su descripción.
+    // Claude miró con visión las 8 candidatas y el fotograma, con sus medidas; con los filtros del dueño.
     const content = calls[1].messages[0].content as Array<{ type: string; text?: string }>;
-    expect(content.filter((b) => b.type === "image")).toHaveLength(4);
-    expect(content.some((b) => b.text?.includes("R24, usada en EISWERK"))).toBe(true);
+    expect(content.filter((b) => b.type === "image")).toHaveLength(9);
+    expect(content.some((b) => b.text?.includes("1080×1440 px"))).toBe(true);
+    expect(JSON.stringify(calls[0])).toContain("hechas con iPhone, verticales y orgánicas");
+    expect(JSON.stringify(calls[1])).toContain("es cuadrada u horizontal");
     expect(await readyPinterestRefs(v.id)).toHaveLength(2);
 
     const { request } = await buildFrameRequest(ana, await getVideoFor(ana, v.id), deps);
@@ -265,7 +268,8 @@ describe("la imagen inicial lleva siempre referencias de Pinterest", () => {
     expect(image.prompt).not.toContain("{ROOM}");
     expect(image.prompt.split("\n\n")).toHaveLength(8);
     const uploaded = fake.calls.filter((c) => c.method === "uploadMedia").map((c) => (c.args as { filename: string }).filename);
-    expect(uploaded.filter((name) => name.startsWith("pinterest-"))).toHaveLength(2);
+    // En la prueba las dos candidatas bajan el mismo archivo: se sube una sola vez.
+    expect(uploaded.filter((name) => name.startsWith("pinterest-"))).toHaveLength(1);
   });
 
   it("lo que él aprueba alimenta el banco: su referencia puesta a mano pasa a las aprobadas", async () => {
@@ -321,10 +325,42 @@ describe("la imagen inicial lleva siempre referencias de Pinterest", () => {
     expect(request.prompt).toContain("EXACT requested background");
   });
 
-  it("si no elige ninguna, lo vuelve a intentar antes de rendirse", async () => {
+  it("filtro del dueño: fuera las cuadradas, horizontales y de baja resolución; primero las verticales", () => {
+    const c = (pinId: string, width: number | null, height: number | null) => ({ pinId, width, height });
+    const kept = phoneShapedFirst([c("cuadrada", 1200, 1200), c("sin", null, null), c("horizontal", 1600, 1000), c("pequeña", 474, 711), c("vertical", 1080, 1920)]);
+    expect(kept.map((k) => k.pinId)).toEqual(["vertical", "sin"]);
+  });
+
+  it("si Pinterest no da nada válido, el banco hace de respaldo y queda en el registro", async () => {
     await requirePinterestRefs(v.id).catch(() => {});
     const run = await runOfVideo(v.id);
-    await runPinterest(run.id, pinterestDeps(gatewayFor([])));
+    const { client, calls } = fakeMessages([
+      { text: JSON.stringify(SCENE) },
+      { text: JSON.stringify({ picks: [{ n: 3, reason: "Salón real de móvil con árbol." }], rejected: "" }) },
+      { text: JSON.stringify(COMPOSED) },
+    ]);
+    // Todo lo que devuelve es horizontal: no pasa el filtro y no llega a la visión.
+    const search: PinterestDeps["search"] = async (query) => ({
+      status: "ready",
+      via: "servidor",
+      candidates: candidatesOf(pinterestResponse(4, "h")).map((cand) => ({ ...cand, width: 1600, height: 1000, pinId: `${cand.pinId}-${query.length}` })),
+    });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    await runPinterest(run.id, pinterestDeps({ gateway: createGateway({ client }), search }));
+    expect(warn.mock.calls.flat().join(" ")).toContain("se usa el banco de respaldo");
+    warn.mockRestore();
+    const done = await runOfVideo(v.id);
+    expect(done.status).toBe("ready");
+    expect((done.refs as Array<{ pinId: string }>).map((r) => r.pinId)).toEqual(["R36"]);
+    expect(JSON.stringify(calls[1])).toContain("usada en EISWERK");
+  });
+
+  it("si no elige ninguna (ni en Pinterest ni en el banco), lo vuelve a intentar antes de rendirse", async () => {
+    await requirePinterestRefs(v.id).catch(() => {});
+    const run = await runOfVideo(v.id);
+    const { client } = fakeMessages([{ text: JSON.stringify(SCENE) }, { text: JSON.stringify({ picks: [], rejected: "No." }) }, { text: JSON.stringify({ picks: [], rejected: "No." }) }]);
+    vi.spyOn(console, "warn").mockImplementationOnce(() => {});
+    await runPinterest(run.id, pinterestDeps({ gateway: createGateway({ client }) }));
     const again = await runOfVideo(v.id);
     expect(again).toMatchObject({ status: "pending", attempts: 1, scene: null });
     expect(again.error).toContain("No se eligió ninguna referencia del banco");
