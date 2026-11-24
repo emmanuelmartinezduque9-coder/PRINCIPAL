@@ -132,7 +132,8 @@ log("Listo para traer enlaces (también los que pide el montaje en la nube).");
 let claude = { bin: null, reason: "Comprobando Claude Code…" };
 async function refreshClaude() {
   const before = claude.bin;
-  claude = await checkClaude(deps);
+  // Si no estaba listo, se comprueba con una llamada mínima de verdad (`auth status` no valida la ficha).
+  claude = await checkClaude(deps, process.env, { verify: !before });
   if (claude.bin && !before) log(`Claude Code ${claude.version} listo: las llamadas a Claude del dueño se hacen en este Mac.`);
   if (!claude.bin) log(claude.reason);
 }
@@ -143,7 +144,7 @@ let connected = null;
 async function beat() {
   let state;
   try {
-    const response = await heartbeat(config, deps, { ytDlp: tools.ytDlp, claude: claude.bin ? claude.version : null });
+    const response = await heartbeat(config, deps, { ytDlp: tools.ytDlp, claude: claude.bin ? claude.version : null, claudeMotivo: claude.bin ? null : claude.reason });
     state = response.ok ? "conectado" : response.status === 401 ? "ficha" : "error";
   } catch {
     state = "error";
@@ -173,7 +174,7 @@ async function claudeSlot() {
     }
     if (outcome === "auth") {
       // Perdió la sesión: deja de recoger y la web pasa a la API en el siguiente latido.
-      claude = { bin: null, reason: "Claude Code ha perdido la sesión: lanza «bash agente-mac/conectar-claude.sh»." };
+      claude = { bin: null, reason: "Claude Code ha rechazado la sesión en una llamada de verdad (ficha caducada o mal pegada): lanza «bash agente-mac/conectar-claude.sh». Mientras, tus lotes van por la API." };
       log(claude.reason);
       void beat();
       continue;

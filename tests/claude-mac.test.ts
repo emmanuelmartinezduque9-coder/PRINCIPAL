@@ -146,6 +146,14 @@ describe("por dónde va una llamada", () => {
     expect(await agentHeartbeat(agentId, { version: "1.8.0", ytDlp: null, claude: "2.1.330" })).toEqual({ claudeReady: true });
   });
 
+  it("el motivo de que Claude Code no esté listo llega a Ajustes; con sesión, se borra", async () => {
+    const { listAgents } = await import("@/server/agent");
+    await agentHeartbeat(agentId, { version: "1.8.1", ytDlp: null, claude: null, claudeMotivo: "Claude Code rechaza la sesión: lanza conectar-claude.sh" });
+    expect((await listAgents(dueno))[0]).toMatchObject({ claude: null, claudeMotivo: "Claude Code rechaza la sesión: lanza conectar-claude.sh" });
+    await agentHeartbeat(agentId, { version: "1.8.1", ytDlp: null, claude: "2.1.330", claudeMotivo: "viejo" });
+    expect((await listAgents(dueno))[0]).toMatchObject({ claude: "2.1.330", claudeMotivo: null });
+  });
+
   it("solo el dueño cambia el modo, y solo a uno válido", async () => {
     await expect(setMacMode(ana, "solo_mac")).rejects.toMatchObject({ status: 403 });
     await expect(setMacMode(dueno, "gratis")).rejects.toMatchObject({ status: 400 });

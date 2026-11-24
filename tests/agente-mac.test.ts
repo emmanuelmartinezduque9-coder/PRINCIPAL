@@ -517,8 +517,8 @@ describe("canciones", () => {
     };
   }
 
-  it("el Mac es de la versión 1.8.0 (trae enlaces, lee perfiles, busca en Pinterest, mide datos de mercado y hace las llamadas a Claude del dueño)", () => {
-    expect(VERSION).toBe("1.8.0");
+  it("el Mac es de la versión 1.8.1 (trae enlaces, lee perfiles, busca en Pinterest, mide datos de mercado y hace las llamadas a Claude del dueño)", () => {
+    expect(VERSION).toBe("1.8.1");
   });
 
   it("saca el audio como MP3 con una lista de argumentos fija y el enlace detrás de `--`", () => {

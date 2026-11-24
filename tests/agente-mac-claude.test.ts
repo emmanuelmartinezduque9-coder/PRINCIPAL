@@ -12,11 +12,12 @@ import {
   claudeCandidates,
   claudeEnv,
   claudeInput,
+  cleanClaudeToken,
   parseClaudeOutput,
   readClaudeToken,
   runClaudeOnce,
 } from "../agente-mac/claude.mjs";
-import { VERSION } from "../agente-mac/lib.mjs";
+import { PROBE_TIMEOUT_MS, VERSION } from "../agente-mac/lib.mjs";
 
 /** Las llamadas a Claude del dueño en el Mac (1.8.0): `claude` y la web son de mentira; el disco, de verdad. */
 
@@ -122,11 +123,37 @@ describe("cómo se lanza claude", () => {
     expect(claudeCandidates({ PRINCIPAL_CLAUDE_BIN: "/x/claude" } as unknown as NodeJS.ProcessEnv, "/h", list)[0]).toBe("/x/claude");
   });
 
+  it("la ficha pegada: la misma varias veces → una; distintas o rotas → se rechaza", () => {
+    const one = "sk-ant-oat01-" + "A".repeat(95);
+    const other = "sk-ant-oat01-" + "B".repeat(95);
+    expect(cleanClaudeToken(` ${one}\n`)).toEqual({ token: one });
+    // Lo que pasó el 24/11/2026: cinco veces la misma ficha seguida (647 caracteres).
+    expect(cleanClaudeToken(one.repeat(5))).toEqual({ token: one });
+    expect(cleanClaudeToken(`${one}\n${one}`)).toEqual({ token: one });
+    expect(cleanClaudeToken(one + other).error).toMatch(/varias fichas distintas/);
+    expect(cleanClaudeToken("hola").error).toMatch(/no parece/);
+    expect(cleanClaudeToken("x" + one).error).toMatch(/Antes de la ficha/);
+    expect(cleanClaudeToken("sk-ant-oat01-corta").error).toMatch(/incompleta/);
+  });
+
+  it("una ficha guardada repetida se lee bien (una sola)", async () => {
+    const file = path.join(tmp, "claude.json");
+    const one = "sk-ant-oat01-" + "C".repeat(95);
+    fsSync.writeFileSync(file, JSON.stringify({ token: one.repeat(5) }), { mode: 0o600 });
+    expect(await readClaudeToken(fs, file)).toBe(one);
+  });
+
+  it("yt-dlp tiene un minuto para arrancar al comprobarlo (el «onefile» tarda ~10 s en frío)", () => {
+    expect(PROBE_TIMEOUT_MS).toBeGreaterThanOrEqual(60_000);
+  });
+
   it("la ficha de la suscripción se lee del archivo y se cierran sus permisos", async () => {
     const file = path.join(tmp, "claude.json");
     expect(await readClaudeToken(fs, file)).toBeNull();
     fsSync.writeFileSync(file, JSON.stringify({ token: "sk-ant-oat01-abcdefghijklmnopqrstuvwxyz" }), { mode: 0o644 });
     expect(await readClaudeToken(fs, file)).toBe("sk-ant-oat01-abcdefghijklmnopqrstuvwxyz");
+    fsSync.writeFileSync(file, JSON.stringify({ token: "basura" }));
+    expect(await readClaudeToken(fs, file)).toBeNull();
     expect(fsSync.statSync(file).mode & 0o077).toBe(0);
   });
 });

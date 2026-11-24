@@ -27,7 +27,7 @@ export function cookieArgs(file = COOKIES_FILE, exists = existsSync) {
   return exists(file) ? ["--cookies", file] : ["--cookies-from-browser", "brave"];
 }
 
-export const VERSION = "1.8.0";
+export const VERSION = "1.8.1";
 
 /** Sitios de los que se descarga, con sus subdominios. La misma lista que el servidor. */
 export const LINK_HOSTS = ["instagram.com", "tiktok.com", "youtube.com", "youtu.be", "facebook.com", "fb.watch"];
@@ -78,7 +78,8 @@ const CHUNK_TIMEOUT_MS = 5 * 60_000;
 const CHUNK_ATTEMPTS = 3;
 const CHUNK_RETRY_MS = 5_000;
 const KILL_WAIT_MS = 5_000;
-const PROBE_TIMEOUT_MS = 15_000;
+// yt-dlp «onefile» tarda 9-10 s en arrancar en frío: con 15 s fallaba a ratos («No se puede lanzar yt-dlp»).
+export const PROBE_TIMEOUT_MS = 60_000;
 const TOKEN = /^pra_[A-Za-z0-9_-]{43}$/;
 const TMP_PREFIX = "principal-agente-";
 
@@ -234,7 +235,7 @@ export function call(config, deps, method, route, { json, body, timeout = REQUES
 /** Latido del programa: está vivo, y con qué versiones. Devuelve la respuesta de la web. */
 export function heartbeat(config, deps, info) {
   // `claude`: la versión de Claude Code si tiene sesión y puede hacer las llamadas del dueño; si no, `null`.
-  return call(config, deps, "POST", "/api/agente/latido", { json: { version: VERSION, ytDlp: info?.ytDlp ?? null, claude: info?.claude ?? null } });
+  return call(config, deps, "POST", "/api/agente/latido", { json: { version: VERSION, ytDlp: info?.ytDlp ?? null, claude: info?.claude ?? null, claudeMotivo: info?.claudeMotivo ?? null } });
 }
 
 /**

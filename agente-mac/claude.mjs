@@ -76,6 +76,24 @@ export function claudeEnv(env, token, job) {
   return out;
 }
 
+const TOKEN_PREFIX = "sk-ant-oat";
+const TOKEN_SHAPE = /^sk-ant-oat[0-9]{0,3}-[A-Za-z0-9_-]{20,300}$/;
+
+/**
+ * La ficha de suscripción a partir de lo pegado: sin espacios ni saltos; si se pegó varias veces la
+ * misma ficha seguida, una sola. `{ token }`, o `{ error }` (apto para enseñar) si no hay ninguna,
+ * si hay fichas distintas o si no tiene la forma de una ficha.
+ */
+export function cleanClaudeToken(raw) {
+  const text = String(raw ?? "").replace(/\s+/g, "");
+  if (!text.includes(TOKEN_PREFIX)) return { error: "Eso no parece una ficha de Claude Code (empiezan por «sk-ant-oat»)." };
+  if (!text.startsWith(TOKEN_PREFIX)) return { error: "Antes de la ficha hay algo más pegado: cópiala sola." };
+  const pieces = [...new Set(text.split(TOKEN_PREFIX).filter(Boolean).map((rest) => TOKEN_PREFIX + rest))];
+  if (pieces.length > 1) return { error: "Hay varias fichas distintas pegadas: pega solo la última que te dio Claude." };
+  if (!TOKEN_SHAPE.test(pieces[0])) return { error: "La ficha está incompleta o le sobra algo: cópiala entera, de una vez." };
+  return { token: pieces[0] };
+}
+
 /** La ficha de la suscripción guardada por `conectar-claude.sh`, o `null`. Cierra permisos si hace falta. */
 export async function readClaudeToken(fs, file = CLAUDE_TOKEN_FILE) {
   let text;
@@ -86,8 +104,9 @@ export async function readClaudeToken(fs, file = CLAUDE_TOKEN_FILE) {
   }
   if (((await fs.stat(file)).mode & 0o077) !== 0) await fs.chmod(file, 0o600).catch(() => {});
   try {
-    const token = JSON.parse(text)?.token;
-    return typeof token === "string" && /^[A-Za-z0-9_-]{20,400}$/.test(token.trim()) ? token.trim() : null;
+    // También arregla una ficha guardada pegada varias veces (la misma, repetida).
+    const cleaned = cleanClaudeToken(JSON.parse(text)?.token);
+    return cleaned.token ?? null;
   } catch {
     return null;
   }
@@ -300,7 +319,7 @@ function quick(deps, bin, args, env, timeoutMs = 20_000) {
  * con la ficha de la suscripción, si la hay. Devuelve `{ bin, token, version }` o
  * `{ bin: null, reason }`. No gasta nada del plan.
  */
-export async function checkClaude(deps, env = process.env) {
+export async function checkClaude(deps, env = process.env, { verify = false } = {}) {
   const exists = deps.exists ?? existsSync;
   const token = await readClaudeToken(deps.fs);
   for (const bin of claudeCandidates(env, deps.home ?? os.homedir(), deps.listDir)) {
@@ -317,9 +336,31 @@ export async function checkClaude(deps, env = process.env) {
     }
     const v = version.out.trim().split(/\s/)[0].slice(0, 40) || "?";
     if (!loggedIn) return { bin: null, reason: `Claude Code ${v} no tiene sesión: lanza «bash agente-mac/conectar-claude.sh».` };
+    // `auth status` no comprueba la ficha: al arrancar (o tras un fallo) se hace una llamada mínima de verdad.
+    if (verify) {
+      const probe = await verifyClaude(deps, bin, claudeEnv(env, token));
+      if (!probe.ok) return { bin: null, reason: probe.auth ? `Claude Code rechaza la sesión (${probe.error}): lanza «bash agente-mac/conectar-claude.sh». Mientras, tus lotes van por la API.` : `Claude Code no responde (${probe.error}).`, auth: probe.auth };
+    }
     return { bin, token, version: v };
   }
   return { bin: null, reason: "No se encuentra Claude Code en este Mac." };
+}
+
+/** La llamada más pequeña posible (Haiku, sin herramientas) para ver que la sesión vale de verdad. */
+export async function verifyClaude(deps, bin, env) {
+  const dir = await workDir(deps.fs);
+  try {
+    const system = path.join(dir, "sistema.txt");
+    await deps.fs.writeFile(system, "Responde solo: ok", { mode: 0o600 });
+    const job = { model: "haiku", effort: "low", jsonSchema: null, web: null, content: "ok" };
+    const run = await runClaude(deps, bin, claudeArgs(job, { system }), claudeInput(job), { env, cwd: dir, timeoutMs: 2 * 60_000, beat: async () => "ok" });
+    if (run.local) return { ok: false, auth: false, error: run.error };
+    if (run.timedOut) return { ok: false, auth: false, error: "tardó más de 2 minutos" };
+    const parsed = parseClaudeOutput(run.out ?? "");
+    return parsed.ok ? { ok: true } : { ok: false, auth: parsed.auth, error: parsed.error.slice(0, 160) };
+  } finally {
+    await deps.fs.rm(dir, { recursive: true, force: true }).catch(() => {});
+  }
 }
 
 /**

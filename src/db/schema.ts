@@ -1061,7 +1061,7 @@ export const agents = pgTable(
     lastSeenAt: instant("last_seen_at"),
     /** Lo que el programa dice de sí mismo en cada latido. */
     /** `claude`: la versión de Claude Code si tiene sesión y hace las llamadas del dueño (1.8.0); si no, `null`. */
-    info: jsonb("info").$type<{ version: string; ytDlp: string | null; claude?: string | null }>(),
+    info: jsonb("info").$type<{ version: string; ytDlp: string | null; claude?: string | null; claudeMotivo?: string | null }>(),
     revokedAt: instant("revoked_at"),
   },
   (t) => [index("agents_created_by").on(t.createdBy)],

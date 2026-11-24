@@ -30,6 +30,16 @@ if [ -z "$CLAUDE" ]; then
 fi
 echo "Claude Code: $("$CLAUDE" --version)"
 
+limpiar() {
+  # La ficha limpia (si se pegó la misma varias veces, una sola) o el motivo por el que no vale.
+  PRINCIPAL_PEGADO="$1" "$NODE" --input-type=module -e '
+    const { cleanClaudeToken } = await import(process.argv[1]);
+    const r = cleanClaudeToken(process.env.PRINCIPAL_PEGADO);
+    if (r.token) process.stdout.write(r.token); else { process.stderr.write(r.error + "\n"); process.exit(1); }
+  ' "$ORIGEN/claude.mjs"
+}
+
+FICHA=""
 if [ -t 0 ]; then
   echo
   echo "Ahora se abre el navegador: entra con tu cuenta de Claude (la del plan Max)."
@@ -38,34 +48,51 @@ if [ -t 0 ]; then
   mkdir -p "$HOME/.principal-tools/claude-config"
   CLAUDE_CONFIG_DIR="$HOME/.principal-tools/claude-config" env -u ANTHROPIC_API_KEY "$CLAUDE" setup-token || true
   echo
-  read -r -s -p "Pega aquí la ficha de Claude y pulsa Intro: " FICHA || true
-  echo
+  for intento in 1 2 3 4 5; do
+    PEGADO=""
+    read -r -s -p "Pega aquí la ficha de Claude (una sola vez) y pulsa Intro: " PEGADO || true
+    echo
+    if FICHA="$(limpiar "$PEGADO")"; then break; fi
+    FICHA=""
+    echo "Vuelve a pegarla." >&2
+  done
+  unset PEGADO
 else
-  read -r -s FICHA || true
+  read -r -s PEGADO || true
+  FICHA="$(limpiar "${PEGADO:-}")" || FICHA=""
+  unset PEGADO
 fi
-FICHA="$(printf '%s' "${FICHA:-}" | tr -d '[:space:]')"
-case "$FICHA" in
-  sk-ant-oat*) ;;
-  *) echo "Eso no parece una ficha de Claude Code (empiezan por «sk-ant-oat»). No se ha guardado nada." >&2; exit 1 ;;
-esac
+if [ -z "$FICHA" ]; then
+  echo "No se ha guardado nada." >&2
+  exit 1
+fi
 
 (
   umask 077
   PRINCIPAL_CLAUDE_TOKEN="$FICHA" "$NODE" -e '
     const fs = require("node:fs");
     fs.writeFileSync(process.argv[1], JSON.stringify({ token: process.env.PRINCIPAL_CLAUDE_TOKEN }) + "\n", { mode: 0o600 });
-  ' "$ARCHIVO" 2>/dev/null || printf '{"token":"%s"}\n' "$FICHA" > "$ARCHIVO"
+  ' "$ARCHIVO"
 )
 chmod 600 "$ARCHIVO"
 unset FICHA
 echo "Guardada en $ARCHIVO"
 
-# Comprobación sin gastar nada: ¿tiene sesión con esa ficha?
-if CLAUDE_CODE_OAUTH_TOKEN="$("$NODE" -p 'require(process.argv[1]).token' "$ARCHIVO" 2>/dev/null)" \
-  CLAUDE_CONFIG_DIR="$HOME/.principal-tools/claude-config" env -u ANTHROPIC_API_KEY "$CLAUDE" auth status 2>/dev/null | grep -q '"loggedIn": *true'; then
-  echo "Claude Code tiene sesión con tu plan."
+# Comprobación de verdad: una llamada mínima (Haiku) con esa ficha. `auth status` no la valida.
+echo "Comprobando la ficha con una llamada pequeña…"
+if MOTIVO="$("$NODE" --input-type=module -e '
+    import fs from "node:fs/promises";
+    import { spawn } from "node:child_process";
+    const { checkClaude } = await import(process.argv[1]);
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const r = await checkClaude({ fs, spawn, sleep }, process.env, { verify: true });
+    if (r.bin) process.exit(0);
+    process.stdout.write(r.reason); process.exit(1);
+  ' "$ORIGEN/claude.mjs" 2>/dev/null)"; then
+  echo "Claude Code responde con tu plan."
 else
-  echo "Aviso: Claude Code no da la sesión por buena con esa ficha. Vuelve a lanzar esto." >&2
+  echo "Aviso: la ficha no vale ($MOTIVO). Vuelve a lanzar esto y pega la ficha nueva." >&2
+  exit 1
 fi
 
 if launchctl print "gui/$(id -u)/$ETIQUETA" >/dev/null 2>&1; then

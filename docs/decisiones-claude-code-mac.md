@@ -67,6 +67,20 @@ el Claude Code de su Mac (su suscripción) para todo lo que hace Claude; la web 
   intenta (va directa a la API). Si aun así una llamada queda 3 min en cola sin que el Mac recoja
   ninguna, se retira.
 
+## 1.8.1 (24/11/2026, tras la primera conexión de verdad)
+
+- `conectar-claude.sh` guardó cinco fichas pegadas seguidas (647 caracteres) y `auth status` la daba
+  por buena igualmente: `auth status` **no valida la ficha**. Ahora lo pegado pasa por
+  `cleanClaudeToken`: la misma ficha repetida queda en una, fichas distintas o algo que no es una
+  ficha se rechaza y se vuelve a pedir (hasta 5 veces). `readClaudeToken` arregla también una ficha
+  ya guardada repetida.
+- Comprobación de verdad: al guardar la ficha, y cada vez que el agente pasa de «no listo» a
+  «listo», se hace una llamada mínima (Haiku, «ok», ~1,5 s). Si la sesión se rechaza, el agente no
+  recoge llamadas, el latido manda el motivo (`claudeMotivo`) y Ajustes → Mac lo enseña junto al Mac;
+  mientras, los lotes van por la API. Un rechazo en una llamada real hace lo mismo.
+- yt-dlp «onefile» tarda 9-10 s en arrancar en frío y la comprobación daba 15 s: «No se puede lanzar
+  yt-dlp» a ratos. `PROBE_TIMEOUT_MS` pasa a 60 s.
+
 ## Pruebas
 
 - `tests/claude-mac.test.ts`: ruta (dueño/colaboradora/modos/apagado/sin sesión), llamada completa

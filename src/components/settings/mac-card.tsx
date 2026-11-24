@@ -71,6 +71,7 @@ function AgentRow({ agent, onRevoke }: { agent: Agent; onRevoke: () => void }) {
               ? [agent.ytDlp ? `yt-dlp ${agent.ytDlp}` : "Sin yt-dlp", agent.claude ? `Claude Code ${agent.claude}` : "Claude Code sin sesión"].join(" · ")
               : seenAgo(agent.lastSeenAt)}
         </span>
+        {agent.online && !agent.claude && agent.claudeMotivo ? <span className="text-xs text-warning-ink">{agent.claudeMotivo}</span> : null}
       </div>
       <Button variant="ghost" className="h-8 gap-1.5 px-2.5 text-muted-foreground hover:text-destructive" aria-label={`Revocar ${agent.name}`} onClick={onRevoke}>
         <Trash2 data-icon="inline-start" />
