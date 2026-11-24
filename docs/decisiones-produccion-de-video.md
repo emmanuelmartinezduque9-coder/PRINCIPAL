@@ -899,3 +899,21 @@ hasta 2 reintentos con el prompt sin marcas y, si sigue, una pausa clara.
 - **Avatar «Automático» por defecto** en las tarjetas de «Nuevo lote» (`batchCardAvatar`, como el
   `reference_match` de Codex); un avatar concreto solo si se elige. Si el producto dice «Sin
   sustitución» o «No aparece nadie», ese modo.
+
+## Todos los clips a 480p y luego a 1080p con Topaz (orden de Emmanuel, 24/11/2026)
+
+Copiado de Codex (pedido 54, `upscale-transport/*.json` y `NanoBanana/_UPSCALE/*/estado.json`):
+`topaz_video` sobre el **trabajo del clip recién generado**, `--resolution 1080p --aspect_ratio auto
+--enhancement {"model":"thd-3","astra_params":null,"params":null} --frame_interpolation null`. En
+Codex el `final_1080p.mp4` era la entrada del montaje: el orden es clip (480p) → Topaz → montaje (y el
+doblaje, que va en el montaje).
+
+- Es una generación más (`kind = upscale`): envío único, reconciliación por historial, coste en el
+  vídeo y en lo comprometido del lote. Se pide sola al terminar cada clip (lote: `lote.ts`; vídeo
+  suelto: `autopilot.ts`). El montaje espera a que termine; la descarga y el montaje usan el 1080p
+  (`downloadableClip`). Un fallo se repite solo; tras 3, se monta con el de 480p y un aviso en el
+  registro. El almacén lo copia como cualquier resultado (`archive.ts`).
+- Higgsfield no presupuesta Topaz (`estimate_video_cost`: «does not support alpha v2 cost
+  estimation», también en Codex). Previsión: ~0,33 créditos por segundo, mínimo 2 (`upscaleEstimate`),
+  a partir de sus movimientos (3 y 5 créditos por clip). Entra en la previsión del clip de los lotes
+  nuevos; como el dueño lo autoriza para todos, al pedirlo solo se comprueba el saldo.
