@@ -266,9 +266,10 @@ describe("lugares de la referencia en los rótulos (regla 6c, vídeo 24)", () =>
   it("el lugar sale de la tarjeta (ciudad) o del país del producto", () => {
     expect(targetPlace("Grábalo en las calles de Berlín, Alemania", ["DE"], "de")).toBe("Berlin");
     expect(targetPlace("en Múnich", ["DE"], "de")).toBe("München");
-    expect(targetPlace("", ["AT", "DE"], "de")).toBe("Österreich");
-    expect(targetPlace("", ["DE", "AT", "CH"], "de")).toBe("Deutschland");
-    expect(targetPlace("", ["IT"], "it")).toBe("Italia");
+    // Sin ciudad en las indicaciones: la más reconocible del país (localización, 24/11/2026).
+    expect(targetPlace("", ["AT", "DE"], "de")).toBe("Wien");
+    expect(targetPlace("", ["DE", "AT", "CH"], "de")).toBe("Berlin");
+    expect(targetPlace("", ["IT"], "it")).toBe("Roma");
     expect(targetPlace("calles de Milán", ["IT"], "it")).toBe("Milano");
   });
 

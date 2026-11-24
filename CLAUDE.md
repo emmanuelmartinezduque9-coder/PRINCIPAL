@@ -29,6 +29,16 @@ Emmanuel no lee análisis ni avisos: para eso están las reglas del motor (`regl
 
 Las pruebas `tests/flujo-automatico.test.ts` fijan estas reglas: si una cambia, falla.
 
+## Regla fija del dueño: localización al país del producto (24/11/2026)
+
+La automatización tiene siempre presentes **el producto y el país al que va dirigido**. Todo lo de la
+referencia que sea de otro país se adapta solo a su equivalente más conocido allí, aunque la tarjeta no
+lo pida: lugares (USA → Berlin; «in den USA» → «in Berlin»), tiendas (Target → Action, Walmart/Costco →
+Kaufland, supermercado → Lidl), moneda ($12.99 → 12,99 €), calles, matrículas, carteles, banderas y
+marcas locales. Lo que ponga la tarjeta manda. Es un paso central: el desglose saca `localization` y la
+usan imagen, Pinterest, clip, rótulos y doblaje (`src/server/videos/localization.ts`,
+`reglas/localizacion-por-pais.md`, `tests/localizacion.test.ts`). No lo quites sin una orden suya.
+
 ## Regla fija del dueño: referencias de Pinterest (no olvidar)
 
 - **Toda imagen inicial (Nano Banana) lleva SIEMPRE fotos reales de Pinterest como referencia**, también

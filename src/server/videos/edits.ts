@@ -8,6 +8,7 @@ import { parseRange, songSummaries } from "@/server/songs";
 import type { Analysis } from "@/server/videos/analysis";
 import { bodiesOfVideo, productBodyIds } from "@/server/videos/bodies";
 import { dubDialogueOf } from "@/server/videos/doblaje";
+import { localizeText, marketOf } from "@/server/videos/localization";
 import { getObjectStore } from "@/lib/object-store";
 import { downloadableClip, servableClipUrl } from "@/server/videos/clip";
 import { canChooseSong, effectiveEditReferenceUrl, getVideoFor, hookTiming, type Video } from "@/server/videos/videos";
@@ -117,13 +118,17 @@ function noteText(note: string | null): string | null {
  */
 export function editTextsFor(
   video: Pick<Video, "editMainText" | "editCtaText" | "note">,
-  product: Pick<Product, "name" | "language">,
-  analysis: Pick<Analysis, "editTexts"> | null,
+  product: Pick<Product, "name" | "language"> & { countries?: string[] | null },
+  analysis: Pick<Analysis, "editTexts" | "localization"> | null,
 ): { main: string; cta: string } {
+  // Los que propone el desglose pasan por la localización al país del producto (regla del dueño,
+  // 24/11/2026: Target → Action, «in den USA» → «in Berlin», $ → €); los que escribió él, tal cual.
+  const market = marketOf(product);
+  const local = (text: string | null) => (text === null ? null : localizeText(text, market, analysis?.localization ?? []));
   const proposed = analysis?.editTexts ?? null;
   return {
-    main: cleanText(video.editMainText) ?? cleanText(proposed?.main) ?? noteText(video.note) ?? `${product.name.toUpperCase()} 😍`,
-    cta: cleanText(video.editCtaText) ?? cleanText(proposed?.cta) ?? standardCta(product.name, product.language),
+    main: cleanText(video.editMainText) ?? local(cleanText(proposed?.main)) ?? noteText(video.note) ?? `${product.name.toUpperCase()} 😍`,
+    cta: cleanText(video.editCtaText) ?? local(cleanText(proposed?.cta)) ?? standardCta(product.name, product.language),
   };
 }
 

@@ -107,3 +107,16 @@ hace nada ni se gasta (Whisper lo decide sobre la voz separada). Solo la voz: la
 no doblar es apagar «Doblar el diálogo» en la tarjeta del vídeo. Gasto aprobado: ~44 créditos por vídeo de 12 s.
 Regla en `reglas/doblaje-del-dialogo.md`; código en `src/server/videos/doblaje.ts` y `montador/doblar.py`.
 
+
+## 11. Localización al país del producto (Emmanuel, 24/11/2026)
+
+«La automatización tiene siempre muy presentes el producto con el que trabaja y el país al que va dirigido.» Todo lo del vídeo de referencia que sea de otro país se adapta sola y automáticamente a su equivalente más conocido en el país de destino, aunque la tarjeta no lo pida:
+
+* Lugares: una ciudad de EE. UU. → la más reconocible del país (Alemania → Berlín); en los rótulos, «in den USA» → «in Berlin».
+* Calles, rótulos de calle, matrículas, señales y carteles → en el idioma y el estilo de ese país.
+* Tiendas y cadenas: Target, Walmart o Costco → la cadena equivalente conocida allí (en Alemania, Lidl, Aldi, Action, dm, Rossmann o Kaufland, según el tipo de tienda).
+* Moneda y precios → € con formato alemán.
+* Banderas: solo las del país de origen → la del país de destino.
+* Marcas o productos locales que se vean y no sean el suyo → equivalentes locales o neutros (nunca marcas de terceros en primer plano).
+
+Es un paso central: el desglose saca la «localización» (lista origen → destino para el país del producto) y la usan todos (prompt de la imagen, búsqueda en Pinterest, prompt del clip, rótulos y doblaje). Lo que ponga la tarjeta manda sobre esto. Regla en `reglas/localizacion-por-pais.md`; código en `src/server/videos/localization.ts`.

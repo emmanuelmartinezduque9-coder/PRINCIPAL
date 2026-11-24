@@ -182,5 +182,15 @@
       "docs/reglas-motor-del-dueno.md",
       "docs/decisiones-doblaje-dialogo.md"
     ]
+  },
+  {
+    "slug": "localizacion-por-pais",
+    "title": "Localización al país del producto",
+    "description": "Todo lo de la referencia que sea de otro país (lugares, tiendas, moneda, calles, matrículas, banderas, marcas locales) se adapta solo a su equivalente más conocido en el país del producto; el encargo manda.",
+    "file": "localizacion-por-pais.md",
+    "source": "docs/reglas-motor-del-dueno.md",
+    "sources": [
+      "docs/reglas-motor-del-dueno.md"
+    ]
   }
 ]

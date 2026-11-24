@@ -394,6 +394,11 @@ Cadena y país (orden del dueño, 24/11/2026): si se exige una cadena, solo vale
 
 Elige como mucho ${MAX_PINTEREST_REFS}, de mejor a peor, por su número de candidata. Si ninguna vale, no elijas ninguna.`;
 
+const localizationItems = (result: Record<string, unknown>) =>
+  Array.isArray(result.localization)
+    ? (result.localization as Array<Record<string, unknown>>).filter((item) => typeof item.original === "string" && typeof item.target === "string").map((item) => ({ kind: String(item.kind ?? "otro"), original: String(item.original), target: String(item.target) }))
+    : [];
+
 /** Los textos del desglose que describen la escena (sin los prompts largos). */
 function analysisText(result: Record<string, unknown> | null): string {
   if (!result) return "";
@@ -403,6 +408,9 @@ function analysisText(result: Record<string, unknown> | null): string {
     typeof result.conceptLogic === "string" ? `Lógica del concepto: ${result.conceptLogic}` : "",
     ...shots.map((shot, i) => `Toma ${i + 1}: se ve ${String(shot.seen ?? "")}; acción: ${String(shot.action ?? "")}`),
     ...adaptation.slice(0, 6).map((row) => `Adaptación: ${String(row.original ?? "")} → ${String(row.equivalent ?? "")} (se conserva: ${String(row.kept ?? "")})`),
+    // Localización al país del producto (regla del dueño, 24/11/2026): la tienda, el lugar y los carteles
+    // que se buscan son los del país de destino (Target → Action, USA → Berlin), no los de la referencia.
+    ...localizationItems(result).map((item) => `Localización al país del anuncio (${item.kind}): ${item.original} → ${item.target}`),
   ]
     .filter(Boolean)
     .join("\n");

@@ -1,4 +1,5 @@
 import { and, asc, eq, inArray, max, sql } from "drizzle-orm";
+import { localizationGuide, MARKETS, marketOf, type LocalizationItem, type Market } from "@/server/videos/localization";
 import { z } from "zod";
 import { getDb, schema } from "@/db/client";
 import { enqueueJob } from "@/jobs/boss";
@@ -116,6 +117,12 @@ export interface Analysis {
    */
   editTexts?: { main: string; cta: string } | null;
   /**
+   * Localización al país del producto (`localization.ts`): lo de la referencia que es de otro país y
+   * su equivalente aquí (lugar, tienda, moneda, bandera…). La usan la imagen, Pinterest, el clip, los
+   * rótulos y el doblaje. Opcional: los desgloses anteriores no la traen.
+   */
+  localization?: LocalizationItem[] | null;
+  /**
    * Lo añade la aplicación al guardar (no Claude): con «Automático», a quién buscó y qué avatar
    * eligió (`null` si ninguno encajaba).
    */
@@ -189,6 +196,17 @@ export const analysisSchema: z.ZodType<Analysis> = z.object({
     .nullable()
     .optional(),
   variantMatch: z.string().nullable().optional(),
+  localization: z
+    .array(
+      z.object({
+        kind: z.enum(["lugar", "tienda", "moneda", "bandera", "calle", "matricula", "rotulo", "marca", "otro"]),
+        original: filled.max(200).describe("Lo que se ve u oye en la referencia que es de otro país («Target», «in den USA», «$12.99»)."),
+        target: filled.max(200).describe("Su equivalente en el país del producto («Lidl», «in Berlin», «12,99 €»)."),
+      }),
+    )
+    .max(30)
+    .nullable()
+    .optional(),
   editTexts: z
     .object({
       main: filled.max(200).describe("Rótulo principal del montaje, en el idioma del anuncio."),
@@ -283,7 +301,7 @@ const ANSWERED = `Las respuestas del dueño van en <respuestas_del_dueno>: aplí
  * Con «Solo gancho», `hook` son sus tiempos reales (`hookTiming` del vídeo); si no se dan, los de
  * la duración pedida.
  */
-export function analysisInstructions(brief: Brief, hook: HookTiming | null = null, variantNames: string[] = []): string {
+export function analysisInstructions(brief: Brief, hook: HookTiming | null = null, variantNames: string[] = [], market: Market = MARKETS.DE): string {
   const identity = IDENTITY[brief.avatarMode];
   const model = brief.clipModel ?? SEEDANCE;
   const seedance = model === SEEDANCE;
@@ -310,12 +328,15 @@ ${seedance ? `7. videoPrompt: el prompt del clip según la plantilla de la regla
 9. angleAudience: si el encargo (sus indicaciones, su adaptación o sus cambios) pide un público o un ángulo con una persona concreta (p. ej. «abuelas», «para mamás», «un niño»), su sexo, su edad aproximada y cómo lo nombra; si no pide ninguno, null.${variantNames.length > 0 ? `
 10. variantMatch: de las variantes del producto (${variantNames.map((name) => `«${name}»`).join(", ")}), la que coincide claramente por color o forma con el objeto que se ve en la referencia, escrita igual; si no coincide claramente ninguna, null.` : ""}
 
+localization: la localización al país del producto (ver «Localización» abajo): cada cosa de la referencia que sea de otro país (lugar, tienda o cadena, moneda o precio, bandera, calle, matrícula, rótulo o cartel, marca local que no sea la del encargo) con su equivalente aquí, como {kind, original, target}; lista vacía si no hay ninguna. Aplícala tú en los dos prompts (la escena de la imagen y del clip ya pasa en ${market.countryEs}: tiendas, carteles, matrículas y banderas de aquí) y en editTexts.
+
 editTexts: los dos rótulos del montaje, en el idioma del anuncio: main, el rótulo principal que se ve desde el primer fotograma (corto, como mucho unos 45 caracteres, con uno o dos emojis, con el gancho del concepto; p. ej. «STARBUCKS × EISWERK 😳🍦» o «Jede vielbeschäftigte Mama braucht genau DAS! 🎁😍»), sin marcas ajenas salvo que el encargo las pida; y cta, el CTA de siempre del dueño con el nombre del producto: «Kommentiere „{Produkt}“, wenn du auch eine willst!» más un emoji (en italiano, su equivalente).
 
 Ninguno de los dos prompts lleva direcciones, identificadores de archivos ni estas palabras vetadas: ${PROMPT_BLACKLIST.join(", ")}.
 
 Las explicaciones (conceptLogic, shots, adaptation, risks) van en español; los dos prompts, en inglés.`,
   ];
+  sections.push(`Localización\n${localizationGuide(market)}`);
   if (brief.kind === "adaptacion_concepto") sections.push(ADAPTATION_KIND);
   if (brief.kind === "solo_gancho" && brief.hookSeconds !== null) {
     sections.push(hookOnlyKind(hook ?? { hookMs: brief.hookSeconds * 1000, clipSeconds: clipDurationSeconds(brief.hookSeconds * 1000) }, model));
@@ -350,7 +371,9 @@ function sourceVideoPromptItem(model: ClipModel): string {
  */
 export function analysisRuleSlugs(kind: VideoKind, model: ClipModel = SEEDANCE): string[] {
   const video = model === SEEDANCE ? [...VIDEO_RULE_SLUGS] : VIDEO_RULE_SLUGS.map((slug) => (slug === RULE_SLUGS.video ? RULE_SLUGS.genjutsu : slug));
-  return kind === "adaptacion_concepto" ? [...new Set([RULE_SLUGS.adaptacion, ...video])] : video;
+  // La localización al país del producto va siempre (regla del dueño, 24/11/2026).
+  const all = [...video, RULE_SLUGS.localizacion];
+  return kind === "adaptacion_concepto" ? [...new Set([RULE_SLUGS.adaptacion, ...all])] : all;
 }
 
 // ───────────────────────── Contenido de la petición ─────────────────────────
@@ -822,7 +845,7 @@ export async function runAnalysis(analysisId: number, deps: { gateway?: LlmGatew
           userId: ctx.userId,
           productId: ctx.productId,
           rules: await loadRules(analysisRuleSlugs(brief.kind, brief.clipModel)),
-          instructions: analysisInstructions(brief, hookTiming(video), variants.map((variant) => variant.name)),
+          instructions: analysisInstructions(brief, hookTiming(video), variants.map((variant) => variant.name), marketOf(product)),
           content,
           maxTokens: MAX_TOKENS,
           schema: analysisSchema,
