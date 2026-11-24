@@ -65,6 +65,8 @@ startWorker().then(
         await relaunchFailedEditsOnce("montaje.relanzado-lote6-16-salida-20261124", [16]);
         // Una vez: el 15 se vuelve a montar con los emojis arreglados (salía un recuadro en el primer rótulo).
         await remountEditsOnce("montaje.remontado-15-emojis-20261124", [15]);
+        // Una vez: el 22 salió con un doblaje viejo en inglés (montaje 61); con 932bde2 se rehace el doblaje.
+        await remountEditsOnce("montaje.remontado-22-doblaje-20261124", [22]);
         // TEMPORAL: enlaces para comprobar a mano el sonido y los rótulos de los ya montados.
         await (await import("@/server/videos/montaje-nube")).logVerifyLinks([15, 22]);
         // Y los doblados antes de la comprobación con Whisper (el vídeo 6 dejó una frase en inglés).
