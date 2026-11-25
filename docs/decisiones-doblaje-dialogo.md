@@ -140,6 +140,15 @@ de 44, 45, 46, 47 y 48 → habla; canciones de 48, 50, 51, 53 y los villancicos 
 Límite conocido, imposible de decidir solo con el texto: en el 21 dos versos mal transcritos («I'm on a ride», «Your top
 stick») salen habla, y en el 22 una frase hablada poética («…the imagination, was held in chains») sale canto.
 
+Datos corregidos a mano (25/11/2026): los doblajes 54 (vídeo 50) y 55, 57, 58 (vídeo 48) se retiraron: se hicieron
+con la versión que exigía nombrar la canción, y la comprobación final tradujo «rock your body» (48). El 46 volvió a su
+primer doblaje (51), sin el trozo de «Let It Snow». Vídeo 51: la tarjeta pedía «el audio en alemán del 3, 2, 1, vamos a
+ver cómo sale» al principio, con «vamos a ver cómo sale» al retirar el pañuelo. Es la voz de las referencias de EisWerk
+del mismo lote («Eins, zwei, drei. Mal sehen, wie es geworden ist.», referencia 38, separada con BandIt): se añadió al
+«Audio original» del 51 0,5 s tarde («Mal» a los 3,2 s; el pañuelo sale a los 3,4–3,5 s). La copia sin la voz está en
+`referencias/51/audio-original-sin-voz-alemana.m4a`. Pendiente: que una orden así de la tarjeta («añade esta voz») se
+haga sola en el montaje.
+
 Descartado tras medirlo: una puntuación acústica de canto (tono sostenido, sílabas por segundo; prototipo de Codex con
 las 28 frases de los lotes 6 y 10) acertaba el 46 % dejando cada vídeo fuera del ajuste; inaSpeechSegmenter y YAMNet
 meten TensorFlow en la imagen y tampoco separan «habla sobre música» de «canto» con fiabilidad. Forzar el idioma en
