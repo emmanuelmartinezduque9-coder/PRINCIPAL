@@ -12,7 +12,11 @@ import { getProductFor, listProductsFor } from "@/server/products";
  */
 
 export const MAX_PHOTO_BYTES = 8 * 1024 * 1024;
-export const MAX_PHOTOS_PER_PRODUCT = 12;
+/**
+ * 80: un producto admite 30 variantes y cada una lleva su foto de artículo y su caja, más la marca,
+ * el logo vertical y los avatares (con 12 no cabían ni las variantes de EisWerk; 25/11/2026).
+ */
+export const MAX_PHOTOS_PER_PRODUCT = 80;
 
 // Los papeles viven en un módulo sin base de datos para poder usarlos también en las pantallas.
 export { PHOTO_ROLES, isPhotoRole, type PhotoRole };

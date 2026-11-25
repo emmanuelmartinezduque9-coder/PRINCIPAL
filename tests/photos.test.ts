@@ -133,19 +133,19 @@ describe("fotos de producto", () => {
     expect(await listProductPhotos(ana, producto.id)).toHaveLength(1);
   });
 
-  it("un producto admite 12 fotos y la 13.ª se rechaza", async () => {
-    expect(MAX_PHOTOS_PER_PRODUCT).toBe(12);
+  it("un producto admite 80 fotos (30 variantes con artículo y caja, marca, logo y avatares) y la 81.ª se rechaza", async () => {
+    expect(MAX_PHOTOS_PER_PRODUCT).toBe(80);
     for (let i = 0; i < MAX_PHOTOS_PER_PRODUCT; i++) await addProductPhoto(ana, producto.id, JPEG);
-    await expect(addProductPhoto(ana, producto.id, JPEG)).rejects.toThrow("Este producto ya tiene 12 fotos.");
-    expect(await listProductPhotos(ana, producto.id)).toHaveLength(12);
+    await expect(addProductPhoto(ana, producto.id, JPEG)).rejects.toThrow("Este producto ya tiene 80 fotos.");
+    expect(await listProductPhotos(ana, producto.id)).toHaveLength(80);
   });
 
   it("subidas simultáneas no superan el máximo", async () => {
     const results = await Promise.allSettled(
-      Array.from({ length: 15 }, () => addProductPhoto(ana, producto.id, JPEG)),
+      Array.from({ length: MAX_PHOTOS_PER_PRODUCT + 3 }, () => addProductPhoto(ana, producto.id, JPEG)),
     );
-    expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(12);
-    expect(await listProductPhotos(ana, producto.id)).toHaveLength(12);
+    expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(MAX_PHOTOS_PER_PRODUCT);
+    expect(await listProductPhotos(ana, producto.id)).toHaveLength(MAX_PHOTOS_PER_PRODUCT);
   });
 
   it("la portada de cada producto es su primera foto, y solo de productos visibles", async () => {
@@ -229,18 +229,18 @@ describe("fotos de producto", () => {
     expect((await listProductPhotos(dueno, producto.id)).map((p) => p.role)).toEqual(["articulo", "avatar"]);
   });
 
-  it("si el producto llega a 12 fotos a mitad de una importación, se queda con las 12 y rechaza el resto", async () => {
-    for (let i = 0; i < 10; i++) await addProductPhoto(ana, producto.id, JPEG);
+  it("si el producto llega al máximo de fotos a mitad de una importación, se queda con el máximo y rechaza el resto", async () => {
+    for (let i = 0; i < MAX_PHOTOS_PER_PRODUCT - 2; i++) await addProductPhoto(ana, producto.id, JPEG);
     await expect(
       importProductPhotos(dueno, producto.id, [
         { bytes: JPEG, role: "articulo" },
         { bytes: JPEG, role: "avatar" },
         { bytes: JPEG, role: "entorno" },
       ]),
-    ).rejects.toMatchObject({ status: 400, message: "Este producto ya tiene 12 fotos." });
+    ).rejects.toMatchObject({ status: 400, message: `Este producto ya tiene ${MAX_PHOTOS_PER_PRODUCT} fotos.` });
     const roles = (await listProductPhotos(dueno, producto.id)).map((p) => p.role);
-    expect(roles).toHaveLength(12);
-    expect(roles.slice(10)).toEqual(["articulo", "avatar"]);
+    expect(roles).toHaveLength(MAX_PHOTOS_PER_PRODUCT);
+    expect(roles.slice(MAX_PHOTOS_PER_PRODUCT - 2)).toEqual(["articulo", "avatar"]);
   });
 
   it("da el sha256 del contenido de cada foto, en orden, solo a quien ve el producto", async () => {

@@ -12,7 +12,7 @@ import { PHOTO_ROLES, type PhotoRole } from "@/lib/photo-roles";
 import { cn } from "@/lib/utils";
 import { PHOTO_ROLE_HINTS, PHOTO_ROLE_LABELS } from "./labels";
 
-export const MAX_PHOTOS = 12;
+export const MAX_PHOTOS = 80; // igual que MAX_PHOTOS_PER_PRODUCT en src/server/photos.ts
 const ACCEPTED_TYPES = ["image/jpeg", "image/png", "image/webp"];
 const ACCEPT = ACCEPTED_TYPES.join(",");
 
