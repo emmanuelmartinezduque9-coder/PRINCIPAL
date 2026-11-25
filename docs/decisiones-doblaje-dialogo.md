@@ -111,8 +111,11 @@ Ningún vídeo de HaarZauber del lote 10 salió en alemán según el coordinador
 Órdenes del dueño (25/11/2026) y cómo quedan:
 
 1. **Ante la duda gana HABLA; una frase conversacional nunca es canto; con canción de fondo el diálogo se dobla
-   igual.** `classifySpeech` ya no tiene «duda»: Claude solo puede decir CANTO si nombra la canción y el verso
-   (`cancion`, `verso`); si no, es habla. Cada frase se juzga sola. Fuera la regla del solapamiento.
+   igual.** En `classifySpeech` una «duda» (o una frase sin contestar) es habla; canto es el verso de una canción que
+   Claude nombra (`cancion`, `verso`) o letra claramente cantada aunque no la conozca (rima, estribillo repetido, frases
+   poéticas que no se dirigen a nadie). Exigir siempre el nombre de la canción se probó y se descartó: canciones que
+   Claude no reconoce («Rock your body» del 48, «I'm a fireball» del 50, «Ordinary» del 53) salían habla y se habrían
+   traducido. Cada frase se juzga sola. Fuera la regla del solapamiento.
    `DECISION_VERSION = 3`: todas las marcas y doblajes anteriores se vuelven a mirar.
 2. **Whisper large-v3-turbo** en todo el doblaje (antes `base`). Probado en el contenedor de Railway con las pistas de
    BandIt: `base` daba el alemán del 44 como «el»/«es» y `small` como «en» al 0,75; el turbo transcribe bien las frases
@@ -131,6 +134,11 @@ Ningún vídeo de HaarZauber del lote 10 salió en alemán según el coordinador
    «but the fire is so delightful») y, sin contexto, Claude no la reconoció: se dobló un trozo de la canción («Aber dass
    ich er…»). Ahora una frase necesita al menos dos palabras para contar, y Claude decide con todo lo oído en otro
    idioma como contexto (los versos de alrededor), no con la frase suelta.
+
+Prueba con Claude real y Whisper large-v3-turbo sobre 14 referencias reales (25/11/2026): lote 10 todo bien (diálogo
+de 44, 45, 46, 47 y 48 → habla; canciones de 48, 50, 51, 53 y los villancicos → canto); lote 6: 6, 8, 11 y 13 bien.
+Límite conocido, imposible de decidir solo con el texto: en el 21 dos versos mal transcritos («I'm on a ride», «Your top
+stick») salen habla, y en el 22 una frase hablada poética («…the imagination, was held in chains») sale canto.
 
 Descartado tras medirlo: una puntuación acústica de canto (tono sostenido, sílabas por segundo; prototipo de Codex con
 las 28 frases de los lotes 6 y 10) acertaba el 46 % dejando cada vídeo fuera del ajuste; inaSpeechSegmenter y YAMNet

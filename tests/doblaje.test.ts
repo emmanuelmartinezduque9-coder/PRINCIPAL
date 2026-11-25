@@ -172,8 +172,8 @@ beforeEach(async () => {
 });
 
 /**
- * Claude simulado para «¿habla o canto?»: lo que lleva «CANTO» es canto con su canción nombrada; lo que lleva «DUDA»
- * dice canto pero sin nombrar la canción (cuenta como habla); el resto, habla. Con `down`, no responde.
+ * Claude simulado para «¿habla o canto?»: lo que lleva «CANTO» es canto; lo que lleva «DUDA», «duda» (cuenta como
+ * habla); el resto, habla. Con `down`, no responde.
  */
 const speech = { calls: 0, down: false, instructions: "" };
 const gateway: LlmGateway = {
@@ -187,7 +187,7 @@ const gateway: LlmGateway = {
         line.includes("CANTO")
           ? { n: i + 1, tipo: "canto", cancion: "Canción de prueba", verso: "un verso", motivo: "prueba" }
           : line.includes("DUDA")
-            ? { n: i + 1, tipo: "canto", cancion: null, verso: null, motivo: "prueba" }
+            ? { n: i + 1, tipo: "duda", cancion: null, verso: null, motivo: "prueba" }
             : { n: i + 1, tipo: "habla", cancion: null, verso: null, motivo: "prueba" },
       ),
     };
@@ -482,7 +482,7 @@ describe("una canción no se traduce nunca (orden del 24/11/2026)", () => {
     expect((await dubRows())[0].raw).toMatchObject({ ventanas: [[7, 9]] });
   });
 
-  it("canto sin nombrar la canción y el verso es habla: ante la duda, habla (orden del dueño)", async () => {
+  it("ante la duda, habla (orden del dueño): «Oh no, I'm good.» con un villancico debajo se dobla", async () => {
     const video = await withAudio(Buffer.from("MUSICA-DUDA"));
     const { row } = await mount(video.id);
     expect(row.notes).toContain("audio:MEZCLA-ALEMANA");

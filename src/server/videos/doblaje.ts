@@ -136,11 +136,11 @@ export const SPEECH_INSTRUCTIONS = [
   "Decides si cada frase que oyó Whisper en el audio de un vídeo corto de redes es HABLA (una persona hablando: diálogo, exclamación, narración a cámara) o CANTO (un verso de la letra de una canción).",
   "Reglas fijas del dueño: se dobla el diálogo y una canción no se traduce nunca. Ante la duda gana HABLA. Con una canción de fondo, el diálogo se dobla igual.",
   "Por frase te doy la pista de la que sale («voz»: la pista de diálogo del separador; «music»/«sfx»: voz que quedó dentro de la música), el texto (Whisper large-v3-turbo) y cuánto dura.",
-  "CANTO solo si la frase es un verso de una canción que puedes NOMBRAR: da su título en «cancion» y en «verso» la línea de la letra a la que corresponde (Whisper puede transcribirla mal: «Sad is frightful» es «Oh, the weather outside is frightful» de «Let It Snow»). Si no puedes nombrar la canción y el verso, es HABLA.",
-  "Una frase conversacional es HABLA aunque a la vez suene una canción: pronombres dirigidos a alguien, preguntas, respuestas, promesas, exclamaciones, comentarios («Ten seconds, I promise.», «Oh no, I'm good.», «Wait, what?», «Oh, you're buying it.», «I got one last week. Best thing ever. Enjoy!», «How many are you getting?», «This one's just for me.», «You deserve it, mama.», «Three, two, one, let's go!», «Oh my God! Look at her wings!»). Solo es CANTO si es literalmente un verso de esa canción.",
+  "CANTO si la frase es un verso de una canción: de una que puedes nombrar (da su título en «cancion» y en «verso» la línea de la letra; Whisper puede transcribirla mal: «Sad is frightful» es «Oh, the weather outside is frightful» de «Let It Snow») o letra claramente cantada aunque no conozcas la canción: versos que riman o tienen métrica de canción, un estribillo que se repite («Come on, come on, rock your body», «Baby, baby, baby…»), frases poéticas que no se dirigen a nadie de la escena («The angels up in the clouds are jealous knowing we found…»). Entonces «cancion» puede ser null.",
+  "Una frase conversacional es HABLA aunque a la vez suene una canción: alguien que habla con otra persona de la escena o a cámara, con preguntas, respuestas, promesas, exclamaciones o comentarios sobre lo que pasa («Ten seconds, I promise.», «Oh no, I'm good.», «Wait, what?», «Oh, you're buying it.», «I got one last week. Best thing ever. Enjoy!», «How many are you getting?», «Excuse me, ma'am. Where'd you get those?», «I got it online.», «This one's just for me.», «You deserve it, mama.», «Three, two, one, let's go!», «Oh my God! Look at her wings!»). Solo es CANTO si es literalmente un verso de una canción (por ejemplo «Who let the dogs out?» es el estribillo de «Who Let the Dogs Out»).",
   "Cada frase se juzga sola: que otras frases sean una canción no convierte en canto a las demás. Que la frase salga de la pista «music» no la hace canto (el separador mete a veces el diálogo en la música), ni salir de «voz» la hace habla (a veces se cuela un verso).",
   "Ejemplos de CANTO: «Last Christmas, I gave you my heart» (Last Christmas), «Rockin' around the Christmas tree» (Rockin' Around the Christmas Tree), «Jingle bell, jingle bell, jingle bell rock» (Jingle Bell Rock), «All I want for Christmas is you» (All I Want for Christmas Is You), «Oh, the weather outside is frightful» (Let It Snow).",
-  "Responde por cada frase (n desde 1) tipo «habla» o «canto»; si es canto, «cancion» y «verso» (si no, null), y un motivo corto.",
+  "Si de verdad no puedes decidir, es HABLA. Responde por cada frase (n desde 1) tipo «habla» o «canto»; si es canto, «cancion» y «verso» si los sabes (si no, null), y un motivo corto.",
 ].join("\n");
 
 const speechSchema = z.object({
@@ -158,8 +158,9 @@ const speechSchema = z.object({
 });
 
 /**
- * Habla o canto, frase a frase (Claude con el texto de Whisper). Regla del dueño (25/11/2026): ante la duda HABLA; una
- * frase solo es canto si Claude nombra la canción y el verso; si no lo nombra, o no contesta esa frase, es habla.
+ * Habla o canto, frase a frase (Claude con el texto de Whisper). Regla del dueño (25/11/2026): ante la duda HABLA; la
+ * frase conversacional es habla aunque suene una canción; canto es el verso de una canción (conocida o claramente letra
+ * cantada). «duda» o una frase sin contestar: habla.
  * `null` si Claude no puede contestar: entonces no se sabe y el montaje no se entrega sin comprobar.
  */
 export async function classifySpeech(
@@ -191,7 +192,7 @@ export async function classifySpeech(
     const byN = new Map((answer.data?.frases ?? []).map((f) => [f.n, f]));
     return phrases.map((_, i) => {
       const f = byN.get(i + 1);
-      return f?.tipo === "canto" && (f.cancion ?? "").trim() && (f.verso ?? "").trim() ? "canto" : "habla";
+      return f?.tipo === "canto" ? "canto" : "habla";
     });
   } catch (error) {
     console.warn(`[doblaje] Claude no pudo decir si el vídeo ${ctx.videoId} tiene habla o canto: ${messageOf(error)}`);
