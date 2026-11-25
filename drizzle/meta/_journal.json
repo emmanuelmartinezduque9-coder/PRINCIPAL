@@ -442,6 +442,13 @@
       "when": 1795577431414,
       "tag": "0062_aprendizaje_por_lote",
       "breakpoints": true
+    },
+    {
+      "idx": 63,
+      "version": "7",
+      "when": 1795581543124,
+      "tag": "0063_preferencia_salones",
+      "breakpoints": true
     }
   ]
 }
