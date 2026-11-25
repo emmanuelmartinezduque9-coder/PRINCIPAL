@@ -609,6 +609,19 @@ describe("comprobación final del vídeo montado (orden del dueño, 25/11/2026)"
     expect(await getDb().select().from(schema.edits)).toHaveLength(1);
   });
 
+  it("un doblaje bueno devuelto a mano manda sobre una fila fallida posterior: se reutiliza sin pagar (vídeo 46)", async () => {
+    const video = await videoWithAudio({ dubDialogue: true });
+    await mount(video.id);
+    const [good] = await dubRows();
+    await getDb().update(schema.dubs).set({ status: "failed" }).where(eq(schema.dubs.id, good.id));
+    await getDb().insert(schema.dubs).values({ videoId: video.id, userId: dueno.id, sourceSha256: good.sourceSha256, language: "deu", status: "failed", quotedCredits: 66, error: "Retirado", raw: { forzar: [[5, 6]] } });
+    await getDb().update(schema.dubs).set({ status: "done" }).where(eq(schema.dubs.id, good.id));
+    const { outcome, row } = await mount(video.id);
+    expect(outcome).toBe("done");
+    expect(row.notes).toContain("Diálogo en alemán: el doblaje ya hecho de este vídeo (sin gastar otra vez)");
+    expect(dubCalls()).toHaveLength(1);
+  });
+
   it("apagado en la tarjeta: no se comprueba", async () => {
     const video = await videoWithAudio({ dubDialogue: false });
     await getDb().update(schema.videoReferenceAudio).set({ data: Buffer.from("SIEMPRE-EN") }).where(eq(schema.videoReferenceAudio.videoId, video.id));

@@ -232,6 +232,9 @@ def lineas(texto):
 MIN_PLANO_S = 0.28  # como el motor de Codex: cortes a menos de esto son el mismo cambio
 
 
+MIN_DURACION_PLANO_A_PLANO = 0.9  # parte de la duración de la referencia que tiene que conservar el «plano a plano»
+
+
 def planos_como_referencia(path, frames, edicion):
     """Los tramos del clip para que dure y corte como la referencia (Codex: `cut-plan.json` con los tramos de cada
     toma, `first_frame`/`end_frame_exclusive`, recortados a la referencia). Con los mismos planos que la referencia,
@@ -253,10 +256,15 @@ def planos_como_referencia(path, frames, edicion):
     ref_bordes = [0.0] + ref_cuts + [ref]
     ref_lens = [b - a for a, b in zip(ref_bordes, ref_bordes[1:])]
     if len(planos) == len(ref_lens):
-        modo, metas = 'plano a plano', [max(1, round(x * FPS)) for x in ref_lens]
-    else:
-        modo, metas = 'proporcional', [max(1, round((b - a) * objetivo / frames)) for a, b in planos]
-    return [(a, a + min(b - a, n)) for (a, b), n in zip(planos, metas)], modo, ref_cuts
+        metas = [max(1, round(x * FPS)) for x in ref_lens]
+        tramos = [(a, a + min(b - a, n)) for (a, b), n in zip(planos, metas)]
+        # Mismo número de planos pero de otras duraciones (un clip de Motion Transfer con los cortes en otro sitio): plano
+        # a plano solo si el montaje sigue durando como la referencia; si no, se recorta en proporción (vídeo 50 del lote
+        # 10: cortes del clip en 2,3 y 5,2 s frente a 2,3 y 10,9 s, y salía de 8,75 s en vez de 14,5).
+        if sum(b - a for a, b in tramos) >= MIN_DURACION_PLANO_A_PLANO * objetivo:
+            return tramos, 'plano a plano', ref_cuts
+    metas = [max(1, round((b - a) * objetivo / frames)) for a, b in planos]
+    return [(a, a + min(b - a, n)) for (a, b), n in zip(planos, metas)], 'proporcional', ref_cuts
 
 
 def tiempo_en_salida(t, tramos, modo, ref, ref_cuts):

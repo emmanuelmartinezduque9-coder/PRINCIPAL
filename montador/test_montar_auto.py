@@ -220,6 +220,14 @@ class EdicionDeLaReferencia(unittest.TestCase):
         self.assertEqual(plan['texts'][1]['start'], 6.0)  # 6 s de 8 → 144 de 192, sin corte a menos de 0,4 s
         self.assertEqual(plan['audio']['product_shown'], {'t': round(77 / 24, 4)})  # el primer corte del montaje
 
+    def test_mismos_planos_pero_mucho_mas_cortos_se_recorta_en_proporcion_y_dura_como_la_referencia(self):
+        # Vídeo 50 (lote 10): el 2º plano del clip dura mucho menos que el de la referencia; plano a plano daba 8,75 s de 14,5.
+        ma.m.scene_cuts = lambda path, threshold: [1.0, 2.0]  # 3 planos: 1 s, 1 s y 8 s frente a 0,5 / 3,5 / 4 s
+        plan, _ = ma.construir_plan(dict(SPEC, kind='replicar', hookMs=None, edicionReferencia=EDICION), [('clip', '/w/0.mp4')], '/w', '/f.ttf')
+        total = sum(c['out_frame'] - c['in_frame'] for c in plan['clips'])
+        self.assertGreaterEqual(total, 0.9 * 192)
+        self.assertEqual([(c['in_frame'], c['out_frame']) for c in plan['clips']], [(0, 19), (24, 43), (48, 202)])
+
     def test_un_clip_que_no_es_mas_largo_va_entero_con_los_rotulos_proporcionales(self):
         ma.m.video_frames = lambda path: 180  # 7,5 s, menos que los 8 de la referencia
         plan, _ = ma.construir_plan(dict(SPEC, kind='replicar', hookMs=None, edicionReferencia=EDICION), [('clip', '/w/0.mp4')], '/w', '/f.ttf')

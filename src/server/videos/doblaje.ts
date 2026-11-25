@@ -5,7 +5,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, sql } from "drizzle-orm";
 import { getDb, schema } from "@/db/client";
 import { getHiggsfield, HiggsfieldRejectedError, HiggsfieldUnknownOutcomeError, isHiggsfieldError, type HiggsfieldPort } from "@/connectors/higgsfield";
 import { z } from "zod";
@@ -61,6 +61,8 @@ export const dubFailure = (detail: string) => `No se pudo doblar el diálogo: ${
 
 const dubs = schema.dubs;
 type Dub = typeof dubs.$inferSelect;
+/** 1 si la fila está viva (la que cuenta: `dubs_one_live`). */
+const LIVE = sql<number>`(case when ${schema.dubs.status} in ('submitting', 'submitted', 'done', 'skipped') then 1 else 0 end)`;
 
 /**
  * Si el montaje dobla el diálogo: SIEMPRE, salvo que el dueño lo apague en la tarjeta (regla fija del 24/11/2026).
@@ -347,11 +349,13 @@ export async function dubbedAudio(ctx: DubContext): Promise<DubOutcome> {
   const target = dubLanguageOf(ctx.language);
 
   try {
+    // La fila viva (hecha, saltada o en marcha; solo puede haber una) manda sobre la última: así se puede devolver a mano
+    // un doblaje bueno sin que una fila fallida posterior lo tape (vídeo 46, 25/11/2026).
     let [row]: Array<Dub | undefined> = await getDb()
       .select()
       .from(dubs)
       .where(and(eq(dubs.videoId, ctx.videoId), eq(dubs.sourceSha256, sha), eq(dubs.language, target.code)))
-      .orderBy(desc(dubs.id))
+      .orderBy(desc(LIVE), desc(dubs.id))
       .limit(1);
     // Tramos que la comprobación final del montaje oyó en el idioma original: se doblan sí o sí.
     const forzar = (row?.raw as { forzar?: Array<[number, number]> } | null)?.forzar ?? [];
@@ -624,7 +628,7 @@ async function nativeWindows(videoId: number, audio: string, language: string): 
     .select({ raw: dubs.raw })
     .from(dubs)
     .where(and(eq(dubs.videoId, videoId), eq(dubs.sourceSha256, sha), eq(dubs.language, dubLanguageOf(language).code)))
-    .orderBy(desc(dubs.id))
+    .orderBy(desc(LIVE), desc(dubs.id))
     .limit(1);
   type Raw = { frases?: Phrase[]; detalle?: { frases?: Phrase[]; voz?: { frases?: Phrase[] } } } | null;
   const raw = (row?.raw ?? null) as Raw;
@@ -649,7 +653,7 @@ export async function requireRedub(
     .select()
     .from(dubs)
     .where(and(eq(dubs.videoId, videoId), eq(dubs.sourceSha256, sha), eq(dubs.language, code)))
-    .orderBy(desc(dubs.id));
+    .orderBy(desc(LIVE), desc(dubs.id));
   const before = rows.filter((r) => (r.error ?? "").startsWith(FINAL_CHECK)).length;
   if (before >= MAX_FINAL_REDUBS) return false;
   const latest = rows[0];
