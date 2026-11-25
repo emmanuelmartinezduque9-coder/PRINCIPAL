@@ -4,7 +4,7 @@ import { z } from "zod";
 import { getDb, schema } from "@/db/client";
 import { imagePart, textPart, type LlmContent } from "@/llm/content";
 import { getGateway, LlmCapReachedError, LlmNotConfiguredError, type LlmGateway } from "@/llm/gateway";
-import { PROBLEM_TYPE_KEYS, PROBLEM_TYPES, type ProblemType } from "@/lib/mejoras";
+import { PROBLEM_TYPE_KEYS, PROBLEM_TYPES, prohibitsThirdParty, type ProblemType } from "@/lib/mejoras";
 import { makeThumbnail } from "@/server/media/ffmpeg";
 import { productNamesByIds } from "@/server/products";
 import { activeCorrections, createCorrection, MAX_DIRECTIVE_CHARS, type Correction, type CorrectionStage } from "@/server/videos/mejoras/corrections";
@@ -53,7 +53,7 @@ ${typeList}
   - "regla": se arregla con una instrucción nueva para Claude o Higgsfield en uno de estos pasos:
     - "frame": el prompt de la imagen inicial (producto deformado, fondo que no encaja, luz, textos dentro de la imagen, manos raras).
     - "clip": el prompt del clip (movimiento malo, acción, cámara).
-    - "montaje": la lectura y adaptación de los rótulos del montaje (rótulo mal traducido o adaptado, un lugar o país que no toca, una marca o personaje de terceros en un rótulo, rótulo que falta o sobra).
+    - "montaje": la lectura y adaptación de los rótulos del montaje (rótulo mal traducido o adaptado, un lugar o país que no toca, rótulo que falta o sobra).
     - "doblaje": la decisión de si la voz de la referencia es habla (se dobla) o canción (no se dobla), p. ej. un diálogo que quedó sin doblar porque se tomó por canción, o una canción que se dobló.
   - "codigo": es un fallo del programa (p. ej. vídeo sin audio, montaje roto, botón que no funciona, algo que no se guarda, error en pantalla, descarga que falla). La traducción hablada del doblaje la hace Higgsfield sin instrucciones nuestras: si lo que falla es esa traducción o la voz doblada, es "codigo".
   - "uso": no hay nada que cambiar (duda de uso, ya resuelto, petición que no es un fallo).
@@ -62,7 +62,11 @@ ${typeList}
 - directive: si fix_kind es "regla", UNA instrucción imperativa, concreta y general (que valga para próximos vídeos, sin nombres de archivo ni números de vídeo), de como mucho ${MAX_DIRECTIVE_CHARS} caracteres: en inglés para "frame" y "clip" (va al final de su prompt) y en español para "montaje" y "doblaje" (va a las instrucciones de Claude). Si no, null.
 - existing_correction_id: si una de las correcciones activas que te paso ya cubre exactamente este problema, su id (y directive null); si no, null.
 - product_specific: true si la instrucción solo tiene sentido para este producto.
-Si el reporte empieza por «${CHANGE_REQUEST_PREFIX}», es un cambio que la persona pidió para ESE vídeo desde el montaje y que ya se aplica solo en él: por defecto es "uso" (un gusto de ese vídeo, no un fallo). Solo es "regla" si describe un error que se repetiría en otros vídeos (p. ej. un lugar o una marca de terceros que no tocaba, un rótulo mal traducido, un diálogo sin doblar); y "codigo" si algo del programa falló.
+
+Reglas fijas del dueño:
+- En marketing orgánico se permiten marcas, tiendas, películas y personajes de terceros. Nunca propongas una instrucción que los quite, los prohíba o los sustituya; que aparezcan no es un fallo.
+- No inventes reglas que el reporte no pide: la instrucción dice lo que la persona pidió, sin ampliarlo.
+Si el reporte empieza por «${CHANGE_REQUEST_PREFIX}», es un cambio que la persona pidió para ESE vídeo desde el montaje y que ya se aplica solo en él: por defecto es "uso" (un gusto de ese vídeo, no un fallo). Solo es "regla" si describe un error que se repetiría en otros vídeos (p. ej. un lugar que no tocaba, un rótulo mal traducido, un diálogo sin doblar); y "codigo" si algo del programa falló.
 No inventes: si no está claro, elige el tipo más probable y explica la duda en cause.`;
 
 export const REJECTION_INSTRUCTIONS = `Clasifica cada motivo de rechazo (de una imagen inicial o un clip de un anuncio) en uno de estos tipos:
@@ -141,7 +145,7 @@ export async function applyClassification(reportId: number, result: ReportClassi
           .where(and(eq(schema.learnedCorrections.id, result.existing_correction_id), eq(schema.learnedCorrections.status, "activa")));
         if (existing) correctionId = existing.id;
       }
-      if (correctionId === null && result.directive && result.directive.trim().length >= 10) {
+      if (correctionId === null && result.directive && result.directive.trim().length >= 10 && !prohibitsThirdParty(result.directive)) {
         const created = await createCorrection(tx, {
           stage: result.stage,
           problemType: result.problem_type,

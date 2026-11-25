@@ -102,3 +102,12 @@ pedido en el montaje:» (`CHANGE_REQUEST_PREFIX`). Ese cambio ya se aplica solo 
 por defecto como `uso`: no cuenta como problema en las cifras ni crea una regla para todos. Solo es `regla` si describe
 un error que se repetiría (un lugar o una marca de terceros que no tocaba, un rótulo mal traducido, un diálogo sin
 doblar), y `codigo` si falló el programa. Así un gusto de un vídeo no cambia los demás.
+
+## Marcas de terceros y no generalizar (25/11/2026, reglas fijas de Emmanuel)
+
+- En marketing orgánico se permite nombrar y mostrar marcas, tiendas, películas y personajes de terceros. La corrección
+  sembrada `semilla-marcas-rotulos` (0056) los prohibía en los rótulos: la migración 0065 la retira. `prohibitsThirdParty`
+  (`src/lib/mejoras.ts`) impide crear o aplicar cualquier corrección o preferencia que los quite o prohíba, y Haiku ya no
+  cuenta una marca de terceros como fallo.
+- No se crea, amplía ni generaliza una regla sin su consentimiento expreso: el clasificador repite lo que pide el reporte
+  sin ampliarlo.

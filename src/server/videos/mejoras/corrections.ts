@@ -1,6 +1,6 @@
 import { and, asc, desc, eq, isNull, or, sql } from "drizzle-orm";
 import { getDb, schema } from "@/db/client";
-import type { ProblemType } from "@/lib/mejoras";
+import { prohibitsThirdParty, type ProblemType } from "@/lib/mejoras";
 
 /**
  * Correcciones aprendidas (`learned_corrections`): instrucciones cortas que el motor añade al final del
@@ -26,7 +26,7 @@ export type Correction = typeof schema.learnedCorrections.$inferSelect;
 /** Correcciones activas de ese paso que valen para ese producto (las suyas y las de todos), más recientes primero. */
 export async function activeCorrections(stage: CorrectionStage, productId: number | null): Promise<Correction[]> {
   const t = schema.learnedCorrections;
-  return getDb()
+  const rows = await getDb()
     .select()
     .from(t)
     .where(
@@ -37,7 +37,9 @@ export async function activeCorrections(stage: CorrectionStage, productId: numbe
       ),
     )
     .orderBy(desc(t.createdAt), desc(t.id))
-    .limit(MAX_DIRECTIVES);
+    .limit(MAX_DIRECTIVES * 2);
+  // Regla fija del dueño: nada aprendido puede prohibir marcas, tiendas, películas o personajes de terceros.
+  return rows.filter((c) => !prohibitsThirdParty(c.directive)).slice(0, MAX_DIRECTIVES);
 }
 
 /** Texto que se añade al final del prompt: las instrucciones aprendidas, o vacío si no hay. */

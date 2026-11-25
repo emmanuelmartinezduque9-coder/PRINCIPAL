@@ -71,3 +71,15 @@ export type FixKind = keyof typeof FIX_KINDS;
 export const MAX_REPORT_CHARS = 4_000;
 export const MAX_SCREENSHOT_BYTES = 4 * 1024 * 1024;
 export const SCREENSHOT_TYPES = ["image/png", "image/jpeg", "image/webp"] as const;
+
+/**
+ * Regla fija del dueño (25/11/2026): en marketing orgánico se permite nombrar y mostrar marcas, tiendas, películas y
+ * personajes de terceros; nunca se quitan. Ninguna corrección o preferencia aprendida puede prohibirlos o mandar
+ * quitarlos: si el texto lo hace, no se crea ni se aplica.
+ */
+const THIRD_PARTY = "marcas?|logos?|brands?|logotipos?|personajes?|characters?|pel[ií]culas?|films?|movies?|franquicias?|franchises?|trademarks?|harry potter";
+const FORBID = "ning[uú]n[ao]?|nunca|sin|quita\\w*|elimina\\w*|retira\\w*|evita\\w*|borra\\w*|sustit[uú]\\w*|reemplaz\\w*|prohib\\w*|never|no|without|remove\\w*|avoid\\w*|replace\\w*|delete\\w*|drop\\w*";
+const PROHIBITS = new RegExp(`\\b(${FORBID})\\b[^.]{0,60}\\b(${THIRD_PARTY})\\b`, "i");
+export function prohibitsThirdParty(text: string | null | undefined): boolean {
+  return typeof text === "string" && PROHIBITS.test(text);
+}

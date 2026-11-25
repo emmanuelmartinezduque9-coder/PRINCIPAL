@@ -3,7 +3,7 @@ import { eq, inArray } from "drizzle-orm";
 import { getDb, getPool, schema } from "@/db/client";
 import { stopWorker } from "@/jobs/boss";
 import { createGateway } from "@/llm/gateway";
-import { keyWithScope, narrowScope, repairScopes } from "@/server/videos/aprendizaje/alcance";
+import { keyWithScope, productGroups, repairScopes } from "@/server/videos/aprendizaje/alcance";
 import { distill } from "@/server/videos/aprendizaje/destilar";
 import { learningByBatch } from "@/server/videos/aprendizaje/medicion";
 import { choosePreferred, preferencesFor, preferredChoice, recomputeWeight, settleApplications } from "@/server/videos/aprendizaje/preferencias";
@@ -36,10 +36,11 @@ describe("aprendizaje persistido", () => {
   beforeEach(truncateAll);
   it("ciclo: rechazo, Haiku, aplicación en DE, aprobación sube y otra corrección baja", async () => {
     const { user, product, b1, b2, a, b } = await fixture();
-    // Dos vídeos del lote 1 (de dos productos de Alemania) rechazados por lo mismo: con uno solo no sale una regla
-    // para los demás, y con un solo producto sería solo de ese producto.
+    // Dos vídeos del lote 1 del mismo producto rechazados por lo mismo: con uno solo no sale una regla para los demás,
+    // y la regla es solo de ese producto aunque Haiku la proponga para todo el país (regla fija: no generalizar).
     const other = await makeProduct(user, { name: "Otro", countries: ["DE"] });
-    const a2 = await createVideo(user, other.id, { batchId: b1.id });
+    const a2 = await createVideo(user, product.id, { batchId: b1.id });
+    const elsewhere = await createVideo(user, other.id, { batchId: b2.id });
     await generation(a.id, user.id, "frame", "fondo de estudio no, calle real");
     await generation(a2.id, user.id, "frame", "otra vez estudio: quiero una calle de verdad");
     const captured = [...(await collectSignals({ videoId: a.id })), ...(await collectSignals({ videoId: a2.id }))];
@@ -58,11 +59,11 @@ describe("aprendizaje persistido", () => {
     await distill("lote", b1.id, { gateway: createGateway({ client: fake.client }) });
     expect(fake.calls).toHaveLength(1);
     const [p] = await getDb().select().from(schema.learnedPreferences);
-    expect(p.scope).toBe("pais");
+    expect(p).toMatchObject({ scope: "producto", scopeValue: String(product.id) });
     const carried = await preferencesFor("imagen", { videoId: b.id });
     expect(carried.text).toContain(p.directiveEn);
     expect(carried.ids).toEqual([p.id]);
-    expect(await preferencesFor("imagen", { videoId: b.id, country: "IT" })).toEqual({ text: "", ids: [] });
+    expect(await preferencesFor("imagen", { videoId: elsewhere.id })).toEqual({ text: "", ids: [] });
     expect((await getDb().select().from(schema.preferenceApplications))).toHaveLength(1);
     const { results } = await generation(b.id, user.id);
     await approveResult(user, b.id, "frame", results[0].id);
@@ -143,6 +144,21 @@ describe("aprendizaje persistido", () => {
 
 
 describe("ámbito: lo de un producto no se vuelve regla del país", () => {
+  it("nada aprendido prohíbe marcas, tiendas, películas o personajes de terceros (regla fija del dueño)", async () => {
+    await truncateAll();
+    const user = await makeUser("dueno");
+    const product = await makeProduct(user, { countries: ["DE"] });
+    const v = await createVideo(user, product.id);
+    await getDb().insert(schema.learnedPreferences).values([
+      { key: "marcas:producto", scope: "producto", scopeValue: String(product.id), stages: ["rotulos"], directive: "Ningún rótulo puede nombrar marcas o personajes de terceros.", directiveEn: "No third-party brands.", polarity: -1, topic: "marcas", supports: 2, weight: 0.8 },
+      { key: "salon:producto", scope: "producto", scopeValue: String(product.id), stages: ["rotulos"], directive: "Rótulos más grandes.", directiveEn: "Bigger captions.", polarity: 1, topic: "rotulos", supports: 2, weight: 0.8 },
+    ]);
+    await repairScopes();
+    const rows = await getDb().select().from(schema.learnedPreferences);
+    expect(rows.find((r) => r.key === "marcas:producto")).toMatchObject({ status: "retirada", retiredBy: "dueno" });
+    expect((await preferencesFor("rotulos", { videoId: v.id })).text).not.toMatch(/marcas/);
+  });
+
   beforeEach(truncateAll);
   it("caso real del lote 7 → lote 10: «calles de Berlín» de KreuzKapuze se queda en KreuzKapuze y sale de EisWerk", async () => {
     const user = await makeUser("dueno");
@@ -166,15 +182,18 @@ describe("ámbito: lo de un producto no se vuelve regla del país", () => {
     await getDb().update(schema.learnedPreferences).set({ scope: "pais", scopeValue: "DE", key: "berlin:pais:DE:desglose" });
     expect((await preferencesFor("desglose", { videoId: v39.id })).ids).toEqual([p.id]);
     await repairScopes();
-    const [fixed] = await getDb().select().from(schema.learnedPreferences);
-    expect(fixed).toMatchObject({ scope: "producto", scopeValue: String(kreuz.id), status: "activa" });
-    expect(await getDb().select().from(schema.preferenceApplications).where(eq(schema.preferenceApplications.videoId, v39.id))).toEqual([]);
+    const all = await getDb().select().from(schema.learnedPreferences);
+    expect(all.find((x) => x.id === p.id)).toMatchObject({ status: "retirada", retiredBy: "dueno" });
+    expect(all.filter((x) => x.status === "activa")).toMatchObject([{ scope: "producto", scopeValue: String(kreuz.id), key: `berlin:producto:${kreuz.id}:desglose` }]);
+    expect(await preferencesFor("desglose", { videoId: v39.id })).toEqual({ text: "", ids: [] });
+    expect((await preferencesFor("desglose", { videoId: v23.id })).text).toContain("Berlín");
   });
 
-  it("puros: dos productos sí sostienen una regla del país", () => {
-    expect(narrowScope("pais", "DE", [{ productId: 1 }, { productId: 1 }])).toEqual({ scope: "producto", scopeValue: "1" });
-    expect(narrowScope("pais", "DE", [{ productId: 1 }, { productId: 2 }])).toEqual({ scope: "pais", scopeValue: "DE" });
-    expect(narrowScope("producto", "3", [{ productId: 3 }])).toEqual({ scope: "producto", scopeValue: "3" });
+  it("puros: cada producto solo con lo que él pidió allí (lote o dos vídeos); nunca para todo el país", () => {
+    const s = (id: number, productId: number, videoId: number | null, kind = "rechazado") => ({ id, productId, videoId, kind, batchId: 1 });
+    const groups = productGroups([s(1, 1, 10), s(2, 1, 11), s(3, 2, 20), s(4, 3, null, "instruccion_lote")]);
+    expect([...groups.keys()].sort()).toEqual([1, 3]);
+    expect(groups.get(1)!.map((x) => x.id)).toEqual([1, 2]);
     expect(keyWithScope("berlin:pais:DE:desglose,imagen", "producto", "57")).toBe("berlin:producto:57:desglose,imagen");
   });
 });

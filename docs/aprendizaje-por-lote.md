@@ -121,3 +121,12 @@ No tiene botones de confirmar.
 
 Lo mecánico (migración, recolector, destilado, inyección, pruebas) se delegó en Codex con este documento como
 especificación. Claude lo diseñó, revisó cada cambio e hizo la vista.
+
+## Reglas fijas del 25/11/2026
+
+- **No generalizar sin su consentimiento.** Una preferencia vale solo para el producto en que él la pidió: en el lote, o
+  en dos vídeos distintos de ese producto. Nunca para un país, un tipo de toma o todo. El barrido reparte las que había
+  de país o globales en una por producto (donde él lo pidió) y las retira (`retired_by = 'dueno'`). La directiva repite
+  lo que él pidió, sin añadir nada.
+- **Marcas de terceros permitidas.** Ninguna preferencia puede quitar o prohibir marcas, tiendas, películas o personajes
+  de terceros (`prohibitsThirdParty`): no se crea, y si existe se retira.

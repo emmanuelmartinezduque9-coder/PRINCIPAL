@@ -456,6 +456,13 @@
       "when": 1795581864041,
       "tag": "0064_cerebro_cuentas",
       "breakpoints": true
+    },
+    {
+      "idx": 65,
+      "version": "7",
+      "when": 1795630371218,
+      "tag": "0065_sin_prohibir_marcas",
+      "breakpoints": true
     }
   ]
 }

@@ -189,14 +189,18 @@ describe("editar como la referencia", () => {
     expect(calls[0].instructions).not.toContain("Keep the product.");
     expect(first.row.learnedCorrections).toEqual([lugar.id]);
     // Otra corrección: la edición en caché ya no vale y se vuelve a leer con las dos.
-    const [marcas] = await getDb()
+    const [grandes] = await getDb()
       .insert(schema.learnedCorrections)
-      .values({ key: "marcas", version: 1, stage: "montaje", problemType: "rotulos", directive: "Ninguna marca de terceros (p. ej. Harry Potter) en los rótulos.", note: "Harry Potter" })
+      .values({ key: "grandes", version: 1, stage: "montaje", problemType: "rotulos", directive: "Los rótulos del gancho, en dos líneas como mucho.", note: "x" })
       .returning();
     const second = await mount(video.id);
     expect(calls).toHaveLength(2);
-    expect(calls[1].instructions).toContain("Harry Potter");
-    expect([...second.row.learnedCorrections].sort()).toEqual([lugar.id, marcas.id].sort());
+    expect(calls[1].instructions).toContain("en dos líneas como mucho");
+    expect([...second.row.learnedCorrections].sort()).toEqual([lugar.id, grandes.id].sort());
+    // Regla fija del dueño: una corrección que prohíbe marcas o personajes de terceros nunca se aplica.
+    await getDb().insert(schema.learnedCorrections).values({ key: "marcas", version: 1, stage: "montaje", problemType: "rotulos", directive: "Ninguna marca de terceros (p. ej. Harry Potter) en los rótulos.", note: "Harry Potter" });
+    await mount(video.id);
+    expect(calls.at(-1)!.instructions).not.toContain("Harry Potter");
   });
 
   it("una lectura guardada antes de las correcciones se reutiliza al volver a montar (sus rótulos no cambian) y no se apuntan", async () => {
@@ -204,7 +208,7 @@ describe("editar como la referencia", () => {
     const video = await videoWithClip({ referenceStorageKey: "referencias/x/ref.mp4" });
     const first = await mount(video.id);
     expect(first.row.learnedCorrections).toEqual([]);
-    await getDb().insert(schema.learnedCorrections).values({ key: "marcas", version: 1, stage: "montaje", problemType: "rotulos", directive: "Ninguna marca de terceros.", note: "x" });
+    await getDb().insert(schema.learnedCorrections).values({ key: "grandes", version: 1, stage: "montaje", problemType: "rotulos", directive: "Rótulos en dos líneas como mucho.", note: "x" });
     const second = await mount(video.id);
     expect(second.outcome).toBe("done");
     expect(calls).toHaveLength(1);
