@@ -70,7 +70,7 @@ export function PromptEditor({
         {manifest.map((item) => (
           <li key={item.tag} className="inline-flex h-6 items-center gap-1 rounded-md bg-muted px-1.5 text-xs">
             <span className="font-mono font-medium">{item.tag}</span>
-            <span className="text-muted-foreground">{MANIFEST_ROLE[item.role]}</span>
+            <span className="text-muted-foreground">{item.ownerSelected || item.role === "entorno" ? "Tu imagen de entorno (manda)" : MANIFEST_ROLE[item.role]}</span>
           </li>
         ))}
       </ul>

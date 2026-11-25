@@ -649,6 +649,7 @@ export async function manifestRefsFor(user: AuthUser, video: Video, options: { f
     }
   }
   // Las fotos de Pinterest del último desglose (no en el propio desglose: aún no existen).
+  const manualBackgrounds = options.forAnalysis ? (await listReferences(video.id)).filter((ref) => ref.role === "fondo").map((ref) => ref.sha256) : [];
   const ready = options.forAnalysis
     ? { refs: [], productHidden: false, packagingHidden: false, approvedMethod: false }
     : await readyPinterest(video.id, (video as Video & { tramo?: { index: number } }).tramo?.index ?? 0);
@@ -656,7 +657,8 @@ export async function manifestRefsFor(user: AuthUser, video: Video, options: { f
     photos,
     variant,
     avatar,
-    pinterest: ready.refs,
+    pinterest: options.forAnalysis ? manualBackgrounds : ready.refs,
+    manualEnvironmentRefs: options.forAnalysis ? manualBackgrounds : "manualEnvironmentRefs" in ready ? ready.manualEnvironmentRefs : [],
     productHidden: ready.productHidden,
     packagingHidden: ready.packagingHidden,
     approvedMethod: ready.approvedMethod,

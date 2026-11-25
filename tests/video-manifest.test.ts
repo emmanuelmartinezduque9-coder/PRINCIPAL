@@ -130,3 +130,27 @@ describe("orden de las referencias", () => {
     ]);
   });
 });
+
+describe("un único frame y fotos por entorno (orden expresa de Emmanuel, 25/11/2026)", () => {
+  it("Motion Transfer adjunta las fotos del tramo después del frame y del producto", () => {
+    const refs = { photos, variant: null, avatar: null, pinterest: ["calle-1", "calle-2"], clipSetting: true };
+    const manifest = clipManifest(videoWith({ avatarPhotoId: 10 }), refs, undefined, "hf_mult_motion_control");
+    expect(manifest[1]).toMatchObject({ index: 1, source: { kind: "approved_frame" } });
+    expect(manifest.slice(-2).map((m) => [m.index, m.source])).toEqual([
+      [6, { kind: "pinterest", sha256: "calle-1" }],
+      [7, { kind: "pinterest", sha256: "calle-2" }],
+    ]);
+    expect(clipManifest(video, { ...refs, clipSetting: false }, undefined, "hf_mult_motion_control").some((m) => m.role === "entorno" || m.role === "pinterest")).toBe(false);
+  });
+
+  it("la foto elegida del dueño tiene prioridad sobre Pinterest en su tramo", () => {
+    const manifest = clipManifest(video, { photos, variant: null, avatar: null, pinterest: ["otra-sala"], clipSetting: true }, undefined, "hf_mult_motion_control");
+    expect(manifest.at(-1)).toMatchObject({ source: { kind: "photo", photoId: 40 }, role: "entorno", ownerSelected: true });
+    expect(manifest.some((m) => m.role === "pinterest")).toBe(false);
+  });
+
+  it("marca el fondo manual en el manifiesto sin cambiar sus números", () => {
+    const manifest = imageManifest(videoWith({ avatarPhotoId: 10 }), { photos, variant: null, avatar: null, pinterest: ["foto-del-dueno"], manualEnvironmentRefs: ["foto-del-dueno"], approvedMethod: true });
+    expect(manifest.find((m) => m.source.kind === "pinterest")).toMatchObject({ index: 5, ownerSelected: true });
+  });
+});

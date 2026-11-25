@@ -410,3 +410,8 @@ Aplicar también la regla «Vídeo con Seedance 2.5», que se entrega junto a es
 
 ## Fondos sin personas en cuadros ni pósteres (orden de Emmanuel, 23/11/2026)
 Ningún cuadro, póster, foto, ilustración, pantalla ni figura con personas, caras, famosos o personajes en paredes, espejos o fondos de la imagen inicial, y ninguna marca ajena. Si el fotograma original o la sala de referencia los tienen, se sustituyen por pared lisa o decoración sin personas. Motivo: en el lote 3 (HaarZauber) un póster de una actriz famosa en la pared de la peluquería hizo que Higgsfield bloqueara los clips (`ip_detected`) con cualquier prompt.
+
+
+## Imagen de entorno del dueño — orden expresa de Emmanuel, 25/11/2026
+
+La imagen elegida o subida como fondo manda: es la misma habitación con todo su mobiliario, decoración y TODOS sus objetos. En el prompt en inglés nombra cada objeto visible uno a uno y con su posición, sin omitir portátil, peluche, plato de galletas, manta ni detalles pequeños. Coloca dentro la acción, manos y producto del fotograma original. Solo permite el reencuadre necesario al ángulo de la toma; no quites, cambies ni ordenes ningún objeto de la imagen de entorno. Conserva las pantallas con contenido neutro sin personajes ni marcas. La aplicación añade también este mandato como párrafo fijo; no basta llamarla «sala de estilo». Un único frame por vídeo; más candidatas solo mediante frame_count.

@@ -13,15 +13,16 @@ import { ensureMedia } from "@/server/higgsfield";
 import { HttpError } from "@/server/http";
 import { readAvatarImage } from "@/server/avatars";
 import { readProductPhoto } from "@/server/photos";
-import { readPinterestImage } from "@/server/videos/pinterest";
+import { readPinterestImage, readyPinterestRefs, requirePinterestRefs, ownerEnvironmentParagraph } from "@/server/videos/pinterest";
 import { resolveClipModel, SEEDANCE, sourceProblem, wanDurationSeconds, type ClipModel } from "@/lib/clip-models";
 import { getProductFor } from "@/server/products";
+import { listReferences } from "@/server/videos/referencias";
 import { fileSlug } from "@/server/videos/filename";
 import { asHttp, registerRequestBuilder, type GenDeps, type RequestBuilder } from "@/server/videos/generations";
-import { clipManifest, clipPromptFor, type ManifestItem } from "@/server/videos/manifest";
+import { clipManifest, clipPromptFor, MAX_IMAGE_REFS, genjutsuImageTag, type ManifestItem } from "@/server/videos/manifest";
 import { learnedSuffix } from "@/server/videos/mejoras/corrections";
 import { checkVideoPrompt, PROMPT_ERROR } from "@/server/videos/prompt-check";
-import { tramoKind, type TramoVideo } from "@/server/videos/tramos";
+import { tramosOf, shortPlacePrompt } from "@/server/videos/tramos";
 import {
   BRIEF_CHANGED,
   clipDurationSeconds,
@@ -71,9 +72,6 @@ const NO_CLIP = "Todavía no hay clip.";
 
 const EXTENSIONS: Record<string, string> = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp" };
 
-/** El sitio de la referencia de un vídeo visto desde un sitio (`tramos.ts`), o 0. */
-const tramoIndexOf = (video: Video) => (video as TramoVideo).tramo?.index ?? 0;
-
 /** El `jobId` de la imagen inicial aprobada (un resultado bueno de una imagen de este vídeo), o `null`. */
 async function approvedFrameJobId(video: Video): Promise<string | null> {
   if (video.approvedFrameResultId === null) return null;
@@ -86,7 +84,7 @@ async function approvedFrameJobId(video: Video): Promise<string | null> {
         eq(schema.generationResults.id, video.approvedFrameResultId),
         eq(schema.generationResults.ok, true),
         eq(schema.generations.videoId, video.id),
-        eq(schema.generations.kind, tramoKind("frame", tramoIndexOf(video))),
+        eq(schema.generations.kind, "frame"),
       ),
     );
   return found?.jobId ?? null;
@@ -138,10 +136,51 @@ export const buildClipRequest: RequestBuilder = async (user, video, deps) => {
   const model = resolveClipModel(video.clipModel, video.segmentDurationMs);
   const problem = model === SEEDANCE ? null : sourceProblem(model, video.segmentDurationMs);
   if (problem) throw new HttpError(409, problem);
-  const manifest = clipManifest(video, await manifestRefsFor(user, video), undefined, model);
+  const refs = await manifestRefsFor(user, video);
+  const manifest = clipManifest(video, refs, undefined, model);
+  // Las frases de papel de lo de siempre (apertura, persona, producto…), antes de añadir las fotos de cada
+  // entorno: esas llevan su propio párrafo con sus tiempos (nunca «sustituye todo el sitio»).
+  const basePrompt = clipPromptFor(video.videoPrompt ?? "", manifest);
+  const places = await tramosOf(video);
+  const paragraphs: string[] = [];
+  const manual = (await listReferences(video.id)).filter((ref) => ref.role === "fondo");
+  for (const place of places ?? []) {
+    if (place.index === 0) continue;
+    const approved = video.tramoApprovals?.[`frame:${place.index}`];
+    if (place.shortPlaces?.length && !approved) {
+      paragraphs.push(shortPlacePrompt(place));
+      continue;
+    }
+    if (model === SEEDANCE) continue;
+    const sources: ManifestItem["source"][] = [];
+    if (approved) {
+      const [frame] = await getDb().select({ jobId: schema.generationResults.jobId }).from(schema.generationResults)
+        .innerJoin(schema.generations, eq(schema.generations.id, schema.generationResults.generationId))
+        .where(and(eq(schema.generationResults.id, approved), eq(schema.generationResults.ok, true),
+          eq(schema.generations.videoId, video.id), eq(schema.generations.kind, `frame:${place.index}`)));
+      if (frame) sources.push({ kind: "environment_frame", jobId: frame.jobId });
+    }
+    if (!sources.length && place.ownerEnvironment) {
+      if (video.environmentPhotoId !== null) sources.push({ kind: "photo", photoId: video.environmentPhotoId });
+      else sources.push(...manual.map((ref): ManifestItem["source"] => ({ kind: "pinterest", sha256: ref.sha256 })));
+    }
+    if (!sources.length) {
+      await requirePinterestRefs(video.id, place.index);
+      sources.push(...(await readyPinterestRefs(video.id, place.index)).map((sha256): ManifestItem["source"] => ({ kind: "pinterest", sha256 })));
+    }
+    const first = manifest.length;
+    for (const source of sources) {
+      const index = manifest.length; // includes source video: first additional image gets the next image number
+      if (index > MAX_IMAGE_REFS[model]) break;
+      manifest.push({ index, tag: genjutsuImageTag(index), source, role: "entorno", ownerSelected: place.ownerEnvironment || !!approved });
+    }
+    if (place.ownerEnvironment && manifest.length > first) paragraphs.push(`From ${place.startMs / 1000}s to ${place.endMs / 1000}s: ${ownerEnvironmentParagraph(genjutsuImageTag(first))}`);
+    if (manifest.length > first) paragraphs.push(`From ${place.startMs / 1000}s to ${place.endMs / 1000}s the scene takes place in ${place.place}: rebuild that setting from images [${first}]..[${manifest.length - 1}] (real photos of it), localized to the target country; keep the action (${place.action}) and ${place.keepObjects.join(", ")}. Image [1] only supplies the person, the product, the outfit and the look for that part; do not carry its background there.`);
+  }
+  const settingPrompt = paragraphs.length ? `\n\n${paragraphs.join("\n\n")}` : "";
   if (manifest.some((item) => item.source.kind === "avatar_pending")) throw new HttpError(409, NO_AUTO_AVATAR);
   // Correcciones aprendidas de los reportes («Mejoras», `src/server/videos/mejoras/`): van literales al final.
-  const prompt = `${clipPromptFor(video.videoPrompt ?? "", manifest)}${await learnedSuffix("clip", video.productId)}${(await preferencesFor("clip", { videoId: video.id, tramo: tramoIndexOf(video) })).text}`;
+  const prompt = `${basePrompt + settingPrompt}${await learnedSuffix("clip", video.productId)}${(await preferencesFor("clip", { videoId: video.id, tramo: 0 })).text}`;
   const error = checkVideoPrompt(prompt, manifest).find((issue) => issue.level === "error");
   if (error) throw new HttpError(400, error.message, PROMPT_ERROR);
 
@@ -156,6 +195,7 @@ export const buildClipRequest: RequestBuilder = async (user, video, deps) => {
 async function mediaRef(user: AuthUser, video: Video, item: ManifestItem, model: ClipModel, approvedJobId: string, deps: GenDeps): Promise<HfMediaRef> {
   const { source } = item;
   if (source.kind === "reference_video") return { role: "video_references", value: video.referenceMediaId! };
+  if (source.kind === "environment_frame") return { role: "image_references", value: source.jobId };
   if (source.kind === "approved_frame") {
     // Genjutsu y Wan (con referencias) no admiten `start_image`: la aprobada va como referencia (Codex).
     return { role: model === SEEDANCE && video.frameUse === "start_image" ? "start_image" : "image_references", value: approvedJobId };
@@ -202,7 +242,7 @@ registerRequestBuilder("clip", buildClipRequest);
 
 /** El clip hecho que se sube a 1080p: el aprobado o, si no hay, el último bueno; `null` si no hay. */
 async function finishedClip(video: Video): Promise<{ jobId: string } | null> {
-  const kind = tramoKind("clip", tramoIndexOf(video));
+  const kind = "clip";
   const results = await getDb()
     .select({ id: schema.generationResults.id, jobId: schema.generationResults.jobId })
     .from(schema.generationResults)
@@ -305,9 +345,9 @@ export async function downloadableClipUrl(video: Video): Promise<string | null> 
 }
 
 /** Como `downloadableClipUrl`, con el trabajo de Higgsfield (para buscar su copia en el almacén propio). */
-export async function downloadableClip(video: Video, tramo = 0): Promise<{ url: string; jobId: string } | null> {
-  const kind = tramoKind("clip", tramo);
-  const approvedId = tramo === 0 ? video.approvedClipResultId : (video.tramoApprovals?.[kind] ?? null);
+export async function downloadableClip(video: Video): Promise<{ url: string; jobId: string } | null> {
+  const kind = "clip";
+  const approvedId = video.approvedClipResultId;
   const results = await getDb()
     .select({ id: schema.generationResults.id, url: schema.generationResults.url, jobId: schema.generationResults.jobId })
     .from(schema.generationResults)
@@ -326,11 +366,11 @@ export async function downloadableClip(video: Video, tramo = 0): Promise<{ url: 
   if (!chosen?.url) return null;
   // El montaje y la descarga van con el clip subido a 1080p con Topaz, si ya está (orden de Emmanuel,
   // 24/11/2026); si Topaz no pudo, con el de 480p.
-  return (await upscaledOf(video, chosen.jobId, tramo)) ?? { url: chosen.url, jobId: chosen.jobId };
+  return (await upscaledOf(video, chosen.jobId)) ?? { url: chosen.url, jobId: chosen.jobId };
 }
 
 /** La subida a 1080p (Topaz) terminada de ese clip, o `null`. */
-async function upscaledOf(video: Video, clipJobId: string, tramo = 0): Promise<{ url: string; jobId: string } | null> {
+async function upscaledOf(video: Video, clipJobId: string): Promise<{ url: string; jobId: string } | null> {
   const rows = await getDb()
     .select({ url: schema.generationResults.url, jobId: schema.generationResults.jobId, request: schema.generations.request })
     .from(schema.generationResults)
@@ -338,7 +378,7 @@ async function upscaledOf(video: Video, clipJobId: string, tramo = 0): Promise<{
     .where(
       and(
         eq(schema.generations.videoId, video.id),
-        eq(schema.generations.kind, tramoKind("upscale", tramo)),
+        eq(schema.generations.kind, "upscale"),
         eq(schema.generations.status, "done"),
         eq(schema.generationResults.ok, true),
       ),

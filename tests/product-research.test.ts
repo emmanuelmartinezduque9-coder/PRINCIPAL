@@ -6,7 +6,7 @@ import type { AuthUser } from "@/server/auth";
 import { listResearch, queriesOf, requestResearch, runResearch, WAITING_FOR_MAC } from "@/server/product-research";
 import { getDb, schema } from "@/db/client";
 import { appendTaskChunk, claimTask, createAgentToken, finishTask } from "@/server/agent";
-import { getProductFor, updateProduct } from "@/server/products";
+import { updateProduct } from "@/server/products";
 import { seedRules } from "@/server/rules";
 import { fakeMessages, type FakeReply } from "./helpers/fake-llm";
 import { makeProduct, makeUser } from "./helpers/fixtures";

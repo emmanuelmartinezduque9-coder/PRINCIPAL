@@ -10,7 +10,6 @@ import "@/server/videos/frame";
 import "@/server/videos/clip";
 import { quoteGeneration, requestGeneration, type GenDeps, type GenerationKind } from "@/server/videos/generations";
 import { PROMPT_ERROR } from "@/server/videos/prompt-check";
-import { tramoKind, tramosOf, tramoVideo } from "@/server/videos/tramos";
 import { kickBatchOfVideo, stageOf, type Stage } from "@/server/videos/lote";
 import { getVideoFor, latestDoneAnalysis, referenceOutdated, requireVideoOwner, withProductNotes, type Video } from "@/server/videos/videos";
 
@@ -58,22 +57,17 @@ export type AutoStatus =
 
 type Generation = typeof schema.generations.$inferSelect;
 
-async function generationsOf(videoId: number, tramo = 0): Promise<{ frames: Generation[]; clips: Generation[]; upscales: Generation[] }> {
+async function generationsOf(videoId: number): Promise<{ frames: Generation[]; clips: Generation[]; upscales: Generation[] }> {
   const rows = await getDb().select().from(schema.generations).where(eq(schema.generations.videoId, videoId)).orderBy(asc(schema.generations.id));
-  const of = (base: "frame" | "clip" | "upscale") => rows.filter((g) => g.kind === tramoKind(base, tramo));
+  const of = (base: "frame" | "clip" | "upscale") => rows.filter((g) => g.kind === base);
   return { frames: of("frame"), clips: of("clip"), upscales: of("upscale") };
 }
 
 /**
- * Los sitios del vídeo (regla del 24/11/2026, `tramos.ts`): cada uno con el vídeo visto desde él y
- * sus generaciones. Con un solo sitio, el vídeo de siempre.
+ * Solo las generaciones únicas del vídeo: los sufijos históricos no bloquean el avance.
  */
 async function placesOf(video: Video): Promise<Array<{ index: number; video: Video; frames: Generation[]; clips: Generation[]; upscales: Generation[] }>> {
-  const tramos = await tramosOf(video);
-  const indexes = tramos ? tramos.map((t) => t.index) : [0];
-  return Promise.all(
-    indexes.map(async (index) => ({ index, video: tramos ? tramoVideo(video, tramos, index) : video, ...(await generationsOf(video.id, index)) })),
-  );
+  return [{ index: 0, video, ...(await generationsOf(video.id)) }];
 }
 
 /** Un fallo se queda parado hasta «Seguir» (cada intento cuesta): por eso la fecha de corte es el principio de los tiempos. */
@@ -183,23 +177,22 @@ export async function advanceVideo(videoId: number, deps: GenDeps = {}): Promise
     return;
   }
 
-  // Con varios sitios en la referencia (`tramos.ts`), cada sitio lleva su apertura, su tramo y su
-  // 1080p; se piden de uno en uno y el montaje los empalma.
+  // Un frame, un clip con la fuente entera y un Topaz.
   const places = await placesOf(video);
   const busy = places.some((p) => p.frames.concat(p.clips, p.upscales).some((g) => ["intent", "submitting", "submitted", "unknown"].includes(g.status)));
 
-  // 3. Imagen inicial (una por sitio): se pide sola; luego espera la aprobación visual.
+  // 3. Imagen inicial única (salvo compatibilidad): se pide sola y espera la aprobación visual.
   for (const place of places) {
     const frame = frameStageOf(place.video, place.frames);
-    if (frame === "need") return busy ? undefined : requestAuto(user, video, tramoKind("frame", place.index), deps);
+    if (frame === "need") return busy ? undefined : requestAuto(user, video, "frame", deps);
     if (frame === "failed" || frame === "maxed") return stop(video.id, frameStopReason(frame, place.frames));
   }
   if (places.some((place) => frameStageOf(place.video, place.frames) !== "approved")) return;
 
-  // 4. Clip (un tramo por sitio), en cuanto las imágenes están aprobadas.
+  // 4. Clips por entorno, en cuanto el frame está aprobado.
   for (const place of places) {
     const clip = clipStageOf(place.clips);
-    if (clip === "need") return busy ? undefined : requestAuto(user, video, tramoKind("clip", place.index), deps);
+    if (clip === "need") return busy ? undefined : requestAuto(user, video, "clip", deps);
     if (clip === "failed" || clip === "maxed") return stop(video.id, clipStopReason(clip, place.clips));
   }
   if (places.some((place) => clipStageOf(place.clips) !== "done")) return;
@@ -211,7 +204,7 @@ export async function advanceVideo(videoId: number, deps: GenDeps = {}): Promise
     const lastUpscale = place.upscales.at(-1);
     if (lastUpscale && ["intent", "submitting", "submitted", "unknown"].includes(lastUpscale.status)) return;
     const failedUpscales = place.upscales.filter((g) => g.status === "failed" || g.status === "not_sent").length;
-    if (lastUpscale?.status !== "done" && failedUpscales < 3) return busy ? undefined : requestAuto(user, video, tramoKind("upscale", place.index), deps);
+    if (lastUpscale?.status !== "done" && failedUpscales < 3) return busy ? undefined : requestAuto(user, video, "upscale", deps);
   }
 
   // 6. Montaje, en cuanto el clip está subido (una vez: «Volver a montar» es cosa de la persona).
@@ -302,9 +295,9 @@ export async function resumeVideo(user: AuthUser, videoId: number, deps: GenDeps
   if (!found) return;
   // Un fallo que ya se dio por visto: se pide otra ronda directamente (el núcleo pone el máximo de rondas).
   for (const place of await placesOf(found.video)) {
-    if (frameStageOf(place.video, place.frames) === "failed") return requestAuto(found.user, found.video, tramoKind("frame", place.index), deps);
+    if (frameStageOf(place.video, place.frames) === "failed") return requestAuto(found.user, found.video, "frame", deps);
     if (place.video.approvedFrameResultId !== null && clipStageOf(place.clips) === "failed") {
-      return requestAuto(found.user, found.video, tramoKind("clip", place.index), deps);
+      return requestAuto(found.user, found.video, "clip", deps);
     }
   }
   await advanceVideo(video.id, deps);

@@ -20,7 +20,6 @@ import { imageManifest, type ManifestItem } from "@/server/videos/manifest";
 import { learnedSuffix } from "@/server/videos/mejoras/corrections";
 import { addApprovedToBank, framePromptFor, hasManualEnvironment, readPinterestImage, requirePinterestRefs } from "@/server/videos/pinterest";
 import { checkImagePrompt, PROMPT_ERROR } from "@/server/videos/prompt-check";
-import { tramoOpeningFrame, type TramoVideo } from "@/server/videos/tramos";
 import {
   BRIEF_CHANGED,
   DEFAULT_FRAME_COUNT,
@@ -113,12 +112,6 @@ async function requireAnalysisDone(video: Video): Promise<void> {
 async function mediaOf(user: AuthUser, video: Video, item: ManifestItem, deps: GenDeps): Promise<string> {
   const { source } = item;
   if (source.kind === "reference_frame") {
-    // Un sitio extra de la referencia: su apertura conserva el primer fotograma de ese sitio.
-    const tramo = (video as TramoVideo).tramo;
-    if (tramo && tramo.index > 0) {
-      const opening = await tramoOpeningFrame(video as TramoVideo);
-      return ensureMedia(user.id, { bytes: opening.data, filename: `fotograma-${video.id}-sitio-${tramo.index}.jpg`, contentType: opening.mime, type: "image" }, deps);
-    }
     const frame = await readVideoFrame(user, video.id, 0);
     return ensureMedia(user.id, { bytes: frame.data, filename: `fotograma-${video.id}.jpg`, contentType: frame.mime, type: "image" }, deps);
   }
@@ -194,7 +187,7 @@ export const buildFrameRequest: RequestBuilder = async (user, video, deps) => {
   }
   const refs = await manifestRefsFor(user, video);
   // Cada sitio de la referencia busca sus propias fotos (regla del 24/11/2026, `tramos.ts`).
-  const tramo = (video as TramoVideo).tramo?.index ?? 0;
+  const tramo = 0;
   // Regla fija del dueño: sin referencia de entorno puesta a mano, siempre con fotos de Pinterest
   // (también al regenerar). Si aún no están, se buscan y esto espera (409).
   if (!hasManualEnvironment(imageManifest(video, { ...refs, pinterest: [] }))) await requirePinterestRefs(video.id, tramo);
@@ -247,23 +240,19 @@ const noClipOf = (kind: GenerationKind): GenerationGuard => async (tx, video) =>
   if (clip) throw new HttpError(409, CLIP_SENT);
 };
 
-const clipKindOf = (frameKind: GenerationKind): GenerationKind => frameKind.replace(/^frame/, "clip") as GenerationKind;
-
-/**
- * Aprueba una de las candidatas de la imagen inicial (o, con `kind` = `frame:N`, la apertura del
- * sitio N de la referencia; ver `tramos.ts`).
- */
+/** Aprueba una candidata de la única apertura del vídeo. */
 export async function approveFrame(user: AuthUser, videoId: number, resultId: number, kind: GenerationKind = "frame"): Promise<void> {
-  await approveResult(user, videoId, kind, resultId, { guard: noClipOf(clipKindOf(kind)) });
-  if (kind !== "frame") return;
+  if (kind !== "frame") throw new HttpError(409, "Este vídeo lleva una sola imagen");
+  await approveResult(user, videoId, kind, resultId, { guard: noClipOf("clip") });
   // Lo que él aprueba alimenta el banco de referencias (su entorno puesto a mano, si lo llevaba).
   await addApprovedToBank(user, videoId).catch((error) => console.error(`[imagen] No se pudo añadir al banco la referencia del vídeo ${videoId}:`, error));
 }
 
-/** Rechaza la última ronda de la imagen inicial (o de la apertura de un sitio) con un motivo de una línea. */
+/** Rechaza la última ronda de la única imagen inicial con un motivo de una línea. */
 export async function rejectFrame(user: AuthUser, videoId: number, reason: string, kind: GenerationKind = "frame"): Promise<void> {
-  await rejectRound(user, videoId, kind, reason, { guard: noClipOf(clipKindOf(kind)) });
-  const tramo = Number(kind.split(":")[1] ?? 0);
+  if (kind !== "frame") throw new HttpError(409, "Este vídeo lleva una sola imagen");
+  await rejectRound(user, videoId, kind, reason, { guard: noClipOf("clip") });
+  const tramo = 0;
   // Un rechazo del dueño (no un paso automático) rehace la referencia y el prompt con sala con su
   // motivo como corrección (ver `lastOwnerRejection` en `pinterest.ts`).
   if (!reason.startsWith("Corrección automática:") || reason.startsWith("Corrección automática: del dueño: ")) {

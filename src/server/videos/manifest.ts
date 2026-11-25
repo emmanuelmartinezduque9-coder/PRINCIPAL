@@ -39,10 +39,13 @@ export interface ManifestItem {
   index: number;
   /** Imagen: `"image 1"`…; clip: `"@Video1"`, `"@Image1"`… (o `START_IMAGE_TAG`). */
   tag: string;
+  /** Entorno elegido o subido a mano: manda sobre cualquier sugerencia de estilo. */
+  ownerSelected?: boolean;
   source:
     | { kind: "reference_frame" }
     | { kind: "reference_video" }
     | { kind: "approved_frame" }
+    | { kind: "environment_frame"; jobId: string }
     | { kind: "photo"; photoId: number }
     /** Un avatar de la biblioteca (`biblioteca`, o el que eligió el desglose con `automatico`). */
     | { kind: "avatar"; avatarId: number }
@@ -69,6 +72,8 @@ export interface ManifestRefs {
    * van siempre, salvo que el vídeo lleve una foto de entorno puesta a mano.
    */
   pinterest?: string[];
+  manualEnvironmentRefs?: string[];
+  clipSetting?: boolean;
   /**
    * Con sala del banco: el producto no se ve en esta toma (aún envuelto, fuera de plano). Como en
    * el método aprobado, entonces no se adjuntan sus fotos ni su caja.
@@ -141,7 +146,7 @@ export function imageManifest(video: Video, input: ManifestRefs | PhotoInfo[]): 
   const refs = refsOf(input);
   const environment = chosen(refs.photos, video.environmentPhotoId, "entorno");
   const bank = environment.length === 0 ? (refs.pinterest ?? []) : [];
-  if (bank.length > 0 && refs.approvedMethod) return codexOrder(video, refs, bank);
+  if (bank.length > 0 && refs.approvedMethod) return markOwner(codexOrder(video, refs, bank), refs);
   const working = firstOf(refs.photos, "funcionamiento", MAX_WORKING_REFS);
   const all = [...productRefs(video, refs), ...working, ...environment];
   const items: ManifestItem[] = [
@@ -155,7 +160,14 @@ export function imageManifest(video: Video, input: ManifestRefs | PhotoInfo[]): 
       items.push({ index, tag: `image ${index}`, source: { kind: "pinterest", sha256 }, role: "pinterest" });
     }
   }
-  return items;
+  return markOwner(items, refs);
+}
+
+/** Marca la procedencia manual sin cambiar la numeración del método aprobado. */
+function markOwner(items: ManifestItem[], refs: ManifestRefs): ManifestItem[] {
+  return items.map((item) => item.role === "entorno" ||
+    (item.source.kind === "pinterest" && refs.manualEnvironmentRefs?.includes(item.source.sha256))
+    ? { ...item, ownerSelected: true } : item);
 }
 
 /**
@@ -222,7 +234,7 @@ export function clipManifest(
 }
 
 /** Máximo de imágenes de referencia que admite cada modelo (catálogo de Higgsfield, 23/11/2026). */
-const MAX_IMAGE_REFS: Record<Exclude<ClipModel, typeof SEEDANCE>, number> = {
+export const MAX_IMAGE_REFS: Record<Exclude<ClipModel, typeof SEEDANCE>, number> = {
   hf_mult_motion_control: 49,
   hf_mult_replace_object: 30,
   wan3_0_prime: 10,
@@ -239,17 +251,17 @@ const MAX_IMAGE_REFS: Record<Exclude<ClipModel, typeof SEEDANCE>, number> = {
 function genjutsuClipManifest(video: Video, refs: ManifestRefs, model: Exclude<ClipModel, typeof SEEDANCE>): ManifestItem[] {
   const environment = chosen(refs.photos, video.environmentPhotoId, "entorno");
   const room: Ref[] =
-    model === "hf_mult_motion_control"
+    refs.clipSetting === false || (refs.clipSetting === undefined && model === "hf_mult_motion_control")
       ? []
       : environment.length > 0
         ? environment
-        : (refs.pinterest ?? []).slice(0, 1).map((sha256): Ref => ({ source: { kind: "pinterest", sha256 }, role: "pinterest" }));
+        : (refs.pinterest ?? []).slice(0, refs.clipSetting ? undefined : 1).map((sha256): Ref => ({ source: { kind: "pinterest", sha256 }, role: "pinterest" }));
   const frame: Ref = { source: { kind: "approved_frame" }, role: "imagen_aprobada" };
   const images: Ref[] = [frame, ...productRefs(video, refs), ...room].slice(0, MAX_IMAGE_REFS[model]);
-  return [
+  return markOwner([
     { index: 1, tag: SOURCE_VIDEO_TAG, source: { kind: "reference_video" }, role: "video_referencia" },
     ...images.map((ref, i): ManifestItem => ({ index: i + 1, tag: genjutsuImageTag(i + 1), source: ref.source, role: ref.role })),
-  ];
+  ], refs);
 }
 
 /** ¿El prompt cita `image [N]` (también «image N» o «Image [N]»)? */
@@ -285,13 +297,13 @@ function roleSentence(item: ManifestItem): string | null {
  * (el entorno nuevo se elige después): un olvido del prompt nunca para el vídeo ni el lote. Con
  * Seedance, el prompt tal cual.
  */
-export function clipPromptFor(prompt: string, manifest: ManifestItem[]): string {
+export function clipPromptFor(prompt: string, manifest: ManifestItem[], setting = false): string {
   if (!isSourceVideoManifest(manifest)) return prompt;
   // Un desglose que citó al estilo de Seedance: misma numeración de imágenes (la aprobada es la 1).
   prompt = prompt.replace(/@\s*Video\s*1\b/gi, "the source video").replace(/@\s*Image\s*(\d+)/gi, "image [$1]");
   const missing = manifest
     .filter((item) => item.tag !== SOURCE_VIDEO_TAG && !cites(prompt, item.index))
-    .map(roleSentence)
+    .map((item) => setting && item.role === "imagen_aprobada" ? `Use ${item.tag} only for the person, product, outfit and look.` : setting && (item.role === "entorno" || item.role === "pinterest") ? null : roleSentence(item))
     .filter((sentence): sentence is string => sentence !== null);
   // Regla fija (lote 6, 24/11/2026): la caja que se ve, también al abrirla, es la impresa de la
   // variante; Motion Transfer si no copia la caja lisa de la fuente.

@@ -1,3 +1,4 @@
+import { batchPaused } from "@/server/videos/batch-pause";
 import { preferencesFor } from "@/server/videos/aprendizaje/preferencias";
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
@@ -116,7 +117,14 @@ const list = (tags: string[]) => (tags.length === 1 ? tags[0] : `${tags.slice(0,
  * prompt de la imagen al pedirla (el desglose escribe el prompt antes de que existan). Sin fotos de
  * Pinterest en el manifiesto, el prompt tal cual.
  */
+/** Párrafo fijo: la foto elegida manda aunque el escritor omita algún objeto. */
+export function ownerEnvironmentParagraph(tag: string): string {
+  return `The background IS ${tag}: preserve the same room, its furniture, decoration and ALL objects it contains, visible and recognizable in their original positions. Name every visible object individually when describing this room. Place the action, hands and product from image 1 inside this exact room; reframe only as much as required for the source shot angle. Do not remove, replace, rearrange or tidy any object from ${tag}. Keep every screen in place, showing neutral content without characters or brands.`;
+}
+
 export function withPinterestRoles(prompt: string, manifest: ManifestItem[]): string {
+  const owner = manifest.filter((item) => item.ownerSelected || item.role === "entorno");
+  if (owner.length) return `${prompt.trimEnd()}\n\n${owner.map((item) => ownerEnvironmentParagraph(item.tag)).filter((paragraph) => !prompt.includes(paragraph)).join("\n\n")}`;
   const tags = manifest.filter((item) => item.source.kind === "pinterest").map((item) => item.tag);
   if (tags.length === 0) return prompt;
   const which = tags.length === 1 ? `${tags[0]} is a real everyday phone photo` : `${list(tags)} are real everyday phone photos`;
@@ -264,7 +272,8 @@ export async function startPinterestAfterAnalysis(videoId: number, analysisId: n
   const tramos = await tramosOf(video, (analysis?.result as Record<string, unknown> | null) ?? null);
   if (tramos) {
     for (const tramo of tramos) {
-      if (video.environmentPhotoId !== null && tramo.ownerEnvironment) continue;
+      if (tramo.index > 0 && (tramo.shortPlaces?.length || video.tramoApprovals?.[`frame:${tramo.index}`])) continue;
+      if (tramo.ownerEnvironment && (video.environmentPhotoId !== null || (tramo.index > 0 && (await manualReferences(videoId)).some((ref) => ref.role === "fondo")))) continue;
       await ensurePinterestRun(videoId, analysisId, { tramo: tramo.index });
     }
     return;
@@ -285,8 +294,8 @@ export async function readyPinterestRefs(videoId: number, tramo = 0): Promise<st
 export async function readyPinterest(
   videoId: number,
   tramo = 0,
-): Promise<{ refs: string[]; productHidden: boolean; packagingHidden: boolean; approvedMethod: boolean }> {
-  const none = { refs: [], productHidden: false, packagingHidden: false, approvedMethod: false };
+): Promise<{ refs: string[]; manualEnvironmentRefs: string[]; productHidden: boolean; packagingHidden: boolean; approvedMethod: boolean }> {
+  const none = { refs: [], manualEnvironmentRefs: [], productHidden: false, packagingHidden: false, approvedMethod: false };
   const analysisId = await latestDoneAnalysisId(videoId);
   if (analysisId === null) return none;
   const run = await runOf(videoId, analysisId, tramo);
@@ -294,7 +303,7 @@ export async function readyPinterest(
   const refs = ((run.refs as PinterestRef[] | null) ?? []).map((ref) => ref.sha256);
   const approvedMethod = run.framePrompt !== null;
   const scene = run.scene as { productHidden?: boolean; packagingHidden?: boolean } | null;
-  return { refs, approvedMethod, productHidden: approvedMethod && scene?.productHidden === true, packagingHidden: approvedMethod && scene?.packagingHidden === true };
+  return { refs, manualEnvironmentRefs: ((run.refs as PinterestRef[] | null) ?? []).slice(0, 1).filter((ref) => ref.sourceUrl === "subida-a-mano").map((ref) => ref.sha256), approvedMethod, productHidden: approvedMethod && scene?.productHidden === true, packagingHidden: approvedMethod && scene?.packagingHidden === true };
 }
 
 /**
@@ -615,7 +624,10 @@ async function pickFromBank(
   // Referencias subidas a mano en la tarjeta o el vídeo (24/11/2026): un fondo a mano es la sala y
   // manda (no se elige del banco); un «ambiente» o «realismo» a mano ocupa el hueco de realismo.
   const manual = await manualReferences(run.videoId);
-  const manualRoom = manual.find((ref) => ref.role === "fondo");
+  const [video] = await getDb().select().from(schema.videos).where(eq(schema.videos.id, run.videoId));
+  const [analysis] = await getDb().select({ result: schema.videoAnalyses.result }).from(schema.videoAnalyses).where(eq(schema.videoAnalyses.id, run.analysisId));
+  const place = placeOf(analysis?.result as Record<string, unknown> | null, video.segmentDurationMs, run.tramo);
+  const manualRoom = (place === null ? run.tramo === 0 : place.ownerEnvironment) ? manual.find((ref) => ref.role === "fondo") : undefined;
   const manualRealism = manual.find((ref) => ref.role === "realismo" || ref.role === "ambiente");
   const userRef = (sha256: string, reason: string): PinterestRef => ({ sha256, query: "a mano", pinId: "a mano", sourceUrl: "subida-a-mano", reason });
   if (manualRoom) {
@@ -696,6 +708,10 @@ async function finishWithRefs(
   userSelected: boolean,
   store: string | null = null,
 ): Promise<void> {
+  if (run.tramo > 0) {
+    await setRun(run.id, { status: "ready", refs, error: null, framePrompt: null, basePromptSha: null });
+    return;
+  }
   const composed = await composeFramePrompt(run, ctx, gateway, rules, refs, frameJpeg, userSelected, store);
   if (!composed) return;
   const [current] = await getDb().select({ scene: runs.scene }).from(runs).where(eq(runs.id, run.id));
@@ -861,12 +877,7 @@ async function composeFramePrompt(
     .select({ imagePrompt: schema.videos.imagePrompt, segmentDurationMs: schema.videos.segmentDurationMs })
     .from(schema.videos)
     .where(eq(schema.videos.id, run.videoId));
-  // Un sitio extra de la referencia parte de su propio prompt de apertura (`tramos.ts`).
-  let base = video?.imagePrompt ?? null;
-  if (run.tramo > 0) {
-    const [analysis] = await getDb().select({ result: schema.videoAnalyses.result }).from(schema.videoAnalyses).where(eq(schema.videoAnalyses.id, run.analysisId));
-    base = placeOf((analysis?.result as Record<string, unknown> | null) ?? null, video?.segmentDurationMs ?? null, run.tramo)?.imagePrompt || null;
-  }
+  const base = video?.imagePrompt ?? null;
   if (!base) {
     await failRun(run, "El vídeo aún no tiene prompt de imagen");
     return null;
@@ -896,7 +907,7 @@ async function composeFramePrompt(
       store
         ? `image {ROOM} — foto real del interior de la tienda que pide el dueño (${store}), fondo EXACTO. Como en el método aprobado: en environment escribe «The environment reference image {ROOM} supplies the real [tipo de tienda, p. ej. drugstore, cosmetics store, discount supermarket] retail space in [país]: [lo que ves: techo, luces, muebles, colores de la tienda, mercancía a la venta] and the genuine physical store signage exactly as in image {ROOM}. Reproject this environment to the source [checkout or aisle] angle, preserving all actor positions, camera height and movement space. Keep merchandise varied, real store shadows and casually stocked surfaces; no showroom rendering.»; en lighting empieza con «Use the attached real store photograph (image {ROOM}) as exposure authority: [las luces que ves]». NO escribas el nombre de la tienda ni de ninguna marca (Higgsfield bloquea los nombres de marca): la tienda se reconoce por image {ROOM}, «exactly as in image {ROOM}»:`
         : userSelected
-          ? "image {ROOM} — el fondo que el dueño subió a mano en la tarjeta, fondo EXACTO. En el párrafo environment empieza con «Image {ROOM} is the user-selected room background only, not product identity.»:"
+          ? `image {ROOM} — Tu imagen de entorno (manda). Describe en inglés TODOS sus objetos uno a uno según los ves, visibles y reconocibles en su sitio. ${ownerEnvironmentParagraph("image {ROOM}")}`
           : "image {ROOM} — la sala elegida, fondo EXACTO:",
     ),
     imagePart(room, "image/jpeg"),
@@ -910,7 +921,7 @@ async function composeFramePrompt(
       userId: ctx.userId,
       productId: ctx.productId,
       rules: [...imageRules, ...rules],
-      instructions: COMPOSE_INSTRUCTIONS,
+      instructions: COMPOSE_INSTRUCTIONS + (userSelected ? "\nOrden expresa de Emmanuel, 25/11/2026: la foto del dueño manda. En environment enumera TODOS los objetos visibles uno a uno con su posición, sin límite de 6–12 y sin omitir portátil, peluches, platos, mantas ni decoración. No quites, cambies ni ordenes nada. Conserva las pantallas con contenido neutro sin personajes ni marcas. " + ownerEnvironmentParagraph("image {ROOM}") : ""),
       content,
       maxTokens: 6_000,
       schema: composedSchema,
@@ -922,6 +933,7 @@ async function composeFramePrompt(
     written.identity.trim(),
     written.product.trim(),
     written.environment.trim(),
+    ...(userSelected ? [ownerEnvironmentParagraph("image {ROOM}")] : []),
     `${written.lighting.trim()} ${LIGHTING_POLICY}`,
     ...(refs.length > 1 ? [realismParagraph(`image ${REALISM_TAG}`)] : []),
     NEGATIVE_PARAGRAPH,
@@ -944,7 +956,7 @@ async function composeFramePrompt(
  */
 export async function framePromptFor(videoId: number, imagePrompt: string, manifest: ManifestItem[], tramo = 0): Promise<string> {
   const tags = manifest.filter((item) => item.source.kind === "pinterest").map((item) => item.tag);
-  if (tags.length === 0) return imagePrompt;
+  if (tags.length === 0) return withPinterestRoles(imagePrompt, manifest);
   const analysisId = await latestDoneAnalysisId(videoId);
   const run = analysisId === null ? null : await runOf(videoId, analysisId, tramo);
   const sha = crypto.createHash("sha256").update(imagePrompt).digest("hex");
@@ -953,7 +965,7 @@ export async function framePromptFor(videoId: number, imagePrompt: string, manif
   const byRole = (role: ManifestItem["role"]) => manifest.filter((item) => item.role === role);
   const pins = byRole("pinterest");
   const articles = byRole("articulo");
-  return run.framePrompt
+  const resolved = run.framePrompt
     .replaceAll(ROOM_TAG, number(pins[0]))
     .replaceAll(REALISM_TAG, number(pins[1] ?? pins[0]))
     .replaceAll("{AVATAR}", number(byRole("avatar")[0]))
@@ -961,6 +973,7 @@ export async function framePromptFor(videoId: number, imagePrompt: string, manif
     .replaceAll("{EFFECT}", number(byRole("funcionamiento")[0]))
     .replace(/\{MANUAL(\d)\}/g, (_, n: string) => number(byRole("referencia")[Number(n) - 1]))
     .replace(/\{ARTICLE(\d?)\}/g, (_, n: string) => number(articles[(n ? Number(n) : 1) - 1]));
+  return manifest.some((item) => item.ownerSelected || item.role === "entorno") ? withPinterestRoles(resolved, manifest) : resolved;
 }
 
 // ───────────────────────── El trabajo ─────────────────────────
@@ -1008,7 +1021,7 @@ export async function runPinterest(runId: number, deps: PinterestDeps = {}): Pro
 
 async function runPinterestOnce(runId: number, deps: PinterestDeps): Promise<void> {
   const [run] = await getDb().select().from(runs).where(eq(runs.id, runId));
-  if (!run || run.status === "ready" || run.status === "failed") return;
+  if (!run || run.status === "ready" || run.status === "failed" || await batchPaused(run.videoId)) return;
   const [video] = await getDb().select().from(schema.videos).where(eq(schema.videos.id, run.videoId));
   const [analysis] = await getDb().select().from(schema.videoAnalyses).where(eq(schema.videoAnalyses.id, run.analysisId));
   if (!video || !analysis) return;

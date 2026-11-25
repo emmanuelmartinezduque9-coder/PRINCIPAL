@@ -1,56 +1,51 @@
-# Sitios de la referencia: una apertura y un tramo por sitio
+# Sitios de la referencia: un frame, un clip y un Topaz por vídeo
 
-Regla fija de Emmanuel (24/11/2026), el defecto que más le molestaba en Codex. Cada toma de la referencia tiene su propio sitio y su propia acción, y se respetan. Caso real del lote 6: un FalterPfote con las primeras tomas en el supermercado y el resto en la calle. Como solo había una referencia de supermercado, salió entero en el supermercado.
+Orden expresa de Emmanuel, **25/11/2026**: todos los vídeos generan una apertura (`frame`),
+un clip (`clip`) con el vídeo fuente entero desde esa apertura aprobada y un Topaz (`upscale`).
+Más candidatas de apertura únicamente mediante `videos.frame_count` o `batches.frame_count`.
+Nunca se crean `frame:N`, `clip:N` ni `upscale:N`. No se recorta por sitio ni se empalma en montaje.
 
-## Cuándo
+## Sitios y referencias
 
-Con Genjutsu (Motion Transfer u Object Swap) o Wan 3.0 Prime, al replicar o en «Solo gancho» (`usesPlaces` en `analysis.ts`). Con Seedance o en «Adaptación de concepto» no se parte nada. Tampoco sin la referencia entera guardada (`reference_storage_key`), porque hace falta para recortar. Con un solo sitio, todo sigue como antes.
+`clipPlaces` en `tramos.ts` conserva los índices de `analysis.places` y sus tiempos absolutos.
+El sitio 0 ya está en la apertura y no añade referencias. Cada sitio N ≥ 1 con al menos dos tomas
+(según sus inicios en `analysis.shots`) o al menos 3 s adjunta al final del único clip las fotos
+reales de su entorno. Primero se mantienen apertura, avatar, artículo y embalaje en su orden habitual.
+Se respeta `MAX_IMAGE_REFS`: Motion Transfer 49, Object Swap 30, Wan 10. Seedance no añade entornos.
 
-## El desglose
+Para ese sitio manda la foto del dueño (`environment_photo_id` o `video_references` con papel
+`fondo`) si `ownerEnvironment` dice que cubre su tipo de sitio; no se busca Pinterest para él.
+Si no, se usan las fotos de `video_pinterest_refs.tramo = N`. La búsqueda de sitios posteriores
+queda lista sin escribir ningún prompt de frame. Sus índices no cambian por haber tomas cortas.
 
-`Analysis.places` (opcional): las tomas consecutivas del mismo lugar real, agrupadas en orden. Cada sitio lleva:
+El único prompt añade por entorno, con sus números reales y tiempos del vídeo entero:
 
-- `startS` y `endS`;
-- `place`: tipo de sitio, en inglés;
-- `action`;
-- `keepObjects`: los objetos que exige la acción, como la nevera o la caja;
-- `ownerEnvironment`: si la referencia de entorno del dueño es de ese tipo de sitio;
-- `imagePrompt` y `videoPrompt`.
+> From {start}s to {end}s the scene takes place in {place}: rebuild that setting from images [k]..[m] (real photos of it), localized to the target country; keep the action ({action}) and {keepObjects}. Image [1] only supplies the person, the product, the outfit and the look for that part; do not carry its background there.
 
-El primer sitio usa los prompts de siempre, y esos prompts describen solo el primer sitio. `normalizePlaces` (`tramos.ts`) ordena los sitios, quita huecos y solapes, cubre el tramo entero y junta lo que dura menos de 1 s con el sitio anterior. Un sitio siguiente sin sus prompts también se junta con el anterior.
+Las tomas cortas (una toma y menos de 3 s) no buscan ni adjuntan fotos. Se describen con tiempos
+absolutos, conservando acción, sitio y objetos necesarios y variando diseño, color y contenido.
+Nunca se traslada el fondo de otra toma ni se saca algo de la nada.
 
-## Las generaciones
+## Vídeos antiguos
 
-El primer sitio usa los tipos de siempre (`frame`, `clip`, `upscale`). Cada sitio extra N usa `frame:N`, `clip:N` y `upscale:N` (la restricción `generations_kind_valid` los admite). Se construyen con los mismos constructores y el vídeo «visto desde ese sitio» (`tramoVideo`):
+También generan un solo clip desde el `frame` de apertura aprobado. Los `frame:N` aprobados en
+`videos.tramo_approvals` se reutilizan como referencias de entorno de su sitio, sustituyendo a
+Pinterest. No se regeneran imágenes. Las generaciones `clip:N` y `upscale:N` antiguas se ignoran:
+no bloquean el avance ni entran en el montaje. La revisión muestra solo la apertura y sus candidatas.
 
-- su prompt;
-- su referencia de entorno, solo si `ownerEnvironment`;
-- lo aprobado de ese sitio, en `videos.tramo_approvals`;
-- su duración;
-- para el clip, su vídeo fuente recortado de la referencia guardada (`tramoReferenceMedia`, subido una vez).
+## La imagen del dueño manda
 
-Lo que se vuelve a comprobar al apuntar (la instantánea) son las columnas del vídeo de verdad.
+La foto manual se etiqueta «Tu imagen de entorno (manda)». El prompt de apertura enumera todos sus
+objetos en inglés con su posición y conserva habitación, mobiliario, decoración y objetos reconocibles.
+Solo reencuadra lo necesario para colocar acción, manos y producto. Las pantallas conservan contenido
+neutro sin personajes ni marcas. El clip aplica esta conservación en los tiempos de su entorno.
 
-- **Apertura.** `image 1` es el primer fotograma de ese sitio, sacado de la referencia guardada. Las fotos de Pinterest son las de ese sitio (`video_pinterest_refs.tramo`), con la escena de ese sitio, su acción y sus objetos.
-- **Sitio corto.** Si un sitio dura menos que el mínimo del modelo (Motion Transfer: 3 s), su vídeo fuente congela el último fotograma hasta llegar (`sourceMsFor`). Lo congelado se corta al empalmar: nunca se toma prestado otro sitio.
-- **Orden.** El lote y el vídeo suelto piden de uno en uno por vídeo. Los clips salen cuando las aperturas de todos los sitios están aprobadas.
-- **Revisión.** Las aperturas del mismo vídeo se revisan juntas, en «Revisar imágenes» y en el paso Imagen. No hay pasos ni botones nuevos: cada apertura extra tiene su «Aprobar» y su «Rechazar».
+## Pausas
 
-## El empalme
+Un lote `pausado` requiere reanudación explícita. El barrido no reanuda pausas de prompt ni devuelve
+vídeos excluidos en lotes pausados. Autopilot solo procesa vídeos sueltos. Las generaciones pendientes
+no se envían y los montajes encolados no se recogen mientras el lote esté pausado. Publicar no arranca
+el lote 10. Un trabajo que ya se envió al proveedor antes de pausar puede terminar y conservar su resultado.
 
-`buildSpec` (`edits.ts`) pone en el clip los tramos de cada sitio (`parts`), cada uno con lo que dura en la referencia. `montaje-nube.ts` descarga cada tramo (a 1080p si Topaz terminó) y los empalma con `spliceClips`, como el empalme por tomas de Codex (lote 6, ids 8 y 12):
-
-- corta cada tramo por su duración;
-- lo pone al tamaño del primero;
-- 24 fps, crf 16;
-- sin audio, porque el audio sale de la referencia.
-
-## Coste extra por vídeo
-
-Por cada sitio extra:
-
-- una imagen de Nano Banana 2.1 a 2K (su precio de siempre, unos 2 créditos por candidata);
-- el redondeo de Topaz por tramo (mínimo 2 créditos por tramo, en lugar de uno para todo el clip);
-- si el sitio dura menos de 3 s, lo congelado que Motion Transfer cobra de más.
-
-El clip en sí no se duplica: los tramos suman la misma duración. El presupuesto del lote ya lo cuenta (`quoteRows`).
+Pruebas: `tests/tramos.test.ts`, `tests/flujo-automatico.test.ts` y el caso de fondo manual en
+`tests/pinterest.test.ts`. No se modifica `CLAUDE.md` ni se migran datos al desplegar.

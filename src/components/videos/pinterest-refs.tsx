@@ -21,10 +21,12 @@ const WAITING: Record<string, string> = {
 export function PinterestRefs({ pinterest, compact = false }: { pinterest: PinterestJson | null | undefined; compact?: boolean }) {
   const [zoomed, setZoomed] = useState<PinterestJson["refs"][number] | null>(null);
   if (!pinterest) return null;
+  const manual = pinterest.refs.length > 0 && pinterest.refs.every((ref) => ref.sourceUrl === "subida-a-mano");
+  const heading = manual ? "Tu imagen de entorno · manda, no se busca en Pinterest" : "Referencias que se usan (elegidas solas de tus aprobadas · no hay que hacer nada)";
   const waiting = WAITING[pinterest.status];
   return (
-    <section className={compact ? "flex flex-col gap-1.5" : "panel flex flex-col gap-2 p-4"} aria-label="Referencias de Pinterest">
-      <h3 className="text-xs font-medium text-muted-foreground">Referencias que se usan (elegidas solas de tus aprobadas · no hay que hacer nada)</h3>
+    <section className={compact ? "flex flex-col gap-1.5" : "panel flex flex-col gap-2 p-4"} aria-label={manual ? "Tu imagen de entorno (manda)" : "Referencias de Pinterest"}>
+      <h3 className="text-xs font-medium text-muted-foreground">{heading}</h3>
       {pinterest.refs.length > 0 ? (
         <ul className="flex flex-wrap gap-2">
           {pinterest.refs.map((ref) => (

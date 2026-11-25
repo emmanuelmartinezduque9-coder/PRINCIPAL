@@ -1,3 +1,5 @@
+import { batchPaused, requireBatchRunning } from "@/server/videos/batch-pause";
+import { readPinterestImage } from "@/server/videos/pinterest";
 import { preferencesFor } from "@/server/videos/aprendizaje/preferencias";
 import { and, asc, eq, inArray, max, sql } from "drizzle-orm";
 import { localizationGuide, MARKETS, marketOf, type LocalizationItem, type Market } from "@/server/videos/localization";
@@ -380,7 +382,7 @@ Ninguno de los dos prompts lleva direcciones, identificadores de archivos ni est
 Las explicaciones (conceptLogic, shots, adaptation, risks) van en español; los dos prompts, en inglés.`,
   ];
   sections.push(`Localización\n${localizationGuide(market)}`);
-  if (usesPlaces(brief.kind, model)) sections.push(PLACES_ITEM);
+  if (usesPlaces(brief.kind)) sections.push(PLACES_ITEM);
   if (brief.kind === "adaptacion_concepto") sections.push(ADAPTATION_KIND);
   if (brief.kind === "solo_gancho" && brief.hookSeconds !== null) {
     sections.push(hookOnlyKind(hook ?? { hookMs: brief.hookSeconds * 1000, clipSeconds: clipDurationSeconds(brief.hookSeconds * 1000) }, model));
@@ -393,14 +395,13 @@ Las explicaciones (conceptLogic, shots, adaptation, risks) van en español; los 
 /**
  * Regla fija de Emmanuel (24/11/2026), el defecto que más le molestaba en Codex: cada toma de la
  * referencia conserva su sitio y su acción. Con Genjutsu o Wan (el vídeo fuente manda), al replicar
- * o en «Solo gancho», la referencia se parte por sitios y cada sitio lleva su propia apertura y su
- * tramo, que después se empalman (como en Codex: «cada clip Genjutsu necesita su apertura»).
+ * o en «Solo gancho», los sitios solo organizan referencias del único clip con el vídeo fuente entero.
  */
-export function usesPlaces(kind: VideoKind, model: ClipModel): boolean {
-  return model !== SEEDANCE && kind !== "adaptacion_concepto";
+export function usesPlaces(kind: VideoKind): boolean {
+  return kind !== "adaptacion_concepto";
 }
 
-const PLACES_ITEM = `places: los sitios de la referencia (regla fija del dueño, 24/11/2026). Cada toma tiene su propio sitio y su propia acción y se respetan: si una toma es sacar algo de la nevera, la nevera se queda (puede cambiar lo de dentro, su color o su estilo), nunca se quita para poner el salón del resto del vídeo y sacar algo de la nada. Agrupa las tomas consecutivas que pasan en el mismo lugar real (no por cortes: dos planos seguidos del mismo pasillo son un sitio). Si todo el tramo pasa en un solo sitio, places es null y no cambia nada. Si hay dos o más sitios, devuelve uno por grupo, en orden, sin huecos ni solapes y cubriendo el tramo entero (el primero empieza en 0 y el último acaba al final del tramo), y no partas un sitio de menos de 1 segundo: júntalo con el de al lado. Por cada sitio: startS y endS; place, el tipo de sitio tal como es en la referencia y en inglés («supermarket aisle», «city street at night», «kitchen with an open fridge»); action, lo que pasa ahí, en español; keepObjects, los objetos que exige esa acción y que se conservan, en inglés («open fridge», «shipping box», «front door»); ownerEnvironment, true solo si el manifiesto de imagen trae una referencia de entorno puesta por el dueño y es de este tipo de sitio (un supermarket del dueño solo vale para las tomas del supermercado; la calle no la usa). El primer sitio usa imagePrompt y videoPrompt y deja los suyos vacíos: esos dos prompts describen solo el primer sitio (su apertura y su tramo), no el vídeo entero. Cada sitio siguiente lleva su propio imagePrompt (la apertura de ese sitio: réplica de su primer fotograma con las mismas reglas que la imagen inicial, el mismo avatar y el mismo producto, su propio entorno localizado al país del anuncio según localization (una calle de EE. UU. pasa a una calle de la ciudad del mercado, una tienda a su cadena equivalente) y los objetos de keepObjects conservados en su sitio; image 1 es el primer fotograma de ese sitio) y su propio videoPrompt (el de su tramo, con las mismas reglas que videoPrompt: su vídeo fuente es solo el tramo de ese sitio, image [1] es la apertura de ese sitio). Ningún sitio toma prestado el entorno de otro.`;
+const PLACES_ITEM = `places: orden expresa de Emmanuel, 25/11/2026. Agrupa las tomas consecutivas del mismo lugar real; devuelve todos los sitios, incluso los de menos de 1 s, sin huecos ni solapes (primero 0, último final del tramo). Con un solo sitio, null. Por sitio: startS, endS, place en inglés, action en inglés y keepObjects en inglés (nevera, puerta, caja que exige la acción). Cada toma conserva su sitio y su acción: sacar algo de la nevera nunca pasa al salón ni saca algo de la nada. ownerEnvironment es true solo cuando la imagen de entorno del dueño es de ese tipo de sitio, también si está subida como fondo. La aplicación NUNCA parte el clip: un único clip con el vídeo fuente entero y un Topaz. Los entornos de ≥ 2 tomas de shots o ≥ 3 s llevan fotos de referencia al final del único clip; las tomas cortas se describen literalmente con tiempos absolutos del vídeo entero. UN SOLO frame por vídeo: imagePrompt global describe el primer fotograma original. Cada sitio deja imagePrompt vacío. videoPrompt global describe el vídeo ENTERO con sus cortes, acciones y tiempos absolutos. Cada sitio deja videoPrompt vacío. Image [1] siempre es el único frame aprobado del vídeo: en los siguientes sitios solo aporta persona, producto, ropa y estilo, nunca su fondo. La aplicación adjunta al final las fotos del entorno de cada tramo y escribe sus números reales. Localiza cada entorno al país del producto según localization y conserva los objetos que exige la acción. Ningún sitio toma prestado el entorno de otro.`;
 
 /** Cómo se nombra el producto en los prompts de vídeo (método aprobado: nunca por su marca). */
 const PRODUCT_NAMING = `Cómo se nombra el producto en el prompt del clip: nunca por su nombre de marca ni por el del producto de la referencia; por su papel («the exact selected product» de su imagen) y con palabras genéricas; la marca propia solo como marca física impresa.`;
@@ -456,8 +457,10 @@ const ROLE_LABEL: Record<ManifestItem["role"], string> = {
 const PENDING_AVATAR = "avatar (lo elige la aplicación después de este desglose: no lo describas, cítalo solo por su número)";
 
 /** Con «sin sustitución», el primer fotograma de la referencia aporta también las personas; con «Automático», el avatar aún no está. */
-const roleLabel = (item: Pick<ManifestItem, "role" | "source">, brief: Brief) =>
-  item.source.kind === "avatar_pending"
+const roleLabel = (item: Pick<ManifestItem, "role" | "source" | "ownerSelected">, brief: Brief) =>
+  item.ownerSelected
+    ? "Tu imagen de entorno (manda); solo cubre los sitios de este tipo"
+    : item.source.kind === "avatar_pending"
     ? PENDING_AVATAR
     : item.role === "composicion" && brief.avatarMode === "sin_sustitucion"
       ? "composición y personas (primer fotograma de la referencia: encuadre, distancia de cámara y las personas que se conservan)"
@@ -555,9 +558,9 @@ async function buildContent(
 
   const sameSource = (a: ManifestItem["source"], b: ManifestItem["source"]) => JSON.stringify(a) === JSON.stringify(b);
   for (const item of images) {
-    if (item.source.kind !== "photo" && item.source.kind !== "avatar") continue;
+    if (item.source.kind !== "photo" && item.source.kind !== "avatar" && item.source.kind !== "pinterest") continue;
     const clipTag = clip.find((other) => sameSource(other.source, item.source))?.tag;
-    const { data } = item.source.kind === "photo" ? await readProductPhoto(user, item.source.photoId) : await readAvatarImage(item.source.avatarId);
+    const { data } = item.source.kind === "photo" ? await readProductPhoto(user, item.source.photoId) : item.source.kind === "avatar" ? await readAvatarImage(item.source.avatarId) : await readPinterestImage(item.source.sha256);
     let reduced: Buffer;
     try {
       reduced = await makeThumbnail(data, "image", PHOTO_MAX_SIDE);
@@ -566,7 +569,7 @@ async function buildContent(
       throw error;
     }
     content.push(
-      textPart(`${item.tag}${clipTag ? ` · ${clipTag}` : ""} — papel: ${roleLabel(item, brief)}`),
+      textPart(`${item.tag}${clipTag ? ` · ${clipTag}` : ""} — papel: ${item.ownerSelected ? "Tu imagen de entorno (manda); solo cubre los sitios de este tipo" : roleLabel(item, brief)}`),
       imagePart(reduced, "image/jpeg"),
     );
   }
@@ -674,6 +677,7 @@ async function insertAnalysis(
   brief: Brief,
   options: { onlyNewReference?: boolean } = {},
 ): Promise<{ analysisId: number } | null> {
+  await requireBatchRunning(video.id);
   const analysisId = await getDb().transaction(async (tx) => {
     await tx.execute(analysisLock(video.id));
     const [active] = await tx
@@ -869,7 +873,7 @@ export async function runAnalysis(analysisId: number, deps: { gateway?: LlmGatew
     .from(analyses)
     .innerJoin(schema.videos, eq(schema.videos.id, analyses.videoId))
     .where(eq(analyses.id, analysisId));
-  if (!row || !ACTIVE.includes(row.status)) return;
+  if (!row || !ACTIVE.includes(row.status) || await batchPaused(row.videoId)) return;
   // Al empezar (o al volver a lanzarlo la cola) queda en marcha y renueva su hora.
   if (!(await setStatus(analysisId, "running", null))) return;
   if (await accessLost(row.createdBy, row.productId)) {
@@ -901,7 +905,7 @@ export async function runAnalysis(analysisId: number, deps: { gateway?: LlmGatew
           userId: ctx.userId,
           productId: ctx.productId,
           rules: await loadRules(analysisRuleSlugs(brief.kind, brief.clipModel)),
-          instructions: analysisInstructions(brief, hookTiming(video), variants.map((variant) => variant.name), marketOf(product)) + (await preferencesFor("desglose", { videoId: video.id })).text,
+          instructions: analysisInstructions(brief, hookTiming(video), variants.map((variant) => variant.name), marketOf(product)) + "\nOrden expresa de Emmanuel, 25/11/2026: si hay imagen de entorno elegida o subida a mano, su habitación ES el fondo. En imagePrompt enumera en inglés todos los objetos que ves, uno a uno y con su posición; conserva mobiliario, decoración y objetos reconocibles sin quitar, cambiar ni ordenar nada. Coloca dentro acción, manos y producto de image 1 y reencuadra solo lo necesario. Conserva pantallas con contenido neutro sin personajes ni marcas." + (await preferencesFor("desglose", { videoId: video.id })).text,
           content,
           maxTokens: MAX_TOKENS,
           schema: analysisSchema,

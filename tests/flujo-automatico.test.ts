@@ -18,9 +18,10 @@ import { seedRules } from "@/server/rules";
 import { runAnalysis, type Analysis } from "@/server/videos/analysis";
 import { advanceVideo, armOnOpen, autoStatusOf, resumeVideo } from "@/server/videos/autopilot";
 import { addVideoToBatch, createBatch, getBatchFor } from "@/server/videos/batches";
-import { approveFrame } from "@/server/videos/frame";
-import { finalizeGeneration, submitGeneration, type GenDeps } from "@/server/videos/generations";
-import { advanceBatch, answerQuestion, autoView, batchQuestions, sendBatch } from "@/server/videos/lote";
+import { approveFrame, rejectFrame } from "@/server/videos/frame";
+import { finalizeGeneration, quoteGeneration, requestGeneration, submitGeneration, type GenDeps } from "@/server/videos/generations";
+import { advanceBatch, advanceRunningBatches, autoView, batchQuestions, sendBatch } from "@/server/videos/lote";
+import { claimRun } from "@/server/videos/montaje-nube";
 import { createVideo, getVideoFor, updateVideoChoices, videoView } from "@/server/videos/videos";
 import { getObjectStore } from "@/lib/object-store";
 import { StepBreakdown } from "@/components/videos/step-breakdown";
@@ -37,9 +38,7 @@ import { instantPinterest } from "./helpers/pinterest";
  * «Generar 2 imágenes · Esto cuesta 4 créditos»: una imagen por vídeo que se pide sola al terminar
  * el desglose; luego clip y montaje. Solo se para con una pregunta obligatoria.
  *
- * Regla 4 cambiada (Emmanuel, 24/11/2026): una imagen por cada SITIO distinto de la referencia
- * (`tramos.ts`). Con un solo sitio, sigue siendo una. Cada sitio lleva su apertura y su tramo de
- * Motion Transfer, que el montaje empalma; las imágenes del mismo vídeo se revisan juntas.
+ * Orden expresa de Emmanuel, 25/11/2026: un frame, un clip y un Topaz por vídeo, incluidos los antiguos.
  */
 
 /** Un desglose con riesgos (instrucciones internas) y ninguna decisión pendiente: como el del vídeo 2 de EisWerk. */
@@ -405,13 +404,14 @@ const STREET_VIDEO =
   "Use the source video as the authority for every action, camera movement, cut and timing. Use image [1] as the human-approved clean opening frame of this street part. The woman is the person in image [2]. The machine is the exact product in image [3]. No text overlays, no captions.";
 const WITH_PLACES: Analysis = {
   ...WITH_RISKS,
+  shots: [0, 1, 2.5, 4].map((startS) => ({ startS, endS: startS + 1, seen: "", action: "", onScreenText: "" })),
   places: [
     { startS: 0, endS: 2.5, place: "supermarket aisle", action: "Coge la máquina de la estantería", keepObjects: ["shelf"], ownerEnvironment: false, imagePrompt: "", videoPrompt: "" },
     { startS: 2.5, endS: 6, place: "city street", action: "Camina por la calle con la máquina", keepObjects: [], ownerEnvironment: false, imagePrompt: STREET_PROMPT, videoPrompt: STREET_VIDEO },
   ],
 };
 
-describe("sitios de la referencia: una apertura y un tramo por sitio", () => {
+describe("sitios de la referencia: un frame, un clip y un Topaz por vídeo", () => {
   /** La referencia entera guardada (hace falta para partirla): 2,5 s rojos (súper) y 3,5 s verdes (calle). */
   async function storedReference(videoId: number): Promise<void> {
     const file = path.join(dir, `referencia-${videoId}.mp4`);
@@ -428,76 +428,45 @@ describe("sitios de la referencia: una apertura y un tramo por sitio", () => {
 
   const kinds = async () => (await generations()).map((g) => [g.kind, g.status]);
 
-  it("vídeo suelto: una imagen por sitio revisadas juntas, un tramo por sitio y el montaje los empalma", async () => {
+  it("vídeo suelto: un frame aprobado compartido, fotos del entorno al final y montaje sin empalme", async () => {
     const id = await soloVideo();
     await storedReference(id);
     await advanceVideo(id, deps);
     await runQueuedAnalyses(WITH_PLACES);
 
-    // La apertura del primer sitio y, después, la del segundo (de una en una).
     await advanceVideo(id, deps);
     expect(await kinds()).toEqual([["frame", "intent"]]);
     await sendAndFinish();
     await advanceVideo(id, deps);
-    expect(await kinds()).toEqual([["frame", "done"], ["frame:1", "intent"]]);
-    const { rows } = await getPool().query("select request from generations where kind = 'frame:1'");
-    const request = rows[0].request as { prompt: string; medias: Array<{ role: string; value: string }> };
-    // Su propio prompt (la calle), su propio fotograma de apertura y sus propias fotos de Pinterest.
-    expect(request.prompt).toContain("Berlin pavement");
-    expect(request.prompt).not.toContain("chest height. ");
-    const { rows: mainRows } = await getPool().query("select request from generations where kind = 'frame'");
-    expect(request.medias[0].value).not.toBe((mainRows[0].request as typeof request).medias[0].value);
-    expect((await getPool().query("select tramo from video_pinterest_refs where video_id = $1 order by tramo", [id])).rows).toEqual([{ tramo: 0 }, { tramo: 1 }]);
-
-    // Las dos imágenes del vídeo se revisan juntas: nada de pasos ni botones nuevos.
-    await sendAndFinish();
-    let view = await viewJson(id);
+    expect(await kinds()).toEqual([["frame", "done"]]);
+    const view = await viewJson(id);
     expect(view.auto).toEqual({ state: "review" });
-    expect(view.places).toHaveLength(1);
-    expect(view.places![0]).toMatchObject({ tramo: 1, place: "city street", startMs: 2500 });
-    expect(view.places![0].frame.current?.results.length).toBe(1);
-    const html = visible(render(createElement(StepFrame, { view, onGoToClip: () => {} })));
-    expect(html).toContain("Sitio 2");
-    expect(html).toContain("city street");
-
+    expect(view.places).toEqual([]);
+    expect(visible(render(createElement(StepFrame, { view, onGoToClip: () => {} })))).not.toContain("Sitio 2");
+    await expect(approveFrame(ana, id, await firstCandidate(id), "frame:1")).rejects.toMatchObject({ status: 409, message: "Este vídeo lleva una sola imagen" });
+    await expect(rejectFrame(ana, id, "Otro entorno", "frame:1")).rejects.toMatchObject({ status: 409, message: "Este vídeo lleva una sola imagen" });
+    await expect(quoteGeneration(ana, id, "frame:1", deps)).rejects.toMatchObject({ status: 409, message: "Este vídeo lleva una sola imagen" });
     await approveFrame(ana, id, await firstCandidate(id));
-    await advanceVideo(id, deps);
-    // Sin la apertura de la calle aprobada, no sale ningún clip.
-    expect((await kinds()).some(([kind]) => String(kind).startsWith("clip"))).toBe(false);
-    const { rows: street } = await getPool().query(
-      "select r.id from generation_results r join generations g on g.id = r.generation_id where g.video_id = $1 and g.kind = 'frame:1'",
-      [id],
-    );
-    await approveFrame(ana, id, street[0].id, "frame:1");
-    view = await viewJson(id);
-    expect(view.places![0].frame.approvedResultId).toBe(street[0].id);
 
-    // Un tramo de Motion Transfer por sitio, cada uno con el vídeo fuente recortado a su sitio.
     await advanceVideo(id, deps);
+    const { rows: clips } = await getPool().query("select kind, request from generations where kind like 'clip%' order by id");
+    expect(clips.map((c) => c.kind)).toEqual(["clip"]);
+    const images = clips[0].request.medias.filter((m: {role: string}) => m.role === "image_references");
+    expect(images).toHaveLength(4);
+    expect(clips[0].request.prompt).toContain("From 2.5s to 6s the scene takes place in city street: rebuild that setting from images [4]..[4]");
+    expect(clips[0].request.prompt).toContain("do not carry its background there");
+    expect(clips[0].request.medias.find((m: {role: string}) => m.role === "video_references").value).toBe(`ref-${id}`);
+    expect(clips[0].request.model).toBe("hf_mult_motion_control");
     await sendAndFinish();
-    await advanceVideo(id, deps);
-    const clips = (await getPool().query("select kind, request from generations where kind like 'clip%' order by id")).rows as Array<{
-      kind: string;
-      request: { model: string; medias: Array<{ role: string; value: string }> };
-    }>;
-    expect(clips.map((c) => c.kind)).toEqual(["clip", "clip:1"]);
-    const sources = clips.map((c) => c.request.medias.find((m) => m.role === "video_references")!.value);
-    expect(sources[0]).not.toBe(`ref-${id}`);
-    expect(sources[1]).not.toBe(sources[0]);
-    expect(clips.every((c) => c.request.model === "hf_mult_motion_control")).toBe(true);
-    await sendAndFinish();
-
-    // Topaz por sitio y, con todo hecho, el montaje con los dos tramos para empalmar.
-    for (let i = 0; i < 4; i++) {
+    for (let i = 0; i < 3; i++) {
       await advanceVideo(id, deps);
       await sendAndFinish();
     }
-    expect((await kinds()).filter(([kind]) => String(kind).startsWith("upscale"))).toEqual([["upscale", "done"], ["upscale:1", "done"]]);
-    await advanceVideo(id, deps);
+    expect(await kinds()).toEqual([["frame", "done"], ["clip", "done"], ["upscale", "done"]]);
     const { rows: runs } = await getPool().query("select spec from edit_runs where video_id = $1", [id]);
     expect(runs).toHaveLength(1);
-    const parts = (runs[0].spec as { clips: Array<{ parts?: Array<{ durationMs: number }> }> }).clips[0].parts;
-    expect(parts?.map((p) => p.durationMs)).toEqual([2500, 3500]);
+    expect(runs[0].spec.clips).toHaveLength(1);
+    expect(runs[0].spec.clips[0].parts).toBeUndefined();
   });
 
   it("con un solo sitio, sigue siendo una imagen (y sin la referencia guardada, también)", async () => {
@@ -511,7 +480,55 @@ describe("sitios de la referencia: una apertura y un tramo por sitio", () => {
     expect((await viewJson(id)).places).toEqual([]);
   });
 
-  it("lote: una imagen por sitio en la revisión y el presupuesto cuenta las dos", async () => {
+  it("la imagen del dueño manda en su sitio y no se busca Pinterest para ese entorno", async () => {
+    const id = await soloVideo();
+    const room = await addProductPhoto(ana, producto.id, Buffer.concat([jpeg, Buffer.from("owner-room")]), "entorno");
+    await updateVideoChoices(ana, id, { environmentPhotoId: room.id });
+    await advanceVideo(id, deps);
+    await runQueuedAnalyses({ ...WITH_PLACES, places: [WITH_PLACES.places![0], { ...WITH_PLACES.places![1], ownerEnvironment: true }] });
+    await advanceVideo(id, deps);
+    await sendAndFinish();
+    await approveFrame(ana, id, await firstCandidate(id));
+    await advanceVideo(id, deps);
+    const { rows } = await getPool().query("select request from generations where video_id = $1 and kind = 'clip'", [id]);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].request.prompt).toContain("From 2.5s to 6s the scene takes place in city street");
+    expect(rows[0].request.prompt).toContain("preserve the same room, its furniture, decoration and ALL objects");
+    expect(rows[0].request.medias.filter((m: {role: string}) => m.role === "image_references")).toHaveLength(4);
+    expect((await getPool().query("select tramo from video_pinterest_refs where video_id = $1", [id])).rows).toEqual([{ tramo: 0 }]);
+  });
+
+  it.each(["frame", "clip", "upscale", "montaje"])("un lote pausado no lanza %s desde barrido, autopilot ni colas", async (step) => {
+    const batch = await createBatch(ana, "Pausado", { autoAnalyze: false });
+    const video = await addVideoToBatch(ana, batch.id, { productId: producto.id, avatarPhotoId: avatar, avatarMode: "elegido" });
+    await readyReference(video.id);
+    await sendBatch(ana, batch.id);
+    await runQueuedAnalyses();
+    for (let i = 0; i < 12; i++) {
+      await advanceBatch(batch.id, deps);
+      const all = await generations();
+      if (step !== "montaje" && all.some((g) => g.kind === step && g.status === "intent")) break;
+      if ((await getPool().query("select id from edit_runs where video_id = $1", [video.id])).rows.length) break;
+      await sendAndFinish();
+      const current = await getVideoFor(ana, video.id);
+      if (current.approvedFrameResultId === null && all.some((g) => g.kind === "frame")) await approveFrame(ana, video.id, await firstCandidate(video.id));
+    }
+    const before = await generations();
+    if (step !== "montaje") expect(before.some((g) => g.kind === step && g.status === "intent")).toBe(true);
+    else expect((await getPool().query("select status from edit_runs where video_id = $1", [video.id])).rows).toEqual([{ status: "queued" }]);
+    await getPool().query("update batches set status = 'pausado', pause = $2::jsonb where id = $1", [batch.id,
+      JSON.stringify({ kind: "fallo", reason: "Higgsfield bloqueó el clip", from: "clips", videoId: video.id, kindOf: "clip" })]);
+    await advanceRunningBatches(deps);
+    await advanceBatch(batch.id, deps);
+    await advanceVideo(video.id, deps);
+    await resumeVideo(ana, video.id, deps);
+    for (const g of before) if (g.status === "intent") await submitGeneration(g.id, deps);
+    expect(await generations()).toEqual(before);
+    expect(await claimRun(new Date())).toBeNull();
+    expect((await getBatchFor(ana, batch.id)).status).toBe("pausado");
+  });
+
+  it("lote: una imagen por vídeo en la revisión y el presupuesto", async () => {
     const batch = await createBatch(ana, "Lote", { autoAnalyze: false });
     const video = await addVideoToBatch(ana, batch.id, { productId: producto.id, avatarPhotoId: avatar, avatarMode: "elegido" });
     await readyReference(video.id);
@@ -522,8 +539,60 @@ describe("sitios de la referencia: una apertura y un tramo por sitio", () => {
       await advanceBatch(batch.id, deps);
       await sendAndFinish();
     }
-    expect(await kinds()).toEqual([["frame", "done"], ["frame:1", "done"]]);
+    expect(await kinds()).toEqual([["frame", "done"]]);
     const estimates = (await getBatchFor(ana, batch.id)).estimates as Record<string, { frame: number }> | null;
-    expect(estimates?.[String(video.id)]?.frame).toBe(4);
+    expect(estimates?.[String(video.id)]?.frame).toBe(2);
+    await approveFrame(ana, video.id, await firstCandidate(video.id));
+    for (let i = 0; i < 5; i++) { await advanceBatch(batch.id, deps); await sendAndFinish(); }
+    expect(await kinds()).toEqual([["frame", "done"], ["clip", "done"], ["upscale", "done"]]);
+    const { rows: edits } = await getPool().query("select spec from edit_runs where video_id = $1", [video.id]);
+    expect(edits).toHaveLength(1);
+    expect(edits[0].spec.clips[0].parts).toBeUndefined();
   });
+  it("reutiliza frame:1 aprobado sin nuevas imágenes e ignora clip:1 y upscale:1", async () => {
+    const id = await soloVideo();
+    await storedReference(id);
+    await advanceVideo(id, deps);
+    await runQueuedAnalyses(WITH_PLACES);
+    await advanceVideo(id, deps);
+    await sendAndFinish();
+    await approveFrame(ana, id, await firstCandidate(id));
+    // Copia un resultado real como frame antiguo aprobado; no genera nada adicional.
+    const { rows: legacy } = await getPool().query(`insert into generations (video_id, user_id, kind, round, status, count, quoted_credits, request)
+      select video_id, user_id, 'frame:1', round, status, count, quoted_credits, request from generations where video_id = $1 returning id`, [id]);
+    const { rows: result } = await getPool().query(`insert into generation_results (generation_id, index, job_id, ok, url)
+      select $2, index, job_id || '-legacy', ok, url from generation_results where generation_id = (select id from generations where video_id = $1 and kind = 'frame') returning id, job_id`, [id, legacy[0].id]);
+    await getPool().query("update videos set tramo_approvals = $2::jsonb where id = $1", [id, JSON.stringify({ "frame:1": result[0].id })]);
+    await getPool().query("update video_pinterest_refs set status = 'failed' where video_id = $1 and tramo = 1", [id]);
+    await expect(requestGeneration(ana, id, "frame", { expectedCredits: 2 }, deps)).rejects.toMatchObject({ status: 409 });
+    for (const kind of ["clip:1", "upscale:1"]) await getPool().query(`insert into generations (video_id, user_id, kind, round, status, count, quoted_credits, request)
+      select video_id, user_id, $2, round, 'failed', count, quoted_credits, request from generations where video_id = $1 and kind = 'frame'`, [id, kind]);
+    for (let i = 0; i < 5; i++) { await advanceVideo(id, deps); await sendAndFinish(); }
+    const { rows: clips } = await getPool().query("select request from generations where video_id = $1 and kind = 'clip'", [id]);
+    expect(clips).toHaveLength(1);
+    expect(clips[0].request.medias.at(-1).value).toBe(result[0].job_id);
+    expect(clips[0].request.prompt).toContain("From 2.5s to 6s the scene takes place in city street");
+    expect((await kinds()).filter(([kind]) => String(kind).startsWith("frame"))).toEqual([["frame", "done"], ["frame:1", "done"]]);
+    expect((await getPool().query("select spec from edit_runs where video_id = $1", [id])).rows[0].spec.clips[0].parts).toBeUndefined();
+  });
+
+  it("la toma corta se queda en el clip vecino, sin referencias propias", async () => {
+    const id = await soloVideo();
+    await storedReference(id);
+    await advanceVideo(id, deps);
+    await runQueuedAnalyses({ ...WITH_PLACES, places: [
+      { ...WITH_PLACES.places![0], endS: 4 },
+      { ...WITH_PLACES.places![1], startS: 4, endS: 5, place: "open fridge", action: "take food out", keepObjects: ["fridge door"] },
+      { ...WITH_PLACES.places![1], startS: 5, endS: 6 },
+    ], shots: [0, 1, 4, 5].map((startS) => ({ startS, endS: startS + 1, seen: "", action: "", onScreenText: "" })) });
+    await advanceVideo(id, deps);
+    await sendAndFinish();
+    await approveFrame(ana, id, await firstCandidate(id));
+    await advanceVideo(id, deps);
+    const { rows } = await getPool().query("select request from generations where video_id = $1 and kind = 'clip'", [id]);
+    expect(rows[0].request.prompt).toContain("From 4s to 5s the shot cuts to open fridge: keep fridge door and the action (take food out) exactly there");
+    expect((await getPool().query("select tramo from video_pinterest_refs where video_id = $1", [id])).rows).toEqual([{ tramo: 0 }]);
+    expect(rows[0].request.medias.filter((m: {role: string}) => m.role === "image_references")).toHaveLength(3);
+  });
+
 });

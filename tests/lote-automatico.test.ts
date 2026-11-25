@@ -244,6 +244,16 @@ describe("pausas por algo interno", () => {
     expect((await getBatchFor(ana, saldo.id)).status).toBe("pausado");
   });
 
+  it("una pausa del dueño (sin tipo, como la del lote 10) nunca se reanuda sola", async () => {
+    const owner = await createBatch(ana, "Parado");
+    const pause = { from: "revision_imagenes", kindOf: null, quoted: null, reason: "Parado por Emmanuel: no hacer un clip por sitio.", videoId: null, extraCredits: 0 };
+    await getPool().query("update batches set status = 'pausado', pause = $2::jsonb where id = $1", [owner.id, JSON.stringify(pause)]);
+    await advanceRunningBatches(deps);
+    await advanceRunningBatches(deps);
+    expect((await getBatchFor(ana, owner.id)).status).toBe("pausado");
+    expect((await getBatchFor(ana, owner.id)).pause).toMatchObject({ reason: pause.reason });
+  });
+
   it("«Saltar» en una pausa por un prompt interno no saca el vídeo; «Volver a incluir» devuelve uno saltado", async () => {
     const { batchId, videos } = await batchWith(1);
     const pause = { kind: "fallo", reason: "Video 1: Falta decir para qué sirve image [4].", from: "clips", extraCredits: 0, videoId: videos[0].id, kindOf: "clip", quoted: null };

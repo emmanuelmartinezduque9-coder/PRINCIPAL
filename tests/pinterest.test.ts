@@ -1,3 +1,7 @@
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { PromptEditor } from "@/components/videos/prompt-editor";
+import { PinterestRefs } from "@/components/videos/pinterest-refs";
 import { spawnSync } from "node:child_process";
 import { eq } from "drizzle-orm";
 import fs from "node:fs";
@@ -541,13 +545,16 @@ describe("imágenes de referencia subidas a mano", () => {
       { text: JSON.stringify(SCENE) },
       { text: JSON.stringify({ ...COMPOSED, environment: "Image {ROOM} is the user-selected room background only, not product identity. Preserve its sofa on the LEFT." }) },
     ]);
-    await runPinterest(run.id, pinterestDeps({ gateway: createGateway({ client }) }));
+    const search = vi.fn(async () => { throw new Error("No debe buscar en Pinterest"); });
+    await runPinterest(run.id, pinterestDeps({ gateway: createGateway({ client }), search }));
+    expect(search).not.toHaveBeenCalled();
     const [done] = await getDb().select().from(schema.videoPinterestRefs).where(eq(schema.videoPinterestRefs.id, run.id));
     expect(done.status).toBe("ready");
     expect((done.refs as Array<{ sha256: string }>).map((r) => r.sha256)).toEqual([fondo.sha256]);
     expect(calls).toHaveLength(2); // escena y prompt: ninguna llamada para elegir del banco
     const texts = (calls[1].messages[0].content as Array<{ type: string; text?: string }>).filter((b) => b.type === "text").map((b) => b.text).join("\n");
-    expect(texts).toContain("user-selected room background only, not product identity");
+    expect(texts).toContain("TODOS sus objetos uno a uno");
+    expect(texts).toContain("Do not remove, replace, rearrange or tidy any object");
     expect(texts).toContain("image {MANUAL1} — la ropa que debe llevar la persona");
 
     // La imagen: la sala es su fondo y la ropa va adjunta con su papel.
@@ -555,6 +562,17 @@ describe("imágenes de referencia subidas a mano", () => {
     const manifest = imageManifest(video, await manifestRefsFor(ana, video));
     expect(manifest.filter((m) => m.role === "pinterest").map((m) => (m.source as { sha256: string }).sha256)).toEqual([fondo.sha256]);
     expect(manifest.find((m) => m.role === "referencia")?.source).toEqual({ kind: "manual", sha256: ropa.sha256, refRole: "ropa" });
+    expect(manifest.find((m) => m.source.kind === "pinterest")?.ownerSelected).toBe(true);
+    const built = await buildFrameRequest(ana, video, deps);
+    expect(built.request.prompt).toContain("Do not remove, replace, rearrange or tidy any object from image");
+    expect(built.request.prompt).toContain("ALL objects it contains");
+    expect(built.request.prompt).toContain("showing neutral content without characters or brands");
+    const editor = renderToStaticMarkup(createElement(PromptEditor, { label: "Imagen", value: "", onChange: () => {}, issues: [], manifest, range: [0, 5000] }));
+    expect(editor).toContain("Tu imagen de entorno (manda)");
+    expect(editor).not.toContain("Referencia de Pinterest");
+    const { pinterestView } = await import("@/server/videos/pinterest");
+    const pins = await pinterestView(created.id);
+    expect(renderToStaticMarkup(createElement(PinterestRefs, { pinterest: pins }))).toContain("Tu imagen de entorno · manda, no se busca en Pinterest");
 
     // Al aprobar, el fondo subido a mano entra en el banco de aprobadas.
     await addApprovedToBank(ana, created.id);
@@ -683,5 +701,43 @@ describe("tienda concreta pedida en la tarjeta", () => {
     expect(lastText).toContain("Último intento");
     expect(lastText).not.toContain("El dueño pide este sitio concreto");
     expect((calls[3].messages[0].content as Array<{ type: string }>).filter((b) => b.type === "image")).toHaveLength(7);
+  });
+});
+
+describe("referencias del clip de otro entorno, sin otra apertura", () => {
+  async function extraPlace(ownerEnvironment: boolean): Promise<void> {
+    await getPool().query("update videos set segment_duration_ms = 6000 where id = $1", [v.id]);
+    const place = { action: "walk with the product", keepObjects: [], imagePrompt: "", videoPrompt: "Keep the source action." };
+    await getPool().query("update video_analyses set result = $2 where video_id = $1", [v.id, JSON.stringify({
+      shots: [{ startS: 0 }, { startS: 3 }],
+      places: [{ ...place, startS: 0, endS: 3, place: "kitchen", ownerEnvironment: false }, { ...place, startS: 3, endS: 6, place: "living room", ownerEnvironment }],
+    })]);
+  }
+
+  it("Pinterest termina ready con fotos y sin llamar al escritor del frame", async () => {
+    await extraPlace(false);
+    await requirePinterestRefs(v.id, 1).catch(() => {});
+    const run = await runOfVideo(v.id);
+    const { gateway, calls } = gatewayFor();
+    await runPinterest(run.id, pinterestDeps({ gateway }));
+    const done = await runOfVideo(v.id);
+    expect(done).toMatchObject({ tramo: 1, status: "ready", framePrompt: null, basePromptSha: null });
+    expect(done.refs).toHaveLength(2);
+    expect(calls).toHaveLength(2); // Solo escena y elección: no hay prompt de otra imagen.
+  });
+
+  it("el fondo del dueño cubre su sitio, sin buscar ni escribir otra imagen", async () => {
+    await extraPlace(true);
+    await getDb().insert(schema.videoReferences).values({ videoId: v.id, sha256: bank[0], role: "fondo", position: 0 });
+    await requirePinterestRefs(v.id, 1).catch(() => {});
+    const run = await runOfVideo(v.id);
+    const { client, calls } = fakeMessages([{ text: JSON.stringify(SCENE) }]);
+    const search = vi.fn(async () => { throw new Error("El dueño ya eligió su entorno"); });
+    await runPinterest(run.id, pinterestDeps({ gateway: createGateway({ client }), search }));
+    const done = await runOfVideo(v.id);
+    expect(done).toMatchObject({ tramo: 1, status: "ready", framePrompt: null });
+    expect(done.refs).toMatchObject([{ sha256: bank[0], sourceUrl: "subida-a-mano" }]);
+    expect(search).not.toHaveBeenCalled();
+    expect(calls).toHaveLength(1);
   });
 });

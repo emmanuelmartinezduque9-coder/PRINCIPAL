@@ -1,5 +1,5 @@
 import { captureVideoSignals } from "@/server/videos/aprendizaje/senales";
-import { and, asc, desc, eq, inArray, isNotNull, lte, ne, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, lte, ne, sql } from "drizzle-orm";
 import { z } from "zod";
 import { getDb, schema } from "@/db/client";
 import { textPart } from "@/llm/content";

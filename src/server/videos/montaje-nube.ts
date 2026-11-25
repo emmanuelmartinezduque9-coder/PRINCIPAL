@@ -1,3 +1,4 @@
+import { batchPaused } from "@/server/videos/batch-pause";
 import { createWriteStream } from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
@@ -11,7 +12,7 @@ import { getObjectStore, type ObjectStore } from "@/lib/object-store";
 import { LlmCapReachedError } from "@/llm/gateway";
 import { macOnline } from "@/server/agent-tasks";
 import { downloadLinkMedia, ensureLinkMedia, fetchInCloud, macTaskStatus, requestFromMac, saveBreakdown, type FetchDeps } from "@/server/link-media";
-import { extractAudio, MediaError, probeVideo, spliceClips } from "@/server/media/ffmpeg";
+import { extractAudio, MediaError, probeVideo } from "@/server/media/ffmpeg";
 import { killPrograms, lastLine, runProgram } from "@/server/media/programs";
 import { latestSongWithDrop, readSongFile } from "@/server/songs";
 import { storedOriginalKey } from "@/server/videos/archive";
@@ -105,7 +106,9 @@ export async function claimRun(now: Date): Promise<Run | null> {
     update edit_runs set status = 'running', attempts = attempts + 1, started_at = ${now.toISOString()}::timestamptz,
       heartbeat_at = ${now.toISOString()}::timestamptz
     where id = (
-      select id from edit_runs where status = 'queued' and available_at <= ${now.toISOString()}::timestamptz
+      select id from edit_runs where status = 'queued'
+      and not exists (select 1 from videos v join batches b on b.id = v.batch_id
+        where v.id = edit_runs.video_id and b.status = 'pausado') and available_at <= ${now.toISOString()}::timestamptz
       order by id limit 1 for update skip locked)
     returning id`);
   const id = result.rows[0]?.id;
@@ -231,24 +234,8 @@ async function appleEmojiFile(store: ObjectStore | null, deps: MontajeDeps): Pro
 
 // ───────────────────────── Entradas ─────────────────────────
 
-/**
- * Un clip a `target`. Con sitios (`parts`), cada tramo y su empalme por orden, cortando lo que se
- * congeló de más (como el empalme por tomas de Codex, ids 8 y 12 del lote 6).
- */
-async function fetchClip(clip: EditSpec["clips"][number], target: string, store: ObjectStore | null, deps: MontajeDeps): Promise<void> {
-  if (!clip.parts || clip.parts.length < 2) return fetchOne(clip, target, store, deps);
-  const files: Array<{ path: string; durationMs: number }> = [];
-  for (const [i, part] of clip.parts.entries()) {
-    const file = `${target.replace(/\.mp4$/, "")}-sitio-${i}.mp4`;
-    await fetchOne(part, file, store, deps);
-    files.push({ path: file, durationMs: part.durationMs });
-  }
-  await spliceClips(files, target);
-  console.log(`[montaje] Empalme de ${files.length} sitios: ${files.map((f) => `${(f.durationMs / 1000).toFixed(2)} s`).join(" + ")}.`);
-}
-
 /** Un clip a `target`: del almacén propio si ya está copiado; si no, de Higgsfield. */
-async function fetchOne(clip: { jobId: string | null; url: string }, target: string, store: ObjectStore | null, deps: MontajeDeps): Promise<void> {
+async function fetchClip(clip: { jobId: string | null; url: string }, target: string, store: ObjectStore | null, deps: MontajeDeps): Promise<void> {
   const key = store && clip.jobId ? await storedOriginalKey(clip.jobId) : null;
   if (store && key) {
     await store.download(key, target);
@@ -374,6 +361,10 @@ async function fallbackSong(dir: string): Promise<(NonNullable<EditSpec["song"]>
  * mal (el vídeo dice por qué) o de vuelta a la cola (esperando un enlace del Mac).
  */
 export async function runEdit(run: Run, deps: MontajeDeps = {}): Promise<"done" | "failed" | "deferred"> {
+  if (await batchPaused(run.videoId)) {
+    await defer(run, 60_000, nowOf(deps));
+    return "deferred";
+  }
   const store = deps.store === undefined ? getObjectStore() : deps.store;
   const spec = run.spec as EditSpec;
   const notes: string[] = [];

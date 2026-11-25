@@ -1,3 +1,4 @@
+import { batchPaused, requireBatchRunning } from "@/server/videos/batch-pause";
 import { captureVideoSignals } from "@/server/videos/aprendizaje/senales";
 import { and, asc, eq, gt, inArray, isNull, lt, ne, or, sql } from "drizzle-orm";
 import {
@@ -102,7 +103,7 @@ export const FINALIZE_JOB = "video.finalizar";
 
 /** `upscale`: Topaz a 1080p sobre el clip ya hecho (orden de Emmanuel, 24/11/2026, como Codex). */
 export type BaseGenerationKind = "frame" | "clip" | "upscale";
-/** `frame:N`, `clip:N`, `upscale:N`: los del sitio N de la referencia (regla del 24/11/2026, `tramos.ts`). */
+/** Los sufijos se conservan únicamente para leer resultados históricos, nunca para generar. */
 export type GenerationKind = BaseGenerationKind | `${BaseGenerationKind}:${number}`;
 
 /** El tipo sin su sitio (`clip:2` → `clip`). */
@@ -199,12 +200,12 @@ export function registerRequestBuilder(kind: BaseGenerationKind, build: RequestB
  * errores (sin conexión, permiso caducado, Higgsfield caído) se responden igual que al presupuestar.
  */
 async function buildRequest(user: AuthUser, video: Video, kind: GenerationKind, deps: GenDeps) {
+  await requireBatchRunning(video.id);
   const build = builders.get(baseKindOf(kind));
   if (!build) throw new HttpError(503, NO_BUILDER);
-  // Con varios sitios en la referencia, cada generación se construye con el vídeo visto desde su
-  // sitio (`tramos.ts`); lo que se vuelve a comprobar al apuntar son las columnas del vídeo de verdad.
+  // Solo la apertura limita el entorno del dueño al tipo de sitio que realmente cubre.
   const { videoForKind } = await import("@/server/videos/tramos");
-  const seen = await videoForKind(video, kind, deps).catch(asHttp);
+  const seen = await videoForKind(video, kind).catch(asHttp);
   const built = await build(user, seen, deps).catch(asHttp);
   if (seen === video || !built.snapshot) return built;
   const keys = Object.keys(built.snapshot) as Array<keyof Video>;
@@ -570,6 +571,8 @@ async function settleSend(row: Generation, outcome: { value: HfSubmitResult } | 
  * (`unknown` → `submitted` o `not_sent`): los identificadores no se pierden.
  */
 export async function submitGeneration(generationId: number, deps: GenDeps = {}): Promise<void> {
+  const [pending] = await getDb().select().from(generations).where(eq(generations.id, generationId));
+  if (!pending || pending.kind.includes(":") || await batchPaused(pending.videoId)) return;
   const claimedAt = clock(deps);
   const deadlineMs = deps.submitDeadlineMs ?? SUBMIT_DEADLINE_MS;
   const deadline = Date.now() + deadlineMs;
@@ -602,6 +605,10 @@ export async function submitGeneration(generationId: number, deps: GenDeps = {})
   // Se vuelve a sellar justo antes de enviar; si la fila ya no está en envío, no se envía.
   if (!(await moveFrom(row.id, "submitting", { submitStartedAt: clock(deps) }))) {
     await settleNotSent(row.id, { error: SEND_TOO_SLOW, finishedAt: clock(deps) });
+    return;
+  }
+  if (await batchPaused(row.videoId)) {
+    await moveFrom(row.id, "submitting", { status: "intent", submitStartedAt: null });
     return;
   }
   const sending =

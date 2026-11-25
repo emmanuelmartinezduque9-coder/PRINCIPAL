@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import { ownerEnvironmentParagraph } from "@/server/videos/pinterest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -165,8 +166,9 @@ describe("petición de la imagen inicial", () => {
     const manifestMediaIds = ["media-1", "media-2", "media-3", "media-4"];
     expect(request).toEqual({
       model: "nano_banana_2_1",
-      // Siempre con la regla fija de fondos sin personas al final.
-      prompt: `${v.imagePrompt!.trim()} ${NO_PEOPLE_PICTURES}`,
+      // La foto de entorno que elige el dueño manda (conserva todos sus objetos) y, siempre, la regla fija
+      // de fondos sin personas al final.
+      prompt: `${v.imagePrompt!.trim()}\n\n${ownerEnvironmentParagraph("image 4")} ${NO_PEOPLE_PICTURES}`,
       aspectRatio: "9:16",
       resolution: "2k",
       medias: manifestMediaIds.map((value) => ({ role: "image_references", value })),
