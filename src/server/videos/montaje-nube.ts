@@ -338,7 +338,23 @@ function safeEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv {
   const keep = ["PATH", "HOME", "LANG", "LC_ALL", "TMPDIR", "PYTHONPATH", "UV_CACHE_DIR", "XDG_CACHE_HOME", "NUMBA_CACHE_DIR", "MPLCONFIGDIR", "EMOJI_FONT", "REA_VIDEO_HOME", "REA_VIDEO_MODELS", "WHISPER_MODELS"];
   const env: Record<string, string> = {};
   for (const name of keep) if (process.env[name]) env[name] = process.env[name]!;
-  return { ...env, PYTHONDONTWRITEBYTECODE: "1", ...extra } as unknown as NodeJS.ProcessEnv;
+  // Lote 10 (25/11/2026): el contenedor admite 1000 hilos y cada librería abría uno por núcleo (48): con varios
+  // montajes a la vez ffmpeg y numpy fallaban con «Resource temporarily unavailable».
+  const threads = { OMP_NUM_THREADS: "4", OPENBLAS_NUM_THREADS: "4", MKL_NUM_THREADS: "4", NUMBA_NUM_THREADS: "4", VECLIB_MAXIMUM_THREADS: "4", NUMEXPR_MAX_THREADS: "4" };
+  return { ...env, ...threads, PYTHONDONTWRITEBYTECODE: "1", ...extra } as unknown as NodeJS.ProcessEnv;
+}
+
+let pinSlot = 0;
+/**
+ * El montador limitado a 8 núcleos (`taskset`): ffmpeg y libx264 calculan sus hilos con los núcleos que ven, así que
+ * cada montaje abre unos 12 en vez de 72. Cada montaje va a otro bloque de núcleos. Sin `taskset` (Mac), tal cual.
+ */
+function pinned(command: string, args: string[]): [string, string[]] {
+  const cpus = os.cpus().length;
+  if (process.platform !== "linux" || cpus <= 8) return [command, args];
+  const blocks = Math.floor(cpus / 8);
+  const start = (pinSlot++ % blocks) * 8;
+  return ["taskset", ["-c", `${start}-${start + 7}`, command, ...args]];
 }
 
 const AUDIO_EXT: Record<string, string> = { "audio/mpeg": "mp3", "audio/mp4": "m4a", "audio/wav": "wav" };
@@ -601,7 +617,7 @@ export async function runEdit(run: Run, deps: MontajeDeps = {}): Promise<"done" 
           doblar: async (args) => {
             const out = path.join(dir, `doblar-${args[0]}.json`);
             await fs.rm(out, { force: true });
-            const ran = await runProgram(python, ["-B", path.join(montadorDir, "doblar.py"), "--resultado", out, ...args], {
+            const ran = await runProgram(...pinned(python, ["-B", path.join(montadorDir, "doblar.py"), "--resultado", out, ...args]), {
               cwd: montadorDir,
               timeoutMs: DOBLAR_TIMEOUT_MS,
               env: safeEnv(numbaCacheOf(dir)),
@@ -660,7 +676,7 @@ export async function runEdit(run: Run, deps: MontajeDeps = {}): Promise<"done" 
     );
     const montadorDir = deps.montadorDir ?? path.join(process.cwd(), "montador");
     const python = deps.python ?? process.env.MONTADOR_PYTHON ?? "python3";
-    const ran = await runProgram(python, ["-B", path.join(montadorDir, "montar_auto.py"), specPath, work], {
+    const ran = await runProgram(...pinned(python, ["-B", path.join(montadorDir, "montar_auto.py"), specPath, work]), {
       cwd: montadorDir,
       timeoutMs: MONTADOR_TIMEOUT_MS,
       env: safeEnv({ ...numbaCacheOf(dir), MONTADOR_FUENTE: font, MONTADOR_CACHE: path.join(os.tmpdir(), "montador-cache"), ...(emojiFont ? { EMOJI_FONT: emojiFont } : {}) }),
