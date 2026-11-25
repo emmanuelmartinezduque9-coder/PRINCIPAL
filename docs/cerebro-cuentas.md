@@ -129,3 +129,18 @@ Es limpia, sin confirmaciones.
 - **Codex:** la ampliación de `perfil.mjs` (yt-dlp por reel), el importador del histórico, la migración, el barrido y
   las pruebas.
 - **Claude:** este diseño, el modelo (`modelo.ts`, con sus pruebas), la vista y la revisión.
+
+## Estado de la prueba real (25/11/2026)
+
+- **Histórico cargado en producción** (`importar-cerebro.ts --cargar`, por `railway ssh`):
+  - 267 reels, 421 lecturas y 50 cuentas;
+  - antes se completaron en este Mac, con yt-dlp, la fecha, la descripción y los comentarios de 128 de los 131 reels
+    propios que no los tenían.
+- **ADN:** sacado por Haiku de la descripción. Pasaba por el Claude Code del Mac.
+  - No se mandan miniaturas a la API: no puede abrir direcciones de Instagram por su robots.txt.
+  - Se separan el ángulo (la idea), la CTA y el rótulo literal.
+  - En el histórico no hay desglose: el fondo, la canción y casi todos los rótulos constan como «desconocido», y no
+    se cuentan.
+- **Lectura cada 6 h de las cuentas: bloqueada.** El agente del Mac (1.11.0, ya instalado) necesita la sesión de
+  Instagram en `~/.principal-agente-instagram.txt`. Hoy falla con `sin_sesion`. Hay que exportarla con
+  `agente-mac/exportar-sesion.sh`, con Instagram abierto en Brave. Eso es del dueño: el Mac no inicia sesión por él.
