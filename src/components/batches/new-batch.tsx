@@ -37,7 +37,6 @@ import {
   ProductCover,
   ProductPicker,
   VariantPicker,
-  VariantSwatches,
   type AvatarChoice,
   type VariantJson,
 } from "./batch-fields";
@@ -646,7 +645,7 @@ function GroupHeader({
         </div>
         {product ? (
           <>
-            <VariantSwatches variants={variants} coverPhotoId={product.coverPhotoId ?? null} value={group.variant} onChange={(variant) => onChange({ variant })} />
+            {/* La variante se elige en cada tarjeta, nunca para todo el producto (orden de Emmanuel, 26/11/2026). */}
             <div className="flex min-w-0 items-start gap-3">
               <Indications value={group.notes} open={notesOpen} onOpenChange={setNotesOpen} className="min-w-0 flex-1">
                 <Textarea
@@ -745,7 +744,8 @@ export function NewBatch() {
     key: nextKey("fila"),
     source,
     avatar: null,
-    variant: group.variant,
+    // Cada tarjeta elige su variante; el grupo ya no la impone (orden de Emmanuel, 26/11/2026).
+    variant: null,
     kind: group.kind,
     adaptation: "",
     hookSeconds: group.hookSeconds,
