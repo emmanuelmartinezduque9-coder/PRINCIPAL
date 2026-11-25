@@ -77,3 +77,16 @@ El defecto que más le molestaba en Codex. En las réplicas con Genjutsu o Wan (
   almacén), `frame.ts` (la imagen no se pide sin ellas) y `reglas/referencias-pinterest.md` (qué buscar
   según la escena). No lo quites ni lo hagas opcional sin una orden expresa del dueño.
 - **Lo que ya funcionaba en Codex (`/Volumes/T7/AUTOMATIZACION SEGA`) se copia tal cual y después se mejora.** Nunca se rehace desde cero ni se «compara»: prompts, skills de Nano Banana, referencias, montaje.
+
+## Regla fija del dueño: delegar en Codex lo que consume (Emmanuel, 24–25/11/2026)
+
+Todos los chats de este proyecto tienen Codex conectado (plugin `codex@openai-codex` y CLI
+`~/.local/npm-global/bin/codex`, con el ChatGPT de Emmanuel) y **delegan en él por defecto** lo que
+gasta mucho, para que el plan de Claude dure y el coordinador quede libre:
+
+- **A Codex:** la ejecución. Programas del móvil, código acotado, revisiones de código (`/codex:review`
+  antes de publicar cambios grandes), búsquedas largas en `/Volumes/T7/AUTOMATIZACION SEGA` y tareas
+  mecánicas (subagente `codex:codex-rescue` o `codex exec --sandbox workspace-write -C <dir> -o <salida.md> "<tarea>"`).
+- **A Claude:** la gestión, las decisiones, el diseño de la web, las conexiones y la revisión final de lo
+  que entrega Codex. Lo de Codex se comprueba antes de decir «hecho».
+- Al informar, decir qué se mandó a Codex.
