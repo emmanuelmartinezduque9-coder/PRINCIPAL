@@ -1,0 +1,1280 @@
+{
+ "version": 1,
+ "decisions": [
+  {
+   "id": "hoofholly-organico-muy-aprobado",
+   "fecha": "2026-11-05",
+   "archivo": "/Volumes/T7/AUTOMATIZACION SEGA/CalendarioCaballos-20261105/human-special-approval-20261105.json",
+   "linea": 4,
+   "cita": "aprobados. Estos resultados me gustaron mucho. Guarda estos resultados como muy aprobados. Esto es lo que quiero que hagas en todos los productos. Ahora genera los clips y ediciones y déjalos listos para subir.",
+   "tipo": "aprobacion",
+   "producto": "HoofHolly",
+   "general": true,
+   "evidencia_general": "Esto es lo que quiero que hagas en todos los productos.",
+   "pasos": [
+    "imagen",
+    "pinterest",
+    "clip",
+    "montaje"
+   ],
+   "directiva": "Usar los tres resultados HoofHolly aprobados como referencia para todos los productos; continuar sus clips y ediciones listos para subir.",
+   "directiva_en": "Use the three approved HoofHolly results as references for all products; finish their clips and edits ready to upload.",
+   "tema": "realismo-organico",
+   "inyectable": false
+  },
+  {
+   "id": "nailuna-r2-mezcla-aprobada",
+   "fecha": "2026-10-25",
+   "archivo": "/Volumes/T7/AUTOMATIZACION SEGA/REGLAS_EDICION/MUSICA_R2_APROBADA/aprobacion.json",
+   "linea": 5,
+   "cita": "Exactamente eso era lo que necesitaba. Guarda esto bien. Ese es el tipo de edición que necesito cuando hay música.",
+   "tipo": "aprobacion",
+   "producto": "Nailuna",
+   "general": true,
+   "evidencia_general": "Ese es el tipo de edición que necesito cuando hay música.",
+   "pasos": [
+    "montaje"
+   ],
+   "directiva": "Guardar la sincronización y mezcla V7 Nailuna R2 como referencia para las ediciones con música.",
+   "directiva_en": "Save V7 Nailuna R2 synchronization and mixing as the reference for edits with music.",
+   "tema": "mezcla-musical",
+   "inyectable": false
+  },
+  {
+   "id": "nailuna-v8-r3-aprobacion",
+   "fecha": "2026-10-25",
+   "archivo": "/Volumes/T7/AUTOMATIZACION SEGA/REGLAS_EDICION/MUSICA_R2_APROBADA/aprobacion-v8-r3.json",
+   "linea": 5,
+   "cita": "Exactamente, exactamente eso es lo que yo pido cuando hagas las ediciones",
+   "tipo": "aprobacion",
+   "producto": "Nailuna",
+   "general": false,
+   "evidencia_general": null,
+   "pasos": [
+    "montaje"
+   ],
+   "directiva": "Conservar V8 R3 como ejemplo aprobado de eliminación de música original y sincronización; su caso sin audio original no autoriza borrar voces en otros vídeos.",
+   "directiva_en": "Keep V8 R3 as an approved example of original music removal and synchronization; this case without original audio does not authorize deleting voices in other videos.",
+   "tema": "mezcla-musical",
+   "inyectable": false
+  },
+  {
+   "id": "faltliebling-tres-ediciones-r3-aprobadas",
+   "fecha": "2026-10-25",
+   "archivo": "/Volumes/T7/AUTOMATIZACION SEGA/TestProductos4-20261025/FaltLiebling-preflight/user-approval-editing-reference.json",
+   "linea": 6,
+   "cita": "las ediciones quedaron perfectas, con textos variados para cada concepto, que tenga sentido, la edición quedó bien, con música correcta y respetando los tiempos de cambios de ritmo y cambios de clip",
+   "tipo": "aprobacion",
+   "producto": "FaltLiebling",
+   "general": false,
+   "evidencia_general": null,
+   "pasos": [
+    "rotulos",
+    "montaje"
+   ],
+   "directiva": "Conservar las tres ediciones R3 aprobadas: textos variados con sentido para cada concepto, música correcta y tiempos de cambios de ritmo y clip respetados.",
+   "directiva_en": "Keep the three approved R3 edits: varied text suited to each concept, correct music, and preserved rhythm and clip change timing.",
+   "tema": "acabado-aprobado",
+   "inyectable": false
+  },
+  {
+   "id": "eiswerk-f01-f02-f03-aprobados",
+   "fecha": "2026-09-13",
+   "archivo": "/Users/emmanuelmartinezduque/Desktop/AUTOMATIZACION IA VIDEOS/EDITOR/lotes/tanda_20260913_prueba_eiswerk/aprobacion_usuario.json",
+   "linea": 3,
+   "cita": "Apruebo los tres",
+   "tipo": "aprobacion",
+   "producto": "EisWerk",
+   "general": false,
+   "evidencia_general": null,
+   "pasos": [
+    "imagen",
+    "clip"
+   ],
+   "directiva": "Generar por método B los vídeos de los tres frames F01, F02 y F03 mostrados y aprobados.",
+   "directiva_en": "Generate the videos from the three shown and approved frames F01, F02 and F03 using method B.",
+   "tema": "frames-aprobados",
+   "inyectable": false
+  },
+  {
+   "id": "eiswerk-traduccion-navidad-aprobada",
+   "fecha": "2026-09-13",
+   "archivo": "/Users/emmanuelmartinezduque/Desktop/AUTOMATIZACION IA VIDEOS/CEREBRO/reglas/traduccion-organica.md",
+   "linea": 57,
+   "cita": "Gemütliche Weihnachtsabende sind damit schöner 🎄🍦🤭",
+   "tipo": "aprobacion",
+   "producto": "EisWerk",
+   "general": false,
+   "evidencia_general": null,
+   "pasos": [
+    "rotulos"
+   ],
+   "directiva": "Usar en EisWerk C22 la traducción aprobada: Gemütliche Weihnachtsabende sind damit schöner 🎄🍦🤭.",
+   "directiva_en": "Use the approved translation in EisWerk C22: Gemütliche Weihnachtsabende sind damit schöner 🎄🍦🤭.",
+   "tema": "traduccion-fiel",
+   "inyectable": false
+  },
+  {
+   "id": "hoofholly-tres-frames-rechazados",
+   "fecha": "2026-11-05",
+   "archivo": "/Volumes/T7/AUTOMATIZACION SEGA/CalendarioCaballos-20261105/human-rejection-20261105.json",
+   "linea": 3,
+   "cita": "Referencias con acabado profesional, espacios que no son tiendas reales. Exigir fotografías orgánicas de móvil tipo iPhone y comercio pertinente con mercancía a la venta.",
+   "tipo": "rechazo",
+   "producto": "HoofHolly",
+   "general": false,
+   "evidencia_general": null,
+   "pasos": [
+    "imagen",
+    "pinterest"
+   ],
+   "directiva": "Descartar los tres frames de la primera ronda por acabado profesional y espacios que no son tiendas reales; usar fotografías orgánicas de móvil y comercios pertinentes.",
+   "directiva_en": "Reject the first three frames for professional styling and spaces that are not real stores; use organic phone photos and relevant retail settings.",
+   "tema": "realismo-organico",
+   "inyectable": false
+  },
+  {
+   "id": "nailuna-dm-piel-plastica-rechazo",
+   "fecha": "2026-09-29",
+   "archivo": "/Users/emmanuelmartinezduque/Desktop/AUTOMATIZACION IA VIDEOS/EDITOR/lotes/app_20260929_61/correcciones_dm_starbucks.json",
+   "linea": 2,
+   "cita": "es la imagen mas asquerosa que has hecho hasta el momento, se ve demasiada plastica, tienes que aplicar lo de la captura que te pase de refrencai solo tomarla como ejemplo en los objetos y las personas pero rediseñarla completamenbte y hacer la textura de piel y luz realista",
+   "tipo": "rechazo",
+   "producto": "Nailuna",
+   "general": false,
+   "evidencia_general": null,
+   "pasos": [
+    "imagen"
+   ],
+   "directiva": "Rediseñar completamente la referencia de V6 usando solo sus objetos y personas como ejemplo; corregir piel plástica y hacer realistas textura y luz.",
+   "directiva_en": "Completely redesign the V6 reference, using only its objects and people as examples; fix plastic skin and make texture and lighting realistic.",
+   "tema": "realismo-organico",
+   "inyectable": false
+  },
+  {
+   "id": "kaffeebild-starbucks-buso-pano",
+   "fecha": "2026-09-29",
+   "archivo": "/Users/emmanuelmartinezduque/Desktop/AUTOMATIZACION IA VIDEOS/EDITOR/lotes/app_20260929_61/correcciones_dm_starbucks.json",
+   "linea": 3,
+   "cita": "cambia el diseño del buso que tiene puesto y del paño que cubre la caja",
+   "tipo": "instruccion",
+   "producto": "KaffeeBild",
+   "general": false,
+   "evidencia_general": null,
+   "pasos": [
+    "imagen"
+   ],
+   "directiva": "Cambiar el diseño del buzo y del paño que cubre la caja en V7.",
+   "directiva_en": "Change the sweatshirt design and the cloth covering the box in V7.",
+   "tema": "vestuario-y-textiles",
+   "inyectable": false
+  },
+  {
+   "id": "nailuna-avatar-no-cambiado-rechazo",
+   "fecha": "2026-09-21",
+   "archivo": "/Users/emmanuelmartinezduque/Desktop/AUTOMATIZACION IA VIDEOS/EDITOR/lotes/app_20260921_47/correccion_motion_usuario.json",
+   "linea": 2,
+   "cita": "vuelve a gnerar esos dos videos que salieron mal perra pero ahora de la manera correcta, porque en el de nailuna ni siquiera cambio el avatar",
+   "tipo": "rechazo",
+   "producto": "Nailuna",
+   "general": false,
+   "evidencia_general": null,
+   "pasos": [
+    "clip"
+   ],
+   "directiva": "Regenerar correctamente Nailuna V8: el resultado rechazado ni siquiera cambió al avatar habitual; usar Motion Transfer conforme al contexto explícito del archivo.",
+   "directiva_en": "Regenerate Nailuna V8 correctly: the rejected result did not even change to the regular avatar; use Motion Transfer as explicitly stated in the file context.",
+   "tema": "identidad-avatar",
+   "inyectable": false
+  },
+  {
+   "id": "kuschelgrinch-oscuridad-producto-rechazo",
+   "fecha": "2026-09-21",
+   "archivo": "/Users/emmanuelmartinezduque/Desktop/AUTOMATIZACION IA VIDEOS/EDITOR/lotes/app_20260921_47/correccion_luz_producto_usuario.json",
+   "linea": 2,
+   "cita": "vale guada este error en tu memoria o monta un muro para que no vuelva a suceder y vuelve a intentarlo",
+   "tipo": "rechazo",
+   "producto": "KuschelGrinch",
+   "general": false,
+   "evidencia_general": null,
+   "pasos": [
+    "imagen",
+    "clip"
+   ],
+   "directiva": "Guardar el error y reintentar únicamente KuschelGrinch, conservando claridad de la toma original y hocico, sonrisa y proporciones del peluche exacto.",
+   "directiva_en": "Record the error and retry only KuschelGrinch, preserving the original shot brightness and the exact toy muzzle, smile and proportions.",
+   "tema": "producto-fiel",
+   "inyectable": false
+  },
+  {
+   "id": "eiswerk-receta-omision-congelador",
+   "fecha": "2026-11-17",
+   "archivo": "/Users/emmanuelmartinezduque/Desktop/AUTOMATIZACION IA VIDEOS/memory/context/eiswerk-receta-mm-original-20261117.md",
+   "linea": 17,
+   "cita": "Emmanuel rechazó V5 de app-ddc0e563d1b24e03956ea11cb59f45d8-31: el vídeo omitía sacar la máquina del congelador. Había seleccionado regenerar C205, cuyo snapshot conservaba una adaptación posterior del lote62; esa adaptación ya había eliminado el paso. No atribuirlo al traslado al SSD: el prompt posterior consta en el snapshot inmutable.",
+   "tipo": "rechazo",
+   "producto": "EisWerk",
+   "general": false,
+   "evidencia_general": null,
+   "pasos": [
+    "desglose",
+    "clip"
+   ],
+   "directiva": "Restaurar en V5 la acción de sacar la máquina del congelador; la adaptación posterior C205 la había omitido.",
+   "directiva_en": "Restore V5’s action of taking the machine out of the freezer; the later C205 adaptation had omitted it.",
+   "tema": "funcion-y-acciones",
+   "inyectable": false
+  },
+  {
+   "id": "eiswerk-caja-fresas-kraft-rechazada",
+   "fecha": "2026-11-16",
+   "archivo": "/Users/emmanuelmartinezduque/Desktop/AUTOMATIZACION IA VIDEOS/memory/context/variantes-embalajes-y-cierre-lotes-20261116.md",
+   "linea": 21,
+   "cita": "IMG_2688.jpg aportada el16/11/2026 es la autoridad de embalaje de FRESAS. Caja VERTICAL alta, fondo claro rosado, logo EisWerk arriba, foto grande de máquina blanca estampada, franja coral/rosa abajo. El mockup kraft horizontal generado anteriormente NO es la caja oficial; conservarlo como histórico rechazado y no seleccionarlo para futuros envíos.",
+   "tipo": "rechazo",
+   "producto": "EisWerk",
+   "general": false,
+   "evidencia_general": null,
+   "pasos": [
+    "imagen",
+    "clip"
+   ],
+   "directiva": "Usar IMG_2688.jpg como autoridad de la caja oficial de fresas, vertical clara y rosada. Rechazar el mockup kraft horizontal y no seleccionarlo en futuros envíos.",
+   "directiva_en": "Use IMG_2688.jpg as the authority for the official tall, light pink strawberry box. Reject the horizontal kraft mockup and do not select it for future submissions.",
+   "tema": "embalaje-exacto",
+   "inyectable": false
+  },
+  {
+   "id": "haarzauber-sephora-arriba",
+   "fecha": "2026-10-24",
+   "archivo": "/Volumes/T7/AUTOMATIZACION SEGA/REGLAS_EDICION/CRITERIOS_OBLIGATORIOS.antes-06b-fijo-20261031.md",
+   "linea": 20,
+   "cita": "V6 HaarZauber, lote60: instrucción explícita actual, **Sephora arriba y HaarZauber debajo**; adaptar el emoji de uñas al contexto capilar. Esta nota no certifica que el MP4 ya esté corregido.",
+   "tipo": "instruccion",
+   "producto": "HaarZauber",
+   "general": false,
+   "evidencia_general": null,
+   "pasos": [
+    "rotulos"
+   ],
+   "directiva": "En V6 HaarZauber del lote60, poner Sephora arriba y HaarZauber debajo; adaptar el emoji de uñas al contexto capilar.",
+   "directiva_en": "In batch60 V6 HaarZauber, place Sephora above HaarZauber; adapt the nail emoji to the hair context.",
+   "tema": "tienda-y-rotulo",
+   "inyectable": false
+  },
+  {
+   "id": "wintertasse-chocolate-solido",
+   "fecha": "2026-11-08",
+   "archivo": "/Users/emmanuelmartinezduque/Desktop/AUTOMATIZACION IA VIDEOS/memory/context/wintertasse-adaptacion-chocolate-20261108.md",
+   "linea": 3,
+   "cita": "Orden de Emmanuel: usar referencias de EisWerk como estructura, ritmo, ambiente y textos compatibles; NO Genjutsu para trasladar acciones de máquina de helados a la taza. Diseñar tomas propias Seedance con funcionamiento solicitado: chocolate sólido dentro de WinterTasse, taza sobre su base, paso del tiempo coherente hacia chocolate ablandado/fundido y snack (p. ej. marshmallow) sumergido al final. No empezar la preparación vertiendo chocolate líquido. Un adelanto del resultado al inicio conserva la estructura de un reel que luego muestra la preparación.",
+   "tipo": "instruccion",
+   "producto": "WinterTasse",
+   "general": false,
+   "evidencia_general": null,
+   "pasos": [
+    "desglose",
+    "clip"
+   ],
+   "directiva": "Usar la estructura y ritmo de EisWerk, pero crear tomas Seedance propias: chocolate sólido, taza sobre su base, fundido tras tiempo coherente y snack sumergido al final.",
+   "directiva_en": "Use EisWerk’s structure and rhythm, but create original Seedance shots: solid chocolate, cup on its base, melting after plausible elapsed time, and a dipped snack at the end.",
+   "tema": "adaptacion-funcional",
+   "inyectable": false
+  },
+  {
+   "id": "wintertasse-milka-alpenmilch",
+   "fecha": "2026-11-08",
+   "archivo": "/Users/emmanuelmartinezduque/Desktop/AUTOMATIZACION IA VIDEOS/memory/context/wintertasse-adaptacion-chocolate-20261108.md",
+   "linea": 9,
+   "cita": "Para DfcRXePMmE4 específicamente: Milka Alpenmilch, envase oficial adjunto; canción nº6 Rockin' Around The Christmas Tree, coincidencia espectral0,9764 y PCM independiente0,8665 desde aproximadamente t0. Fuente y recibos: /Volumes/T7/AUTOMATIZACION SEGA/WinterTasse-DfcRXePMmE4-20261108/. La petición no acredita generación ni aprobación de nuevos frames.",
+   "tipo": "instruccion",
+   "producto": "WinterTasse",
+   "general": false,
+   "evidencia_general": null,
+   "pasos": [
+    "imagen",
+    "clip",
+    "montaje"
+   ],
+   "directiva": "Para DfcRXePMmE4 usar Milka Alpenmilch con envase oficial adjunto y la canción nº6 Rockin’ Around The Christmas Tree.",
+   "directiva_en": "For DfcRXePMmE4 use Milka Alpenmilch with its official packaging reference and song no.6, Rockin’ Around The Christmas Tree.",
+   "tema": "producto-y-cancion",
+   "inyectable": false
+  },
+  {
+   "id": "wintertasse-un-video-largo",
+   "fecha": "2026-11-08",
+   "archivo": "/Users/emmanuelmartinezduque/Desktop/AUTOMATIZACION IA VIDEOS/memory/context/wintertasse-adaptacion-chocolate-20261108.md",
+   "linea": 12,
+   "cita": "Usar SOLO UN frame inicial para UN vídeo largo Seedance con distintas tomas en un único prompt. No generar tres clips independientes por los tres frames preparados.",
+   "tipo": "instruccion",
+   "producto": "WinterTasse",
+   "general": false,
+   "evidencia_general": null,
+   "pasos": [
+    "imagen",
+    "clip"
+   ],
+   "directiva": "Para DfcRXePMmE4 usar un frame inicial y un vídeo largo Seedance multiescena: añadir Milka sólido, activar la base, remover hasta fundido y mojar el snack; conservar taza, base y entorno.",
+   "directiva_en": "For DfcRXePMmE4 use one opening frame and one long multishot Seedance video: add solid Milka, activate the base, stir until melted and dip the snack; keep cup, base and setting consistent.",
+   "tema": "adaptacion-funcional",
+   "inyectable": false
+  },
+  {
+   "id": "wintertasse-pov-r2-aprobado",
+   "fecha": "2026-11-08",
+   "archivo": "/Users/emmanuelmartinezduque/Desktop/AUTOMATIZACION IA VIDEOS/memory/context/wintertasse-ritmo-pov-20261108.md",
+   "linea": 2,
+   "cita": "Emmanuel aprueba WinterTasse_DE_Milka_POV_R2_20261108.mp4. Para próximos vídeos: reducir claramente el tiempo de remover; no encadenar tomas largas/repetitivas de la cuchara. Mostrar brevemente el cambio de sólido a fundido y avanzar al snack/dip, manteniendo comprensión del funcionamiento, POV y velocidad natural. No modificar ni regenerar el final aprobado por esta nota.",
+   "tipo": "aprobacion",
+   "producto": "WinterTasse",
+   "general": false,
+   "evidencia_general": null,
+   "pasos": [
+    "clip",
+    "montaje"
+   ],
+   "directiva": "Conservar WinterTasse_DE_Milka_POV_R2_20261108.mp4 aprobado. En próximos vídeos reducir el tiempo removiendo, mostrar brevemente el fundido y pasar al snack manteniendo POV y velocidad natural.",
+   "directiva_en": "Keep the approved WinterTasse_DE_Milka_POV_R2_20261108.mp4. In future videos shorten stirring, briefly show melting and move to the snack while preserving POV and natural speed.",
+   "tema": "ritmo-demostracion",
+   "inyectable": false
+  },
+  {
+   "id": "haarzauber-contraste-tren",
+   "fecha": "2026-11-09",
+   "archivo": "/Users/emmanuelmartinezduque/.codex/skills/adaptacion-de-conceptos/references/ejemplos-reales.md",
+   "linea": 6,
+   "cita": "**Entrada comunicada por Emmanuel el09/11/2026:** el original muestra, en un tren, a alguien cómodo con una almohada delante y a otra persona incómoda sin ella detrás. Pide trasladar esa lógica al cepillo HaarZauber. Esta explicación del origen la aporta Emmanuel; no asignar al vídeo de la almohada una URL de otro reel de peluquería.",
+   "tipo": "instruccion",
+   "producto": "HaarZauber",
+   "general": false,
+   "evidencia_general": null,
+   "pasos": [
+    "desglose"
+   ],
+   "directiva": "Adaptar al cepillo HaarZauber la lógica del vídeo del tren: una persona cómoda con solución delante y otra incómoda sin ella detrás.",
+   "directiva_en": "Adapt the train video’s logic to the HaarZauber brush: a comfortable person with the solution in front and an uncomfortable person without it behind.",
+   "tema": "adaptacion-funcional",
+   "inyectable": false
+  },
+  {
+   "id": "radblink-demostracion-giro",
+   "fecha": "2026-11-15",
+   "archivo": "/Volumes/T7/AUTOMATIZACION SEGA/REGLAS_EDICION/CORRECCION_FUNCION_DROP_GANCHOS_20261115.md",
+   "linea": 11,
+   "cita": "RadBlink: direccional de bicicleta con señal luminosa y proyección de dirección en el suelo. Los cuerpos deben mostrar señal activada, proyección legible en el pavimento, y giro correspondiente de la bicicleta; entorno al atardecer/noche para visibilidad. Mostrar objeto apagado o circular recto no demuestra su función. No inventar geometría/color de proyección: usar referencia real del producto.",
+   "tipo": "instruccion",
+   "producto": "RadBlink",
+   "general": false,
+   "evidencia_general": null,
+   "pasos": [
+    "desglose",
+    "clip"
+   ],
+   "directiva": "Mostrar RadBlink activado, proyección de dirección legible en el pavimento y giro correspondiente de la bicicleta al atardecer o de noche, con geometría y color de la referencia real.",
+   "directiva_en": "Show RadBlink activated, a readable direction projection on the pavement, and the corresponding bicycle turn at dusk or night, using the real reference geometry and color.",
+   "tema": "funcion-y-acciones",
+   "inyectable": false
+  },
+  {
+   "id": "zauberschirm-emojis-magia",
+   "fecha": "2026-11-15",
+   "archivo": "/Volumes/T7/AUTOMATIZACION SEGA/REGLAS_EDICION/CORRECCION_FUNCION_DROP_GANCHOS_20261115.md",
+   "linea": 9,
+   "cita": "Adaptar textos y emojis al producto, público y nicho destino, no copiar mecánicamente emojis de la fuente. ZauberSchirm: Harry Potter/magia, p. ej. 🪄⚡🦉; ☂️ si ayuda al producto. Mantener marca y alemán natural.",
+   "tipo": "instruccion",
+   "producto": "ZauberSchirm",
+   "general": false,
+   "evidencia_general": null,
+   "pasos": [
+    "rotulos"
+   ],
+   "directiva": "En ZauberSchirm adaptar emojis a Harry Potter y magia, por ejemplo 🪄⚡🦉; usar ☂️ si ayuda al producto, manteniendo marca y alemán natural.",
+   "directiva_en": "For ZauberSchirm adapt emojis to Harry Potter and magic, for example 🪄⚡🦉; use ☂️ if useful to the product, retaining the brand and natural German.",
+   "tema": "emojis-nicho",
+   "inyectable": false
+  },
+  {
+   "id": "colliezauber-charms-planos",
+   "fecha": "2026-11-04",
+   "archivo": "/Users/emmanuelmartinezduque/Desktop/AUTOMATIZACION IA VIDEOS/memory/context/colliezauber-charms-2d-20261104.md",
+   "linea": 3,
+   "cita": "Emmanuel sustituye la referencia de figuras por su lámina adjunta. Usar adornos planos 2D impresos, nunca esculturas 3D. Conservar punto de sujeción y cordón visibles de cada diseño real. El sombreado impreso no indica volumen del objeto. Misma selección y referencias en la comparación Genjutsu/Seedance 2.5.",
+   "tipo": "instruccion",
+   "producto": "CollieZauber",
+   "general": false,
+   "evidencia_general": null,
+   "pasos": [
+    "imagen",
+    "clip"
+   ],
+   "directiva": "Usar la lámina aportada por Emmanuel: adornos planos 2D impresos con punto de sujeción y cordón visibles, sin interpretarlos como esculturas 3D.",
+   "directiva_en": "Use Emmanuel’s supplied sheet: printed flat 2D ornaments with visible attachment point and string; do not interpret them as 3D sculptures.",
+   "tema": "producto-fiel",
+   "inyectable": false
+  },
+  {
+   "id": "hoofholly-seedance-v2-aprobacion-parcial",
+   "fecha": "2026-11-05",
+   "archivo": "/Volumes/T7/AUTOMATIZACION SEGA/REGLAS_EDICION/SEEDANCE_ESCALA_MANO_20261105.md",
+   "linea": 8,
+   "cita": "HoofHolly: Emmanuel aprueba el resultado Seedance V2 en edición, movimiento y calidad, pero pide corregir las referencias de tamaño. Generar ahora tres imágenes de los caballos aprobados con escala de mano observada en frenchie.countdown. Esto no autoriza otra regeneración de V2 en este turno. Su aprobación de calidad no borra los defectos registrados (número20 en palomino y extracción negra omitida).",
+   "tipo": "aprobacion",
+   "producto": "HoofHolly",
+   "general": false,
+   "evidencia_general": null,
+   "pasos": [
+    "imagen",
+    "clip",
+    "montaje"
+   ],
+   "directiva": "Conservar la aprobación de edición, movimiento y calidad de HoofHolly V2; preparar tres imágenes de caballos con escala de mano observada, sin autorizar otra regeneración de V2.",
+   "directiva_en": "Keep HoofHolly V2’s approval for editing, movement and quality; prepare three horse images with observed hand scale, without authorizing another V2 regeneration.",
+   "tema": "escala-real",
+   "inyectable": false
+  },
+  {
+   "id": "eiswerk-chispas-color",
+   "fecha": "2026-11-17",
+   "archivo": "/Users/emmanuelmartinezduque/Desktop/AUTOMATIZACION IA VIDEOS/memory/context/eiswerk-variante-virutas-20261117.md",
+   "linea": 13,
+   "cita": "Emmanuel pide colores más notorios: chispas alargadas azules, rosas, amarillas y verdes, no rayas grises pálidas. Regenerados producto y caja; ambos conservan fondo gris.",
+   "tipo": "instruccion",
+   "producto": "EisWerk",
+   "general": false,
+   "evidencia_general": null,
+   "pasos": [
+    "imagen"
+   ],
+   "directiva": "Para la variante blanca usar chispas alargadas azules, rosas, amarillas y verdes, más notorias; corregir producto y caja con fondo gris.",
+   "directiva_en": "For the white variant use more visible elongated blue, pink, yellow and green sprinkles; correct product and box on a gray background.",
+   "tema": "variante-exacta",
+   "inyectable": false
+  },
+  {
+   "id": "haarfein-tiendas-lote",
+   "fecha": "2026-11-18",
+   "archivo": "/Users/emmanuelmartinezduque/Desktop/AUTOMATIZACION IA VIDEOS/memory/context/pinterest-seleccion-manual-20261117.md",
+   "linea": 11,
+   "cita": "Para este lote Emmanuel seleccionó dm alemana en V1 y otro interior de Sephora en V2. Registrar la referencia concreta; un cambio de letrero por sí solo no cambia el entorno.",
+   "tipo": "instruccion",
+   "producto": "HaarFein",
+   "general": false,
+   "evidencia_general": null,
+   "pasos": [
+    "imagen",
+    "pinterest"
+   ],
+   "directiva": "En este lote de HaarFein usar dm alemana en V1 y otro interior de Sephora en V2; registrar la referencia concreta y cambiar realmente el entorno.",
+   "directiva_en": "In this HaarFein batch use a German dm for V1 and a different Sephora interior for V2; record the specific reference and actually change the setting.",
+   "tema": "tienda-coherente-escena",
+   "inyectable": false
+  },
+  {
+   "id": "sustituir-elemento-producto-destino",
+   "fecha": "2026-09-04",
+   "archivo": "/Users/emmanuelmartinezduque/Desktop/AUTOMATIZACION IA VIDEOS/CEREBRO/lecciones/2026-09-04-al-adaptar-el-elemento-es-el-de-la-cuenta-destino.md",
+   "linea": 4,
+   "cita": "antes de generarse cualquier video debera de comprobar que el elemento esta correctamente sustituido por la referencia del producto al que se va a adaptar",
+   "tipo": "regla",
+   "producto": null,
+   "general": true,
+   "evidencia_general": "antes de generarse cualquier video debera de comprobar que el elemento esta correctamente sustituido por la referencia del producto al que se va a adaptar",
+   "pasos": [
+    "desglose"
+   ],
+   "directiva": "Antes de generar cualquier vídeo, comprobar que el elemento está sustituido correctamente por la referencia del producto de destino.",
+   "directiva_en": "Before generating any video, verify that the element has been correctly replaced with the destination product reference.",
+   "tema": "producto-fiel",
+   "inyectable": true
+  },
+  {
+   "id": "dos-intentos-frame-maximo",
+   "fecha": "2026-09-02",
+   "archivo": "/Users/emmanuelmartinezduque/Desktop/AUTOMATIZACION IA VIDEOS/CEREBRO/lecciones/2026-09-02-dos-intentos-por-frame-y-se-para.md",
+   "linea": 5,
+   "cita": "si un frame te cuesta mas de dos imagenes, paralo, no generes una tercera",
+   "tipo": "regla",
+   "producto": null,
+   "general": true,
+   "evidencia_general": "si un frame te cuesta mas de dos imagenes, paralo, no generes una tercera",
+   "pasos": [
+    "imagen"
+   ],
+   "directiva": "Si un frame cuesta más de dos imágenes, parar y no generar una tercera.",
+   "directiva_en": "If a frame takes more than two images, stop and do not generate a third.",
+   "tema": "limite-iteracion",
+   "inyectable": false
+  },
+  {
+   "id": "traduccion-nativa-fiel",
+   "fecha": "2026-09-13",
+   "archivo": "/Users/emmanuelmartinezduque/Desktop/AUTOMATIZACION IA VIDEOS/CEREBRO/reglas/traduccion-organica.md",
+   "linea": 16,
+   "cita": "sonar como lo escribiría una persona nativa del país de destino y conservar\nel significado lo más fiel posible a la referencia",
+   "tipo": "regla",
+   "producto": null,
+   "general": true,
+   "evidencia_general": "Prioridad permanente confirmada por Emmanuel el 13 septiembre de 2026:",
+   "pasos": [
+    "doblaje",
+    "rotulos"
+   ],
+   "directiva": "En toda traducción sonar como una persona nativa del país de destino y conservar lo más fielmente posible el significado de la referencia.",
+   "directiva_en": "In every translation sound like a native of the destination country and preserve the reference meaning as faithfully as possible.",
+   "tema": "traduccion-fiel",
+   "inyectable": true
+  },
+  {
+   "id": "texto-no-alarga-video",
+   "fecha": "2026-09-13",
+   "archivo": "/Users/emmanuelmartinezduque/Desktop/AUTOMATIZACION IA VIDEOS/CEREBRO/reglas/edicion-musica-texto-cta.md",
+   "linea": 23,
+   "cita": "**Texto al vídeo**, nunca vídeo al texto: no añadir dos segundos, repetir,\n  ralentizar, congelar ni regenerar el vídeo para una CTA. Respetar su corte real.",
+   "tipo": "regla",
+   "producto": null,
+   "general": true,
+   "evidencia_general": "**Texto al vídeo**, nunca vídeo al texto: no añadir dos segundos, repetir,",
+   "pasos": [
+    "montaje",
+    "rotulos"
+   ],
+   "directiva": "Adaptar el texto al corte real del vídeo; no añadir tiempo, repetir, ralentizar, congelar ni regenerar el vídeo para una CTA.",
+   "directiva_en": "Fit text to the video’s real cut; do not add time, repeat, slow down, freeze or regenerate the video for a CTA.",
+   "tema": "texto-sobre-montaje",
+   "inyectable": true
+  },
+  {
+   "id": "texto-fijo-06b-productos-fisicos",
+   "fecha": "2026-10-31",
+   "archivo": "/Volumes/T7/AUTOMATIZACION SEGA/REGLAS_EDICION/TEXTOS_FIJOS_PRODUCTOS_FISICOS_20261031.md",
+   "linea": 16,
+   "cita": "Configuración predeterminada para TODOS los vídeos, incluidos infoproductos: 06B, TikTokDisplay-Medium blanco, contorno exterior negro 0,05 em, interlínea 35/31 em; recuadro fijo x112/y287/ancho886/alto318 en 1080×1920, texto centrado y rectángulo invisible. Sin seguimiento de personas ni cambios de posición entre tomas. La indicación anterior de altura del pecho queda sustituida; no hay excepción de posición para infoproductos.",
+   "tipo": "regla",
+   "producto": null,
+   "general": true,
+   "evidencia_general": "Configuración predeterminada para TODOS los vídeos, incluidos infoproductos:",
+   "pasos": [
+    "rotulos"
+   ],
+   "directiva": "En productos físicos usar 06B TikTokDisplay-Medium blanco, contorno negro 0,05 em e interlínea 35/31; región fija x112/y287/886×318 en 1080×1920, centrada e invisible, sin seguimiento.",
+   "directiva_en": "For physical products use white 06B TikTokDisplay-Medium, black 0.05 em outline and 35/31 line spacing; fixed invisible centered x112/y287/886×318 region at 1080×1920, without tracking.",
+   "tema": "tipografia-06b",
+   "inyectable": false
+  },
+  {
+   "id": "ganchos-variacion-visual-todos-productos",
+   "fecha": "2026-10-31",
+   "archivo": "/Volumes/T7/AUTOMATIZACION SEGA/REGLAS_EDICION/variacion-visual-ganchos-tests-20261031.md",
+   "linea": 4,
+   "cita": "Las referencias fijas fijan composición, perspectiva, posiciones, roles y acción; NO fijan vestuario, identidad, decoración ni el mismo fondo para todos los productos.",
+   "tipo": "regla",
+   "producto": null,
+   "general": true,
+   "evidencia_general": "Orden de Emmanuel — 31/10/2026. Aplicar a TODOS los productos en próximos frames de tests con ganchos validados.",
+   "pasos": [
+    "desglose"
+   ],
+   "directiva": "En nuevos tests conservar composición, perspectiva, posiciones, roles y acción del gancho validado; variar vestuario, identidad, decoración y fondo entre productos.",
+   "directiva_en": "In new tests retain the validated hook composition, perspective, positions, roles and action; vary clothing, identity, decor and backgrounds across products.",
+   "tema": "variacion-visual",
+   "inyectable": true
+  },
+  {
+   "id": "ganchos-ropa-contexto",
+   "fecha": "2026-10-31",
+   "archivo": "/Volumes/T7/AUTOMATIZACION SEGA/REGLAS_EDICION/variacion-visual-ganchos-tests-20261031.md",
+   "linea": 6,
+   "cita": "Vestuario: apropiado para el nicho, contexto, edad y papel. Si no hay un nicho específico, elegir ropa cotidiana distinta entre tests; no repetir por defecto sudadera azul, jersey azul oscuro o conjuntos rosas de las referencias. Variar prendas, cortes, capas y colores, no solo recolorear el mismo uniforme.",
+   "tipo": "regla",
+   "producto": null,
+   "general": true,
+   "evidencia_general": "Orden de Emmanuel — 31/10/2026. Aplicar a TODOS los productos en próximos frames de tests con ganchos validados.",
+   "pasos": [
+    "imagen"
+   ],
+   "directiva": "Elegir vestuario apropiado para nicho, contexto, edad y papel; variar prendas y colores entre tests, sin repetir por defecto los conjuntos de las referencias.",
+   "directiva_en": "Choose clothing suited to niche, context, age and role; vary garments and colors between tests instead of defaulting to the reference outfits.",
+   "tema": "vestuario-y-textiles",
+   "inyectable": true
+  },
+  {
+   "id": "regalo-navidad-contextual",
+   "fecha": "2026-10-31",
+   "archivo": "/Volumes/T7/AUTOMATIZACION SEGA/REGLAS_EDICION/variacion-visual-ganchos-tests-20261031.md",
+   "linea": 10,
+   "cita": "Regalo POV: variar realmente la casa (suelo, sofá, alfombra, paredes, iluminación y decoración), ropa de quien entrega y ropa visible de quien recibe. Añadir decoración navideña en campañas/contextos navideños; evitar que todos los regalos repitan la misma casa o jersey. Conservar POV, escala, manos, caja y acción. No añadir caras donde no las hay.",
+   "tipo": "regla",
+   "producto": null,
+   "general": true,
+   "evidencia_general": "Orden de Emmanuel — 31/10/2026. Aplicar a TODOS los productos en próximos frames de tests con ganchos validados.",
+   "pasos": [
+    "imagen"
+   ],
+   "directiva": "En regalo POV variar realmente casa y ropa; añadir decoración navideña en campañas o contextos navideños. Conservar POV, escala, manos, caja y acción, sin añadir caras.",
+   "directiva_en": "For POV gifts actually vary the home and clothing; add Christmas decor in Christmas campaigns or contexts. Preserve POV, scale, hands, box and action, without adding faces.",
+   "tema": "temporada-escena",
+   "inyectable": true
+  },
+  {
+   "id": "textos-finales-todas-entregas",
+   "fecha": "2026-10-31",
+   "archivo": "/Users/emmanuelmartinezduque/Desktop/AUTOMATIZACION IA VIDEOS/memory/context/textos-siempre-edicion-20261031.md",
+   "linea": 3,
+   "cita": "Orden expresa de Emmanuel: todas las entregas deben llevar textos y edición posterior; frames y clips generados limpios sin overlays. El text_mode=none heredado de generación NO cancela textos finales ni justifica preguntar. No ofrecer exclusión de textos finales en nuevos lotes o duplicados.",
+   "tipo": "regla",
+   "producto": null,
+   "general": true,
+   "evidencia_general": "Orden expresa de Emmanuel: todas las entregas deben llevar textos y edición posterior; frames y clips generados limpios sin overlays.",
+   "pasos": [
+    "imagen",
+    "clip",
+    "rotulos",
+    "montaje"
+   ],
+   "directiva": "Todas las entregas llevan textos y edición posterior; generar frames y clips limpios. El text_mode=none heredado no cancela los textos finales.",
+   "directiva_en": "All deliveries include text and post editing; generate clean frames and clips. Inherited text_mode=none does not cancel final text.",
+   "tema": "textos-en-edicion",
+   "inyectable": false
+  },
+  {
+   "id": "publico-reconocible-primer-frame",
+   "fecha": "2026-11-03",
+   "archivo": "/Volumes/T7/AUTOMATIZACION SEGA/REGLAS_EDICION/FLUJO_TEST_PRODUCTOS.md",
+   "linea": 77,
+   "cita": "Para toda cuenta y producto, identificar antes de generar quién debe reconocerse en la escena y especificar en el entorno una señal física concreta, visible inmediatamente en móvil sin leer ni oír nada.",
+   "tipo": "regla",
+   "producto": null,
+   "general": true,
+   "evidencia_general": "Para toda cuenta y producto, identificar antes de generar quién debe reconocerse en la escena",
+   "pasos": [
+    "desglose"
+   ],
+   "directiva": "Para toda cuenta y producto hacer reconocible al público desde el primer frame mediante una señal física pertinente y visible en móvil; no adelantar el producto que el gancho debe revelar.",
+   "directiva_en": "For every account and product make the audience recognizable from the opening frame through a relevant physical cue visible on mobile; do not reveal the product before the hook should.",
+   "tema": "nicho-visible",
+   "inyectable": true
+  },
+  {
+   "id": "calendario-envase-y-piezas-exactas",
+   "fecha": null,
+   "archivo": "/Volumes/T7/AUTOMATIZACION SEGA/REGLAS_EDICION/FLUJO_TEST_PRODUCTOS.md",
+   "linea": 80,
+   "cita": "Para todas las cuentas, el envase del calendario forma parte del producto vendido. Cuando el producto es el mismo de la referencia, conservar su caja real (impresión, ilustración, idioma, forma, proporciones, colores, disposición y números de las casillas) y cada figura o charm que sale de cada día mostrado, con su forma, acabado, accesorios, color y orden. Cambiar el entorno según el encargo.",
+   "tipo": "regla",
+   "producto": null,
+   "general": true,
+   "evidencia_general": "Para todas las cuentas, el envase del calendario forma parte del producto vendido.",
+   "pasos": [
+    "desglose"
+   ],
+   "directiva": "En calendarios de todas las cuentas conservar caja real, idioma, casillas y figuras exactas de la referencia por toma, con sus accesorios, colores y orden; cambiar el entorno según el encargo.",
+   "directiva_en": "For calendars across all accounts preserve the real box, language, compartments and exact reference figures per shot, including accessories, colors and order; change the setting as requested.",
+   "tema": "embalaje-exacto",
+   "inyectable": true
+  },
+  {
+   "id": "fondos-intencion-todos-productos",
+   "fecha": "2026-11-05",
+   "archivo": "/Volumes/T7/AUTOMATIZACION SEGA/REGLAS_EDICION/FLUJO_TEST_PRODUCTOS.md",
+   "linea": 87,
+   "cita": "Emmanuel aprueba este criterio para todos los productos en testeo y en venta. Registrar producto, comprador y problema; observar qué cuenta el reel; definir qué debe percibirse en cada plano y qué detalles lo contradirían. Buscar, observar y adjuntar el fondo adecuado al mercado, la acción y la intención.",
+   "tipo": "regla",
+   "producto": null,
+   "general": true,
+   "evidencia_general": "Emmanuel aprueba este criterio para todos los productos en testeo y en venta.",
+   "pasos": [
+    "desglose",
+    "pinterest"
+   ],
+   "directiva": "Elegir fondos según producto, comprador, problema, intención de cada toma, mercado y acción. Observar y adjuntar la referencia y comprobar lo que comunica la imagen generada.",
+   "directiva_en": "Choose backgrounds by product, buyer, problem, each shot’s intent, market and action. Inspect and attach the reference and check what the generated image communicates.",
+   "tema": "fondo-intencion",
+   "inyectable": true
+  },
+  {
+   "id": "identidades-nuevas-replicas",
+   "fecha": "2026-11-06",
+   "archivo": "/Volumes/T7/AUTOMATIZACION SEGA/REGLAS_EDICION/IDENTIDADES_PERSONAS_ANIMALES_GENJUTSU_20261106.md",
+   "linea": 5,
+   "cita": "En réplicas, sustituir las personas de la fuente por personas distintas de la biblioteca activa, respetando papel, edad aparente adecuada, acción e instrucciones expresas. Cambiar también el vestuario con lógica de nicho y entorno. Mantener la identidad elegida entre tomas; no cambiar de persona arbitrariamente dentro del vídeo.",
+   "tipo": "regla",
+   "producto": null,
+   "general": true,
+   "evidencia_general": "Orden expresa de Emmanuel. Aplicar a todas las cuentas y a nuevas preparaciones de vídeos,",
+   "pasos": [
+    "desglose"
+   ],
+   "directiva": "En nuevas réplicas usar personas distintas de la biblioteca activa, con edad, papel, acción y vestuario coherentes; respetar elecciones expresas.",
+   "directiva_en": "In new replicas use different people from the active library, with coherent age, role, action and clothing; respect explicit choices.",
+   "tema": "identidad-avatar",
+   "inyectable": true
+  },
+  {
+   "id": "referencias-identidad-frame-y-video",
+   "fecha": "2026-11-06",
+   "archivo": "/Volumes/T7/AUTOMATIZACION SEGA/REGLAS_EDICION/IDENTIDADES_PERSONAS_ANIMALES_GENJUTSU_20261106.md",
+   "linea": 9,
+   "cita": "En Genjutsu, adjuntar las referencias individuales de las personas y animales elegidos TANTO al generar el frame COMO a la solicitud de generación del vídeo, además del frame aprobado. El cambio visible en el frame no sustituye estos adjuntos de identidad del vídeo.",
+   "tipo": "regla",
+   "producto": null,
+   "general": true,
+   "evidencia_general": "Orden expresa de Emmanuel. Aplicar a todas las cuentas y a nuevas preparaciones de vídeos,",
+   "pasos": [
+    "imagen",
+    "clip"
+   ],
+   "directiva": "En Genjutsu adjuntar referencias individuales de las personas y animales elegidos tanto al frame como al vídeo, además del frame aprobado.",
+   "directiva_en": "In Genjutsu attach individual references for the chosen people and animals to both frame and video generation, alongside the approved frame.",
+   "tema": "identidad-avatar",
+   "inyectable": false
+  },
+  {
+   "id": "generacion-480-theia-1080",
+   "fecha": "2026-11-07",
+   "archivo": "/Users/emmanuelmartinezduque/Desktop/AUTOMATIZACION IA VIDEOS/memory/context/generacion-480-global-20261107.md",
+   "linea": 3,
+   "cita": "Orden expresa de Emmanuel: todos los vídeos nuevos de testeos y lotes, incluidos Seedance, Genjutsu y otros motores, se preparan por defecto en 480p y después Topaz Theia 1080p con FPS originales. Sustituye la regla global720 del04/11 y las excepciones automáticas por caras alejadas. Una selección humana explícita distinta prevalece.",
+   "tipo": "regla",
+   "producto": null,
+   "general": true,
+   "evidencia_general": "Orden expresa de Emmanuel: todos los vídeos nuevos de testeos y lotes, incluidos Seedance, Genjutsu y otros motores,",
+   "pasos": [
+    "clip",
+    "montaje"
+   ],
+   "directiva": "Preparar todos los vídeos nuevos de tests y lotes por defecto en 480p y escalar con Topaz Theia a 1080p conservando FPS originales; respetar selección humana distinta.",
+   "directiva_en": "Prepare all new test and batch videos at 480p by default, then upscale with Topaz Theia to 1080p at original FPS; respect a different explicit human selection.",
+   "tema": "resolucion-video",
+   "inyectable": false
+  },
+  {
+   "id": "avatar-identidad-no-realismo",
+   "fecha": "2026-11-14",
+   "archivo": "/Users/emmanuelmartinezduque/Desktop/AUTOMATIZACION IA VIDEOS/memory/context/identidad-avatar-realismo-20261114.md",
+   "linea": 4,
+   "cita": "La referencia elegida como avatar es la única autoridad de facciones e identidad. Referencias de realismo aportan textura fotográfica; nunca rasgos, edad, pelo o parecido de la persona que contienen. No mezclar caras ni promediar identidades. Fondo y composición tampoco aportan identidad salvo asignación expresa. La iluminación procede del entorno según la regla existente.",
+   "tipo": "regla",
+   "producto": null,
+   "general": true,
+   "evidencia_general": "Orden expresa de Emmanuel, 14/11/2026. Alcance: testeos de productos y lotes de vídeos, todos los frames nuevos.",
+   "pasos": [
+    "imagen"
+   ],
+   "directiva": "Tomar facciones e identidad exclusivamente del avatar elegido; las referencias de realismo solo aportan textura, sin mezclar caras, edad o pelo. La luz procede del entorno.",
+   "directiva_en": "Take facial features and identity exclusively from the chosen avatar; realism references provide texture only, without mixing faces, age or hair. Lighting comes from the setting.",
+   "tema": "identidad-avatar",
+   "inyectable": true
+  },
+  {
+   "id": "referencia-subida-desactiva-pinterest",
+   "fecha": "2026-11-14",
+   "archivo": "/Users/emmanuelmartinezduque/Desktop/AUTOMATIZACION IA VIDEOS/AGENTS.md",
+   "linea": 72,
+   "cita": "Cuando una tarjeta tiene una imagen de referencia subida por Emmanuel, usar esa referencia y desactivar automáticamente la búsqueda en Pinterest para esa tarjeta, incluso si tenía Pinterest activado. Las demás tarjetas conservan su configuración.",
+   "tipo": "regla",
+   "producto": null,
+   "general": true,
+   "evidencia_general": "Cuando una tarjeta tiene una imagen de referencia subida por Emmanuel, usar esa referencia y desactivar automáticamente la búsqueda en Pinterest para esa tarjeta, incluso si tenía Pinterest activado.",
+   "pasos": [
+    "pinterest",
+    "imagen"
+   ],
+   "directiva": "Si Emmanuel sube una imagen de referencia a una tarjeta, usarla y desactivar la búsqueda automática de Pinterest en esa tarjeta; mantener la configuración de las demás.",
+   "directiva_en": "If Emmanuel uploads a reference image to a card, use it and disable automatic Pinterest search for that card; keep other cards’ settings.",
+   "tema": "prioridad-referencia",
+   "inyectable": false
+  },
+  {
+   "id": "fondos-manuales-base-todos-productos",
+   "fecha": "2026-11-17",
+   "archivo": "/Users/emmanuelmartinezduque/Desktop/AUTOMATIZACION IA VIDEOS/memory/context/pinterest-seleccion-manual-20261117.md",
+   "linea": 3,
+   "cita": "Orden de Emmanuel: usar sus fondos manuales como base de selección para todos los productos.",
+   "tipo": "regla",
+   "producto": null,
+   "general": true,
+   "evidencia_general": "Orden de Emmanuel: usar sus fondos manuales como base de selección para todos los productos.",
+   "pasos": [
+    "pinterest"
+   ],
+   "directiva": "Usar los fondos manuales de Emmanuel como base para seleccionar fondos de todos los productos.",
+   "directiva_en": "Use Emmanuel’s manually selected backgrounds as the basis for background selection for all products.",
+   "tema": "fondo-intencion",
+   "inyectable": false
+  },
+  {
+   "id": "entorno-funcional-todas-cuentas",
+   "fecha": "2026-11-16",
+   "archivo": "/Users/emmanuelmartinezduque/Desktop/AUTOMATIZACION IA VIDEOS/memory/context/variantes-embalajes-y-cierre-lotes-20261116.md",
+   "linea": 24,
+   "cita": "Una acción de sacar de nevera/congelador debe mostrar inequívocamente puerta abierta, interior, estante y retirada real desde dentro; nunca un producto surgiendo del salón. La tienda aplica a tomas comerciales, salón a tomas domésticas compatibles, interior de nevera a extracción. Mantener objetos funcionales y lógica de acción en TODAS las cuentas/productos.",
+   "tipo": "regla",
+   "producto": null,
+   "general": true,
+   "evidencia_general": "Mantener objetos funcionales y lógica de acción en TODAS las cuentas/productos.",
+   "pasos": [
+    "desglose",
+    "imagen"
+   ],
+   "directiva": "En todas las cuentas mantener la lógica funcional de la toma: una extracción de nevera muestra puerta, interior, estante y retirada real; la referencia de salón no reemplaza esa función.",
+   "directiva_en": "Across all accounts preserve each shot’s functional logic: fridge extraction shows door, interior, shelf and actual removal; a living room reference does not replace that function.",
+   "tema": "funcion-y-acciones",
+   "inyectable": true
+  },
+  {
+   "id": "object-swap-quitar-texto-editorial",
+   "fecha": "2026-11-17",
+   "archivo": "/Users/emmanuelmartinezduque/Desktop/AUTOMATIZACION IA VIDEOS/memory/context/object-swap-textos-fondos-20261117.md",
+   "linea": 5,
+   "cita": "**Eliminar completamente los textos editoriales del original** en todas las tomas: títulos, subtítulos, CTA, emojis y overlays. No basta con no añadir texto nuevo ni con cubrir el inglés con alemán. Reconstruir limpiamente el entorno bajo las letras. Añadir los textos del idioma destino después, en edición.",
+   "tipo": "regla",
+   "producto": null,
+   "general": true,
+   "evidencia_general": "Regla fija para cualquier nueva réplica con Object Swap, de cualquier cuenta o producto.",
+   "pasos": [
+    "rotulos"
+   ],
+   "directiva": "En toda nueva réplica Object Swap eliminar títulos, subtítulos, CTA, emojis y overlays del original; reconstruir limpiamente el fondo y añadir el idioma destino en edición, conservando textos físicos auténticos y función del producto.",
+   "directiva_en": "In every new Object Swap replica remove original titles, subtitles, CTAs, emojis and overlays; cleanly reconstruct the background and add target text in editing, preserving authentic physical text and product function.",
+   "tema": "textos-en-edicion",
+   "inyectable": true
+  },
+  {
+   "id": "object-swap-todos-entornos",
+   "fecha": "2026-11-17",
+   "archivo": "/Users/emmanuelmartinezduque/Desktop/AUTOMATIZACION IA VIDEOS/memory/context/object-swap-textos-fondos-20261117.md",
+   "linea": 6,
+   "cita": "2. **Cambiar obligatoriamente TODOS los entornos originales.** No conservar el fondo de ninguna toma en una réplica Object Swap. Agrupar tomas por entorno real observado, no por número, duración o nombre: tomas del mismo lugar comparten el mismo fondo nuevo; lugares distintos requieren fondos nuevos distintos. Ejemplo: cinco clips, los dos primeros en un mismo entorno y los tres restantes en lugares diferentes → cuatro fondos nuevos, asignación A/A/B/C/D.",
+   "tipo": "regla",
+   "producto": null,
+   "general": true,
+   "evidencia_general": "Regla fija para cualquier nueva réplica con Object Swap, de cualquier cuenta o producto.",
+   "pasos": [
+    "desglose",
+    "pinterest"
+   ],
+   "directiva": "En toda réplica Object Swap cambiar todos los entornos; usar un fondo nuevo por lugar original distinto y compartirlo entre las tomas del mismo lugar.",
+   "directiva_en": "In every Object Swap replica change all settings; use one new background per distinct original location and share it across shots of that same location.",
+   "tema": "sustitucion-entornos",
+   "inyectable": true
+  },
+  {
+   "id": "wan-prime-mismas-reglas-object-swap",
+   "fecha": "2026-11-18",
+   "archivo": "/Users/emmanuelmartinezduque/Desktop/AUTOMATIZACION IA VIDEOS/memory/context/object-swap-textos-fondos-20261117.md",
+   "linea": 3,
+   "cita": "**Ampliación expresa de Emmanuel, 18/11/2026: Wan 3.0 Prime aplica los mismos filtros, referencias obligatorias y reglas de preparación y revisión que Genjutsu Object Swap.** Esto incluye todos los puntos de este documento, sin excepción por cambiar de motor.",
+   "tipo": "regla",
+   "producto": null,
+   "general": true,
+   "evidencia_general": "Regla fija para cualquier nueva réplica con Object Swap, de cualquier cuenta o producto.",
+   "pasos": [
+    "desglose",
+    "pinterest",
+    "imagen",
+    "clip",
+    "rotulos"
+   ],
+   "directiva": "Aplicar a Wan 3.0 Prime los mismos filtros, referencias obligatorias y reglas de preparación y revisión que a Genjutsu Object Swap, sin excepciones por motor.",
+   "directiva_en": "Apply the same filters, required references, preparation and review rules to Wan 3.0 Prime as to Genjutsu Object Swap, without engine-based exceptions.",
+   "tema": "sustitucion-entornos",
+   "inyectable": false
+  },
+  {
+   "id": "cancion-exacta-drop-ancla",
+   "fecha": "2026-10-25",
+   "archivo": "/Volumes/T7/AUTOMATIZACION SEGA/REGLAS_EDICION/MUSICA_R2_APROBADA/REGLA.md",
+   "linea": 5,
+   "cita": "Mantener exactamente la canción elegida. El drop guardado en Canciones es un ANCLA, no el comienzo de la pista.",
+   "tipo": "regla",
+   "producto": null,
+   "general": true,
+   "evidencia_general": "Ese es el tipo de edición que necesito cuando hay música.",
+   "pasos": [
+    "montaje"
+   ],
+   "directiva": "Mantener exactamente la canción elegida; el drop guardado es el ancla, no el comienzo de la pista.",
+   "directiva_en": "Keep the exact chosen song; the saved drop is the anchor, not the start of the track.",
+   "tema": "sincronia-drop",
+   "inyectable": false
+  },
+  {
+   "id": "musica-continua-desde-primer-frame",
+   "fecha": "2026-10-25",
+   "archivo": "/Volumes/T7/AUTOMATIZACION SEGA/REGLAS_EDICION/MUSICA_R2_APROBADA/REGLA.md",
+   "linea": 6,
+   "cita": "Alinear ese punto con el primer fotograma del cuerpo real, excluyendo el gancho antiguo. Recortar solo los extremos izquierdo y derecho al inicio y final del vídeo. La música suena desde el primer fotograma, continua, sin saltos ni reinicios.",
+   "tipo": "regla",
+   "producto": null,
+   "general": true,
+   "evidencia_general": "Ese es el tipo de edición que necesito cuando hay música.",
+   "pasos": [
+    "montaje"
+   ],
+   "directiva": "Alinear el drop al primer frame real del cuerpo, sin gancho antiguo; recortar solo extremos y mantener música continua desde el primer frame, sin saltos ni reinicios.",
+   "directiva_en": "Align the drop with the first real body frame, excluding the old hook; trim only outer edges and keep music continuous from the first frame, without jumps or restarts.",
+   "tema": "sincronia-drop",
+   "inyectable": false
+  },
+  {
+   "id": "mezcla-r2-nivel-constante",
+   "fecha": "2026-10-25",
+   "archivo": "/Volumes/T7/AUTOMATIZACION SEGA/REGLAS_EDICION/MUSICA_R2_APROBADA/REGLA.md",
+   "linea": 7,
+   "cita": "No separar, limpiar ruido ni atenuar automáticamente la canción seleccionada durante el gancho. Mantener nivel constante a lo largo de la pista; solo ajuste global constante para evitar saturación si hace falta.",
+   "tipo": "regla",
+   "producto": null,
+   "general": true,
+   "evidencia_general": "Ese es el tipo de edición que necesito cuando hay música.",
+   "pasos": [
+    "montaje"
+   ],
+   "directiva": "Mantener constante la canción elegida, sin separación, limpieza ni atenuación automática en el gancho; permitir solo ajuste global constante para evitar saturación.",
+   "directiva_en": "Keep the selected song constant, without separation, denoising or automatic hook ducking; allow only constant global gain to prevent clipping.",
+   "tema": "mezcla-musical",
+   "inyectable": false
+  },
+  {
+   "id": "gancho-cuerpo-solo-habla-primero",
+   "fecha": "2026-10-27",
+   "archivo": "/Volumes/T7/AUTOMATIZACION SEGA/REGLAS_EDICION/GENJUTSU_AUDIO_COMPLETO.md.before-20261115",
+   "linea": 14,
+   "cita": "Gancho más cuerpo: descartar todo audio generado/original del cuerpo y todo ambiente. Conservar únicamente habla del primer clip si existe, separada de música y canto; usar solo la canción elegida continua desde t0 con drop al cuerpo.",
+   "tipo": "regla",
+   "producto": null,
+   "general": true,
+   "evidencia_general": "Gancho más cuerpo: descartar todo audio generado/original del cuerpo y todo ambiente.",
+   "pasos": [
+    "montaje"
+   ],
+   "directiva": "En gancho más cuerpo conservar solo habla del primer clip, sin música ni canto; descartar audio del cuerpo y ambiente. Añadir la canción elegida continua desde t0 y sincronizada por drop.",
+   "directiva_en": "For hook plus body retain only first-clip speech, without music or singing; discard body audio and ambience. Add the chosen song continuously from t0, aligned by its drop.",
+   "tema": "mezcla-musical",
+   "inyectable": false
+  },
+  {
+   "id": "cancion-tarjeta-prevalece-genjutsu",
+   "fecha": "2026-11-15",
+   "archivo": "/Volumes/T7/AUTOMATIZACION SEGA/REGLAS_EDICION/CORRECCION_FUNCION_DROP_GANCHOS_20261115.md",
+   "linea": 8,
+   "cita": "Canción explícita de tarjeta prevalece también en réplica Genjutsu completa. Conservar audio original solo cuando no hay canción explícita, salvo instrucción posterior. Retirar música original al sustituirla, conservar habla pertinente y verificar mezcla.",
+   "tipo": "regla",
+   "producto": null,
+   "general": true,
+   "evidencia_general": "Canción explícita de tarjeta prevalece también en réplica Genjutsu completa.",
+   "pasos": [
+    "montaje"
+   ],
+   "directiva": "La canción explícita de la tarjeta prevalece también en Genjutsu completo; retirar música original y conservar habla pertinente. Sin canción explícita conservar audio original, salvo orden posterior.",
+   "directiva_en": "The card’s explicit song also takes priority in full Genjutsu replicas; remove original music and retain relevant speech. Without an explicit song keep original audio unless later instructed otherwise.",
+   "tema": "mezcla-musical",
+   "inyectable": false
+  },
+  {
+   "id": "limites-gancho-por-concepto",
+   "fecha": "2026-11-15",
+   "archivo": "/Volumes/T7/AUTOMATIZACION SEGA/REGLAS_EDICION/CORRECCION_FUNCION_DROP_GANCHOS_20261115.md",
+   "linea": 19,
+   "cita": "No hay límite general de tres segundos. Solo el gancho regalo pop y el gancho de dejar caer café tienen máximo3s; el gancho 1,2,3 tiene máximo6s. Conservar duraciones aprobadas menores. Límites exclusivos del gancho identificado, nunca del cuerpo.",
+   "tipo": "regla",
+   "producto": null,
+   "general": true,
+   "evidencia_general": "No hay límite general de tres segundos.",
+   "pasos": [
+    "clip",
+    "montaje"
+   ],
+   "directiva": "Sin límite general: regalo pop y caída de café, máximo 3 s; 1,2,3, máximo 6 s. Conservar duraciones aprobadas menores y aplicar límites solo al gancho identificado, nunca al cuerpo.",
+   "directiva_en": "No general limit: pop gift and coffee drop hooks, maximum 3 s; 1,2,3 hook, maximum 6 s. Keep shorter approved durations; apply limits only to the identified hook, never the body.",
+   "tema": "limites-gancho",
+   "inyectable": false
+  },
+  {
+   "id": "replicas-conservar-secuencia-y-ritmo",
+   "fecha": "2026-11-15",
+   "archivo": "/Volumes/T7/AUTOMATIZACION SEGA/REGLAS_EDICION/CORRECCION_FUNCION_DROP_GANCHOS_20261115.md",
+   "linea": 19,
+   "cita": "Réplicas de contenido conservan secuencia, acciones, visuales, tiempos, cortes y ritmo de la referencia efectiva; no recortar ni acelerar partes para cumplir un límite general. Ajustar el fragmento de la canción al vídeo, sin prolongarlo.",
+   "tipo": "regla",
+   "producto": null,
+   "general": true,
+   "evidencia_general": "Réplicas de contenido conservan secuencia, acciones, visuales, tiempos, cortes y ritmo de la referencia efectiva;",
+   "pasos": [
+    "desglose",
+    "montaje"
+   ],
+   "directiva": "En réplicas conservar secuencia, acciones, visuales, tiempos, cortes y ritmo; no recortar ni acelerar por un límite general. Ajustar la canción al vídeo sin prolongarlo.",
+   "directiva_en": "In replicas preserve sequence, actions, visuals, timing, cuts and rhythm; do not trim or accelerate for a general limit. Fit the song to the video without extending it.",
+   "tema": "fidelidad-referencia",
+   "inyectable": true
+  },
+  {
+   "id": "tienda-alemana-coherente-autonomia",
+   "fecha": "2026-11-09",
+   "archivo": "/Users/emmanuelmartinezduque/Desktop/AUTOMATIZACION IA VIDEOS/memory/context/tiendas-alemania-pinterest-logo-20261109.md",
+   "linea": 5,
+   "cita": "Para nuevos frames dentro de tiendas en Alemania, si Emmanuel no especifica tienda y el texto del vídeo de referencia tampoco la especifica, elegir autónomamente una tienda coherente con el producto entre Lidl, Action, Aldi y MediaMarkt. Una indicación expresa del usuario prevalece; conservar una tienda explícita de referencia salvo cambio encargado. No usar un almacén genérico como sustituto.",
+   "tipo": "regla",
+   "producto": null,
+   "general": true,
+   "evidencia_general": "Para nuevos frames dentro de tiendas en Alemania, si Emmanuel no especifica tienda y el texto del vídeo de referencia tampoco la especifica,",
+   "pasos": [
+    "desglose",
+    "pinterest"
+   ],
+   "directiva": "En tiendas alemanas sin cadena indicada por Emmanuel ni por el texto fuente, elegir Lidl, Action, Aldi o MediaMarkt según el producto; respetar elecciones expresas y evitar almacenes genéricos.",
+   "directiva_en": "For German stores with no chain specified by Emmanuel or source text, choose Lidl, Action, Aldi or MediaMarkt according to the product; respect explicit choices and avoid generic warehouses.",
+   "tema": "tienda-coherente-escena",
+   "inyectable": true
+  },
+  {
+   "id": "tienda-logo-fisico-autentico",
+   "fecha": "2026-11-09",
+   "archivo": "/Users/emmanuelmartinezduque/Desktop/AUTOMATIZACION IA VIDEOS/memory/context/tiendas-alemania-pinterest-logo-20261109.md",
+   "linea": 9,
+   "cita": "El frame debe mostrar el logo auténtico de esa tienda en cartelería física del fondo u otro elemento real coherente: no solo colores de marca, no logo inventado ni overlay. Conservar arquitectura, mobiliario y luz propios del comercio.",
+   "tipo": "regla",
+   "producto": null,
+   "general": true,
+   "evidencia_general": "Para nuevos frames dentro de tiendas en Alemania, si Emmanuel no especifica tienda y el texto del vídeo de referencia tampoco la especifica,",
+   "pasos": [
+    "imagen"
+   ],
+   "directiva": "En esos frames mostrar el logo auténtico en cartelería física u otro elemento real coherente; conservar arquitectura, mobiliario y luz del comercio.",
+   "directiva_en": "In those frames show the authentic logo on physical signage or another coherent real element; preserve the store architecture, fixtures and lighting.",
+   "tema": "tienda-coherente-escena",
+   "inyectable": true
+  },
+  {
+   "id": "gancho-hablado-idioma-destino",
+   "fecha": "2026-11-04",
+   "archivo": "/Volumes/T7/AUTOMATIZACION SEGA/REGLAS_EDICION/GANCHO_HABLADO_IDIOMA_MOTOR_MIXTO_20261104.md",
+   "linea": 7,
+   "cita": "Si el idioma hablado del gancho no coincide con el mercado, generar ese clip con Seedance (Seedance 2.5, salvo selección expresa posterior), con diálogo adaptado al idioma objetivo y referencias exactas de avatar/producto. Conservar intención y acción sin inventar afirmaciones. El resto del vídeo se replica con Genjutsu.",
+   "tipo": "regla",
+   "producto": null,
+   "general": true,
+   "evidencia_general": "Orden expresa de Emmanuel para nuevos testeos en modalidad replicar los más virales.",
+   "pasos": [
+    "desglose",
+    "clip",
+    "doblaje",
+    "montaje"
+   ],
+   "directiva": "En nuevos tests de réplicas virales, si el gancho habla otro idioma, generar solo ese clip con Seedance y diálogo del mercado destino, conservando intención y acción; replicar el resto con Genjutsu.",
+   "directiva_en": "In new viral replica tests, if the hook speaks another language, generate only that clip with Seedance and target-market dialogue, preserving intent and action; replicate the remainder with Genjutsu.",
+   "tema": "idioma-gancho",
+   "inyectable": false
+  },
+  {
+   "id": "frames-aprobados-continuar-lote",
+   "fecha": "2026-10-29",
+   "archivo": "/Volumes/T7/AUTOMATIZACION SEGA/ReglaContinuidad-20261029/REGLA.md",
+   "linea": 3,
+   "cita": "Emmanuel aprueba las imágenes y se va a dormir. Esa aprobación autoriza continuar el lote encargado hasta tener TODOS los clips y TODAS las ediciones exportadas y listas para descargar, sin otra pregunta, revisión humana de clips ni pausa creativa antes de editar. Las correcciones que quiera se deciden después de recibir la tanda completa.",
+   "tipo": "regla",
+   "producto": null,
+   "general": true,
+   "evidencia_general": "Se aplica también a lotes mixtos con edición de vídeos existentes.",
+   "pasos": [
+    "clip",
+    "rotulos",
+    "doblaje",
+    "montaje"
+   ],
+   "directiva": "Tras aprobar las imágenes continuar el lote hasta todos los clips y ediciones exportados, sin otra revisión humana intermedia; Emmanuel decide correcciones tras recibir la tanda completa.",
+   "directiva_en": "After image approval finish all batch clips and exported edits without another intermediate human review; Emmanuel decides corrections after receiving the complete batch.",
+   "tema": "continuidad-lote",
+   "inyectable": false
+  },
+  {
+   "id": "dudas-iniciales-antes-frames",
+   "fecha": "2026-11-10",
+   "archivo": "/Users/emmanuelmartinezduque/Desktop/AUTOMATIZACION IA VIDEOS/memory/context/automatizacion-ligera-20261109.md",
+   "linea": 27,
+   "cita": "Todas las preguntas esenciales del lote (imágenes, generación, edición, música, voz, textos y cortes) se reúnen al recibir el encargo completo y se resuelven ANTES de generar frames. Tras aprobar los frames, continuar vídeos y edición sin nuevas preguntas ni solicitudes rutinarias de aprobación o escucha.",
+   "tipo": "regla",
+   "producto": null,
+   "general": true,
+   "evidencia_general": "Todas las preguntas esenciales del lote (imágenes, generación, edición, música, voz, textos y cortes)",
+   "pasos": [
+    "desglose",
+    "imagen",
+    "clip",
+    "rotulos",
+    "doblaje",
+    "montaje"
+   ],
+   "directiva": "Resolver todas las dudas esenciales del lote antes de generar frames. Tras aprobarlos, continuar vídeos y edición sin nuevas preguntas ni solicitudes rutinarias de aprobación o escucha.",
+   "directiva_en": "Resolve all essential batch questions before generating frames. Once approved, continue videos and editing without new questions or routine approval or listening requests.",
+   "tema": "continuidad-lote",
+   "inyectable": false
+  },
+  {
+   "id": "entregas-editadas-carpeta-fecha",
+   "fecha": "2026-10-29",
+   "archivo": "/Volumes/T7/AUTOMATIZACION SEGA/videos editados/REGLA.md",
+   "linea": 3,
+   "cita": "Orden directa de Emmanuel: todos los vídeos editados se guardan en `/Volumes/T7/AUTOMATIZACION SEGA/videos editados/`, dentro de una carpeta por fecha de edición/entrega, formato `AAAA-MM-DD`, usando Europe/Madrid. Crear la carpeta de cada nuevo día (ejemplos: `2026-10-29`, `2026-10-30`). Este es el destino local obligatorio de las entregas; Drive no lo sustituye.",
+   "tipo": "regla",
+   "producto": null,
+   "general": true,
+   "evidencia_general": "Orden directa de Emmanuel: todos los vídeos editados se guardan en",
+   "pasos": [
+    "montaje"
+   ],
+   "directiva": "Guardar todos los vídeos editados en /Volumes/T7/AUTOMATIZACION SEGA/videos editados/AAAA-MM-DD según fecha de edición o entrega en Europe/Madrid; Drive no sustituye ese destino.",
+   "directiva_en": "Save all edited videos in /Volumes/T7/AUTOMATIZACION SEGA/videos editados/YYYY-MM-DD by editing or delivery date in Europe/Madrid; Drive does not replace that destination.",
+   "tema": "entrega-archivo",
+   "inyectable": false
+  },
+  {
+   "id": "targetalarm-cuerpos-aportados",
+   "fecha": "2026-10-29",
+   "archivo": "/Users/emmanuelmartinezduque/Desktop/AUTOMATIZACION IA VIDEOS/memory/context/split-testing-dos-bases-20261029.md",
+   "linea": 7,
+   "cita": "TargetAlarm y ZielAlarm: cuerpos exclusivamente IMG_0523.mov, IMG_0525.mov, IMG_0527.mov e IMG_0528.mov aportados por Emmanuel. Elegir por contenido y continuidad observados; no regenerar cuerpos. Nailuna conserva su cuerpo recuperable correspondiente.",
+   "tipo": "instruccion",
+   "producto": "TargetAlarm",
+   "general": false,
+   "evidencia_general": null,
+   "pasos": [
+    "clip",
+    "montaje"
+   ],
+   "directiva": "Usar exclusivamente los cuerpos aportados IMG_0523.mov, IMG_0525.mov, IMG_0527.mov e IMG_0528.mov, según contenido y continuidad; no regenerar cuerpos.",
+   "directiva_en": "Use only the supplied body clips IMG_0523.mov, IMG_0525.mov, IMG_0527.mov and IMG_0528.mov according to content and continuity; do not regenerate body clips.",
+   "tema": "cuerpos-reutilizables",
+   "inyectable": false
+  },
+  {
+   "id": "zielalarm-cuerpos-aportados",
+   "fecha": "2026-10-29",
+   "archivo": "/Users/emmanuelmartinezduque/Desktop/AUTOMATIZACION IA VIDEOS/memory/context/split-testing-dos-bases-20261029.md",
+   "linea": 7,
+   "cita": "TargetAlarm y ZielAlarm: cuerpos exclusivamente IMG_0523.mov, IMG_0525.mov, IMG_0527.mov e IMG_0528.mov aportados por Emmanuel. Elegir por contenido y continuidad observados; no regenerar cuerpos. Nailuna conserva su cuerpo recuperable correspondiente.",
+   "tipo": "instruccion",
+   "producto": "ZielAlarm",
+   "general": false,
+   "evidencia_general": null,
+   "pasos": [
+    "clip",
+    "montaje"
+   ],
+   "directiva": "Usar exclusivamente los cuerpos aportados IMG_0523.mov, IMG_0525.mov, IMG_0527.mov e IMG_0528.mov, según contenido y continuidad; no regenerar cuerpos.",
+   "directiva_en": "Use only the supplied body clips IMG_0523.mov, IMG_0525.mov, IMG_0527.mov and IMG_0528.mov according to content and continuity; do not regenerate body clips.",
+   "tema": "cuerpos-reutilizables",
+   "inyectable": false
+  },
+  {
+   "id": "imagen-organica-no-anuncio",
+   "fecha": "2026-09-02",
+   "archivo": "/Users/emmanuelmartinezduque/Desktop/AUTOMATIZACION IA VIDEOS/CEREBRO/reglas/organico-no-publicidad.md",
+   "linea": 13,
+   "cita": "creo que tú aún no tienes claro que yo no hago publicidad, o sea no pago para que se enseñen\n> los vídeos, es completamente orgánico por lo que busco una imagen orgánica",
+   "tipo": "regla",
+   "producto": null,
+   "general": true,
+   "evidencia_general": "los vídeos, es completamente orgánico por lo que busco una imagen orgánica",
+   "pasos": [
+    "desglose"
+   ],
+   "directiva": "Buscar una imagen orgánica para los vídeos: Emmanuel no paga para que se enseñen y su contenido es completamente orgánico.",
+   "directiva_en": "Aim for an organic image in the videos: Emmanuel does not pay for distribution and his content is entirely organic.",
+   "tema": "realismo-organico",
+   "inyectable": true
+  },
+  {
+   "id": "eiswerk-receta-navidena-v3-aprobada",
+   "fecha": "2026-09-29",
+   "archivo": "/Users/emmanuelmartinezduque/Desktop/AUTOMATIZACION IA VIDEOS/EDITOR/lotes/app_20260929_61/aprobaciones_primera_revision.json",
+   "linea": 4,
+   "cita": "Aprobar",
+   "tipo": "aprobacion",
+   "producto": "EisWerk",
+   "general": false,
+   "evidencia_general": null,
+   "pasos": [
+    "imagen"
+   ],
+   "directiva": "Conservar aprobado el frame v3f3 de la receta navideña EisWerk del vídeo 3, identificado por su hash en el archivo.",
+   "directiva_en": "Keep the approved v3f3 frame for the EisWerk video 3 Christmas recipe, identified by its hash in the file.",
+   "tema": "frames-aprobados",
+   "inyectable": false
+  },
+  {
+   "id": "targetalarm-militar-pies-cortados",
+   "fecha": "2026-09-29",
+   "archivo": "/Users/emmanuelmartinezduque/Desktop/AUTOMATIZACION IA VIDEOS/EDITOR/lotes/app_20260929_61/aprobaciones_primera_revision.json",
+   "linea": 11,
+   "cita": "Conservar",
+   "tipo": "aprobacion",
+   "producto": "TargetAlarm",
+   "general": false,
+   "evidencia_general": null,
+   "pasos": [
+    "imagen"
+   ],
+   "directiva": "Conservar el frame militar v5f1 de TargetAlarm aun con los pies cortados; la aprobación corresponde solo a ese frame.",
+   "directiva_en": "Keep TargetAlarm’s military frame v5f1 despite cropped feet; the approval applies only to that frame.",
+   "tema": "frames-aprobados",
+   "inyectable": false
+  },
+  {
+   "id": "emojis-adaptados-referencia-real",
+   "fecha": "2026-10-31",
+   "archivo": "/Users/emmanuelmartinezduque/Desktop/AUTOMATIZACION IA VIDEOS/memory/context/textos-siempre-edicion-20261031.md",
+   "linea": 3,
+   "cita": "Adaptar textos de referencia real al idioma, marca, tienda y emojis según reglas; conservar snapshots y aprobaciones históricas.",
+   "tipo": "regla",
+   "producto": null,
+   "general": true,
+   "evidencia_general": "Orden expresa de Emmanuel: todas las entregas deben llevar textos y edición posterior; frames y clips generados limpios sin overlays.",
+   "pasos": [
+    "rotulos"
+   ],
+   "directiva": "En todas las entregas adaptar textos y emojis de la referencia real al idioma y producto según las reglas vigentes, conservando históricos.",
+   "directiva_en": "In all deliveries adapt text and emojis from the actual reference to the language and product according to current rules, preserving historical records.",
+   "tema": "emojis-nicho",
+   "inyectable": true
+  },
+  {
+   "id": "cada-demostracion-funcion-real",
+   "fecha": "2026-11-15",
+   "archivo": "/Volumes/T7/AUTOMATIZACION SEGA/REGLAS_EDICION/CORRECCION_FUNCION_DROP_GANCHOS_20261115.md",
+   "linea": 10,
+   "cita": "Antes de escribir cada demostración, consultar la función real del producto y sus referencias. La revisión final debe comprobar esa función en el vídeo, no solo presencia/forma del objeto.",
+   "tipo": "regla",
+   "producto": null,
+   "general": true,
+   "evidencia_general": "Antes de escribir cada demostración, consultar la función real del producto y sus referencias.",
+   "pasos": [
+    "desglose"
+   ],
+   "directiva": "Antes de escribir cada demostración consultar función real y referencias del producto; comprobar en el vídeo final esa función, no solo presencia y forma del objeto.",
+   "directiva_en": "Before writing each demonstration consult the product’s actual function and references; verify that function in the final video, not merely the object’s presence and shape.",
+   "tema": "funcion-y-acciones",
+   "inyectable": true
+  },
+  {
+   "id": "falterpfote-preservar-proyeccion",
+   "fecha": "2026-11-17",
+   "archivo": "/Users/emmanuelmartinezduque/Desktop/AUTOMATIZACION IA VIDEOS/memory/context/object-swap-textos-fondos-20261117.md",
+   "linea": 5,
+   "cita": "Nunca borrar el funcionamiento visible del producto al eliminar overlays (por ejemplo, la proyección luminosa de FalterPfote).",
+   "tipo": "instruccion",
+   "producto": "FalterPfote",
+   "general": false,
+   "evidencia_general": null,
+   "pasos": [
+    "desglose",
+    "rotulos"
+   ],
+   "directiva": "Al eliminar overlays conservar la proyección luminosa visible de FalterPfote, que demuestra su funcionamiento.",
+   "directiva_en": "When removing overlays preserve FalterPfote’s visible light projection, which demonstrates its function.",
+   "tema": "funcion-y-acciones",
+   "inyectable": true
+  }
+ ]
+}

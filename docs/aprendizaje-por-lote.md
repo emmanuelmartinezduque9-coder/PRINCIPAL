@@ -130,3 +130,26 @@ especificación. Claude lo diseñó, revisó cada cambio e hizo la vista.
   lo que él pidió, sin añadir nada.
 - **Marcas de terceros permitidas.** Ninguna preferencia puede quitar o prohibir marcas, tiendas, películas o personajes
   de terceros (`prohibitsThirdParty`): no se crea, y si existe se retira.
+
+## Lo que ya sabía Codex (26/11/2026, con su consentimiento expreso)
+
+- **Extracción (Codex, solo lectura):** de `/Volumes/T7/AUTOMATIZACION SEGA`, su CEREBRO y las skills de Codex salieron
+  68 decisiones reales suyas, cada una con su cita, su fecha, su archivo y su línea. Están en
+  `docs/aprendizaje-codex/decisiones.json`, con el informe de la extracción al lado.
+- **Carga:** `scripts/cargar-decisiones-codex.ts`, que llama a `loadCodexDecisions`. Todas entran como señales
+  (`kind = codex`, con su origen).
+- **Preferencias** (`origin = codex`, `origin_ref` con su fecha, archivo y cita):
+  - solo sus reglas e instrucciones sobre cómo hacer el vídeo, 21 en total;
+  - generales solo con evidencia de que las dio para todos (`explicit_general`); el barrido no las reparte;
+  - la de un producto, solo para ese producto.
+- **Lo que queda solo como señal** (revisión de Claude, `inyectable: false`):
+  - las de flujo de trabajo: carpetas de entrega, 480p con Topaz, motores, cuántos intentos, cuándo preguntar;
+  - las que ya están programadas: rótulos 06B, Pinterest manual, audio del montaje;
+  - las de un solo vídeo o de un solo lote;
+  - las de productos que no existen en PRINCIPAL.
+- **Dónde va cada una:** las que son instrucciones para un agente («comprueba…», «consulta…») van al desglose, que hace
+  Claude. Al prompt de imagen solo van las que describen la imagen.
+- **Topes por paso:** como mucho 5 preferencias en imagen y clip, 14 en el desglose y 10 en los demás. Lo del
+  producto va antes que lo general.
+- **En «Qué ha aprendido»:** se ven aparte, con su origen y, en los lotes siguientes, en cuántos vídeos se aplicaron y
+  cuántas aprobó (verde) o corrigió (rojo).

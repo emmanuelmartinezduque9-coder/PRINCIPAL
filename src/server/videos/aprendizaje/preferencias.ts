@@ -20,7 +20,11 @@ export async function preferencesFor(stage: Stage, ctx: PreferenceContext): Prom
     const country = ctx.country ?? (market ? marketOf(market).code : "");
     const shotTypes = ctx.shotTypes ?? await shotTypesFor(video.id, ctx.tramo);
     const rows = await db.select().from(schema.learnedPreferences).where(and(eq(schema.learnedPreferences.status, "activa"), gte(schema.learnedPreferences.weight, 0.5))).orderBy(desc(schema.learnedPreferences.weight), schema.learnedPreferences.id);
-    const active = rows.filter((p) => p.stages.includes(stage) && (ctx.choiceOptions === undefined || p.choice !== null && ctx.choiceOptions.includes(p.choice.value)) && (p.scope === "global" || p.scope === "producto" && p.scopeValue === String(productId) || p.scope === "pais" && p.scopeValue === country || p.scope === "toma" && shotTypes.includes(p.scopeValue))).slice(0, 5);
+    // Lo de su producto va antes que lo general; dentro, por peso. Los prompts de Higgsfield admiten menos texto que
+    // las instrucciones de Claude.
+    const limit = stage === "imagen" || stage === "clip" ? 5 : stage === "desglose" ? 14 : 10;
+    const matches = rows.filter((p) => p.stages.includes(stage) && (ctx.choiceOptions === undefined || p.choice !== null && ctx.choiceOptions.includes(p.choice.value)) && (p.scope === "global" || p.scope === "producto" && p.scopeValue === String(productId) || p.scope === "pais" && p.scopeValue === country || p.scope === "toma" && shotTypes.includes(p.scopeValue)));
+    const active = [...matches.filter((p) => p.scope !== "global"), ...matches.filter((p) => p.scope === "global")].slice(0, limit);
     if (!active.length) return { text: "", ids: [] };
     if (ctx.record !== false) await db.insert(schema.preferenceApplications).values(active.map((p) => ({ preferenceId: p.id, videoId: video.id, batchId: video.batchId, stage }))).onConflictDoNothing();
     const english = stage === "imagen" || stage === "clip";

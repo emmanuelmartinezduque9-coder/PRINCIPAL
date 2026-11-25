@@ -31,6 +31,11 @@ export const codexDecisionsSchema = z.object({
       directiva: z.string().min(1).max(600),
       directiva_en: z.string().min(1).max(600),
       tema: z.string().min(1).max(100),
+      /**
+       * Revisión de Claude: `false` para las de flujo de trabajo (carpetas, motores, resolución, cuándo preguntar) o las
+       * que ya están programadas; quedan como señal con su origen, sin ir a los prompts.
+       */
+      inyectable: z.boolean().optional(),
     }),
   ),
 });
@@ -86,6 +91,10 @@ export async function loadCodexDecisions(input: unknown, ownerId: number): Promi
     if (signal) report.signals += 1;
     // Lo que aprobó o rechazó sin dar una regla queda como señal; preferencias, solo sus reglas e instrucciones.
     if (d.tipo !== "regla" && d.tipo !== "instruccion") continue;
+    if (d.inyectable === false) {
+      report.skipped.push({ id: d.id, reason: "De flujo de trabajo o ya programada: queda como señal, no va a los prompts." });
+      continue;
+    }
     if (!general && !product) {
       report.skipped.push({ id: d.id, reason: d.producto ? `El producto «${d.producto}» no está en PRINCIPAL: queda como señal.` : "Sin producto ni evidencia de que sea general: queda como señal." });
       continue;
