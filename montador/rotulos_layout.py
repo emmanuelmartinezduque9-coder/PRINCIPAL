@@ -3,7 +3,7 @@ import re
 from functools import lru_cache
 from itertools import combinations
 
-FIXED_SIZE = 58  # como solían quedar los rótulos de Codex (50–64): dos líneas con cortes de frase
+FIXED_SIZE = 74  # medido por Codex en sus ediciones 06B aprobadas (25/11/2026): mayúsculas de ~52 px en 1080 de ancho; con 58 salían de 41 px
 MAX_LINES = 3
 MIN_CUE_SECONDS = 0.8
 

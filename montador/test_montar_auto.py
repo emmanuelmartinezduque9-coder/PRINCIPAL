@@ -162,7 +162,7 @@ class RotulosFijos(unittest.TestCase):
                 except ImportError as error:
                     self.skipTest(str(error))
                 self.assertGreater(len(cues), 2)
-                self.assertEqual({c['font_size_px'] for c in cues}, {58})
+                self.assertEqual({c['font_size_px'] for c in cues}, {74})
                 self.assertEqual(cues[0]['start'], 1.)
                 self.assertEqual(cues[-1]['end'], 11.)
                 self.assertTrue(all(c['role']=='cta' for c in cues[:-1]))
