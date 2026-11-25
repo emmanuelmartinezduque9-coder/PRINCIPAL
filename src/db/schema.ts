@@ -1933,7 +1933,7 @@ export const socialAccounts = pgTable("social_accounts", {
 ]);
 
 /** ADN observado; importado nunca equivale a una propuesta sin publicación verificada. */
-export type SocialDna = { angulo: string; fondo: string; texto: string; cancion: string; descripcion?: string; producto?: string; pais?: string };
+export type SocialDna = { angulo: string; fondo: string; texto: string; cancion: string; cta?: string; descripcion?: string; producto?: string; pais?: string };
 export const socialPosts = pgTable("social_posts", {
   id: bigserial("id", { mode: "number" }).primaryKey(),
   accountId: bigint("account_id", { mode: "number" }).notNull().references(() => socialAccounts.id, { onDelete: "cascade" }),

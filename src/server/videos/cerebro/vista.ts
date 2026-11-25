@@ -63,7 +63,7 @@ async function loadModelData(): Promise<ModelData> {
       videoId: p.videoId,
       publishedAt: p.publishedAt,
       excluded: p.excluded,
-      dna: p.dna ? { angulo: p.dna.angulo, fondo: p.dna.fondo, texto: p.dna.texto, cancion: p.dna.cancion } : {},
+      dna: p.dna ? { angulo: p.dna.angulo, cta: p.dna.cta, fondo: p.dna.fondo, texto: p.dna.texto, cancion: p.dna.cancion } : {},
       readings: readings.get(p.id) ?? [],
     })),
     history: tests.map((t) => ({
@@ -81,7 +81,7 @@ async function loadModelData(): Promise<ModelData> {
   };
 }
 
-const UNKNOWN = /^(desconocido|unknown|n\/a|-)$/i;
+const UNKNOWN = /^(desconocido|unknown|ninguna|n\/a|-)$/i;
 const usable = (s: PieceStat) => !UNKNOWN.test(s.value.trim());
 
 function postView(p: ScoredPost, data: ModelData) {

@@ -18,7 +18,7 @@ type View = Serialized<CerebroView>;
 type Stat = Serialized<PieceStat>;
 type Post = View["accounts"][number]["recent"][number];
 
-const KEY_LABELS: Record<string, string> = { angulo: "Ángulos y ganchos", fondo: "Fondos", texto: "Textos en pantalla", cancion: "Canciones" };
+const KEY_LABELS: Record<string, string> = { angulo: "Ángulos y ganchos", cta: "Llamadas a la acción", fondo: "Fondos", texto: "Textos en pantalla", cancion: "Canciones" };
 const PILLAR_LABELS: Record<string, string> = { gancho: "Gancho", texto: "Texto", fondo: "Fondo", cancion: "Canción" };
 const VERDICT: Record<string, { label: string; tone: string }> = {
   recomendado: { label: "Funciona", tone: "text-success" },
@@ -213,7 +213,7 @@ export function CerebroPage() {
   const { data, isLoading, error } = useQuery({ queryKey: ["cerebro"], queryFn: () => api<View>("/api/cerebro"), refetchInterval: 120_000 });
   if (isLoading) return <Skeleton className="h-64" />;
   if (error || !data) return <p className="text-sm text-destructive">{error?.message ?? "No se pudo cargar."}</p>;
-  const keys = (["angulo", "fondo", "texto", "cancion"] as const).filter((k) => data.global[k].length > 0);
+  const keys = (["angulo", "cta", "fondo", "texto", "cancion"] as const).filter((k) => data.global[k].length > 0);
   return (
     <div className="flex flex-col gap-8">
       <PageHeader title="Cerebro de cuentas">

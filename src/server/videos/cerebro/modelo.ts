@@ -4,7 +4,7 @@
  * (orden de CEREBRO), nunca ventas.
  */
 
-export const DNA_KEYS = ["angulo", "fondo", "texto", "cancion"] as const;
+export const DNA_KEYS = ["angulo", "cta", "fondo", "texto", "cancion"] as const;
 export type DnaKey = (typeof DNA_KEYS)[number];
 export type Dna = Partial<Record<DnaKey, string | null>>;
 
@@ -375,7 +375,7 @@ export function splitCandidates(accounts: ModelAccount[], scored: ScoredPost[], 
 export function winningTexts(scored: ScoredPost[], stats: PieceStat[], limit = 10): Array<{ text: string; ratio: number; postId: number; p: number | null }> {
   const pOf = new Map(stats.filter((s) => s.key === "texto").map((s) => [norm(s.value), s.p]));
   return scored
-    .filter((p) => p.hit && p.dna.texto && p.ratio !== null)
+    .filter((p) => p.hit && p.dna.texto && !/^(desconocido|unknown)$/i.test(p.dna.texto.trim()) && p.ratio !== null)
     .sort((a, b) => b.ratio! - a.ratio!)
     .slice(0, limit)
     .map((p) => ({ text: p.dna.texto!.trim(), ratio: p.ratio!, postId: p.id, p: pOf.get(norm(p.dna.texto)) ?? null }));
