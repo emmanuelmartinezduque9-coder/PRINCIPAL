@@ -209,3 +209,41 @@ describe("rechazos y elecciones puros", () => {
     expect(choosePreferred(["var:todas"], [{ value: "var:3" }])).toBeNull();
   });
 });
+
+describe("decisiones de Codex (consentimiento del 26/11/2026)", () => {
+  beforeEach(truncateAll);
+  it("entran con su origen y su ámbito real; las de un producto que no existe quedan como señal; nada que prohíba marcas", async () => {
+    const { loadCodexDecisions } = await import("@/server/videos/aprendizaje/codex");
+    const { learningView } = await import("@/server/videos/aprendizaje/medicion");
+    const user = await makeUser("dueno");
+    const eis = await makeProduct(user, { name: "EisWerk", countries: ["DE"] });
+    const other = await makeProduct(user, { name: "Otro", countries: ["DE"] });
+    const base = { linea: 3, pasos: ["rotulos"] as const, directiva_en: "x", fecha: "2026-11-02", archivo: "/Volumes/T7/AUTOMATIZACION SEGA/REGLAS_EDICION/CRITERIOS_OBLIGATORIOS.md" };
+    const json = { version: 1, decisions: [
+      { ...base, id: "emojis-temporada", cita: "Emmanuel: los emojis siempre de la temporada del vídeo", tipo: "regla", producto: null, general: true, evidencia_general: "siempre, en todos los vídeos", directiva: "Emojis de la temporada del vídeo.", tema: "emojis-temporada" },
+      { ...base, id: "eis-regalo", cita: "en EisWerk, el gancho del regalo", tipo: "instruccion", producto: "EisWerk", general: false, evidencia_general: null, directiva: "En EisWerk, gancho del regalo.", tema: "gancho-regalo" },
+      { ...base, id: "nailuna", cita: "Nailuna: uñas rosas", tipo: "regla", producto: "Nailuna", general: false, evidencia_general: null, directiva: "Uñas rosas.", tema: "unas" },
+      { ...base, id: "sin-general", cita: "general pero sin evidencia", tipo: "regla", producto: null, general: true, evidencia_general: null, directiva: "Algo.", tema: "algo" },
+      { ...base, id: "marcas", cita: "quita las marcas", tipo: "regla", producto: null, general: true, evidencia_general: "todos", directiva: "Quita las marcas de terceros de los rótulos.", tema: "marcas" },
+      { ...base, id: "rechazo", cita: "no me gusta el fondo", tipo: "rechazo", producto: "EisWerk", general: false, evidencia_general: null, directiva: "Fondo real.", tema: "fondo" },
+    ] };
+    const report = await loadCodexDecisions(json, user.id);
+    expect(report).toMatchObject({ preferences: 2, general: 1, byProduct: { EisWerk: 1 } });
+    expect(report.skipped.map((s) => s.id).sort()).toEqual(["marcas", "nailuna", "sin-general"]);
+    // Idempotente.
+    expect(await loadCodexDecisions(json, user.id)).toMatchObject({ preferences: 0, signals: 0 });
+    const prefs = await getDb().select().from(schema.learnedPreferences);
+    expect(prefs.find((p) => p.explicitGeneral)).toMatchObject({ scope: "global", origin: "codex", originRef: { fecha: "2026-11-02", linea: 3 } });
+    // La general dada por él sigue general tras el barrido; la de EisWerk no llega a otro producto.
+    await repairScopes();
+    expect((await getDb().select().from(schema.learnedPreferences)).filter((p) => p.status === "activa")).toHaveLength(2);
+    const v = await createVideo(user, other.id);
+    const w = await createVideo(user, eis.id);
+    expect((await preferencesFor("rotulos", { videoId: v.id })).text).toContain("temporada");
+    expect((await preferencesFor("rotulos", { videoId: v.id })).text).not.toContain("regalo");
+    expect((await preferencesFor("rotulos", { videoId: w.id })).text).toContain("regalo");
+    const view = await learningView(user);
+    expect(view.codex).toHaveLength(2);
+    expect(view.codex.find((c) => c.preference.scope === "global")).toMatchObject({ applied: 2, approved: 0, corrected: 0 });
+  });
+});

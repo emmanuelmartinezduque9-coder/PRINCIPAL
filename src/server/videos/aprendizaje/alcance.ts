@@ -51,6 +51,8 @@ export async function repairScopes(): Promise<void> {
         continue;
       }
       if (p.scope === "producto") continue;
+      // Las que él dio expresamente para todos los vídeos (p. ej. sus reglas de Codex) se quedan generales.
+      if (p.explicitGeneral && p.scope === "global") continue;
       // De país, de toma o global: se reparte en una por cada producto en que él lo pidió (lote o dos vídeos) y la
       // general se retira.
       const ids = p.sourceSignalIds;

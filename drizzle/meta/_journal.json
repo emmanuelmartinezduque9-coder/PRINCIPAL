@@ -463,6 +463,13 @@
       "when": 1795630371218,
       "tag": "0065_sin_prohibir_marcas",
       "breakpoints": true
+    },
+    {
+      "idx": 66,
+      "version": "7",
+      "when": 1795650137207,
+      "tag": "0066_aprendizaje_origen_codex",
+      "breakpoints": true
     }
   ]
 }

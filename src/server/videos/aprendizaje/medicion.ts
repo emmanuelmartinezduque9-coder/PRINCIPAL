@@ -66,10 +66,37 @@ export async function learningByBatch(viewer: AuthUser) {
 }
 
 export type LearningBatch = Awaited<ReturnType<typeof learningByBatch>>[number];
-export type LearningView = { batches: LearningBatch[]; videoProducts: Record<number, number> };
+
+/**
+ * Las preferencias que vienen de sus decisiones en Codex (26/11/2026): con su origen (fecha, archivo, cita) y, en los
+ * lotes siguientes, cuántas veces se aplicaron y cuántas aprobó (verde) o corrigió (rojo).
+ */
+export async function codexLearned(viewer: AuthUser) {
+  const db = getDb();
+  const prefs = await db.select().from(schema.learnedPreferences).where(eq(schema.learnedPreferences.origin, "codex")).orderBy(asc(schema.learnedPreferences.id));
+  if (!prefs.length) return [];
+  const assigned = viewer.role === "dueno" ? null : await assignedProductIds(viewer.id);
+  const visible = prefs.filter((p) => assigned === null || p.scope !== "producto" || assigned.includes(Number(p.scopeValue)));
+  const apps = await db.select().from(schema.preferenceApplications).where(inArray(schema.preferenceApplications.preferenceId, visible.map((p) => p.id)));
+  const names = await productNamesByIds(visible.filter((p) => p.scope === "producto").map((p) => Number(p.scopeValue)));
+  return visible.map((p) => {
+    const mine = apps.filter((a) => a.preferenceId === p.id);
+    return {
+      preference: { id: p.id, scope: p.scope, scopeLabel: p.scope === "producto" ? names.get(Number(p.scopeValue)) ?? p.scopeValue : p.scopeValue, directive: p.directive, weight: p.weight, status: p.status, stages: p.stages, originRef: p.originRef },
+      applied: new Set(mine.map((a) => a.videoId)).size,
+      approved: mine.filter((a) => a.outcome === "aprobado").length,
+      corrected: mine.filter((a) => a.outcome === "corregido").length,
+      appliedIn: mine.map(({ videoId, batchId, stage, outcome }) => ({ videoId, batchId, stage, outcome })),
+    };
+  });
+}
+
+export type LearningView = { batches: LearningBatch[]; codex: Awaited<ReturnType<typeof codexLearned>>; videoProducts: Record<number, number> };
 
 /** Contrato de la vista: añade los destinos de los enlaces sin consultar tablas desde la ruta. */
 export async function learningView(viewer: AuthUser): Promise<LearningView> {
   const batches = await learningByBatch(viewer);
-  return { batches, videoProducts: Object.fromEntries(batches.flatMap((b) => b.videoDetail.map((v) => [v.videoId, v.productId]))) };
+  const codex = await codexLearned(viewer);
+  const products = new Map(batches.flatMap((b) => b.videoDetail.map((v) => [v.videoId, v.productId] as const)));
+  return { batches, codex, videoProducts: Object.fromEntries(products) };
 }

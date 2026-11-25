@@ -9,6 +9,68 @@ import type { LearningBatch, LearningView } from "@/server/videos/aprendizaje/me
 
 type View = Serialized<LearningView>;
 type Batch = Serialized<LearningBatch>;
+type CodexItem = View["codex"][number];
+
+/** Verde (aprobadas) frente a rojo (corregidas): lo que dice si una preferencia funciona. */
+function Score({ approved, corrected }: { approved: number; corrected: number }) {
+  if (approved + corrected === 0) return null;
+  return (
+    <span className="tabular-nums">
+      {" · "}
+      <span className="text-success">✓ {approved} {approved === 1 ? "aprobada" : "aprobadas"}</span>
+      {" · "}
+      <span className="text-destructive">✗ {corrected} {corrected === 1 ? "corregida" : "corregidas"}</span>
+    </span>
+  );
+}
+
+const fileName = (path: string) => path.split("/").filter(Boolean).slice(-2).join("/");
+
+/** Lo que vino de sus decisiones en Codex: origen, dónde se aplicó y si lo aprobó o lo corrigió. */
+function CodexSection({ items, products }: { items: CodexItem[]; products: Record<number, number> }) {
+  if (items.length === 0) return null;
+  const applied = items.filter((i) => i.applied > 0).length;
+  return (
+    <details className="panel px-4 py-3" open={items.length <= 12}>
+      <summary className="cursor-pointer text-sm font-medium">
+        Lo que vino de Codex ({items.length}) <span className="font-normal text-muted-foreground">· {applied} ya aplicadas en lotes de PRINCIPAL</span>
+      </summary>
+      <p className="mt-2 text-xs text-muted-foreground">
+        Sus decisiones en la automatización de Codex (reglas de edición, aprobaciones y rechazos con su motivo), cargadas con su permiso, cada una con su ámbito real: la de un
+        producto solo para ese producto; general solo si él la dio para todos.
+      </p>
+      <ul className="mt-3 flex flex-col gap-2">
+        {items.map(({ preference: p, applied, approved, corrected, appliedIn }) => (
+          <li key={p.id} className={cn("flex flex-col gap-0.5 border-l-2 pl-3", p.status === "activa" ? "border-primary" : "border-border opacity-70")}>
+            <span className="text-sm">
+              <span className="text-muted-foreground">{p.scope === "global" ? "Para todos: " : `${p.scopeLabel}: `}</span>
+              {p.directive}
+            </span>
+            <span className="text-xs text-muted-foreground">
+              De Codex{p.originRef?.fecha ? ` · ${p.originRef.fecha}` : ""}
+              {p.originRef?.archivo ? ` · ${fileName(p.originRef.archivo)}` : ""} · Peso {Math.round(p.weight * 100)} % ·{" "}
+              {applied === 0 ? "aún no se ha aplicado" : `aplicada en ${applied} ${applied === 1 ? "vídeo" : "vídeos"}`}
+              <Score approved={approved} corrected={corrected} />
+              {appliedIn.length > 0 ? (
+                <span>
+                  {" ("}
+                  {appliedIn.slice(0, 8).map((a, i) => (
+                    <span key={`${a.videoId}-${a.stage}`}>
+                      {i > 0 ? ", " : ""}
+                      <VideoLink id={a.videoId} products={products} />
+                    </span>
+                  ))}
+                  {appliedIn.length > 8 ? "…" : ""})
+                </span>
+              ) : null}
+            </span>
+            {p.originRef?.cita ? <span className="text-xs italic text-muted-foreground">«{p.originRef.cita}»</span> : null}
+          </li>
+        ))}
+      </ul>
+    </details>
+  );
+}
 
 const pct = (value: number | null) => (value === null ? "—" : `${Math.round(value * 100)} %`);
 const num = (value: number | null) => (value === null ? "—" : value.toLocaleString("es-ES", { maximumFractionDigits: 1 }));
@@ -132,6 +194,7 @@ function BatchCard({ batch, products }: { batch: Batch; products: Record<number,
               </span>
               <span className="text-xs text-muted-foreground">
                 Peso {Math.round(p.weight * 100)} % · {p.supports} a favor, {p.contradicts} en contra
+                <Score approved={appliedIn.filter((a) => a.outcome === "aprobado").length} corrected={appliedIn.filter((a) => a.outcome === "corregido").length} />
                 {p.status === "retirada" ? " · retirada porque no funcionaba" : ""} · Se usó en{" "}
                 {appliedIn.length === 0 ? (
                   "ningún vídeo todavía"
@@ -203,7 +266,8 @@ export function AprendizajeSection() {
       </h2>
       <p className="text-sm text-muted-foreground">
         Cada aprobación, rechazo, instrucción, cambio y elección de cada vídeo se guarda. Al cerrar cada lote, y cada día, se convierte en preferencias que el
-        motor aplica solo en los vídeos siguientes; su peso sube cuando se aprueban y baja cuando se corrigen.
+        motor aplica solo en los vídeos siguientes; su peso sube cuando se aprueban y baja cuando se corrigen. Si aprende, la barra de correcciones por vídeo baja de un
+        lote a otro y cada preferencia acumula más verde (aprobadas) que rojo (corregidas).
       </p>
       {isLoading ? (
         <Skeleton className="h-48" />
@@ -214,6 +278,7 @@ export function AprendizajeSection() {
       ) : (
         <>
           <CorrectionsChart batches={data.batches} />
+          <CodexSection items={data.codex} products={data.videoProducts} />
           <ul className="flex flex-col gap-3">
             {[...data.batches].reverse().map((b) => (
               <BatchCard key={b.batchId} batch={b} products={data.videoProducts} />

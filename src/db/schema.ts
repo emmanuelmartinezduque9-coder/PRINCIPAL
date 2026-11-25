@@ -1850,7 +1850,7 @@ export const learningSignals = pgTable("learning_signals", {
   index("learning_signals_distilled").on(t.distilledAt),
   check("learning_signals_polarity", sql`${t.polarity} in (-1,0,1)`),
   check("learning_signals_text_length", sql`char_length(${t.text}) <= 4000`),
-  check("learning_signals_kind", sql`${t.kind} in ('rechazado','aprobado','candidata_descartada','instruccion_tarjeta','instruccion_lote','respuesta','cambio_pedido','reporte','montaje_aprobado','montaje_rechazado','eleccion')`),
+  check("learning_signals_kind", sql`${t.kind} in ('rechazado','aprobado','candidata_descartada','instruccion_tarjeta','instruccion_lote','respuesta','cambio_pedido','reporte','montaje_aprobado','montaje_rechazado','eleccion','codex')`),
   check("learning_signals_stage", sql`${t.stage} in ('desglose','imagen','pinterest','clip','rotulos','doblaje','montaje','variante','cancion','avatar')`),
 ]);
 
@@ -1873,9 +1873,18 @@ export const learnedPreferences = pgTable("learned_preferences", {
   retiredBy: text("retired_by"),
   firstBatchId: bigint("first_batch_id", { mode: "number" }),
   sourceSignalIds: jsonb("source_signal_ids").$type<number[]>().notNull().default([]),
+  /**
+   * De dónde sale: `principal` (lo que hace en esta web) o `codex` (sus decisiones en la automatización de Codex,
+   * cargadas con su consentimiento del 26/11/2026), con su fecha, archivo y cita en `origin_ref`.
+   */
+  origin: text("origin").notNull().default("principal"),
+  originRef: jsonb("origin_ref").$type<{ fecha: string | null; archivo: string; linea: number | null; cita: string }>(),
+  /** Solo `true` si él la dio expresamente para todos los vídeos (entonces puede ser `global`). */
+  explicitGeneral: boolean("explicit_general").notNull().default(false),
   createdAt: instant("created_at").notNull().defaultNow(),
   updatedAt: instant("updated_at").notNull().defaultNow(),
 }, (t) => [
+  check("learned_preferences_origin", sql`${t.origin} in ('principal','codex')`),
   check("learned_preferences_scope", sql`${t.scope} in ('global','producto','pais','toma') and (${t.scope} <> 'global' or ${t.scopeValue} = '')`),
   check("learned_preferences_stages", sql`cardinality(${t.stages}) > 0 and ${t.stages} <@ ARRAY['desglose','imagen','pinterest','clip','rotulos','doblaje','montaje','variante','cancion','avatar']::text[]`),
   check("learned_preferences_polarity", sql`${t.polarity} in (-1,1)`),
