@@ -226,11 +226,15 @@ export type UpscaleStage = "need" | "busy" | "done" | "given_up" | "waiting";
 const upscaleStage = (row: Row, batch: Batch): UpscaleStage => partUpscaleStage(row, batch);
 function partUpscaleStage(row: Row, batch: Batch): UpscaleStage {
   if (partClipStage(row, batch) !== "done") return "waiting";
-  const last = row.upscales.at(-1);
+  // Solo cuenta la subida del clip actual: un clip rehecho (p. ej. pasado de Object Swap a Motion Transfer, lote 10)
+  // necesita la suya, no la del clip anterior.
+  const clip = row.clips.at(-1);
+  const upscales = clip ? row.upscales.filter((g) => g.id > clip.id) : row.upscales;
+  const last = upscales.at(-1);
   if (!last) return "need";
   if (BUSY_GENERATION.includes(last.status)) return "busy";
   if (last.status === "done") return "done";
-  const failed = row.upscales.filter((g) => g.status === "failed" || g.status === "not_sent").length;
+  const failed = upscales.filter((g) => g.status === "failed" || g.status === "not_sent").length;
   return failed >= MAX_UPSCALE_ATTEMPTS ? "given_up" : "need";
 }
 const upscaleSettled = (row: Row, batch: Batch) => ["done", "given_up"].includes(upscaleStage(row, batch));
