@@ -23,6 +23,7 @@ import { createVideo, getVideoFor, type Video } from "@/server/videos/videos";
 import { makeProduct, makeUser } from "./helpers/fixtures";
 import { truncateAll } from "./helpers/global-setup";
 import { makeSampleAudio } from "./helpers/sample-audio";
+import { DOBLAR_SIN_DIALOGO } from "./helpers/doblar-falso";
 import { makeSampleVideo } from "./helpers/sample-video";
 import { uploadSong } from "@/server/songs";
 
@@ -82,6 +83,7 @@ beforeAll(async () => {
   montadorDir = path.join(dir, "montador");
   fs.mkdirSync(montadorDir);
   fs.writeFileSync(path.join(montadorDir, "montar_auto.py"), FAKE_MONTADOR);
+  fs.writeFileSync(path.join(montadorDir, "doblar.py"), DOBLAR_SIN_DIALOGO);
   fontPath = path.join(dir, "fuente.ttf");
   fs.writeFileSync(fontPath, "fuente");
 }, 120_000);

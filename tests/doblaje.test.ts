@@ -81,6 +81,9 @@ if args[0] == 'separar':
         voz = {'hay': False, 'idioma': None, 'probabilidad': None, 'texto': '', 'motivo': 'voz casi muda', 'frases': []}
         candidatas = [{'desde': 5.0, 'hasta': 8.0, 'texto': "CANTO: I don't want a lot for Christmas", 'idioma': 'en', 'prob': 0.6, 'no_habla': 0.1, 'confianza': -1.0, 'pista': 'music'},
                       {'desde': 7.0, 'hasta': 9.0, 'texto': "What do you think it's gonna be?", 'idioma': 'en', 'prob': 0.6, 'no_habla': 0.1, 'confianza': -1.0, 'pista': 'music'}]
+    elif audio.startswith(b'MUSICA-DUDA'):
+        voz = {'hay': True, 'idioma': 'en', 'probabilidad': 0.99, 'texto': "DUDA: Oh no, I'm good.", 'motivo': None,
+               'frases': [{'desde': 1.5, 'hasta': 2.3, 'texto': "DUDA: Oh no, I'm good.", 'idioma': 'en', 'prob': 0.99, 'no_habla': 0.05, 'confianza': -0.35}]}
     elif audio.startswith(b'MUSICA-CANTO'):
         voz = {'hay': False, 'idioma': None, 'probabilidad': None, 'texto': '', 'motivo': 'voz casi muda', 'frases': []}
         candidatas = [{'desde': 2.8, 'hasta': 11.1, 'texto': 'CANTO: Last Christmas, I gave you my heart', 'idioma': 'en', 'prob': 0.73, 'no_habla': 0.43, 'confianza': -0.47, 'pista': 'music'}]
@@ -98,6 +101,25 @@ elif args[0] == 'comprobar':
     if Path(args[1]).read_bytes().startswith(b'DOBLAJE-VIEJO-EN'):
         quedan = [{'desde': 0.0, 'hasta': 3.4, 'texto': "3, 2, 1, let's see this guy!", 'idioma': 'en'}]
     r = {'ok': True, 'comprobado': True, 'quedan': quedan}
+elif args[0] == 'verificar':
+    # Comprobación final del vídeo montado. Según el «Audio original» de la referencia: «FINAL-EN» deja diálogo en inglés
+    # la primera vez (luego, ya doblado, nada); «SIEMPRE-EN», siempre; «FINAL-CANCION», solo la letra de una canción.
+    ref = Path(args[2]).parent / 'referencia-audio.m4a'
+    audio = ref.read_bytes() if ref.exists() else b''
+    contador = Path(__file__).with_name('verificar-' + audio[:40].decode('utf8', 'replace'))
+    veces = int(contador.read_text()) if contador.exists() else 0
+    contador.write_text(str(veces + 1))
+    dialogo = {'desde': 0.0, 'hasta': 2.0, 'texto': 'Ten seconds, I promise.', 'idioma': 'en', 'prob': 1.0, 'no_habla': 0.05, 'confianza': -0.3, 'pista': 'voz'}
+    cancion = {'desde': 6.0, 'hasta': 9.0, 'texto': 'CANTO: Jingle bell, jingle bell, jingle bell rock', 'idioma': 'en', 'prob': 0.9, 'no_habla': 0.1, 'confianza': -0.4, 'pista': 'music'}
+    quedan = []
+    if audio.startswith(b'SIEMPRE-EN') or (b'FINAL-EN' in audio and veces == 0):
+        quedan = [dialogo]
+    elif audio.startswith(b'AUDIO-ALEMAN'):
+        # Whisper confunde una frase alemana de la referencia con inglés: no cuenta (vídeo 20).
+        quedan = [dict(dialogo, desde=0.6, hasta=1.7, texto='What about your fingers?', prob=0.62, pista='music')]
+    elif audio.startswith(b'FINAL-CANCION'):
+        quedan = [cancion]
+    r = {'ok': True, 'comprobado': True, 'quedan': quedan, 'frases': quedan + [{'desde': 0.0, 'hasta': 2.0, 'texto': 'Zehn Sekunden, versprochen.', 'idioma': 'de', 'prob': 0.99, 'no_habla': 0.05, 'confianza': -0.3, 'pista': 'voz'}]}
 elif args[0] == 'tramo':
     shutil.copy(Path(args[1]) / 'dialogue-only.mp4', args[4])
     r = {'ok': True, 'desde': float(args[2]) - 0.25, 'hasta': float(args[3]) + 0.25}
@@ -149,7 +171,10 @@ beforeEach(async () => {
   dueno = await makeUser("dueno");
 });
 
-/** Claude simulado para «¿habla o canto?»: lo que empieza por «CANTO» es canto; el resto, habla. Con `down`, no responde. */
+/**
+ * Claude simulado para «¿habla o canto?»: lo que lleva «CANTO» es canto con su canción nombrada; lo que lleva «DUDA»
+ * dice canto pero sin nombrar la canción (cuenta como habla); el resto, habla. Con `down`, no responde.
+ */
 const speech = { calls: 0, down: false, instructions: "" };
 const gateway: LlmGateway = {
   async call<T>(request: LlmCall<T>): Promise<LlmResult<T>> {
@@ -157,7 +182,15 @@ const gateway: LlmGateway = {
     speech.instructions = request.instructions;
     if (speech.down) throw new Error("Claude sin saldo");
     const lines = String((request.content as Array<{ text?: string }>)[0]?.text ?? "").split("\n");
-    const data = { frases: lines.map((line, i) => ({ n: i + 1, tipo: line.includes("CANTO") ? "canto" : "habla", motivo: "prueba" })) };
+    const data = {
+      frases: lines.map((line, i) =>
+        line.includes("CANTO")
+          ? { n: i + 1, tipo: "canto", cancion: "Canción de prueba", verso: "un verso", motivo: "prueba" }
+          : line.includes("DUDA")
+            ? { n: i + 1, tipo: "canto", cancion: null, verso: null, motivo: "prueba" }
+            : { n: i + 1, tipo: "habla", cancion: null, verso: null, motivo: "prueba" },
+      ),
+    };
     return { text: "", data: data as T, model: "prueba", usage: {} as never, costMicros: 0, spendEntryId: 0, ruleVersions: {}, webSources: [] };
   },
 };
@@ -236,6 +269,8 @@ describe("cuándo no hace falta doblar (no se gasta)", () => {
     expect(first.row.notes).toContain("El diálogo de la referencia ya está en alemán: no se dobla");
     expect(hf.calls).toEqual([]);
     expect((await dubRows()).map((r) => [r.status, r.quotedCredits])).toEqual([["skipped", 0]]);
+    // La comprobación final oyó «inglés» donde la referencia ya hablaba alemán: no se vuelve a doblar.
+    expect(first.row.notes?.some((n) => n.startsWith("Comprobado en el vídeo montado (Whisper)"))).toBe(true);
     await mount(video.id);
     expect(hf.calls).toEqual([]);
   });
@@ -412,7 +447,7 @@ describe("una canción no se traduce nunca (orden del 24/11/2026)", () => {
     expect(row.notes).toContain("audio:CANCION-EN-INGLES");
     expect(row.notes).toContain("La voz de la referencia es una canción (o no está claro que alguien hable): no se dobla; la canción no se traduce");
     expect(hf.calls).toEqual([]);
-    expect((await dubRows()).map((r) => [r.status, r.error])).toEqual([["skipped", "solo canto o duda"]]);
+    expect((await dubRows()).map((r) => [r.status, r.error])).toEqual([["skipped", "solo canto"]]);
   });
 
   it("habla que BandIt dejó en la música (voz muda): se dobla solo la habla; la canción de al lado no", async () => {
@@ -421,7 +456,7 @@ describe("una canción no se traduce nunca (orden del 24/11/2026)", () => {
     expect(outcome).toBe("done");
     expect(row.notes).toContain("audio:MEZCLA-ALEMANA");
     expect(row.notes).toContain("Habla que estaba en la música, también doblada: «Three, two, one, let's go!» (0–3.5 s)");
-    expect(row.notes).toContain("No se dobla (canción o dudoso): «CANTO: Last Christmas, I gave you my heart»");
+    expect(row.notes).toContain("No se dobla (letra de una canción): «CANTO: Last Christmas, I gave you my heart»");
     expect(dubCalls()).toHaveLength(1);
     const [dub] = await dubRows();
     expect(dub.raw).toMatchObject({ clasificado: true, origen: "en", ventanas: [[0, 3.5]] });
@@ -438,11 +473,20 @@ describe("una canción no se traduce nunca (orden del 24/11/2026)", () => {
     expect((await dubRows()).map((r) => r.status)).toEqual(["failed", "done"]);
   });
 
-  it("una frase de habla que se solapa con una de canto está dentro de la canción: no se dobla", async () => {
+  it("una frase de habla con una canción sonando a la vez se dobla igual; la canción no (lote 10)", async () => {
     const video = await withAudio(Buffer.from("MUSICA-SOLAPE"));
     const { row } = await mount(video.id);
-    expect(row.notes).toContain("audio:MUSICA-SOLAPE");
-    expect(hf.calls).toEqual([]);
+    expect(row.notes).toContain("audio:MEZCLA-ALEMANA");
+    expect(row.notes).toContain("No se dobla (letra de una canción): «CANTO: I don't want a lot for Christmas»");
+    expect(dubCalls()).toHaveLength(1);
+    expect((await dubRows())[0].raw).toMatchObject({ ventanas: [[7, 9]] });
+  });
+
+  it("canto sin nombrar la canción y el verso es habla: ante la duda, habla (orden del dueño)", async () => {
+    const video = await withAudio(Buffer.from("MUSICA-DUDA"));
+    const { row } = await mount(video.id);
+    expect(row.notes).toContain("audio:MEZCLA-ALEMANA");
+    expect(dubCalls()).toHaveLength(1);
   });
 
   it("con «Doblar el diálogo» encendido a propósito en la tarjeta se dobla sin clasificar (orden del dueño)", async () => {
@@ -509,6 +553,66 @@ describe("una canción no se traduce nunca (orden del 24/11/2026)", () => {
     const rows = await dubRows();
     expect(rows.map((r) => [r.videoId, r.status])).toEqual([[song.id, "skipped"], [talk.id, "done"]]);
     expect(rows[1].raw).toMatchObject({ clasificado: true, ventanas: [[0.5, 1.8]] });
+  });
+});
+
+describe("comprobación final del vídeo montado (orden del dueño, 25/11/2026)", () => {
+  async function withAudio(bytes: Buffer) {
+    const video = await videoWithAudio();
+    await getDb().update(schema.videoReferenceAudio).set({ data: bytes, size: bytes.length }).where(eq(schema.videoReferenceAudio.videoId, video.id));
+    return video;
+  }
+  const again = async () => {
+    await getDb().update(schema.editRuns).set({ availableAt: new Date(0) });
+    const run = (await claimRun(new Date()))!;
+    const outcome = await runEdit(run, deps());
+    const [row] = await getDb().select().from(schema.editRuns).where(eq(schema.editRuns.id, run.id));
+    return { outcome, row };
+  };
+
+  it("si en el vídeo montado se oye diálogo en inglés, no se entrega: se dobla ese tramo sí o sí y se vuelve a montar", async () => {
+    // La primera decisión dijo «canción» (no se dobló); la comprobación final oye «Ten seconds, I promise.» en inglés.
+    const video = await withAudio(Buffer.from("CANCION-FINAL-EN"));
+    const first = await mount(video.id);
+    expect(first.outcome).toBe("deferred");
+    expect(await getDb().select().from(schema.edits)).toEqual([]);
+    const [marked] = await dubRows();
+    expect(marked).toMatchObject({ status: "failed" });
+    expect(marked.error).toMatch(/^Comprobación final: .*«Ten seconds, I promise\.»/);
+    expect(marked.raw).toMatchObject({ forzar: [[0, 2.1]] });
+    // Siguiente intento: ese tramo es habla aunque Claude dijera canto; se dobla, se monta y la comprobación pasa.
+    const second = await again();
+    expect(second.outcome).toBe("done");
+    expect(second.row.notes).toContain("audio:MEZCLA-ALEMANA");
+    expect(second.row.notes?.some((n) => n.startsWith("Comprobado en el vídeo montado (Whisper): «Zehn Sekunden, versprochen.» (de)"))).toBe(true);
+    expect(dubCalls()).toHaveLength(1);
+    expect((await dubRows()).map((r) => r.status)).toEqual(["failed", "done"]);
+    const redone = (await dubRows())[1].raw as { forzar: unknown; ventanas: unknown[] };
+    expect(redone.forzar).toEqual([[0, 2.1]]);
+    expect(redone.ventanas).toContainEqual([0, 2.1]);
+  });
+
+  it("si después de volver a doblar sigue el inglés, se para con el motivo y no se entrega", async () => {
+    const video = await withAudio(Buffer.from("SIEMPRE-EN"));
+    expect((await mount(video.id)).outcome).toBe("deferred");
+    expect((await again()).outcome).toBe("deferred");
+    const last = await again();
+    expect(last.outcome).toBe("failed");
+    expect((await getVideoFor(dueno, video.id)).editError).toMatch(/el diálogo sigue sin traducir después de doblarlo otra vez \(«Ten seconds, I promise\.»/);
+    expect(await getDb().select().from(schema.edits)).toEqual([]);
+  });
+
+  it("lo que sigue en inglés y es la letra de una canción se queda (una canción no se traduce nunca)", async () => {
+    const video = await withAudio(Buffer.from("FINAL-CANCION"));
+    const { outcome } = await mount(video.id);
+    expect(outcome).toBe("done");
+    expect(await getDb().select().from(schema.edits)).toHaveLength(1);
+  });
+
+  it("apagado en la tarjeta: no se comprueba", async () => {
+    const video = await videoWithAudio({ dubDialogue: false });
+    await getDb().update(schema.videoReferenceAudio).set({ data: Buffer.from("SIEMPRE-EN") }).where(eq(schema.videoReferenceAudio.videoId, video.id));
+    expect((await mount(video.id)).outcome).toBe("done");
   });
 });
 

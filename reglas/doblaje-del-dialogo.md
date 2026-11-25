@@ -6,7 +6,9 @@ Regla fija del dueño (24/11/2026). No se negocia ni se pregunta.
 Todo vídeo cuya referencia tenga diálogo en otro idioma se dobla al idioma del país del producto (Alemania → alemán, Italia → italiano…), sin interruptores ni preguntas. Le pareció absurdo que hubiera que encenderlo: un anuncio para Alemania no lleva diálogo en inglés.
 
 - Se dobla SOLO cuando una persona HABLA en el vídeo. Una canción no se traduce nunca, aunque la cante alguien del vídeo o sea un audio de moda (orden del 24/11/2026).
-- Ante la duda entre habla y canto, gana HABLA cuando la frase es conversacional (una cuenta atrás, un comentario, una pregunta) y no es la letra de una canción. Si solo puede ser letra, no se dobla.
+- Ante la duda entre habla y canto, gana HABLA (orden del 25/11/2026). Una frase conversacional (pronombres dirigidos a alguien, preguntas, respuestas, exclamaciones) nunca es canto. Solo es canto el verso de una canción que se puede nombrar (título y verso); si no, es habla.
+- Con una canción de fondo, el diálogo se dobla igual: que suene una canción a la vez no convierte el diálogo en canto.
+- Comprobación final obligatoria (25/11/2026): tras cada montaje se escucha el vídeo montado. Si queda habla en un idioma que no es el del país, el montaje no vale: se vuelve a doblar esa parte y a montar, solo. Nunca se entrega un vídeo con el diálogo sin traducir ni con un aviso que diga que está traducido sin estarlo. Si después de volver a doblar sigue igual, se para con el motivo.
 - Si el dueño enciende a propósito «Doblar el diálogo» en la tarjeta, es diálogo: se dobla todo.
 - Si la referencia no tiene diálogo, o el diálogo ya está en el idioma del anuncio, no se hace nada y no se gasta.
 - Se dobla SOLO la voz: la música y los efectos de la referencia quedan exactamente igual: se separan voz, música y efectos, se dobla la voz y se mezcla sobre la música original.

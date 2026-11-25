@@ -37,10 +37,11 @@ from rea_video import stems; stems.ensure_model()" || echo 'modelos de rea-video
 # copia del método de Codex del 19/11/2026): dentro de la imagen; si no se puede bajar ahora, se baja al primer doblaje.
 RUN /opt/montador/bin/python -c "\
 from rea_video import effects; effects.ensure_model()" || echo 'BandIt v2: se bajará al primer doblaje'
-# Whisper `base` (~145 MB) para saber si la referencia tiene diálogo y en qué idioma (doblaje por defecto).
+# Whisper `large-v3-turbo` (~1,6 GB) para saber si la referencia tiene diálogo, en qué idioma, y para la comprobación
+# final del vídeo montado (25/11/2026: `base` y `small` confundían frases alemanas dobladas con español o inglés).
 ENV WHISPER_MODELS=/opt/whisper-models
 RUN /opt/montador/bin/python -c "\
-from faster_whisper import WhisperModel; WhisperModel('base', device='cpu', compute_type='int8', download_root='/opt/whisper-models')" \
+from faster_whisper import WhisperModel; WhisperModel('large-v3-turbo', device='cpu', compute_type='int8', download_root='/opt/whisper-models')" \
   || echo 'Whisper: se bajará al primer doblaje'
 
 WORKDIR /app

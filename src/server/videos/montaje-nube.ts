@@ -17,7 +17,7 @@ import { killPrograms, lastLine, runProgram } from "@/server/media/programs";
 import { latestSongWithDrop, readSongFile } from "@/server/songs";
 import { storedOriginalKey } from "@/server/videos/archive";
 import { openClipStream } from "@/server/videos/clip";
-import { dubbedAudio } from "@/server/videos/doblaje";
+import { checkFinalDialogue, dubbedAudio, requireRedub } from "@/server/videos/doblaje";
 import { referenceEdit, targetPlace, withLocalPlaces, type ReferenceEdit } from "@/server/videos/edicion-referencia";
 import { applyEditChange, saveEditChange, type EditChangeResult } from "@/server/videos/cambio-montaje";
 import { localizeText, marketOf, shopOfLocalization, type LocalizationItem } from "@/server/videos/localization";
@@ -593,11 +593,28 @@ export async function runEdit(run: Run, deps: MontajeDeps = {}): Promise<"done" 
 
     // «Traducir el diálogo al alemán»: el «Audio original» con la voz doblada y la música de siempre.
     // Por defecto (regla fija del 24/11/2026); con canción elegida no suena la referencia y no hay nada que doblar.
+    // La comprobación final (abajo) escucha el vídeo montado cuando la referencia pone el audio y el diálogo se dobla.
+    let finalCheck: { audio: string; origin: string | null } | null = null;
+    const doblar = async (args: string[]) => {
+      const montadorDir = deps.montadorDir ?? path.join(process.cwd(), "montador");
+      const python = process.env.REA_VIDEO_PYTHON || deps.python || process.env.MONTADOR_PYTHON || "python3";
+      const out = path.join(dir, `doblar-${args[0]}.json`);
+      await fs.rm(out, { force: true });
+      const ran = await runProgram(...pinned(python, ["-B", path.join(montadorDir, "doblar.py"), "--resultado", out, ...args]), {
+        cwd: montadorDir,
+        timeoutMs: DOBLAR_TIMEOUT_MS,
+        env: safeEnv(numbaCacheOf(dir)),
+      });
+      try {
+        return JSON.parse(await fs.readFile(out, "utf8")) as import("@/server/videos/doblaje").DoblarResult;
+      } catch {
+        return { ok: false, error: ran.timedOut ? "tardó demasiado" : (lastLine(ran.stderr) ?? "doblar.py no respondió") };
+      }
+    };
     if (spec.dubDialogue && !spec.song && referenceAudio) {
       if (!store) notes.push("Sin almacén de archivos: el diálogo no se traduce");
       else {
-        const montadorDir = deps.montadorDir ?? path.join(process.cwd(), "montador");
-        const python = process.env.REA_VIDEO_PYTHON || deps.python || process.env.MONTADOR_PYTHON || "python3";
+        finalCheck = { audio: referenceAudio.path, origin: null };
         const dub = await dubbedAudio({
           videoId: spec.videoId,
           requestedAt: run.createdAt,
@@ -614,20 +631,7 @@ export async function runEdit(run: Run, deps: MontajeDeps = {}): Promise<"done" 
           pollSeconds: deps.dubPollSeconds,
           gateway: deps.gateway,
           learned,
-          doblar: async (args) => {
-            const out = path.join(dir, `doblar-${args[0]}.json`);
-            await fs.rm(out, { force: true });
-            const ran = await runProgram(...pinned(python, ["-B", path.join(montadorDir, "doblar.py"), "--resultado", out, ...args]), {
-              cwd: montadorDir,
-              timeoutMs: DOBLAR_TIMEOUT_MS,
-              env: safeEnv(numbaCacheOf(dir)),
-            });
-            try {
-              return JSON.parse(await fs.readFile(out, "utf8")) as import("@/server/videos/doblaje").DoblarResult;
-            } catch {
-              return { ok: false, error: ran.timedOut ? "tardó demasiado" : (lastLine(ran.stderr) ?? "doblar.py no respondió") };
-            }
-          },
+          doblar,
         });
         if (dub.kind === "defer") {
           await defer(run, dub.delayMs, nowOf(deps));
@@ -637,7 +641,10 @@ export async function runEdit(run: Run, deps: MontajeDeps = {}): Promise<"done" 
           await finishFailed(run, dub.shown, dub.detail, nowOf(deps), notes);
           return "failed";
         }
-        if (dub.kind === "ready") referenceAudio = { path: dub.path };
+        if (dub.kind === "ready") {
+          referenceAudio = { path: dub.path };
+          finalCheck.origin = dub.origin;
+        }
       }
     }
 
@@ -696,8 +703,44 @@ export async function runEdit(run: Run, deps: MontajeDeps = {}): Promise<"done" 
       return "failed";
     }
 
-    // 4. Guardar.
     const output = path.join(work, "salida.mp4");
+    // 3b. Comprobación final obligatoria (orden del dueño, 25/11/2026): se escucha el vídeo montado. Si queda diálogo en un
+    // idioma que no es el del país, no se entrega: se vuelve a doblar (esos tramos, sí o sí) y a montar; si después de
+    // MAX_FINAL_REDUBS veces sigue igual, se para con el motivo. Nunca se entrega con el diálogo sin traducir.
+    if (finalCheck) {
+      const [owner] = await getDb()
+        .select({ createdBy: schema.videos.createdBy, productId: schema.videos.productId })
+        .from(schema.videos)
+        .where(eq(schema.videos.id, spec.videoId));
+      const verdict = await checkFinalDialogue(
+        { videoId: spec.videoId, file: output, audio: finalCheck.audio, language: spec.product.language, origin: finalCheck.origin, dir, doblar, gateway: deps.gateway, learned },
+        owner?.createdBy ?? run.requestedBy,
+        owner?.productId ?? null,
+      );
+      if (verdict.kind === "error") {
+        await finishFailed(run, montajeFailure(`no se pudo comprobar que el diálogo esté traducido (${verdict.detail.slice(0, 160)}). Vuelve a montar`), verdict.detail, nowOf(deps), notes);
+        return "failed";
+      }
+      if (verdict.kind === "leak") {
+        const said = verdict.leaks.map((l) => `«${l.texto}» (${l.desde}–${l.hasta} s)`).join(", ");
+        if (!(await requireRedub(spec.videoId, finalCheck.audio, spec.product.language, verdict.leaks))) {
+          await finishFailed(
+            run,
+            montajeFailure(`el diálogo sigue sin traducir después de doblarlo otra vez (${said.slice(0, 200)}); no se entrega. Vuelve a montar para intentarlo de nuevo`),
+            `comprobación final: ${said}`,
+            nowOf(deps),
+            notes,
+          );
+          return "failed";
+        }
+        console.warn(`[montaje] Vídeo ${spec.videoId}: la comprobación final oyó diálogo sin traducir (${said}); se vuelve a doblar y a montar`);
+        await defer(run, 0, nowOf(deps));
+        return "deferred";
+      }
+      notes.push(`Comprobado en el vídeo montado (Whisper): ${verdict.heard || "sin diálogo en otro idioma"}`);
+    }
+
+    // 4. Guardar.
     const { size } = await fs.stat(output);
     if (size <= 0 || size > MAX_EDIT_BYTES) {
       await finishFailed(run, montajeFailure("el vídeo montado pesa más de 200 MB"), `tamaño ${size}`, nowOf(deps), notes);

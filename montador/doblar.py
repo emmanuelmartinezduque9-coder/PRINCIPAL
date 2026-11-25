@@ -28,6 +28,10 @@ Uso (`--resultado <archivo.json>` antes de la orden deja también el resultado e
       → el MP4 con solo la voz de ese trozo (moviendo a la voz lo que quedara en la música), para volver a doblarlo.
   python doblar.py injertar <voz_doblada> <trozo_doblado> <desde> <salida.wav>
       → la voz doblada con el trozo nuevo en su sitio.
+  python doblar.py verificar <montaje.mp4> <carpeta> --destino de [--origen en]
+      → comprobación final del vídeo montado: separa su voz y la voz que haya en la música y devuelve en `quedan` las
+        frases que siguen sonando en el idioma original (Whisper large-v3-turbo). `doblaje.ts` decide con Claude si son
+        diálogo (entonces el montaje no vale y se vuelve a doblar) o la letra de una canción (se queda igual).
 """
 import argparse
 import json
@@ -87,9 +91,17 @@ def rms_db(x):
     return round(float(20 * np.log10(np.sqrt(np.mean(np.square(x, dtype='float64'))) + 1e-9)), 1)
 
 
-WHISPER_MODELO = 'base'
+# large-v3-turbo (25/11/2026): `base` oía «Der hier ist nur für mich» como español al 16 % y `small` como inglés; el
+# turbo transcribe bien las frases cortas dobladas y la voz sobre villancicos (lote 10). Se puede cambiar con
+# WHISPER_MODELO para las pruebas.
+WHISPER_MODELO = os.environ.get('WHISPER_MODELO') or 'large-v3-turbo'
 UMBRAL_VOZ_DB = -45.0
 UMBRAL_IDIOMA = 0.5
+# Una frase sigue en el idioma original si Whisper lo da como el más probable con al menos esta probabilidad y dura
+# al menos MIN_FRASE_S: en frases cortas dobladas el turbo duda (la alemana «Der hier ist nur für mich» salió «en» al
+# 0,25) y el inglés de verdad sale al 0,99–1,00. Lo más corto («Ja.») no se puede juzgar.
+UMBRAL_ORIGINAL = 0.5
+MIN_FRASE_S = 0.6
 
 
 RELLENO_S = 0.25      # margen alrededor de una frase al moverla o doblarla
@@ -129,7 +141,7 @@ MAX_NO_HABLA = 0.6  # `no_speech_prob` de Whisper por encima de esto: no es habl
 UMBRAL_CANDIDATA = 0.3  # idioma de una frase de la música para ofrecérsela a Claude (habla o canto)
 
 
-def frases(modelo, x, vad=True):
+def frases(modelo, x, vad=True, idiomas=()):
     """Frases de `x` ([n, 2] a 48 kHz) con su idioma (frase a frase) y lo seguro que está Whisper de que es habla:
     [{desde, hasta, texto, idioma, prob, no_habla, confianza}] (`no_habla` = `no_speech_prob`, `confianza` =
     `avg_logprob`). Sirven para decidir si es diálogo o letra cantada (`doblaje.ts` lo pregunta a Claude)."""
@@ -142,11 +154,28 @@ def frases(modelo, x, vad=True):
             continue
         a, b = int(t.start * WHISPER_RATE), int(t.end * WHISPER_RATE)
         trozo = audio[a:max(b, a + WHISPER_RATE // 2)]
-        idioma, prob, _ = modelo.detect_language(trozo) if len(trozo) >= WHISPER_RATE // 4 else (None, 0.0, None)
-        out.append(dict(desde=round(t.start, 2), hasta=round(t.end, 2), texto=texto[:200], idioma=idioma,
-                        prob=round(float(prob), 2), no_habla=round(float(t.no_speech_prob), 2),
-                        confianza=round(float(t.avg_logprob), 2)))
+        idioma, prob, todos = modelo.detect_language(trozo) if len(trozo) >= WHISPER_RATE // 4 else (None, 0.0, None)
+        f = dict(desde=round(t.start, 2), hasta=round(t.end, 2), texto=texto[:200], idioma=idioma,
+                 prob=round(float(prob), 2), no_habla=round(float(t.no_speech_prob), 2),
+                 confianza=round(float(t.avg_logprob), 2))
+        if idiomas:
+            p = dict(todos or [])
+            f['probs'] = {i: round(float(p.get(i, 0.0)), 2) for i in idiomas if i}
+        out.append(f)
     return out
+
+
+def en_idioma_original(f, origen, destino):
+    """¿La frase `f` (de `frases`) sigue en el idioma original? Habla (no_habla ≤ MAX_NO_HABLA), de al menos MIN_FRASE_S,
+    que no está en el idioma del anuncio y cuyo idioma más probable es el original (o, sin saberlo, otro) con al menos
+    UMBRAL_ORIGINAL. Las dudas de Whisper en frases cortas dobladas no cuentan."""
+    if not f.get('idioma') or f['idioma'] == destino or f['no_habla'] > MAX_NO_HABLA:
+        return False
+    if f['hasta'] - f['desde'] < MIN_FRASE_S:
+        return False
+    if origen and f['idioma'] != origen:
+        return False
+    return f['prob'] >= UMBRAL_ORIGINAL
 
 
 def detectar_dialogo(modelo, voz_wav, voz_db):
@@ -324,12 +353,36 @@ def comprobar(audio, origen, destino, ventanas=None):
     quedan = []
     for f in frases(w, leer(audio)):
         dentro = ventanas is None or any(f['desde'] < b + RELLENO_S and f['hasta'] > a - RELLENO_S for a, b in ventanas)
-        # En el idioma original del diálogo cuenta aunque Whisper dude (el vídeo 22 pasó con «en» al 58 %); sin saber
-        # el idioma original, solo si está seguro.
-        if (dentro and f['idioma'] and f['idioma'] != destino and f['no_habla'] <= MAX_NO_HABLA
-                and (f['idioma'] == origen or (origen is None and f['prob'] >= 0.6))):
+        if dentro and en_idioma_original(f, origen, destino):
             quedan.append(dict(desde=f['desde'], hasta=f['hasta'], texto=f['texto'][:120], idioma=f['idioma'], probabilidad=f['prob']))
     return quedan
+
+
+def verificar(video, carpeta, destino, origen=None):
+    """Comprobación final del vídeo montado (orden del dueño, 25/11/2026: nunca se entrega un diálogo sin traducir):
+    separa su audio como al doblar (BandIt: voz; UVR MDX: la voz que quede en la música y los efectos) y devuelve las
+    frases que siguen en el idioma original, con su pista. Si son diálogo o una canción lo decide `doblaje.ts`."""
+    carpeta = Path(carpeta)
+    carpeta.mkdir(parents=True, exist_ok=True)
+    if not tiene_audio(video):
+        return dict(ok=True, comprobado=True, quedan=[], frases=[])
+    x = leer(video)
+    w = whisper()
+    if w is None:
+        raise Fallo('Falta Whisper para comprobar el idioma del vídeo montado')
+    effects, sesion = modelo()
+    pistas = np.stack([effects.separate(np.ascontiguousarray(x[:, c]), sesion) for c in range(2)], axis=-1)
+    oidas, quedan = [], []
+    fuentes = [('voz', pistas[0])] + [(n, voces_mdx(pistas[i])[0]) for i, n in ((1, 'music'), (2, 'sfx'))]
+    for nombre, pista in fuentes:
+        if rms_db(pista) < UMBRAL_VOZ_DB:
+            continue
+        for f in frases(w, pista, idiomas=(origen, destino)):
+            f = dict(f, pista=nombre)
+            oidas.append(f)
+            if en_idioma_original(f, origen, destino):
+                quedan.append(f)
+    return dict(ok=True, comprobado=True, quedan=quedan, frases=oidas)
 
 
 def tramo(carpeta, desde, hasta, salida, video=None):
@@ -400,6 +453,11 @@ def main(argv=None):
     j.add_argument('trozo', type=Path)
     j.add_argument('desde', type=float)
     j.add_argument('salida', type=Path)
+    v = cmds.add_parser('verificar')
+    v.add_argument('video', type=Path)
+    v.add_argument('carpeta', type=Path)
+    v.add_argument('--destino', required=True)
+    v.add_argument('--origen')
     m = cmds.add_parser('mezclar')
     m.add_argument('carpeta', type=Path)
     m.add_argument('doblaje', type=Path)
@@ -419,6 +477,8 @@ def main(argv=None):
             r = tramo(a.carpeta, a.desde, a.hasta, a.salida, a.video)
         elif a.orden == 'injertar':
             r = injertar(a.doblaje, a.trozo, a.desde, a.salida)
+        elif a.orden == 'verificar':
+            r = verificar(a.video, a.carpeta, a.destino, a.origen)
         else:
             r = mezclar(a.carpeta, a.doblaje, a.salida)
     except Fallo as error:

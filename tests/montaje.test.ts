@@ -37,6 +37,7 @@ import { GET as editVideoRoute } from "@/app/api/videos/[videoId]/montaje/video/
 import { makeProduct, makeUser, TEST_PASSWORD } from "./helpers/fixtures";
 import { truncateAll } from "./helpers/global-setup";
 import { makeSampleAudio } from "./helpers/sample-audio";
+import { DOBLAR_SIN_DIALOGO } from "./helpers/doblar-falso";
 import { makeSampleVideo } from "./helpers/sample-video";
 
 /**
@@ -98,6 +99,7 @@ beforeAll(async () => {
   montadorDir = path.join(sampleDir, "montador");
   fs.mkdirSync(montadorDir);
   fs.writeFileSync(path.join(montadorDir, "montar_auto.py"), FAKE_MONTADOR);
+  fs.writeFileSync(path.join(montadorDir, "doblar.py"), DOBLAR_SIN_DIALOGO);
   fontPath = path.join(sampleDir, "fuente.ttf");
   fs.writeFileSync(fontPath, "fuente de prueba");
 }, 120_000);

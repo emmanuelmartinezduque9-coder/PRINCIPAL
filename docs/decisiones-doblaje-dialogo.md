@@ -2,7 +2,7 @@
 
 > **24/11/2026, orden del dueño:** el doblaje va POR DEFECTO, sin interruptor en el lote (se quitó). Todo vídeo cuya
 > referencia tenga diálogo en otro idioma se dobla al idioma del producto (`products.language`: `de` → `deu`,
-> `it` → `ita`…). Al separar la voz, Whisper (`faster-whisper`, modelo `base`, en la imagen) dice si hay diálogo
+> `it` → `ita`…). Al separar la voz, Whisper (`faster-whisper`, modelo `large-v3-turbo` desde el 25/11/2026, en la imagen) dice si hay diálogo
 > (texto con detector de voz y probabilidad de idioma ≥ 0,5; si no, suele ser la letra de la canción) y en qué idioma:
 > sin diálogo o ya en el idioma del anuncio, no se sube nada ni se gasta (fila `dubs` en `skipped`, que no se vuelve a
 > mirar). Si la voz no se puede separar, se monta con el audio original y un aviso. Solo se apaga desde la tarjeta
@@ -91,6 +91,46 @@ cuando una persona habla; una canción no se traduce nunca; en caso de duda, no.
    con el gancho porque nadie eligió su cuerpo «bury»).
 
 No hay nada parecido en Codex: allí el doblaje se pedía a mano por vídeo y su V6 tradujo letras de la canción.
+
+## Lote 10: el diálogo con un villancico debajo (25/11/2026)
+
+Ningún vídeo de HaarZauber del lote 10 salió en alemán según el coordinador. Medido con el audio real:
+
+- **45** («10 seconds I promise. No I'm good. Wait what? Oh you're buying it.») y **46** («I got one last week. Best
+  thing ever. Enjoy!») quedaron «skipped / solo canto o duda». Dos causas en el código del 24/11: la regla «una frase de
+  habla que se solapa con una de canto es canto» (el diálogo de la pista de voz se solapaba con «Jingle Bell Rock» y
+  «Let It Snow» de la pista de música) y el ejemplo «I'm good» como frase corta «dentro de una canción» en el prompt.
+- **44** sí estaba en alemán: el audio de la edición es el doblaje (correlación 0,9998 con `doblajes/44/36.m4a`) y
+  Whisper large-v3-turbo lo transcribe «Der hier ist nur für mich. Das hast du dir verdient, Mama.». Los clips de
+  Genjutsu de este lote vienen SIN pista de audio (ffprobe: solo vídeo), así que no hay voz generada que quitar; el
+  inglés que se oyó era Whisper `small`/`tiny` leyendo el alemán como inglés («There he is, no fun»). Los cortes del
+  clip coinciden con los de la referencia (±0,05 s) en 44, 45 y 46: el doblaje cae en sus tiempos reales. En el **47**
+  el clip va 1,1 s desplazado desde el primer corte; el montaje «plano a plano» corta en los tiempos de la referencia
+  (los del doblaje) y queda en 12,1 s.
+
+Órdenes del dueño (25/11/2026) y cómo quedan:
+
+1. **Ante la duda gana HABLA; una frase conversacional nunca es canto; con canción de fondo el diálogo se dobla
+   igual.** `classifySpeech` ya no tiene «duda»: Claude solo puede decir CANTO si nombra la canción y el verso
+   (`cancion`, `verso`); si no, es habla. Cada frase se juzga sola. Fuera la regla del solapamiento.
+   `DECISION_VERSION = 3`: todas las marcas y doblajes anteriores se vuelven a mirar.
+2. **Whisper large-v3-turbo** en todo el doblaje (antes `base`). Probado en el contenedor de Railway con las pistas de
+   BandIt: `base` daba el alemán del 44 como «el»/«es» y `small` como «en» al 0,75; el turbo transcribe bien las frases
+   cortas dobladas, la voz sobre villancicos («Oh, no, I'm good», «Wait, what?») y los villancicos. ~20 s por vídeo en
+   CPU además de la separación. Su idioma por frase corta sigue dudando (0,25 en «Der hier ist nur für mich»), así que
+   una frase cuenta como «sigue en el idioma original» solo con ≥ 0,5 y ≥ 0,6 s (`en_idioma_original`).
+3. **Comprobación final obligatoria** (`doblar.py verificar` + `checkFinalDialogue`): tras el montador, el vídeo montado
+   se separa otra vez (BandIt + MDX) y se transcribe. Lo que siga en el idioma original pasa por la misma decisión
+   habla/canto. Si es habla, el montaje NO se guarda: el doblaje de ese audio se marca «Comprobación final: …» con esos
+   tramos en `forzar` (habla sí o sí) y el montaje vuelve a la cola; el siguiente intento dobla con esos tramos y vuelve a
+   comprobar. Tras `MAX_FINAL_REDUBS = 2` rehechos se para con el motivo («el diálogo sigue sin traducir…»): nunca se
+   entrega con el diálogo sin traducir. El aviso «Comprobado en el vídeo montado (Whisper): …» dice lo que se oyó.
+   Si no se puede comprobar, el montaje falla con el motivo en vez de entregarse a ciegas.
+
+Descartado tras medirlo: una puntuación acústica de canto (tono sostenido, sílabas por segundo; prototipo de Codex con
+las 28 frases de los lotes 6 y 10) acertaba el 46 % dejando cada vídeo fuera del ajuste; inaSpeechSegmenter y YAMNet
+meten TensorFlow en la imagen y tampoco separan «habla sobre música» de «canto» con fiabilidad. Forzar el idioma en
+Whisper y comparar probabilidades tampoco: traduce en vez de transcribir.
 
 ## Ningún montaje mudo (24/11/2026)
 
