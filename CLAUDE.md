@@ -18,10 +18,12 @@ Emmanuel no lee análisis ni avisos: para eso están las reglas del motor (`regl
    prompts: nunca se pintan como tarjetas ni paran nada (como mucho, plegados en «Detalles técnicos»).
 3. **Sin botones de confirmar generación.** Nada de «Generar N imágenes · Esto cuesta X créditos»,
    «Generar clip», «Hacer el desglose», «Montar» o «Confirmar y generar» en el camino normal.
-4. **Una imagen por cada sitio distinto de la referencia** (cambiada el 24/11/2026; antes, una por vídeo).
-   Con un solo sitio, sigue siendo una. Más candidatas solo si él lo pide en la tarjeta
-   (`videos.frame_count`) o en el lote (`batches.frame_count`). Un tramo de clip por sitio, empalmados
-   en el montaje. Las imágenes de un mismo vídeo se revisan juntas, sin pasos ni botones nuevos.
+4. **Un solo frame por vídeo, siempre** (orden de Emmanuel, 25/11/2026; anula la del 24/11 de un frame por sitio).
+   El frame es la apertura. Cada **entorno que ocupa varios clips** (p. ej., empieza en el súper y desde el 4.º
+   clip hay varios en un salón) lleva una o varias **imágenes de referencia** de ese entorno para su tramo de clip,
+   nunca otro frame. Las tomas cortas de un sitio propio (1 s sacando algo de la nevera) no llevan referencia: el
+   prompt del clip pide cambiar su diseño o lo de dentro y conserva la acción y el sitio. Más candidatas de frame
+   solo si él lo pide en la tarjeta (`videos.frame_count`) o en el lote (`batches.frame_count`).
 5. **Solo preguntas obligatorias.** Se para únicamente con **una** pregunta concreta que solo él puede
    decidir (avatar obligatorio sin elegir, variante, canción, falta la foto del artículo, no hay
    saldo o se pasa del tope, Higgsfield sin conectar, un fallo que no se repite solo porque cuesta)
@@ -52,11 +54,14 @@ El defecto que más le molestaba en Codex. En las réplicas con Genjutsu o Wan (
   referencia pasan en ese tipo de sitio. Las demás buscan su propio entorno en Pinterest, localizado al
   país de destino (calles de Berlín…). Caso real del lote 6: un FalterPfote con súper y calle salió
   entero en el súper.
-- Cómo (copiado de Codex, «cada clip Genjutsu necesita su apertura»): el desglose agrupa las tomas
-  consecutivas del mismo sitio (`places`); cada sitio lleva su frame de apertura (`frame:N`), sus fotos
-  de Pinterest, su tramo de Motion Transfer con el vídeo fuente recortado (`clip:N`) y su Topaz
-  (`upscale:N`); el montaje los empalma. Código: `src/server/videos/tramos.ts`; diseño en
-  `docs/sitios-de-la-referencia.md`; pruebas en `tests/flujo-automatico.test.ts` y `tests/tramos.test.ts`.
+- Cómo: el desglose agrupa las tomas consecutivas del mismo sitio (`places`). Un solo frame de apertura por
+  vídeo; los entornos de varios clips llevan sus fotos de referencia (Pinterest o la suya) en su tramo de Motion
+  Transfer con el vídeo fuente recortado; las tomas cortas se describen en el prompt. El montaje empalma los tramos.
+  Código: `src/server/videos/tramos.ts`; diseño en `docs/sitios-de-la-referencia.md`; pruebas en
+  `tests/flujo-automatico.test.ts` y `tests/tramos.test.ts`.
+- **La imagen que él elige o sube a mano manda** (25/11/2026, vídeo 35 del lote 10): no se busca en Pinterest
+  para ese entorno, se rotula como suya y en el resultado tiene que verse que el fondo es su imagen, conservando
+  todo lo que tiene dentro.
 
 ## Regla fija del dueño: referencias de Pinterest (no olvidar)
 
