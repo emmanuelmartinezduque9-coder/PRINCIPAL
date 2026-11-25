@@ -122,6 +122,18 @@ const CLIP_SNAPSHOT = [
  * el vídeo (una sola vez por archivo: `ensureMedia`); si Higgsfield falla al subir, la respuesta la
  * pone `generations.ts` (la misma que al presupuestar).
  */
+/**
+ * Los cambios concretos que el desglose escribió para un sitio (pomerania → corgi, bandera → manta lisa, calle de
+ * EE. UU. → Berlín…), que antes iban en su tramo y se perdían al pasar a un solo clip (lote 10, vídeo 49). En el
+ * prompt del tramo, image [1] era la apertura de ese sitio: aquí es su foto de entorno (`first`).
+ */
+export function placeChanges(videoPrompt: string | undefined, first: number, startMs: number, endMs: number): string {
+  const sentences = (videoPrompt ?? "").split(/(?<=\.)\s+/).filter((s) => /^(Replace|Erase|Make|Change)\b/.test(s) && !/\bcaptions?\b/i.test(s));
+  if (!sentences.length) return "";
+  const text = sentences.join(" ").replace(/image\s*\[\s*1\s*\]/gi, `image [${first}]`);
+  return ` Changes from ${startMs / 1000}s to ${endMs / 1000}s, in every shot of that part: ${text}`;
+}
+
 export const buildClipRequest: RequestBuilder = async (user, video, deps) => {
   requireVideoOwner(user, video);
   if (video.referenceStatus !== "ready" || !video.referenceMediaId || !video.segmentDurationMs) throw new HttpError(409, NO_REFERENCE);
@@ -175,7 +187,17 @@ export const buildClipRequest: RequestBuilder = async (user, video, deps) => {
       manifest.push({ index, tag: genjutsuImageTag(index), source, role: "entorno", ownerSelected: place.ownerEnvironment || !!approved });
     }
     if (place.ownerEnvironment && manifest.length > first) paragraphs.push(`From ${place.startMs / 1000}s to ${place.endMs / 1000}s: ${ownerEnvironmentParagraph(genjutsuImageTag(first))}`);
-    if (manifest.length > first) paragraphs.push(`From ${place.startMs / 1000}s to ${place.endMs / 1000}s the scene takes place in ${place.place}: rebuild that setting from images [${first}]..[${manifest.length - 1}] (real photos of it), localized to the target country; keep the action (${place.action}) and ${place.keepObjects.join(", ")}. Image [1] only supplies the person, the product, the outfit and the look for that part; do not carry its background there.`);
+    if (manifest.length > first) paragraphs.push(`From ${place.startMs / 1000}s to ${place.endMs / 1000}s the scene takes place in ${place.place}: rebuild that setting from images [${first}]..[${manifest.length - 1}] (real photos of it), localized to the target country; keep the action (${place.action}) and ${place.keepObjects.join(", ")}. Image [1] only supplies the person, the product, the outfit and the look for that part; do not carry its background there.${placeChanges(place.videoPrompt, first, place.startMs, place.endMs)}`);
+  }
+  // La foto del producto funcionando (su efecto: la proyección de FalterPfote), como la adjuntaba Codex al clip
+  // de Object Swap: sin ella, Genjutsu conserva el efecto de la fuente o lo inventa (lote 10, 25/11/2026).
+  if (model !== SEEDANCE && !manifest.some((item) => item.role === "funcionamiento")) {
+    const working = refs.photos.find((photo) => photo.role === "funcionamiento");
+    if (working && manifest.length <= MAX_IMAGE_REFS[model]) {
+      const index = manifest.length;
+      manifest.push({ index, tag: genjutsuImageTag(index), source: { kind: "photo", photoId: working.id }, role: "funcionamiento" });
+      paragraphs.push(`${genjutsuImageTag(index)} shows the exact selected product working: whenever the product works in the source, its effect is exactly the one in ${genjutsuImageTag(index)} (same shape, colours and light), replacing the original effect completely; never physical objects, floating graphics or pasted flat artwork. Do not copy the animal, person or background of ${genjutsuImageTag(index)}.`);
+    }
   }
   const settingPrompt = paragraphs.length ? `\n\n${paragraphs.join("\n\n")}` : "";
   if (manifest.some((item) => item.source.kind === "avatar_pending")) throw new HttpError(409, NO_AUTO_AVATAR);
