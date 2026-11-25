@@ -486,7 +486,20 @@ export async function runEdit(run: Run, deps: MontajeDeps = {}): Promise<"done" 
       .where(and(eq(schema.videoAnalyses.videoId, spec.videoId), eq(schema.videoAnalyses.status, "done")))
       .orderBy(desc(schema.videoAnalyses.id))
       .limit(1);
+    // La escena real del vídeo: el sitio de su imagen inicial (la tienda que se ve). Manda sobre las indicaciones del
+    // lote, que son para todos los vídeos del producto (lote 10: «Aldi» en la escena y «Lidl» en el texto).
+    const [sceneRow] = await getDb()
+      .select({ scene: schema.videoPinterestRefs.scene })
+      .from(schema.videoPinterestRefs)
+      .where(and(eq(schema.videoPinterestRefs.videoId, spec.videoId), eq(schema.videoPinterestRefs.tramo, 0), eq(schema.videoPinterestRefs.status, "ready")))
+      .orderBy(desc(schema.videoPinterestRefs.id))
+      .limit(1);
+    const sceneInfo = sceneRow?.scene as { namedPlace?: string | null; place?: string | null } | null | undefined;
+    const sceneText = [sceneInfo?.namedPlace, sceneInfo?.place].filter(Boolean).join(": ");
+    const cardNotes = [owner?.note, owner?.adaptation].filter(Boolean).join("\n");
     const shop =
+      shopOfLocalization([{ kind: "tienda", original: cardNotes, target: cardNotes }]) ??
+      shopOfLocalization([{ kind: "tienda", original: sceneInfo?.namedPlace ?? "", target: sceneText }]) ??
       shopOfLocalization([{ kind: "tienda", original: indications, target: indications }]) ??
       shopOfLocalization((analysisRow?.result as { localization?: LocalizationItem[] | null } | null)?.localization);
     let edicion: ReferenceEdit | null = null;
@@ -495,6 +508,9 @@ export async function runEdit(run: Run, deps: MontajeDeps = {}): Promise<"done" 
         edicion = await referenceEdit({
           place,
           shop,
+          indications,
+          scene: sceneText || null,
+          song: spec.song?.title ?? null,
           file: referenceFile,
           product: { id: owner?.productId ?? 0, name: spec.product.name, language: spec.product.language },
           userId: owner?.userId ?? run.requestedBy,

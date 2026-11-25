@@ -22,3 +22,19 @@ describe("tienda en los rótulos", () => {
     expect(EDIT_CHANGE_INSTRUCTIONS).not.toContain("Nunca nombres marcas");
   });
 });
+
+// Lote 10 (26/11/2026): «Jede Haar-MAMA» con la tarjeta «busy mom en vez de hair mom», «Kiosk-Verkäuferin» en una
+// escena de dm, el 🎯 de Target en un anuncio de Aldi y emojis de verano con canción de Navidad.
+describe("rótulos con la lógica de nuestro vídeo", () => {
+  it("las indicaciones del dueño, la escena y la canción llegan y mandan", () => {
+    expect(REFERENCE_EDIT_INSTRUCTIONS).toContain("{INDICACIONES}");
+    expect(REFERENCE_EDIT_INSTRUCTIONS).toContain("{ESCENA}");
+    expect(REFERENCE_EDIT_INSTRUCTIONS).toContain("{CANCION}");
+    expect(REFERENCE_EDIT_INSTRUCTIONS).toContain("se cumplen siempre");
+    expect(REFERENCE_EDIT_INSTRUCTIONS).toContain("el texto nunca contradice lo que se ve");
+  });
+  it("los emojis se adaptan al producto, la escena y la temporada", () => {
+    expect(REFERENCE_EDIT_INSTRUCTIONS).toContain("🎯 de Target en un anuncio de Aldi");
+    expect(REFERENCE_EDIT_INSTRUCTIONS).toContain("pasan a emojis de Navidad");
+  });
+});
