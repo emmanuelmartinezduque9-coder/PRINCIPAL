@@ -43,7 +43,7 @@ import { batchOfVideo, cleanSelfCheck, currentSpec, failEdit, MAX_EDIT_BYTES, re
  */
 
 /** 8 a la vez por defecto (23/11/2026: todos los montajes del lote juntos; la máquina de Railway tiene 24 vCPU y 24 GB). */
-export const MONTAJE_CONCURRENCY = Math.max(1, Math.min(8, Number(process.env.MONTAJE_CONCURRENCIA) || 8));
+export const MONTAJE_CONCURRENCY = Math.max(1, Math.min(8, Number(process.env.MONTAJE_CONCURRENCIA) || 3)); // con 8 a la vez ffmpeg se quedaba sin recursos (lote 10, 25/11)
 export const RUN_HEARTBEAT_MS = 30_000;
 export const RUN_STALE_MS = 3 * 60_000;
 /** Intentos de un montaje cortado sin latido (cada publicación reinicia el proceso; varias seguidas no deben agotarlos). */
