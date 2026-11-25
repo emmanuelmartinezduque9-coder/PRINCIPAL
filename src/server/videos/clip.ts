@@ -134,6 +134,28 @@ export function placeChanges(videoPrompt: string | undefined, first: number, sta
   return ` Changes from ${startMs / 1000}s to ${endMs / 1000}s, in every shot of that part: ${text}`;
 }
 
+/**
+ * Un solo clip con la referencia entera (orden del 25/11/2026): los prompts escritos con el sistema de tramos
+ * hablan de «los primeros 6 s» y el cambio de producto se quedaba en ese trozo (EisWerk, lote 10).
+ */
+export function wholeVideoPreamble(model: ClipModel, segmentMs: number | null): string {
+  if (model === SEEDANCE) return "";
+  const total = segmentMs ? ` (0 s to ${Math.round(segmentMs / 100) / 10} s)` : "";
+  return `The source video is the WHOLE reference${total}; any mention below of a shorter segment or stretch is outdated: apply every instruction to the whole video, every shot, until the last frame.\n\n`;
+}
+
+/**
+ * Orden de Emmanuel (26/11/2026): la variante que elige es la de TODO el vídeo. Si la referencia es la máquina rosa y
+ * elige la amarilla, en ningún momento aparece la rosa.
+ */
+export function productEverywhere(model: ClipModel, manifest: ManifestItem[], variant: boolean): string {
+  if (model === SEEDANCE) return "";
+  const article = manifest.filter((item) => item.role === "articulo").map((item) => item.tag);
+  if (!article.length) return "";
+  const tags = article.length === 1 ? article[0] : `${article.slice(0, -1).join(", ")} and ${article.at(-1)}`;
+  return `\n\nThroughout the WHOLE video, in every shot after every cut and in every moment until the last frame, every instance of the product is the exact ${variant ? "chosen variant" : "selected product"} in ${tags}, with its exact colour, pattern, finish and shape; the product, colour or variant of the source never appears, not even for a single frame.`;
+}
+
 export const buildClipRequest: RequestBuilder = async (user, video, deps) => {
   requireVideoOwner(user, video);
   if (video.referenceStatus !== "ready" || !video.referenceMediaId || !video.segmentDurationMs) throw new HttpError(409, NO_REFERENCE);
@@ -202,7 +224,7 @@ export const buildClipRequest: RequestBuilder = async (user, video, deps) => {
   const settingPrompt = paragraphs.length ? `\n\n${paragraphs.join("\n\n")}` : "";
   if (manifest.some((item) => item.source.kind === "avatar_pending")) throw new HttpError(409, NO_AUTO_AVATAR);
   // Correcciones aprendidas de los reportes («Mejoras», `src/server/videos/mejoras/`): van literales al final.
-  const prompt = `${basePrompt + settingPrompt}${await learnedSuffix("clip", video.productId)}${(await preferencesFor("clip", { videoId: video.id, tramo: 0 })).text}`;
+  const prompt = `${wholeVideoPreamble(model, video.segmentDurationMs)}${basePrompt + settingPrompt}${productEverywhere(model, manifest, video.variantId !== null)}${await learnedSuffix("clip", video.productId)}${(await preferencesFor("clip", { videoId: video.id, tramo: 0 })).text}`;
   const error = checkVideoPrompt(prompt, manifest).find((issue) => issue.level === "error");
   if (error) throw new HttpError(400, error.message, PROMPT_ERROR);
 

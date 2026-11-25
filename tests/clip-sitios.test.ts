@@ -20,3 +20,20 @@ describe("cambios de cada sitio en el clip único", () => {
     expect(placeChanges(undefined, 6, 0, 1000)).toBe("");
   });
 });
+
+// EisWerk, lote 10 (26/11/2026): eligió la variante amarilla y en parte del vídeo salía la rosa de la referencia.
+import { productEverywhere, wholeVideoPreamble } from "@/server/videos/clip";
+describe("la variante elegida en todo el vídeo", () => {
+  const manifest = [
+    { index: 1, tag: "image [1]", source: { kind: "approved_frame" }, role: "imagen_aprobada" },
+    { index: 3, tag: "image [3]", source: { kind: "photo", photoId: 9 }, role: "articulo" },
+  ] as never;
+  it("la variante manda en todas las tomas hasta el final", () => {
+    const out = productEverywhere("hf_mult_motion_control", manifest, true);
+    expect(out).toContain("exact chosen variant in image [3]");
+    expect(out).toContain("never appears, not even for a single frame");
+  });
+  it("el vídeo entero manda sobre los tramos viejos", () => {
+    expect(wholeVideoPreamble("hf_mult_motion_control", 12700)).toContain("WHOLE reference (0 s to 12.7 s)");
+  });
+});

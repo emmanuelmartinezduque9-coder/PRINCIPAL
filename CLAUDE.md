@@ -107,3 +107,9 @@ gasta mucho, para que el plan de Claude dure y el coordinador quede libre:
   caso; si parece que debería ser general, se le pregunta antes en una frase. Vale también para lo que se encargue a
   otros chats y a Codex. (Origen: su queja por un rótulo con Harry Potter se convirtió sin preguntarle en «nunca
   marcas de terceros» y estropeó el lote 10.)
+
+## Regla fija del dueño: la variante elegida en todo el vídeo (Emmanuel, 26/11/2026)
+
+Si elige una variante (p. ej. la amarilla y la referencia es la máquina rosa), esa variante sale en TODO el vídeo, en
+todas las tomas y hasta el último fotograma; el producto o el color de la referencia no aparece nunca. Cada clip lleva
+una frase fija que lo exige (`productEverywhere` en `src/server/videos/clip.ts`, prueba en `tests/clip-sitios.test.ts`).

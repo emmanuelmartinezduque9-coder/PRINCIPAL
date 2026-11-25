@@ -212,6 +212,9 @@ const post = (body: unknown) =>
 // ───────────────────────── Modelo del clip (Codex) ─────────────────────────
 
 /** El vídeo con ese modelo y un desglose escrito para él (como lo dejaría el desglose). */
+
+/** El prompt sin las dos frases fijas del clip único (vídeo entero y variante en todo el vídeo, 26/11/2026). */
+const core = (prompt: string) => prompt.replace(/^The source video is the WHOLE reference[^\n]*\n\n/, "").replace(/\n\nThroughout the WHOLE video[\s\S]*$/, "");
 async function withModel(choice: string, resolved: string, prompt: string): Promise<void> {
   await getPool().query("update videos set clip_model = $2 where id = $1", [v.id, choice]);
   await getPool().query("update video_analyses set clip_model = $2 where video_id = $1", [v.id, resolved]);
@@ -244,9 +247,11 @@ describe("modelo del clip: las opciones de Codex", () => {
     const approvedJobId = await readyForClip();
     await withModel("auto", "hf_mult_motion_control", GENJUTSU_PROMPT);
     const { request } = await buildClipRequest(ana, await fresh(), deps);
+    expect(core(request.prompt)).toBe(GENJUTSU_PROMPT);
+    expect(request.prompt).toContain("The source video is the WHOLE reference");
     expect(request).toEqual({
       model: "hf_mult_motion_control",
-      prompt: GENJUTSU_PROMPT,
+      prompt: request.prompt,
       resolution: "480p",
       medias: [
         { role: "video_references", value: "ref-media" },
@@ -258,7 +263,7 @@ describe("modelo del clip: las opciones de Codex", () => {
     // Lo que llega a Higgsfield: los mismos parámetros que enviaba Codex (sin `mode`, `duration` ni audio).
     expect(videoParams(request as HfVideoRequest)).toEqual({
       model: "hf_mult_motion_control",
-      prompt: GENJUTSU_PROMPT,
+      prompt: request.prompt,
       resolution: "480p",
       use_unlim: false,
       medias: request.medias,
@@ -274,7 +279,7 @@ describe("modelo del clip: las opciones de Codex", () => {
     expect(request.model).toBe("hf_mult_replace_object");
     expect(request.medias[1]).toEqual({ role: "image_references", value: approvedJobId });
     expect(request.medias).toHaveLength(5);
-    expect(request.prompt).toBe(
+    expect(core(request.prompt)).toBe(
       GENJUTSU_PROMPT.replace(
         " No text overlays, no captions.",
         " Replace every original location with the real environment in image [4]. Preserve the SOURCE camera angle, subject scale and action, adapting this environment rather than copying its photographic framing. No text overlays, no captions.",
@@ -316,7 +321,7 @@ describe("modelo del clip: las opciones de Codex", () => {
     await withModel("auto", "hf_mult_motion_control", sinCaja);
     const { request } = await buildClipRequest(ana, await fresh(), deps);
     expect(request.medias).toHaveLength(5);
-    expect(request.prompt).toBe(
+    expect(core(request.prompt)).toBe(
       sinCaja.replace(
         " No text overlays, no captions.",
         " Replace every visible instance of the closed retail packaging with image [4], preserving realistic size relative to the hands and surroundings. Every box that appears, including while it is being opened, is the exact printed retail box of image [4]: its printed design is visible on all outer walls and flaps; never a plain unprinted carton. No text overlays, no captions.",
