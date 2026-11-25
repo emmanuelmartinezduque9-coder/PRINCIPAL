@@ -34,9 +34,10 @@ export interface ProfileData {
   cabecera: string;
   descripcion: string | null;
   enlaces: string[];
-  reels: Array<{ url: string; vistas: number | null; texto: string | null; miniatura: string | null }>;
+  reels: Array<{ url: string; vistas: number | null; texto: string | null; miniatura: string | null; fecha?: string | null; comentarios?: number | null; megusta?: number | null; descripcion?: string | null; vistasTexto?: string | null; rounded?: boolean }>;
 }
 
+const count = (x: unknown): number | null => typeof x === "number" && Number.isSafeInteger(x) && x >= 0 ? x : null;
 const str = (value: unknown, max: number): string | null => (typeof value === "string" ? value.slice(0, max) : null);
 const https = (value: unknown): string | null => {
   if (typeof value !== "string") return null;
@@ -60,10 +61,16 @@ export function profileDataOf(raw: unknown): ProfileData | null {
     .map((x) => ({
       url: https(x.url),
       vistas: typeof x.vistas === "number" && Number.isSafeInteger(x.vistas) && x.vistas >= 0 ? x.vistas : null,
+      fecha: typeof x.fecha === "string" && Number.isFinite(Date.parse(x.fecha)) ? new Date(x.fecha).toISOString() : null,
+      comentarios: count(x.comentarios),
+      megusta: count(x.megusta),
+      descripcion: str(x.descripcion, 10000),
+      vistasTexto: str(x.vistasTexto, 80),
+      rounded: x.rounded === true || typeof x.vistasTexto === "string" && /[a-z]/i.test(x.vistasTexto),
       texto: str(x.texto, 1000),
       miniatura: https(x.miniatura),
     }))
-    .filter((x): x is ProfileData["reels"][number] & { url: string } => x.url !== null)
+    .filter((x): x is typeof x & { url: string } => x.url !== null)
     .slice(0, 30);
   return {
     red: r.red,
@@ -199,6 +206,9 @@ export async function finishProfileTask(agentId: number, taskId: number, result:
     if (!data) return await fail("Lo que mandó el Mac no es un perfil.");
     await close({ status: "done", error: null });
     await getDb().update(profiles).set({ status: "ready", data, error: null, updatedAt: now }).where(eq(profiles.url, task.url));
+    // La ingesta no debe convertir una lectura correcta en una tarea fallida.
+    try { await (await import("@/server/videos/cerebro/ingesta")).ingestReadyProfile(task.url); }
+    catch (error) { console.error("[cerebro] ingesta:", error instanceof Error ? error.message : "fallo"); }
   } finally {
     await removeSongFile(task.uploadId);
   }

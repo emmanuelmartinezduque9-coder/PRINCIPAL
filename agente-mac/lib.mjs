@@ -28,7 +28,7 @@ export function cookieArgs(file = COOKIES_FILE, exists = existsSync) {
   return exists(file) ? ["--cookies", file] : ["--cookies-from-browser", "brave"];
 }
 
-export const VERSION = "1.10.0";
+export const VERSION = "1.11.0";
 
 /** Sitios de los que se descarga, con sus subdominios. La misma lista que el servidor. */
 export const LINK_HOSTS = ["instagram.com", "tiktok.com", "youtube.com", "youtu.be", "facebook.com", "fb.watch"];
@@ -418,7 +418,17 @@ async function readProfile(config, deps, task, file) {
   let result;
   if (who.red === "instagram") {
     const read = deps.readInstagramProfile ?? readInstagramProfile;
-    result = await read(who.usuario, { cookiesFile: config.instagramSession ?? INSTAGRAM_SESSION_FILE, sleep: deps.sleep });
+    // Treinta consultas en serie pueden superar la reserva inicial de la tarea.
+    let lost = false;
+    const beat = setInterval(() => {
+      call(config, deps, "POST", `/api/agente/tareas/${task.taskId}/latido`)
+        .then((r) => { if (r.status === 409) lost = true; })
+        .catch(() => {});
+    }, LEASE_BEAT_MS);
+    try {
+      result = await read(who.usuario, { cookiesFile: config.instagramSession ?? INSTAGRAM_SESSION_FILE, sleep: deps.sleep, ytDlp: config.ytDlp ?? "yt-dlp" });
+    } finally { clearInterval(beat); }
+    if (lost) return { lost: true };
   } else {
     const ran = await runTool(config, deps, task, config.ytDlp ?? "yt-dlp", tiktokProfileArgs(task.url, cookieArgs()), {
       timeoutMs: YT_DLP_TIMEOUT_MS,

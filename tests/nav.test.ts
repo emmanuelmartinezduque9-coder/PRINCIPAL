@@ -4,8 +4,8 @@ import { navFor } from "@/components/shell/app-shell";
 const labels = (role: Parameters<typeof navFor>[0]) => navFor(role).map((item) => item.label);
 
 describe("menú lateral según el papel", () => {
-  it("el dueño ve Productos, Lotes, Biblioteca, Móviles, Canciones, Avatares, Mejoras, Gasto, Reglas, Personas y Ajustes, en ese orden", () => {
-    expect(labels("dueno")).toEqual(["Productos", "Lotes", "Biblioteca", "Móviles", "Canciones", "Avatares", "Mejoras", "Gasto", "Reglas", "Personas", "Ajustes"]);
+  it("el dueño ve Productos, Lotes, Biblioteca, Móviles, Canciones, Avatares, Mejoras, Cerebro, Gasto, Reglas, Personas y Ajustes, en ese orden", () => {
+    expect(labels("dueno")).toEqual(["Productos", "Lotes", "Biblioteca", "Móviles", "Canciones", "Avatares", "Mejoras", "Cerebro", "Gasto", "Reglas", "Personas", "Ajustes"]);
   });
 
   it("el colaborador ve Productos, Lotes, Biblioteca (sus clips de Higgsfield), Móviles, Canciones y Avatares (comunes), Mejoras (sus reportes) y Ajustes (su propia conexión)", () => {

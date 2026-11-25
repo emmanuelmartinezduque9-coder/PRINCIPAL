@@ -10,7 +10,7 @@
 // Devuelve siempre un objeto `{ ok: true, perfil }` o `{ ok: false, codigo, error }`. Nunca escribe
 // las cookies en el registro.
 
-import { spawn } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
@@ -21,7 +21,9 @@ export const CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chr
 /** El navegador sin ventana: Chrome si está; si no, Brave. Las cookies se le dan aparte. */
 export const headlessBrowser = (exists = existsSync) => [CHROME, BRAVE].find((b) => exists(b)) ?? null;
 /** Cuántos reels se leen de un perfil. */
-export const MAX_REELS = 15;
+export const MAX_REELS = 30;
+/** Cuántos reels se leen uno a uno con yt-dlp (fecha, comentarios, me gusta, descripción). */
+export const MAX_ENRICHED = 12;
 const PAGE_WAIT_MS = 12_000;
 export const START_TIMEOUT_MS = 20_000;
 export const UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
@@ -88,6 +90,11 @@ export function canonicalReel(url) {
 
 // ───────────────────────── Instagram con Brave sin ventana ─────────────────────────
 
+/** Conserva el sufijo aunque Instagram lo separe del número con un espacio. */
+export function gridViewsText(value) {
+  return value.match(/(?:^|\s)([\d.,]+(?:\s*(?:mio\.?|tsd\.?|mil|k|m))?)(?=\s|$)/i)?.[1]?.trim() ?? null;
+}
+
 /** Lo que se evalúa dentro de la página del perfil (sin depender de clases internas de Instagram). */
 const READ_PAGE = `(() => {
   const text = (el) => (el?.innerText || '').replace(/\\s+/g, ' ').trim();
@@ -104,7 +111,7 @@ const READ_PAGE = `(() => {
   const meta = (n) => document.querySelector('meta[property="' + n + '"], meta[name="' + n + '"]')?.content || null;
   const reels = [...document.querySelectorAll('a[href*="/reel/"], a[href*="/p/"]')].map(a => ({
     url: a.href.split('?')[0],
-    vistasTexto: text(a).split(' ').find(t => /^[\\d.,]+\\s*(k|K|M|Mio\\.?|Tsd\\.?|mil)?$/.test(t)) || null,
+    vistasTexto: (${gridViewsText.toString()})(text(a)),
     miniatura: a.querySelector('img')?.src || ([...a.querySelectorAll('*')].map(el => getComputedStyle(el).backgroundImage).find(b => b && b.startsWith('url('))?.slice(5, -2)) || null,
     texto: a.querySelector('img')?.alt || null,
   }));
@@ -136,7 +143,7 @@ export async function cdp(wsUrl) {
 }
 
 /** Lee un perfil de Instagram con Brave sin ventana. `deps.sleep` para esperar. */
-export async function readInstagramProfile(usuario, { cookiesFile, brave = headlessBrowser(), sleep }) {
+export async function readInstagramProfile(usuario, { cookiesFile, brave = headlessBrowser(), sleep, ytDlp = "yt-dlp", readReel = reelMetadata }) {
   if (!brave) return { ok: false, codigo: "sin_brave", error: "No está Chrome ni Brave en /Applications: hace falta uno para leer perfiles de Instagram." };
   let cookiesText = "";
   try {
@@ -184,9 +191,11 @@ export async function readInstagramProfile(usuario, { cookiesFile, brave = headl
     const reels = [];
     for (const reel of reelsPage.reels ?? []) {
       if (reels.some((r) => r.url === canonicalReel(reel.url))) continue;
-      reels.push({ url: canonicalReel(reel.url), vistas: parseCount(reel.vistasTexto), texto: reel.texto, miniatura: reel.miniatura });
+      reels.push({ url: canonicalReel(reel.url), vistas: parseCount(reel.vistasTexto), vistasTexto: reel.vistasTexto, rounded: /[a-z]/i.test(reel.vistasTexto ?? ""), texto: reel.texto, miniatura: reel.miniatura });
       if (reels.length >= MAX_REELS) break;
     }
+    // En serie: un fallo puntual no invalida la cuadrícula ni el resto de reels.
+    await enrichInstagramReels(reels, { cookiesFile, ytDlp, readReel, sleep });
     return {
       ok: true,
       perfil: {
@@ -235,4 +244,30 @@ export function tiktokProfileFrom(json, usuario) {
       miniatura: e.thumbnails?.at?.(-1)?.url ?? e.thumbnail ?? null,
     })).filter((r) => r.url),
   };
+}
+
+/** Metadatos públicos con las mismas cookies; nunca se registran cookies ni stderr. */
+export function reelMetadata(url, { cookiesFile, ytDlp }) {
+  return new Promise((resolve, reject) => {
+    execFile(ytDlp, ["--ignore-config", "--cookies", cookiesFile, "-J", "--skip-download", "--", canonicalReel(url)],
+      { timeout: 45_000, maxBuffer: 4 * 1024 * 1024 }, (error, stdout) => {
+        if (error) return reject(new Error("No se pudo leer el reel"));
+        try { resolve(JSON.parse(stdout)); } catch { reject(new Error("Metadatos inválidos")); }
+      });
+  });
+}
+
+export async function enrichInstagramReels(reels, { cookiesFile, ytDlp = "yt-dlp", readReel = reelMetadata, sleep }) {
+  // Solo los 12 más recientes (la cuadrícula va de nuevo a viejo): sus comentarios cambian; los viejos ya se leyeron y
+  // así no se cargan el Mac ni la sesión de Instagram cada 6 h.
+  for (const [index, reel] of reels.slice(0, MAX_ENRICHED).entries()) {
+    if (index) await sleep(350);
+    try {
+      const data = await readReel(canonicalReel(reel.url), { cookiesFile, ytDlp });
+      if (Number.isFinite(data.timestamp)) reel.fecha = new Date(data.timestamp * 1000).toISOString();
+      if (Number.isSafeInteger(data.comment_count) && data.comment_count >= 0) reel.comentarios = data.comment_count;
+      if (Number.isSafeInteger(data.like_count) && data.like_count >= 0) reel.megusta = data.like_count;
+      if (typeof data.description === "string") reel.descripcion = data.description.slice(0, 10000);
+    } catch { /* Se reintentará en la lectura siguiente. */ }
+  }
 }

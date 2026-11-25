@@ -1,7 +1,7 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { Smartphone, BookOpen, Film, Layers, LogOut, Music, Package, Settings, TrendingUp, UserRound, Users, Wallet, type LucideIcon } from "lucide-react";
+import { Brain, Smartphone, BookOpen, Film, Layers, LogOut, Music, Package, Settings, TrendingUp, UserRound, Users, Wallet, type LucideIcon } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef } from "react";
@@ -29,6 +29,7 @@ const NAV: NavItem[] = [
   { href: "/canciones", label: "Canciones", icon: Music },
   { href: "/avatares", label: "Avatares", icon: UserRound },
   { href: "/mejoras", label: "Mejoras", icon: TrendingUp },
+  { href: "/cerebro", label: "Cerebro", icon: Brain, ownerOnly: true },
   { href: "/gasto", label: "Gasto", icon: Wallet, ownerOnly: true },
   { href: "/reglas", label: "Reglas", icon: BookOpen, ownerOnly: true },
   { href: "/personas", label: "Personas", icon: Users, ownerOnly: true },
@@ -37,7 +38,7 @@ const NAV: NavItem[] = [
 
 const ROLE_LABELS: Record<AuthUser["role"], string> = { dueno: "Dueño", colaborador: "Colaborador" };
 
-/** Opciones del menú que ve una persona según su papel: todos, Productos, Lotes, Biblioteca, Canciones, Avatares, Mejoras (sus reportes) y Ajustes; el dueño, además Gasto, Reglas y Personas. */
+/** Opciones del menú que ve una persona según su papel: todos, Productos, Lotes, Biblioteca, Canciones, Avatares, Mejoras (sus reportes) y Ajustes; el dueño, además Cerebro (de cuentas), Gasto, Reglas y Personas. */
 export function navFor(role: AuthUser["role"] | undefined): NavItem[] {
   return NAV.filter((item) => !item.ownerOnly || role === "dueno");
 }

@@ -296,3 +296,8 @@ export async function productMarketsByIds(ids: number[]): Promise<Map<number, { 
   const rows = await getDb().select({ id: schema.products.id, language: schema.products.language, countries: schema.products.countries }).from(schema.products).where(inArray(schema.products.id, [...new Set(ids)]));
   return new Map(rows.map((r) => [r.id, { language: r.language, countries: r.countries }]));
 }
+
+/** Lectura interna del worker para descubrir referencias y atribuir gasto, sin sesión HTTP. */
+export async function listCerebroProducts(): Promise<Product[]> {
+  return getDb().select().from(schema.products);
+}

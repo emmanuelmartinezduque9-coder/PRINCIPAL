@@ -1,5 +1,8 @@
 # Agente del Mac
 
+Versión 1.11.0: la lectura de Instagram añade fecha, comentarios, me gusta y descripción
+de los 12 reels más recientes con yt-dlp, en serie y con la misma sesión.
+
 Un programa pequeño que se queda encendido en tu Mac. Cuando pegas en la web un enlace de
 Instagram, TikTok, YouTube o Facebook, la web no puede descargarlo (Instagram no deja entrar a los
 servidores). Tu Mac sí: este programa lo descarga con `yt-dlp` y se lo entrega a la web. El vídeo

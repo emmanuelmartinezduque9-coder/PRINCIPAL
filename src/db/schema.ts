@@ -1912,3 +1912,87 @@ export const learningRuns = pgTable("learning_runs", {
   createdAt: instant("created_at").notNull().defaultNow(),
   finishedAt: instant("finished_at"),
 }, (t) => [check("learning_runs_trigger", sql`${t.trigger} in ('lote','diario')`)]);
+
+/** Cuentas observadas; el corte se fija una sola vez para los últimos N reels. */
+export const socialAccounts = pgTable("social_accounts", {
+  id: bigserial("id", { mode: "number" }).primaryKey(),
+  network: text("network").notNull(),
+  handle: text("handle").notNull(),
+  kind: text("kind").notNull(),
+  productId: bigint("product_id", { mode: "number" }).references(() => products.id, { onDelete: "set null" }),
+  country: text("country").notNull().default("DE"),
+  countFrom: instant("count_from"),
+  countLast: integer("count_last"),
+  createdAt: instant("created_at").notNull().defaultNow(),
+}, (t) => [
+  unique("social_accounts_network_handle").on(t.network, t.handle),
+  check("social_accounts_network", sql`${t.network} in ('instagram','tiktok','facebook')`),
+  check("social_accounts_kind", sql`${t.kind} in ('propia','competidor')`),
+  check("social_accounts_count_last", sql`${t.countLast} is null or ${t.countLast} > 0`),
+  check("social_accounts_handle", sql`char_length(${t.handle}) between 1 and 100`),
+]);
+
+/** ADN observado; importado nunca equivale a una propuesta sin publicación verificada. */
+export type SocialDna = { angulo: string; fondo: string; texto: string; cancion: string; descripcion?: string; producto?: string; pais?: string };
+export const socialPosts = pgTable("social_posts", {
+  id: bigserial("id", { mode: "number" }).primaryKey(),
+  accountId: bigint("account_id", { mode: "number" }).notNull().references(() => socialAccounts.id, { onDelete: "cascade" }),
+  network: text("network").notNull(),
+  shortcode: text("shortcode").notNull(),
+  url: text("url").notNull(),
+  productId: bigint("product_id", { mode: "number" }).references(() => products.id, { onDelete: "set null" }),
+  videoId: bigint("video_id", { mode: "number" }).references(() => videos.id, { onDelete: "set null" }),
+  publicationId: bigint("publication_id", { mode: "number" }).references(() => publications.id, { onDelete: "set null" }),
+  publishedAt: instant("published_at"),
+  caption: text("caption"),
+  thumbText: text("thumb_text"),
+  thumbnail: text("thumbnail"),
+  dna: jsonb("dna").$type<SocialDna>(),
+  dnaSource: text("dna_source").$type<"principal" | "estimado" | "importado">(),
+  excluded: boolean("excluded").notNull().default(false),
+  source: text("source").notNull().default("perfil"),
+  createdAt: instant("created_at").notNull().defaultNow(),
+}, (t) => [
+  unique("social_posts_network_shortcode").on(t.network, t.shortcode),
+  index("social_posts_account_date").on(t.accountId, t.publishedAt),
+  index("social_posts_product").on(t.productId),
+  check("social_posts_network", sql`${t.network} in ('instagram','tiktok','facebook')`),
+  check("social_posts_source", sql`${t.source} in ('perfil','importado','movil')`),
+  check("social_posts_dna_source", sql`${t.dnaSource} is null or ${t.dnaSource} in ('principal','estimado','importado')`),
+]);
+
+export const socialMetrics = pgTable("social_metrics", {
+  id: bigserial("id", { mode: "number" }).primaryKey(),
+  postId: bigint("post_id", { mode: "number" }).notNull().references(() => socialPosts.id, { onDelete: "cascade" }),
+  observedAt: instant("observed_at").notNull(),
+  views: bigint("views", { mode: "number" }),
+  comments: bigint("comments", { mode: "number" }),
+  likes: bigint("likes", { mode: "number" }),
+  ageHours: real("age_hours"),
+  rounded: boolean("rounded").notNull().default(false),
+  source: text("source").notNull(),
+  raw: jsonb("raw").notNull(),
+}, (t) => [
+  unique("social_metrics_post_observed_source").on(t.postId, t.observedAt, t.source),
+  index("social_metrics_post_age").on(t.postId, t.ageHours),
+  check("social_metrics_counts", sql`(${t.views} is null or ${t.views} >= 0) and (${t.comments} is null or ${t.comments} >= 0) and (${t.likes} is null or ${t.likes} >= 0)`),
+  check("social_metrics_age", sql`${t.ageHours} is null or ${t.ageHours} >= 0`),
+]);
+
+export const splitTests = pgTable("split_tests", {
+  id: bigserial("id", { mode: "number" }).primaryKey(),
+  basePostId: bigint("base_post_id", { mode: "number" }).notNull().references(() => socialPosts.id),
+  pillar: text("pillar").notNull(),
+  step: integer("step").notNull().default(1),
+  batchId: bigint("batch_id", { mode: "number" }).references(() => batches.id),
+  postIds: jsonb("post_ids").$type<number[]>().notNull().default([]),
+  status: text("status").notNull().default("en_marcha"),
+  result: jsonb("result"),
+  createdAt: instant("created_at").notNull().defaultNow(),
+}, (t) => [
+  index("split_tests_base").on(t.basePostId),
+  unique("split_tests_batch").on(t.batchId),
+  check("split_tests_step", sql`${t.step} between 1 and 4`),
+  check("split_tests_pillar", sql`${t.pillar} in ('gancho','texto','fondo','cancion')`),
+  check("split_tests_status", sql`${t.status} in ('en_marcha','ganador','perdedor','pendiente','cancelado')`),
+]);

@@ -4,6 +4,7 @@ import "@/jobs/video-jobs";
 import "@/jobs/product-jobs";
 import "@/jobs/mejoras-jobs";
 import "@/jobs/aprendizaje-jobs";
+import "@/jobs/cerebro-jobs";
 import { startEditLoop, stopEditLoop } from "@/server/videos/montaje-nube";
 
 /**

@@ -449,6 +449,13 @@
       "when": 1795581543124,
       "tag": "0063_preferencia_salones",
       "breakpoints": true
+    },
+    {
+      "idx": 64,
+      "version": "7",
+      "when": 1795581864041,
+      "tag": "0064_cerebro_cuentas",
+      "breakpoints": true
     }
   ]
 }
