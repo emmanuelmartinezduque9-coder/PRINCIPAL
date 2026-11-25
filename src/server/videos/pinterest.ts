@@ -119,7 +119,7 @@ const list = (tags: string[]) => (tags.length === 1 ? tags[0] : `${tags.slice(0,
  */
 /** Párrafo fijo: la foto elegida manda aunque el escritor omita algún objeto. */
 export function ownerEnvironmentParagraph(tag: string): string {
-  return `The background IS ${tag}: preserve the same room, its furniture, decoration and ALL objects it contains, visible and recognizable in their original positions. Name every visible object individually when describing this room. Place the action, hands and product from image 1 inside this exact room; reframe only as much as required for the source shot angle. Do not remove, replace, rearrange or tidy any object from ${tag}. Keep every screen in place, showing neutral content without characters or brands.`;
+  return `The background IS ${tag}: preserve the same room, its furniture, decoration and ALL objects it contains, visible and recognizable in their original positions. Name every visible object individually when describing this room. Place the action, hands and product from image 1 inside this exact room; reframe only as much as required for the source shot angle. Do not remove, replace, rearrange or tidy any object from ${tag}. Keep every screen showing exactly what it shows in ${tag}, and every plush toy, figurine and decoration exactly as in ${tag}, characters included: the owner chose this room, so never neutralize, swap or remove them.`;
 }
 
 export function withPinterestRoles(prompt: string, manifest: ManifestItem[]): string {
@@ -921,7 +921,7 @@ async function composeFramePrompt(
       userId: ctx.userId,
       productId: ctx.productId,
       rules: [...imageRules, ...rules],
-      instructions: COMPOSE_INSTRUCTIONS + (userSelected ? "\nOrden expresa de Emmanuel, 25/11/2026: la foto del dueño manda. En environment enumera TODOS los objetos visibles uno a uno con su posición, sin límite de 6–12 y sin omitir portátil, peluches, platos, mantas ni decoración. No quites, cambies ni ordenes nada. Conserva las pantallas con contenido neutro sin personajes ni marcas. " + ownerEnvironmentParagraph("image {ROOM}") : ""),
+      instructions: COMPOSE_INSTRUCTIONS + (userSelected ? "\nOrden expresa de Emmanuel, 25/11/2026: la foto del dueño manda. En environment enumera TODOS los objetos visibles uno a uno con su posición, sin límite de 6–12 y sin omitir portátil, peluches, platos, mantas ni decoración. No quites, cambies ni ordenes nada. Conserva tal cual lo que muestran sus pantallas y sus peluches, figuras y adornos, también si son personajes: no los neutralices, cambies ni quites (orden de Emmanuel, 25/11/2026). " + ownerEnvironmentParagraph("image {ROOM}") : ""),
       content,
       maxTokens: 6_000,
       schema: composedSchema,

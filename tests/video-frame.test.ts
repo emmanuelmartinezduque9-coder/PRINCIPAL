@@ -19,7 +19,7 @@ import {
   getImageModel,
   IMAGE_MODEL_SETTING,
   rejectFrame,
-  setImageModel, NO_PEOPLE_PICTURES } from "@/server/videos/frame";
+  setImageModel, NO_PEOPLE_PICTURES, NO_PEOPLE_PICTURES_OWNER_ROOM } from "@/server/videos/frame";
 import { finalizeGeneration, quoteGeneration, requestGeneration, submitGeneration, type GenDeps } from "@/server/videos/generations";
 import { createVideo, getVideoFor, updateVideoChoices, type Video } from "@/server/videos/videos";
 import { POST as aprobarRoute } from "@/app/api/videos/[videoId]/imagen/aprobar/route";
@@ -168,7 +168,7 @@ describe("petición de la imagen inicial", () => {
       model: "nano_banana_2_1",
       // La foto de entorno que elige el dueño manda (conserva todos sus objetos) y, siempre, la regla fija
       // de fondos sin personas al final.
-      prompt: `${v.imagePrompt!.trim()}\n\n${ownerEnvironmentParagraph("image 4")} ${NO_PEOPLE_PICTURES}`,
+      prompt: `${v.imagePrompt!.trim()}\n\n${ownerEnvironmentParagraph("image 4")} ${NO_PEOPLE_PICTURES_OWNER_ROOM}`,
       aspectRatio: "9:16",
       resolution: "2k",
       medias: manifestMediaIds.map((value) => ({ role: "image_references", value })),

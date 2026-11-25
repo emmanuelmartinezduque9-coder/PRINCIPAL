@@ -566,7 +566,8 @@ describe("imágenes de referencia subidas a mano", () => {
     const built = await buildFrameRequest(ana, video, deps);
     expect(built.request.prompt).toContain("Do not remove, replace, rearrange or tidy any object from image");
     expect(built.request.prompt).toContain("ALL objects it contains");
-    expect(built.request.prompt).toContain("showing neutral content without characters or brands");
+    expect(built.request.prompt).toContain("characters included: the owner chose this room, so never neutralize, swap or remove them");
+    expect(built.request.prompt).not.toContain("neutral content");
     const editor = renderToStaticMarkup(createElement(PromptEditor, { label: "Imagen", value: "", onChange: () => {}, issues: [], manifest, range: [0, 5000] }));
     expect(editor).toContain("Tu imagen de entorno (manda)");
     expect(editor).not.toContain("Referencia de Pinterest");

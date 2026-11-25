@@ -168,6 +168,10 @@ const FRAME_SNAPSHOT = [
 export const NO_PEOPLE_PICTURES =
   "No framed pictures, posters, photos, artworks, screens or figures showing people, faces, celebrities or characters anywhere on the walls, mirrors or background; keep walls plain or with decor without people, and no third-party brands or logos.";
 
+/** Con la foto de entorno del dueño, lo que ella trae (pantallas, peluches, adornos) se queda aunque sean personajes. */
+export const NO_PEOPLE_PICTURES_OWNER_ROOM =
+  "No added framed pictures, posters, photos or artworks showing people, faces or celebrities, and no added third-party brands or logos. Exception: everything already in the owner's room image stays exactly as it is, including what its screens show and its plush toys and figurines, characters included.";
+
 export const buildFrameRequest: RequestBuilder = async (user, video, deps) => {
   await requireAnalysisDone(video);
   // Paso del efecto (orden del dueño, 23/11/2026; ver `efecto.ts`): si la ronda anterior se pasó a
@@ -196,7 +200,7 @@ export const buildFrameRequest: RequestBuilder = async (user, video, deps) => {
   // Regla fija (23/11/2026, lote 3): un póster con una persona famosa en la pared hizo que Higgsfield
   // bloqueara los clips. Toda imagen inicial lo prohíbe, escriba lo que escriba el desglose.
   // Después, las correcciones aprendidas de los reportes («Mejoras»), literales: así se sabe qué imagen las llevó.
-  const prompt = `${(await framePromptFor(video.id, video.imagePrompt!, manifest, tramo)).trim()} ${NO_PEOPLE_PICTURES}${await learnedSuffix("frame", video.productId)}${(await preferencesFor("imagen", { videoId: video.id, tramo })).text}`;
+  const prompt = `${(await framePromptFor(video.id, video.imagePrompt!, manifest, tramo)).trim()} ${manifest.some((item) => item.ownerSelected || item.role === "entorno") ? NO_PEOPLE_PICTURES_OWNER_ROOM : NO_PEOPLE_PICTURES}${await learnedSuffix("frame", video.productId)}${(await preferencesFor("imagen", { videoId: video.id, tramo })).text}`;
   if (manifest.some((item) => item.source.kind === "avatar_pending")) throw new HttpError(400, NO_AUTO_AVATAR);
   const errors = checkImagePrompt(prompt, manifest).filter((issue) => issue.level === "error");
   if (errors.length > 0) throw new HttpError(400, errors.map((issue) => issue.message).join(" "), PROMPT_ERROR);
