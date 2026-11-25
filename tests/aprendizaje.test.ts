@@ -1,8 +1,9 @@
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
-import { eq } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import { getDb, getPool, schema } from "@/db/client";
 import { stopWorker } from "@/jobs/boss";
 import { createGateway } from "@/llm/gateway";
+import { keyWithScope, narrowScope, repairScopes } from "@/server/videos/aprendizaje/alcance";
 import { distill } from "@/server/videos/aprendizaje/destilar";
 import { learningByBatch } from "@/server/videos/aprendizaje/medicion";
 import { choosePreferred, preferencesFor, preferredChoice, recomputeWeight, settleApplications } from "@/server/videos/aprendizaje/preferencias";
@@ -35,8 +36,10 @@ describe("aprendizaje persistido", () => {
   beforeEach(truncateAll);
   it("ciclo: rechazo, Haiku, aplicación en DE, aprobación sube y otra corrección baja", async () => {
     const { user, product, b1, b2, a, b } = await fixture();
-    // Dos vídeos del lote 1 rechazados por lo mismo: con uno solo no sale una regla para los demás.
-    const a2 = await createVideo(user, product.id, { batchId: b1.id });
+    // Dos vídeos del lote 1 (de dos productos de Alemania) rechazados por lo mismo: con uno solo no sale una regla
+    // para los demás, y con un solo producto sería solo de ese producto.
+    const other = await makeProduct(user, { name: "Otro", countries: ["DE"] });
+    const a2 = await createVideo(user, other.id, { batchId: b1.id });
     await generation(a.id, user.id, "frame", "fondo de estudio no, calle real");
     await generation(a2.id, user.id, "frame", "otra vez estudio: quiero una calle de verdad");
     const captured = [...(await collectSignals({ videoId: a.id })), ...(await collectSignals({ videoId: a2.id }))];
@@ -138,6 +141,43 @@ describe("aprendizaje persistido", () => {
   });
 });
 
+
+describe("ámbito: lo de un producto no se vuelve regla del país", () => {
+  beforeEach(truncateAll);
+  it("caso real del lote 7 → lote 10: «calles de Berlín» de KreuzKapuze se queda en KreuzKapuze y sale de EisWerk", async () => {
+    const user = await makeUser("dueno");
+    const kreuz = await makeProduct(user, { name: "KreuzKapuze", countries: ["DE"] });
+    const eis = await makeProduct(user, { name: "EisWerk", countries: ["DE"] });
+    const [b7, b10] = await getDb().insert(schema.batches).values([{ name: "7", createdBy: user.id }, { name: "10", createdBy: user.id }]).returning();
+    const v23 = await createVideo(user, kreuz.id, { batchId: b7.id });
+    const v24 = await createVideo(user, kreuz.id, { batchId: b7.id });
+    const v39 = await createVideo(user, eis.id, { batchId: b10.id });
+    const note = "quiero que el video sea en las calles de berlin";
+    await getDb().update(schema.videos).set({ note }).where(inArray(schema.videos.id, [v23.id, v24.id]));
+    const signals = [...(await collectSignals({ videoId: v23.id })), ...(await collectSignals({ videoId: v24.id }))].filter((s) => s.kind === "instruccion_tarjeta");
+    // Haiku la propone para toda Alemania, como pasó en producción.
+    const fake = fakeMessages([{ text: JSON.stringify({ topics: [], preferences: [{ scope: "pais", scopeValue: "DE", stages: ["desglose"], directive: "Ambientar en las calles de Berlín.", directiveEn: "Set it in Berlin streets.", polarity: 1, topic: "berlin", signalIds: signals.map((s) => s.id) }], reinforcements: [] }) }]);
+    await distill("lote", b7.id, { gateway: createGateway({ client: fake.client }) });
+    const [p] = await getDb().select().from(schema.learnedPreferences);
+    expect(p).toMatchObject({ scope: "producto", scopeValue: String(kreuz.id), key: `berlin:producto:${kreuz.id}:desglose` });
+    expect(await preferencesFor("desglose", { videoId: v39.id })).toEqual({ text: "", ids: [] });
+
+    // Una creada antes del arreglo (de país) se corrige en el barrido y su aplicación en EisWerk se quita.
+    await getDb().update(schema.learnedPreferences).set({ scope: "pais", scopeValue: "DE", key: "berlin:pais:DE:desglose" });
+    expect((await preferencesFor("desglose", { videoId: v39.id })).ids).toEqual([p.id]);
+    await repairScopes();
+    const [fixed] = await getDb().select().from(schema.learnedPreferences);
+    expect(fixed).toMatchObject({ scope: "producto", scopeValue: String(kreuz.id), status: "activa" });
+    expect(await getDb().select().from(schema.preferenceApplications).where(eq(schema.preferenceApplications.videoId, v39.id))).toEqual([]);
+  });
+
+  it("puros: dos productos sí sostienen una regla del país", () => {
+    expect(narrowScope("pais", "DE", [{ productId: 1 }, { productId: 1 }])).toEqual({ scope: "producto", scopeValue: "1" });
+    expect(narrowScope("pais", "DE", [{ productId: 1 }, { productId: 2 }])).toEqual({ scope: "pais", scopeValue: "DE" });
+    expect(narrowScope("producto", "3", [{ productId: 3 }])).toEqual({ scope: "producto", scopeValue: "3" });
+    expect(keyWithScope("berlin:pais:DE:desglose,imagen", "producto", "57")).toBe("berlin:producto:57:desglose,imagen");
+  });
+});
 
 describe("rechazos y elecciones puros", () => {
   it("puros: distingue al dueño del sistema", () => {
