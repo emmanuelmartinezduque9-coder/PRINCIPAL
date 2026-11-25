@@ -48,6 +48,12 @@ const JOB_EXPIRE_SECONDS = 2 * 60 * 60;
 
 /** Sin reintentos de la cola: un trabajo que lanza un error no vuelve a ejecutarse solo. */
 const NO_RETRIES = { retryLimit: 0, expireInSeconds: JOB_EXPIRE_SECONDS };
+/**
+ * Trabajos que pueden ir varios a la vez (por defecto, uno). El desglose y Pinterest esperan sobre
+ * todo al Claude del Mac, que atiende 4 llamadas a la vez: de uno en uno, un lote de 20 tardaba
+ * más de una hora solo en desgloses. Cada paso se reserva en `runStep`, así que no se duplican.
+ */
+const JOB_CONCURRENCY: Record<string, number> = { "video.desglose": 4, "video.pinterest": 4 };
 
 const RESUME_TASK = "reanudar-pausados";
 const RECOVER_TASK = "recuperar-pasos";
@@ -247,7 +253,7 @@ export async function startWorker(): Promise<void> {
 
   for (const name of jobNames()) {
     await ensureQueue(current, name);
-    await boss.work<QueuedJob>(name, ([job]) => runJob(name, job));
+    await boss.work<QueuedJob>(name, { localConcurrency: JOB_CONCURRENCY[name] ?? 1 }, ([job]) => runJob(name, job));
   }
 
   const tasks = scheduledTasks();
