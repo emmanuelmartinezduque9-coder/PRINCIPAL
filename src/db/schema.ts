@@ -7,6 +7,8 @@ import {
   customType,
   index,
   integer,
+  smallint,
+  real,
   jsonb,
   pgTable,
   primaryKey,
@@ -1821,3 +1823,92 @@ export const publications = pgTable("publications", {
   check("publications_network_valid", sql`${t.network} in ('instagram', 'facebook')`),
   check("publications_status_valid", sql`${t.status} in ('en_cola', 'publicando', 'publicada', 'fallida', 'cancelada')`),
 ]);
+
+
+/** Hechos del dueño: origen único tanto en la acción como en el barrido. */
+export const learningSignals = pgTable("learning_signals", {
+  id: bigserial("id", { mode: "number" }).primaryKey(),
+  sourceKey: text("source_key").notNull().unique(),
+  kind: text("kind").notNull(),
+  stage: text("stage").notNull(),
+  polarity: smallint("polarity").notNull(),
+  videoId: bigint("video_id", { mode: "number" }).references(() => videos.id, { onDelete: "set null" }),
+  batchId: bigint("batch_id", { mode: "number" }),
+  productId: bigint("product_id", { mode: "number" }),
+  country: text("country").notNull().default(""),
+  shotType: text("shot_type"),
+  userId: bigint("user_id", { mode: "number" }).notNull(),
+  text: text("text").notNull().default(""),
+  value: jsonb("value"),
+  topic: text("topic"),
+  occurredAt: instant("occurred_at").notNull().defaultNow(),
+  createdAt: instant("created_at").notNull().defaultNow(),
+  distilledAt: instant("distilled_at"),
+}, (t) => [
+  index("learning_signals_video").on(t.videoId),
+  index("learning_signals_batch").on(t.batchId),
+  index("learning_signals_distilled").on(t.distilledAt),
+  check("learning_signals_polarity", sql`${t.polarity} in (-1,0,1)`),
+  check("learning_signals_text_length", sql`char_length(${t.text}) <= 4000`),
+  check("learning_signals_kind", sql`${t.kind} in ('rechazado','aprobado','candidata_descartada','instruccion_tarjeta','instruccion_lote','respuesta','cambio_pedido','reporte','montaje_aprobado','montaje_rechazado','eleccion')`),
+  check("learning_signals_stage", sql`${t.stage} in ('desglose','imagen','pinterest','clip','rotulos','doblaje','montaje','variante','cancion','avatar')`),
+]);
+
+/** Preferencias persistidas, con evidencia y peso revisable. */
+export const learnedPreferences = pgTable("learned_preferences", {
+  id: bigserial("id", { mode: "number" }).primaryKey(),
+  key: text("key").notNull().unique(),
+  scope: text("scope").notNull(),
+  scopeValue: text("scope_value").notNull().default(""),
+  stages: text("stages").array().notNull(),
+  directive: text("directive").notNull(),
+  directiveEn: text("directive_en").notNull(),
+  polarity: smallint("polarity").notNull(),
+  choice: jsonb("choice").$type<{ kind: string; value: string; label: string }>(),
+  topic: text("topic").notNull(),
+  weight: real("weight").notNull().default(0.5),
+  supports: integer("supports").notNull().default(0),
+  contradicts: integer("contradicts").notNull().default(0),
+  status: text("status").notNull().default("activa"),
+  retiredBy: text("retired_by"),
+  firstBatchId: bigint("first_batch_id", { mode: "number" }),
+  sourceSignalIds: jsonb("source_signal_ids").$type<number[]>().notNull().default([]),
+  createdAt: instant("created_at").notNull().defaultNow(),
+  updatedAt: instant("updated_at").notNull().defaultNow(),
+}, (t) => [
+  check("learned_preferences_scope", sql`${t.scope} in ('global','producto','pais','toma') and (${t.scope} <> 'global' or ${t.scopeValue} = '')`),
+  check("learned_preferences_stages", sql`cardinality(${t.stages}) > 0 and ${t.stages} <@ ARRAY['desglose','imagen','pinterest','clip','rotulos','doblaje','montaje','variante','cancion','avatar']::text[]`),
+  check("learned_preferences_polarity", sql`${t.polarity} in (-1,1)`),
+  check("learned_preferences_status", sql`${t.status} in ('activa','retirada')`),
+  check("learned_preferences_retired", sql`${t.retiredBy} is null or ${t.retiredBy} in ('peso','dueno')`),
+  check("learned_preferences_weight", sql`${t.weight} between 0 and 1 and ${t.supports} >= 0 and ${t.contradicts} >= 0`),
+]);
+
+/** Una aplicación por preferencia, vídeo y paso; su primer resultado es definitivo. */
+export const preferenceApplications = pgTable("preference_applications", {
+  id: bigserial("id", { mode: "number" }).primaryKey(),
+  preferenceId: bigint("preference_id", { mode: "number" }).notNull().references(() => learnedPreferences.id, { onDelete: "cascade" }),
+  videoId: bigint("video_id", { mode: "number" }).notNull().references(() => videos.id, { onDelete: "cascade" }),
+  batchId: bigint("batch_id", { mode: "number" }),
+  stage: text("stage").notNull(),
+  outcome: text("outcome"),
+  signalId: bigint("signal_id", { mode: "number" }).references(() => learningSignals.id, { onDelete: "set null" }),
+  createdAt: instant("created_at").notNull().defaultNow(),
+  settledAt: instant("settled_at"),
+}, (t) => [
+  index("preference_applications_video").on(t.videoId),
+  unique("preference_applications_once").on(t.preferenceId, t.videoId, t.stage),
+  check("preference_applications_outcome", sql`${t.outcome} is null or ${t.outcome} in ('aprobado','corregido')`),
+  check("preference_applications_stage", sql`${t.stage} in ('desglose','imagen','pinterest','clip','rotulos','doblaje','montaje','variante','cancion','avatar')`),
+]);
+
+/** El cerrojo y la transacción del destilado impiden repetir un lote o día. */
+export const learningRuns = pgTable("learning_runs", {
+  id: bigserial("id", { mode: "number" }).primaryKey(),
+  runKey: text("run_key").notNull().unique(),
+  trigger: text("trigger").notNull(),
+  batchId: bigint("batch_id", { mode: "number" }),
+  signalIds: jsonb("signal_ids").$type<number[]>().notNull().default([]),
+  createdAt: instant("created_at").notNull().defaultNow(),
+  finishedAt: instant("finished_at"),
+}, (t) => [check("learning_runs_trigger", sql`${t.trigger} in ('lote','diario')`)]);

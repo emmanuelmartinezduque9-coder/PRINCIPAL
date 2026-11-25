@@ -1,3 +1,4 @@
+import { captureVideoSignals } from "@/server/videos/aprendizaje/senales";
 import { isClipModelChoice, resolveClipModel, SEEDANCE, sourceProblem, type ClipModel, type ClipModelChoice } from "@/lib/clip-models";
 import { and, asc, count, desc, eq, sql } from "drizzle-orm";
 import { getDb, schema } from "@/db/client";
@@ -172,11 +173,13 @@ export async function createVideo(
     // Un vídeo suelto sin fotos de avatar en el producto empieza sin elegir: lo decide la persona.
     extras = { ...extras, ...startingAvatar(product, avatars, "elegir") };
   }
-  return getDb().transaction(async (tx) => {
+  const created = await getDb().transaction(async (tx) => {
     const video = await insertVideo(tx, user, product.id, extras);
     await inTransaction?.(tx, video);
     return video;
   });
+  await captureVideoSignals(created.id);
+  return created;
 }
 
 type Tx = Parameters<Parameters<ReturnType<typeof getDb>["transaction"]>[0]>[0];
@@ -439,6 +442,7 @@ export async function updateVideoChoices(user: AuthUser, videoId: number, input:
     .where(and(eq(schema.videos.id, video.id), eq(schema.videos.createdBy, user.id)))
     .returning();
   if (!updated) throw new HttpError(404, NOT_FOUND);
+  await captureVideoSignals(videoId);
   return updated;
 }
 
@@ -482,10 +486,11 @@ export async function setVideoSong(user: AuthUser, videoId: number, songId: unkn
   try {
     const [updated] = await getDb()
       .update(schema.videos)
-      .set(audioColumns(chosen))
+      .set({ ...audioColumns(chosen), updatedAt: new Date() })
       .where(eq(schema.videos.id, video.id))
       .returning();
     if (!updated) throw new HttpError(404, NOT_FOUND);
+    await captureVideoSignals(videoId);
     return updated;
   } catch (error) {
     // La canción se borró justo entre la comprobación y el guardado.

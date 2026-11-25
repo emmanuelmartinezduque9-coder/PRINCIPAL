@@ -1,3 +1,4 @@
+import { preferencesFor } from "@/server/videos/aprendizaje/preferencias";
 import { eq } from "drizzle-orm";
 import { z } from "zod";
 import { getDb, schema } from "@/db/client";
@@ -121,7 +122,7 @@ export async function applyEditChange(input: EditChangeInput): Promise<EditChang
     userId: input.userId,
     productId: input.productId,
     rules: [],
-    instructions: EDIT_CHANGE_INSTRUCTIONS,
+    instructions: EDIT_CHANGE_INSTRUCTIONS + (await preferencesFor("montaje", { videoId: input.videoId, productId: input.productId })).text,
     content: [
       textPart(`Ficha del montaje actual:\n${JSON.stringify(ficha, null, 2)}`),
       textPart(`Canciones de la biblioteca (id: título):\n${songs.map((s) => `${s.id}: ${s.title}`).join("\n") || "(ninguna)"}`),

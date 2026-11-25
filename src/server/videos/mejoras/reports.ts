@@ -1,3 +1,4 @@
+import { captureVideoSignals, captureBatchSignals } from "@/server/videos/aprendizaje/senales";
 import { and, desc, eq } from "drizzle-orm";
 import { getDb, getSetting, schema, setSetting } from "@/db/client";
 import {
@@ -154,6 +155,8 @@ export async function createReport(user: AuthUser, input: NewReport): Promise<{ 
       appVersion: appVersion(),
     })
     .returning({ id: schema.problemReports.id });
+  if (videoId !== null) await captureVideoSignals(videoId);
+  else if (batchId !== null) await captureBatchSignals(batchId);
   return row;
 }
 

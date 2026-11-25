@@ -435,6 +435,13 @@
       "when": 1795550649036,
       "tag": "0061_moviles_publicaciones",
       "breakpoints": true
+    },
+    {
+      "idx": 62,
+      "version": "7",
+      "when": 1795577431414,
+      "tag": "0062_aprendizaje_por_lote",
+      "breakpoints": true
     }
   ]
 }

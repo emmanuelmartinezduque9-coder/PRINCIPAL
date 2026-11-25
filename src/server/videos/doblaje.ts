@@ -1,3 +1,4 @@
+import { preferencesFor } from "@/server/videos/aprendizaje/preferencias";
 import crypto from "node:crypto";
 import { createReadStream, createWriteStream } from "node:fs";
 import fs from "node:fs/promises";
@@ -159,6 +160,7 @@ export async function classifySpeech(
     .join("\n");
   // Correcciones aprendidas de los reportes sobre el doblaje («Mejoras»): van al final de las instrucciones.
   const learned = await learnedFor("doblaje", productId);
+  learned.text += (await preferencesFor("doblaje", { videoId: ctx.videoId, productId })).text;
   ctx.learned?.push(...learned.ids);
   try {
     const answer = await (ctx.gateway ?? getGateway()).call({

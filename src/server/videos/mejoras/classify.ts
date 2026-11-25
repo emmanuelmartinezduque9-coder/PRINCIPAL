@@ -1,3 +1,4 @@
+import { captureReportSignals } from "@/server/videos/aprendizaje/senales";
 import { and, asc, desc, eq, inArray, isNotNull, isNull, lte, or, sql } from "drizzle-orm";
 import { z } from "zod";
 import { getDb, schema } from "@/db/client";
@@ -168,6 +169,7 @@ export async function applyClassification(reportId: number, result: ReportClassi
       })
       .where(eq(schema.problemReports.id, report.id));
   });
+  await captureReportSignals(reportId);
 }
 
 /** Clasifica un reporte recibido. Si falla (tope, sin clave…), lo deja para más tarde. */

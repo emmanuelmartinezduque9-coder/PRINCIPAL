@@ -1,3 +1,5 @@
+import { preferredChoice } from "@/server/videos/aprendizaje/preferencias";
+import { captureVideoSignals } from "@/server/videos/aprendizaje/senales";
 import { and, asc, desc, eq, gte, inArray, isNull, lt, ne, or, sql } from "drizzle-orm";
 import { getDb, schema } from "@/db/client";
 import { enqueueJob } from "@/jobs/boss";
@@ -653,6 +655,7 @@ export async function answerQuestion(user: AuthUser, batchId: number, input: { v
     // «Falta la foto del artículo» y la referencia solo se cierran arreglándolo (o saltando el vídeo).
     throw new HttpError(400, BAD_ANSWER);
   }
+  await captureVideoSignals(videoId);
   await kickBatch(batch);
 }
 
@@ -1234,6 +1237,9 @@ async function autoAnswer(user: AuthUser, batch: Batch, rows: Row[], asks: Map<n
           break;
         }
         value = RETRY;
+      }
+      if (["variante", "cancion", "avatar", "biblioteca"].includes(question.kind)) {
+        value = await preferredChoice(question.kind === "biblioteca" ? "avatar" : question.kind as "variante" | "cancion" | "avatar", { videoId: row.video.id }, values) ?? value;
       }
       if (value === null) continue;
       try {

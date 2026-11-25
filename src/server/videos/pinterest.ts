@@ -1,3 +1,4 @@
+import { preferencesFor } from "@/server/videos/aprendizaje/preferencias";
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
@@ -1077,7 +1078,7 @@ async function runPinterestOnce(runId: number, deps: PinterestDeps): Promise<voi
         userId: ctx.userId,
         productId: ctx.productId,
         rules,
-        instructions: PLAN_INSTRUCTIONS,
+        instructions: PLAN_INSTRUCTIONS + (await preferencesFor("pinterest", { videoId: video.id, tramo: run.tramo })).text,
         content,
         maxTokens: 4_000,
         schema: sceneSchema,
@@ -1155,7 +1156,7 @@ async function runPinterestOnce(runId: number, deps: PinterestDeps): Promise<voi
         userId: ctx.userId,
         productId: ctx.productId,
         rules,
-        instructions: PICK_INSTRUCTIONS,
+        instructions: PICK_INSTRUCTIONS + (await preferencesFor("pinterest", { videoId: video.id, tramo: run.tramo })).text,
         content: pickContent,
         maxTokens: 3_000,
         schema: pickSchema,

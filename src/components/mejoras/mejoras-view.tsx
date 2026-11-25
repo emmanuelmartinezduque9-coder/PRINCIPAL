@@ -7,6 +7,7 @@ import { Check, Circle, Code2, ImageIcon, Loader2, RotateCcw } from "lucide-reac
 import Link from "next/link";
 import { useState } from "react";
 import { toast } from "sonner";
+import { AprendizajeSection } from "@/components/mejoras/aprendizaje-view";
 import { PageHeader } from "@/components/shell/page-header";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -346,6 +347,8 @@ export function MejorasPage() {
         <Stat value={data.totals.measuring} label="Midiendo" />
         <Stat value={data.totals.notImproving} label="Sin mejora" />
       </div>
+
+      <AprendizajeSection />
 
       {data.corrections.length > 0 ? (
         <section className="flex flex-col gap-3" aria-labelledby="aprendido">

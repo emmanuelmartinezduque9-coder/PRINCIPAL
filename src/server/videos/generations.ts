@@ -1,3 +1,4 @@
+import { captureVideoSignals } from "@/server/videos/aprendizaje/senales";
 import { and, asc, eq, gt, inArray, isNull, lt, ne, or, sql } from "drizzle-orm";
 import {
   getHiggsfield,
@@ -1236,6 +1237,8 @@ export async function rejectRound(
     if (finished.length === 0) throw new HttpError(409, NOTHING_TO_REJECT);
     const last = finished.reduce((a, b) => (b.round > a.round ? b : a));
     await tx.update(generations).set({ rejectReason: text }).where(eq(generations.id, last.id));
+    // Fecha del hecho aunque la ronda rechazada no tuviera ningún resultado aprobado.
+    await tx.update(schema.videos).set({ updatedAt: new Date() }).where(eq(schema.videos.id, video.id));
 
     if (kind.includes(":")) {
       // Un sitio extra: lo aprobado de ese sitio deja de estarlo si era de esta ronda.
@@ -1258,6 +1261,7 @@ export async function rejectRound(
         ),
       );
   });
+  await captureVideoSignals(videoId);
 }
 
 /**
@@ -1304,6 +1308,7 @@ export async function approveResult(
       .set({ ...(kind === "frame" ? { approvedFrameResultId: found.id } : { approvedClipResultId: found.id }), updatedAt: new Date() })
       .where(and(eq(schema.videos.id, video.id), eq(schema.videos.createdBy, user.id)));
   });
+  await captureVideoSignals(videoId);
 }
 
 /** La miniatura (JPEG) de un resultado, para quien ve su vídeo. Si no, 404. */

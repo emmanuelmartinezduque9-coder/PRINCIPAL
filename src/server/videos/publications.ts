@@ -1,3 +1,4 @@
+import { captureVideoSignals } from "@/server/videos/aprendizaje/senales";
 import { and, asc, desc, eq, inArray, isNotNull, lte, ne, sql } from "drizzle-orm";
 import { z } from "zod";
 import { getDb, schema } from "@/db/client";
@@ -60,8 +61,9 @@ export async function approveEdit(user: AuthUser, videoId: number) {
       const rows = await tx.select({ at: schema.publications.scheduledFor }).from(schema.publications).where(and(eq(schema.publications.network, network), eq(schema.publications.account, account), account ? undefined : eq(schema.publications.phoneId, product.phoneId!), ne(schema.publications.status, "cancelada")));
       await tx.insert(schema.publications).values({ videoId, editId: edit.id, phoneId: product.phoneId!, network, account, description: answer.data!.text, gapHours: product.publishGapHours, scheduledFor: nextPublicationSlot(rows.map((r) => r.at), new Date(), product.publishGapHours) }).onConflictDoNothing();
     }
-    await tx.update(schema.videos).set({ editReview: "aprobado", editReviewReason: null }).where(eq(schema.videos.id, videoId));
+    await tx.update(schema.videos).set({ editReview: "aprobado", editReviewReason: null, updatedAt: new Date() }).where(eq(schema.videos.id, videoId));
   });
+  await captureVideoSignals(videoId);
 }
 export async function approveEdits(user: AuthUser, batchId: number) {
   await getBatchFor(user, batchId);
@@ -79,8 +81,9 @@ export async function rejectEdit(user: AuthUser, videoId: number, reason: string
   const product = await getProductFor(user, video.productId);
   if (!product.phoneId || video.editReview !== "pendiente") throw new HttpError(409, "Este vídeo no está pendiente de revisión.");
   if (!reason.trim()) throw new HttpError(400, "Escribe qué quieres cambiar.");
-  const changed = await getDb().update(schema.videos).set({ editReview: "rechazado", editReviewReason: reason.trim() }).where(and(eq(schema.videos.id, videoId), eq(schema.videos.editReview, "pendiente"))).returning({ id: schema.videos.id });
+  const changed = await getDb().update(schema.videos).set({ editReview: "rechazado", editReviewReason: reason.trim(), updatedAt: new Date() }).where(and(eq(schema.videos.id, videoId), eq(schema.videos.editReview, "pendiente"))).returning({ id: schema.videos.id });
   if (!changed.length) throw new HttpError(409, "Este vídeo ya se ha revisado.");
+  await captureVideoSignals(videoId);
   try { await requestEditChange(user, videoId, reason); }
   catch (error) {
     await getDb().update(schema.videos).set({ editReview: "pendiente", editReviewReason: null }).where(and(eq(schema.videos.id, videoId), eq(schema.videos.editReview, "rechazado")));

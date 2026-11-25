@@ -1,3 +1,4 @@
+import { captureBatchSignals, captureVideoSignals } from "@/server/videos/aprendizaje/senales";
 import { pinterestView, type PinterestView } from "@/server/videos/pinterest";
 import { checkReferences, writeReferences } from "@/server/videos/referencias";
 import { resolveClipModel, type ClipModel } from "@/lib/clip-models";
@@ -130,6 +131,7 @@ export async function setBatchProductNotes(user: AuthUser, batchId: number, prod
     .insert(schema.batchProducts)
     .values({ batchId: batch.id, productId, notes: clean })
     .onConflictDoUpdate({ target: [schema.batchProducts.batchId, schema.batchProducts.productId], set: { notes: clean, updatedAt: new Date() } });
+  await captureBatchSignals(batchId);
   return clean;
 }
 
@@ -752,7 +754,7 @@ export async function duplicateBatchVideo(user: AuthUser, batchId: number, video
     : [];
   const valid = latest && staleness(latest, { ...video, productNotes: await productNotesOf(video) }).staleReason === null ? latest : null;
 
-  return db.transaction(async (tx) => {
+  const duplicated = await db.transaction(async (tx) => {
     const copy = await insertVideo(tx, user, video.productId, {
       batchId: batch.id,
       note: video.note,
@@ -824,6 +826,8 @@ export async function duplicateBatchVideo(user: AuthUser, batchId: number, video
     }
     return copy;
   });
+  await captureVideoSignals(duplicated.id);
+  return duplicated;
 }
 
 const ANALYSIS_RUNNING = "Este vídeo se está desglosando: espera a que termine para quitarlo.";

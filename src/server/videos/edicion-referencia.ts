@@ -1,3 +1,4 @@
+import { preferencesFor } from "@/server/videos/aprendizaje/preferencias";
 import crypto from "node:crypto";
 import { createReadStream } from "node:fs";
 import fs from "node:fs/promises";
@@ -290,10 +291,14 @@ export async function referenceEdit(ctx: ReferenceEditContext): Promise<Referenc
   // clave es la de siempre. Una lectura ya guardada sin ellas (p. ej. la del vídeo 24) se reutiliza tal cual al volver a
   // montar, para que sus rótulos no cambien: las correcciones valen para las lecturas nuevas y solo entonces se apuntan.
   const learned = await learnedFor("montaje", ctx.product.id || null);
+  learned.text += (await preferencesFor("rotulos", { videoId: ctx.videoId, productId: ctx.product.id || null, record: false })).text;
   const plainKey = cacheKey(ctx.videoId, sha, ctx.product.name);
   const plainSaved = learned.text !== "" && ctx.store !== null && (await ctx.store.head(plainKey).catch(() => null)) !== null;
   const key = plainSaved ? plainKey : cacheKey(ctx.videoId, sha, ctx.product.name, learned.text);
-  if (!plainSaved) ctx.learned?.push(...learned.ids);
+  if (!plainSaved) {
+    ctx.learned?.push(...learned.ids);
+    await preferencesFor("rotulos", { videoId: ctx.videoId, productId: ctx.product.id || null });
+  }
   if (ctx.store && (await ctx.store.head(key).catch(() => null)) !== null) {
     const cached = path.join(ctx.dir, "edicion-referencia.json");
     await ctx.store.download(key, cached);

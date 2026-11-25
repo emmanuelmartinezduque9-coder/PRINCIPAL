@@ -289,3 +289,10 @@ export async function saveProductDelegation(
 ): Promise<void> {
   await getDb().update(schema.products).set(input).where(eq(schema.products.id, productId));
 }
+
+/** Mercado de productos conocidos por el motor; la lectura permanece en la capa de productos. */
+export async function productMarketsByIds(ids: number[]): Promise<Map<number, { language: string; countries: string[] }>> {
+  if (!ids.length) return new Map();
+  const rows = await getDb().select({ id: schema.products.id, language: schema.products.language, countries: schema.products.countries }).from(schema.products).where(inArray(schema.products.id, [...new Set(ids)]));
+  return new Map(rows.map((r) => [r.id, { language: r.language, countries: r.countries }]));
+}

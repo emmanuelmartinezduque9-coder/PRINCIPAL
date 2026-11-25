@@ -1,3 +1,4 @@
+import { preferencesFor } from "@/server/videos/aprendizaje/preferencias";
 import { and, asc, desc, eq } from "drizzle-orm";
 import {
   getHiggsfield,
@@ -140,7 +141,7 @@ export const buildClipRequest: RequestBuilder = async (user, video, deps) => {
   const manifest = clipManifest(video, await manifestRefsFor(user, video), undefined, model);
   if (manifest.some((item) => item.source.kind === "avatar_pending")) throw new HttpError(409, NO_AUTO_AVATAR);
   // Correcciones aprendidas de los reportes («Mejoras», `src/server/videos/mejoras/`): van literales al final.
-  const prompt = `${clipPromptFor(video.videoPrompt ?? "", manifest)}${await learnedSuffix("clip", video.productId)}`;
+  const prompt = `${clipPromptFor(video.videoPrompt ?? "", manifest)}${await learnedSuffix("clip", video.productId)}${(await preferencesFor("clip", { videoId: video.id, tramo: tramoIndexOf(video) })).text}`;
   const error = checkVideoPrompt(prompt, manifest).find((issue) => issue.level === "error");
   if (error) throw new HttpError(400, error.message, PROMPT_ERROR);
 

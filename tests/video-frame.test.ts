@@ -185,6 +185,22 @@ describe("petición de la imagen inicial", () => {
     expect(fake.calls.every((c) => c.userId === ana.id)).toBe(true);
   });
 
+  it("una preferencia aprendida de su producto va al final del prompt que se envía, y aprobar la imagen sube su peso", async () => {
+    const { rows } = await getPool().query(
+      "insert into learned_preferences (key, scope, scope_value, stages, directive, directive_en, polarity, topic, supports, weight) values ('fondo-real:producto', 'producto', $1, '{imagen}', 'Calle real, sin estudio.', 'Use a real street, never a studio background.', 1, 'fondo-real', 2, 0.75) returning id",
+      [String(producto.id)],
+    );
+    const { request } = await buildFrameRequest(ana, v, deps);
+    expect((request as { prompt: string }).prompt).toMatch(/Use a real street, never a studio background\.$/);
+    const applied = await getPool().query("select video_id, stage, outcome from preference_applications where preference_id = $1", [rows[0].id]);
+    expect(applied.rows).toEqual([{ video_id: v.id, stage: "imagen", outcome: null }]);
+    await approveFrame(ana, v.id, await frameDone());
+    const after = await getPool().query("select weight from learned_preferences where id = $1", [rows[0].id]);
+    expect(after.rows[0].weight).toBeGreaterThan(0.75);
+    const settled = await getPool().query("select outcome from preference_applications where preference_id = $1", [rows[0].id]);
+    expect(settled.rows[0].outcome).toBe("aprobado");
+  });
+
   it("con el ajuste en Nano Banana Pro cambia el modelo y sigue pidiendo 2K", async () => {
     await setImageModel(dueno, "nano_banana_pro");
     const { request } = await buildFrameRequest(ana, v, deps);

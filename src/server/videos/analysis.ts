@@ -1,3 +1,4 @@
+import { preferencesFor } from "@/server/videos/aprendizaje/preferencias";
 import { and, asc, eq, inArray, max, sql } from "drizzle-orm";
 import { localizationGuide, MARKETS, marketOf, type LocalizationItem, type Market } from "@/server/videos/localization";
 import { z } from "zod";
@@ -900,7 +901,7 @@ export async function runAnalysis(analysisId: number, deps: { gateway?: LlmGatew
           userId: ctx.userId,
           productId: ctx.productId,
           rules: await loadRules(analysisRuleSlugs(brief.kind, brief.clipModel)),
-          instructions: analysisInstructions(brief, hookTiming(video), variants.map((variant) => variant.name), marketOf(product)),
+          instructions: analysisInstructions(brief, hookTiming(video), variants.map((variant) => variant.name), marketOf(product)) + (await preferencesFor("desglose", { videoId: video.id })).text,
           content,
           maxTokens: MAX_TOKENS,
           schema: analysisSchema,

@@ -1,3 +1,4 @@
+import { preferencesFor } from "@/server/videos/aprendizaje/preferencias";
 import { and, eq, notInArray } from "drizzle-orm";
 import type { HfMediaRef } from "@/connectors/higgsfield";
 import { getDb, getSetting, schema, setSetting } from "@/db/client";
@@ -202,7 +203,7 @@ export const buildFrameRequest: RequestBuilder = async (user, video, deps) => {
   // Regla fija (23/11/2026, lote 3): un póster con una persona famosa en la pared hizo que Higgsfield
   // bloqueara los clips. Toda imagen inicial lo prohíbe, escriba lo que escriba el desglose.
   // Después, las correcciones aprendidas de los reportes («Mejoras»), literales: así se sabe qué imagen las llevó.
-  const prompt = `${(await framePromptFor(video.id, video.imagePrompt!, manifest, tramo)).trim()} ${NO_PEOPLE_PICTURES}${await learnedSuffix("frame", video.productId)}`;
+  const prompt = `${(await framePromptFor(video.id, video.imagePrompt!, manifest, tramo)).trim()} ${NO_PEOPLE_PICTURES}${await learnedSuffix("frame", video.productId)}${(await preferencesFor("imagen", { videoId: video.id, tramo })).text}`;
   if (manifest.some((item) => item.source.kind === "avatar_pending")) throw new HttpError(400, NO_AUTO_AVATAR);
   const errors = checkImagePrompt(prompt, manifest).filter((issue) => issue.level === "error");
   if (errors.length > 0) throw new HttpError(400, errors.map((issue) => issue.message).join(" "), PROMPT_ERROR);
