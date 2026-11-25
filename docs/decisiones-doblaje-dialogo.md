@@ -127,6 +127,11 @@ Ningún vídeo de HaarZauber del lote 10 salió en alemán según el coordinador
    entrega con el diálogo sin traducir. El aviso «Comprobado en el vídeo montado (Whisper): …» dice lo que se oyó.
    Si no se puede comprobar, el montaje falla con el motivo en vez de entregarse a ciegas.
 
+4. **Primera prueba real (montajes 139–141):** 44 y 45 bien; en el 46 la comprobación final oyó «I.» suelta (un trozo de
+   «but the fire is so delightful») y, sin contexto, Claude no la reconoció: se dobló un trozo de la canción («Aber dass
+   ich er…»). Ahora una frase necesita al menos dos palabras para contar, y Claude decide con todo lo oído en otro
+   idioma como contexto (los versos de alrededor), no con la frase suelta.
+
 Descartado tras medirlo: una puntuación acústica de canto (tono sostenido, sílabas por segundo; prototipo de Codex con
 las 28 frases de los lotes 6 y 10) acertaba el 46 % dejando cada vídeo fuera del ajuste; inaSpeechSegmenter y YAMNet
 meten TensorFlow en la imagen y tampoco separan «habla sobre música» de «canto» con fiabilidad. Forzar el idioma en

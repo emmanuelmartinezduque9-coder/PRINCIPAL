@@ -602,10 +602,17 @@ export async function checkFinalDialogue(ctx: FinalCheckContext, userId: number,
   const native = await nativeWindows(ctx.videoId, ctx.audio, ctx.language);
   const left = ((result.quedan ?? []) as Array<Phrase & { pista?: string }>).filter((f) => !native.some(([a, b]) => f.desde < b && a < f.hasta));
   if (left.length === 0) return { kind: "ok", heard };
-  const phrases = left.map((f) => ({ ...f, pista: f.pista ?? "voz", prob: f.prob ?? 0, no_habla: f.no_habla ?? 0, confianza: f.confianza ?? 0 }));
+  // Claude decide con TODO lo que se oyó en otro idioma (el contexto: los versos de alrededor), no con la frase suelta
+  // (vídeo 46: «I.» sola no se reconocía como parte de «Let It Snow»).
+  const same = (a: Phrase, b: Phrase) => a.desde === b.desde && a.hasta === b.hasta && a.texto === b.texto;
+  const context = ((result.frases ?? []) as Array<Phrase & { pista?: string }>).filter((f) => f.idioma !== ctx.language || left.some((g) => same(f, g)));
+  const all = [...context, ...left.filter((f) => !context.some((g) => same(f, g)))];
+  const phrases = all.map((f) => ({ ...f, pista: f.pista ?? "voz", prob: f.prob ?? 0, no_habla: f.no_habla ?? 0, confianza: f.confianza ?? 0 }));
   const kinds = await classifySpeech({ videoId: ctx.videoId, gateway: ctx.gateway, learned: ctx.learned }, userId, productId, phrases);
   if (kinds === null) return { kind: "error", detail: "Claude no pudo decir si lo que sigue en el idioma original es diálogo o una canción" };
-  const leaks = phrases.filter((_, i) => kinds[i] === "habla").map((f) => ({ desde: f.desde, hasta: f.hasta, texto: f.texto, idioma: f.idioma }));
+  const leaks = phrases
+    .filter((f, i) => kinds[i] === "habla" && left.some((g) => same(f, g)))
+    .map((f) => ({ desde: f.desde, hasta: f.hasta, texto: f.texto, idioma: f.idioma }));
   return leaks.length ? { kind: "leak", leaks } : { kind: "ok", heard };
 }
 

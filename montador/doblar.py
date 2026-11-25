@@ -102,6 +102,9 @@ UMBRAL_IDIOMA = 0.5
 # 0,25) y el inglés de verdad sale al 0,99–1,00. Lo más corto («Ja.») no se puede juzgar.
 UMBRAL_ORIGINAL = 0.5
 MIN_FRASE_S = 0.6
+# Y al menos dos palabras: una palabra suelta («I.», «Yeah») suele ser un trozo de la canción que Claude no puede
+# reconocer sin más (vídeo 46: «I.» de «but the fire is so delightful» se dobló como diálogo).
+MIN_PALABRAS = 2
 
 
 RELLENO_S = 0.25      # margen alrededor de una frase al moverla o doblarla
@@ -172,6 +175,8 @@ def en_idioma_original(f, origen, destino):
     if not f.get('idioma') or f['idioma'] == destino or f['no_habla'] > MAX_NO_HABLA:
         return False
     if f['hasta'] - f['desde'] < MIN_FRASE_S:
+        return False
+    if len([p for p in f.get('texto', '').split() if any(c.isalpha() or c.isdigit() for c in p)]) < MIN_PALABRAS:
         return False
     if origen and f['idioma'] != origen:
         return False

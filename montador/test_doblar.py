@@ -49,7 +49,7 @@ class IdiomaOriginal(unittest.TestCase):
     """Qué frase del vídeo montado sigue en el idioma original (lote 10, 25/11/2026)."""
 
     def frase(self, idioma, prob, desde=1.0, hasta=2.4, no_habla=0.05):
-        return dict(desde=desde, hasta=hasta, texto='x', idioma=idioma, prob=prob, no_habla=no_habla, confianza=-0.3)
+        return dict(desde=desde, hasta=hasta, texto='Ten seconds, I promise.', idioma=idioma, prob=prob, no_habla=no_habla, confianza=-0.3)
 
     def test_el_ingles_de_verdad_cuenta(self):
         self.assertTrue(doblar.en_idioma_original(self.frase('en', 1.0), 'en', 'de'))  # «Ten seconds, I promise.»
@@ -63,6 +63,11 @@ class IdiomaOriginal(unittest.TestCase):
     def test_lo_muy_corto_o_que_no_es_habla_no_se_juzga(self):
         self.assertFalse(doblar.en_idioma_original(self.frase('en', 0.63, 5.62, 5.82), 'en', 'de'))  # «Ja.»
         self.assertFalse(doblar.en_idioma_original(self.frase('en', 0.99, no_habla=0.9), 'en', 'de'))
+
+    def test_una_palabra_suelta_no_cuenta(self):
+        # «I.» de «but the fire is so delightful» (vídeo 46) se dobló como diálogo.
+        self.assertFalse(doblar.en_idioma_original(dict(self.frase('en', 0.9), texto='I.'), 'en', 'de'))
+        self.assertTrue(doblar.en_idioma_original(dict(self.frase('en', 0.9), texto='Wait, what?'), 'en', 'de'))
 
     def test_con_idioma_original_conocido_otro_idioma_no_cuenta(self):
         self.assertFalse(doblar.en_idioma_original(self.frase('es', 0.9), 'en', 'de'))
