@@ -19,7 +19,7 @@ import { PINTEREST_PENDING } from "@/server/videos/pinterest";
 import { expectsEffectPass } from "@/server/videos/efecto";
 // Registra el constructor de la imagen inicial (`frame`) en las generaciones.
 import { approveFrame, rejectFrame } from "@/server/videos/frame";
-import { baseKindOf, type BaseGenerationKind, BLOCKED, JOB_NOT_FOUND, MAX_REGENERATIONS, TIMED_OUT, upscaleEstimate, quoteGeneration, SYSTEM_REJECT_PREFIX, requestGeneration, type GenDeps, type GenerationKind } from "@/server/videos/generations";
+import { baseKindOf, type BaseGenerationKind, BLOCKED, JOB_NOT_FOUND, MAX_REGENERATIONS, TIMED_OUT, upscaleEstimate, quoteGeneration, rejectRound, SYSTEM_REJECT_PREFIX, requestGeneration, type GenDeps, type GenerationKind } from "@/server/videos/generations";
 import { clipModelProblem, getVideoFor, setVideoSong, referenceOutdated, REFERENCE_OUTDATED, staleness, updateVideoChoices, withProductNotes, type Video } from "@/server/videos/videos";
 import { CLIP_MODEL_LABEL, CLIP_MODELS, resolveClipModel, SEEDANCE, sourceProblem } from "@/lib/clip-models";
 import { isPromptProblem, PROMPT_ERROR } from "@/server/videos/prompt-check";
@@ -1026,6 +1026,17 @@ async function onRequestError(user: AuthUser, batch: Batch, row: Row, kind: Gene
  * `expectedCredits` (el núcleo vuelve a presupuestar, compara, y apunta una sola vez).
  */
 async function requestFor(user: AuthUser, batch: Batch, rows: Row[], row: Row, kind: GenerationKind, deps: GenDeps): Promise<boolean> {
+  // La subida a 1080p de un clip anterior (el clip se rehízo) se descarta como corrección del sistema: si no, el
+  // núcleo pide rechazarla antes de regenerar y el vídeo se queda sin subir ni montar (FalterPfote, lote 10).
+  if (baseKindOf(kind) === "upscale") {
+    const clip = row.clips.at(-1);
+    const old = row.upscales.at(-1);
+    if (clip && old && old.id < clip.id && !old.rejectReason) {
+      await rejectRound(user, row.video.id, kind, `${SYSTEM_REJECT_PREFIX}subida del clip anterior; el clip se rehízo`).catch((error) => {
+        console.warn(`[lotes] Vídeo ${row.video.id}: no se pudo descartar la subida anterior: ${error instanceof Error ? error.message : error}`);
+      });
+    }
+  }
   let quote: Awaited<ReturnType<typeof quoteGeneration>>;
   try {
     quote = await quoteGeneration(user, row.video.id, kind, deps);
