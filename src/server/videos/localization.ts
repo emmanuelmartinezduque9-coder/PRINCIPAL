@@ -240,3 +240,18 @@ export function localizationGuide(market: Market): string {
     `- Marcas o productos locales que se vean y no sean el del encargo: equivalentes locales o neutros; nunca marcas de terceros en primer plano.`,
   ].join("\n");
 }
+
+/** Cadenas que se reconocen en el texto de la localización («Aldi, con logo auténtico…» → «Aldi»). */
+const KNOWN_SHOPS = ["Lidl", "Aldi", "Kaufland", "Rewe", "Edeka", "Netto", "Penny", "Norma", "dm", "Rossmann", "Müller", "Action", "MediaMarkt", "Saturn", "Sephora", "Douglas", "IKEA", "Fressnapf", "TEDi", "Woolworth", "Primark", "H&M", "Zara", "Thalia", "Decathlon", "OBI", "Hornbach", "Bauhaus", "Toom", "Tchibo", "Conad", "Esselunga", "Carrefour", "Mercadona", "Leclerc"];
+
+/** La tienda donde pasa el anuncio según la localización del desglose (kind «tienda»), o `null`. */
+export function shopOfLocalization(items: LocalizationItem[] | null | undefined): string | null {
+  for (const item of items ?? []) {
+    if (item.kind !== "tienda") continue;
+    for (const text of [item.target, item.original]) {
+      const found = KNOWN_SHOPS.find((shop) => new RegExp(`(?<![\\p{L}])${escapeRe(shop)}(?![\\p{L}])`, "iu").test(text ?? ""));
+      if (found) return found;
+    }
+  }
+  return null;
+}

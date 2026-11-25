@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
-import { and, eq, inArray, lt, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, lt, sql } from "drizzle-orm";
 import { getDb, schema } from "@/db/client";
 import type { HiggsfieldPort } from "@/connectors/higgsfield";
 import { getObjectStore, type ObjectStore } from "@/lib/object-store";
@@ -20,7 +20,7 @@ import { openClipStream } from "@/server/videos/clip";
 import { dubbedAudio } from "@/server/videos/doblaje";
 import { referenceEdit, targetPlace, withLocalPlaces, type ReferenceEdit } from "@/server/videos/edicion-referencia";
 import { applyEditChange, saveEditChange, type EditChangeResult } from "@/server/videos/cambio-montaje";
-import { localizeText, marketOf } from "@/server/videos/localization";
+import { localizeText, marketOf, shopOfLocalization, type LocalizationItem } from "@/server/videos/localization";
 import { batchOfVideo, cleanSelfCheck, currentSpec, failEdit, MAX_EDIT_BYTES, readReferenceAudio, saveEdit, settleBatch, type EditSpec } from "@/server/videos/edits";
 
 /**
@@ -461,11 +461,24 @@ export async function runEdit(run: Run, deps: MontajeDeps = {}): Promise<"done" 
       spec.product.countries ?? [],
       spec.product.language,
     );
+    // La tienda del anuncio (regla 5 de los rótulos): la que nombran las indicaciones del dueño o, si no, la de la
+    // escena según la localización del desglose. Nunca el nombre del producto (vídeo 37 del lote 10: «zu EisWerk»).
+    const indications = [owner?.note, owner?.adaptation, batchProduct?.notes].filter(Boolean).join("\n");
+    const [analysisRow] = await getDb()
+      .select({ result: schema.videoAnalyses.result })
+      .from(schema.videoAnalyses)
+      .where(and(eq(schema.videoAnalyses.videoId, spec.videoId), eq(schema.videoAnalyses.status, "done")))
+      .orderBy(desc(schema.videoAnalyses.id))
+      .limit(1);
+    const shop =
+      shopOfLocalization([{ kind: "tienda", original: indications, target: indications }]) ??
+      shopOfLocalization((analysisRow?.result as { localization?: LocalizationItem[] | null } | null)?.localization);
     let edicion: ReferenceEdit | null = null;
     if (referenceFile) {
       try {
         edicion = await referenceEdit({
           place,
+          shop,
           file: referenceFile,
           product: { id: owner?.productId ?? 0, name: spec.product.name, language: spec.product.language },
           userId: owner?.userId ?? run.requestedBy,
