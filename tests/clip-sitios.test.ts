@@ -35,5 +35,7 @@ describe("la variante elegida en todo el vídeo", () => {
   });
   it("el vídeo entero manda sobre los tramos viejos", () => {
     expect(wholeVideoPreamble("hf_mult_motion_control", 12700)).toContain("WHOLE reference (0 s to 12.7 s)");
+    // HaarZauber 47 (lote 10): la oficina de la referencia salió como supermercado.
+    expect(wholeVideoPreamble("hf_mult_motion_control", 12700)).toContain("an office stays an office");
   });
 });

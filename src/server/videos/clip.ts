@@ -141,7 +141,7 @@ export function placeChanges(videoPrompt: string | undefined, first: number, sta
 export function wholeVideoPreamble(model: ClipModel, segmentMs: number | null): string {
   if (model === SEEDANCE) return "";
   const total = segmentMs ? ` (0 s to ${Math.round(segmentMs / 100) / 10} s)` : "";
-  return `The source video is the WHOLE reference${total}; any mention below of a shorter segment or stretch is outdated: apply every instruction to the whole video, every shot, until the last frame.\n\n`;
+  return `The source video is the WHOLE reference${total}; any mention below of a shorter segment or stretch is outdated: apply every instruction to the whole video, every shot, until the last frame. Each shot keeps the TYPE of place it has in the source (an office stays an office, a kitchen stays a kitchen), only redesigned and localized; a place named for one part (a store, a supermarket) and every environment reference apply only to the shots of that same type of place.\n\n`;
 }
 
 /**

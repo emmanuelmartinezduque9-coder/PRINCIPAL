@@ -108,6 +108,13 @@ gasta mucho, para que el plan de Claude dure y el coordinador quede libre:
   otros chats y a Codex. (Origen: su queja por un rótulo con Harry Potter se convirtió sin preguntarle en «nunca
   marcas de terceros» y estropeó el lote 10.)
 
+## Regla fija del dueño: el entorno tiene que tener sentido (Emmanuel, 26/11/2026)
+
+Cada toma conserva el TIPO de sitio de la referencia, porque es el ángulo que vende: una oficina pasa a otra oficina
+distinta y localizada, nunca a un supermercado. Una indicación de sitio («que sea en Lidl») y una imagen de referencia de
+entorno solo valen para las tomas de ese mismo tipo de sitio. Caso real: HaarZauber 47, lote 10. Código: desglose
+(`analysis.ts`, sitios) y clip (`wholeVideoPreamble` en `clip.ts`).
+
 ## Regla fija del dueño: la variante elegida en todo el vídeo (Emmanuel, 26/11/2026)
 
 Si elige una variante (p. ej. la amarilla y la referencia es la máquina rosa), esa variante sale en TODO el vídeo, en
