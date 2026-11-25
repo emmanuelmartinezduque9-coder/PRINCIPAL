@@ -20,7 +20,7 @@ Emmanuel no lee análisis ni avisos: para eso están las reglas del motor (`regl
    «Generar clip», «Hacer el desglose», «Montar» o «Confirmar y generar» en el camino normal.
 4. **Un solo frame por vídeo, siempre** (orden de Emmanuel, 25/11/2026; anula la del 24/11 de un frame por sitio).
    El frame es la apertura. Cada **entorno que ocupa varios clips** (p. ej., empieza en el súper y desde el 4.º
-   clip hay varios en un salón) lleva una o varias **imágenes de referencia** de ese entorno para su tramo de clip,
+   clip hay varios en un salón) lleva una o varias **imágenes de referencia** de ese entorno dentro del único clip del vídeo,
    nunca otro frame. Las tomas cortas de un sitio propio (1 s sacando algo de la nevera) no llevan referencia: el
    prompt del clip pide cambiar su diseño o lo de dentro y conserva la acción y el sitio. Más candidatas de frame
    solo si él lo pide en la tarjeta (`videos.frame_count`) o en el lote (`batches.frame_count`).
@@ -54,11 +54,12 @@ El defecto que más le molestaba en Codex. En las réplicas con Genjutsu o Wan (
   referencia pasan en ese tipo de sitio. Las demás buscan su propio entorno en Pinterest, localizado al
   país de destino (calles de Berlín…). Caso real del lote 6: un FalterPfote con súper y calle salió
   entero en el súper.
-- Cómo: el desglose agrupa las tomas consecutivas del mismo sitio (`places`). Un solo frame de apertura por
-  vídeo; los entornos de varios clips llevan sus fotos de referencia (Pinterest o la suya) en su tramo de Motion
-  Transfer con el vídeo fuente recortado; las tomas cortas se describen en el prompt. El montaje empalma los tramos.
-  Código: `src/server/videos/tramos.ts`; diseño en `docs/sitios-de-la-referencia.md`; pruebas en
-  `tests/flujo-automatico.test.ts` y `tests/tramos.test.ts`.
+- **Nunca clip por clip** (orden de Emmanuel, 25/11/2026): **un solo clip por vídeo**, un Motion Transfer con el
+  vídeo fuente entero desde su único frame de apertura, y su Topaz. Nada de tramos por sitio ni por toma, ni
+  empalmes de clips. El desglose sigue sacando los sitios (`places`) para escribir el prompt: los entornos de
+  varios clips llevan sus fotos de referencia (Pinterest o la suya) en ese mismo clip y las tomas cortas se
+  describen en el prompt. Código: `src/server/videos/tramos.ts`; diseño en `docs/sitios-de-la-referencia.md`;
+  pruebas en `tests/flujo-automatico.test.ts` y `tests/tramos.test.ts`.
 - **La imagen que él elige o sube a mano manda** (25/11/2026, vídeo 35 del lote 10): no se busca en Pinterest
   para ese entorno, se rotula como suya y en el resultado tiene que verse que el fondo es su imagen, conservando
   todo lo que tiene dentro.
