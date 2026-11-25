@@ -166,11 +166,11 @@ const FRAME_SNAPSHOT = [
 
 /** Lo que lleva siempre la imagen inicial al final del prompt (regla fija de fondos). */
 export const NO_PEOPLE_PICTURES =
-  "No framed pictures, posters, photos, artworks, screens or figures showing people, faces, celebrities or characters anywhere on the walls, mirrors or background; keep walls plain or with decor without people, and no third-party brands or logos.";
+  "No framed pictures or posters showing real famous people on the walls or background.";
 
 /** Con la foto de entorno del dueño, lo que ella trae (pantallas, peluches, adornos) se queda aunque sean personajes. */
 export const NO_PEOPLE_PICTURES_OWNER_ROOM =
-  "No added framed pictures, posters, photos or artworks showing people, faces or celebrities, and no added third-party brands or logos. Exception: everything already in the owner's room image stays exactly as it is, including what its screens show and its plush toys and figurines, characters included.";
+  "Everything in the owner's room image stays exactly as it is, including what its screens show and its plush toys and figurines, characters and brands included.";
 
 export const buildFrameRequest: RequestBuilder = async (user, video, deps) => {
   await requireAnalysisDone(video);

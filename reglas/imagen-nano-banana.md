@@ -409,7 +409,7 @@ Aplicar solo al crear lotes nuevos; no reaplicar estos valores a lotes pendiente
 Aplicar también la regla «Vídeo con Seedance 2.5», que se entrega junto a esta: las imágenes de referencia de producto muestran el producto comparado con una mano humana, basada en evidencia real del producto original. No inventar centímetros.
 
 ## Fondos sin personas en cuadros ni pósteres (orden de Emmanuel, 23/11/2026)
-Ningún cuadro, póster, foto, ilustración, pantalla ni figura con personas, caras, famosos o personajes en paredes, espejos o fondos de la imagen inicial, y ninguna marca ajena. Si el fotograma original o la sala de referencia los tienen, se sustituyen por pared lisa o decoración sin personas. Motivo: en el lote 3 (HaarZauber) un póster de una actriz famosa en la pared de la peluquería hizo que Higgsfield bloqueara los clips (`ip_detected`) con cualquier prompt.
+Ningún cuadro ni póster con personas famosas reales en paredes o fondos de la imagen inicial. Las marcas, tiendas y personajes de terceros sí se permiten (marketing orgánico, orden de Emmanuel del 25/11/2026), y lo que traiga la imagen de entorno del dueño se queda tal cual. Si el fotograma original o la sala de referencia los tienen, se sustituyen por pared lisa o decoración sin personas. Motivo: en el lote 3 (HaarZauber) un póster de una actriz famosa en la pared de la peluquería hizo que Higgsfield bloqueara los clips (`ip_detected`) con cualquier prompt.
 
 
 ## Imagen de entorno del dueño — orden expresa de Emmanuel, 25/11/2026

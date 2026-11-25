@@ -259,10 +259,11 @@ describe("el fotograma del cambio de rótulo", () => {
 });
 
 describe("marcas y personajes de terceros en los rótulos", () => {
-  it("la instrucción prohíbe nombrarlos y pide la lista de ajenos", () => {
-    expect(REFERENCE_EDIT_INSTRUCTIONS).toMatch(/NUNCA nombres marcas, personajes/);
-    expect(REFERENCE_EDIT_INSTRUCTIONS).toContain("Harry Potter");
-    expect(REFERENCE_EDIT_INSTRUCTIONS).toMatch(/8\. ajenos/);
+  // Orden de Emmanuel (25/11/2026): en marketing orgánico se nombran; la prohibición la inventamos nosotros.
+  it("la instrucción conserva las marcas, tiendas y personajes de terceros", () => {
+    expect(REFERENCE_EDIT_INSTRUCTIONS).not.toMatch(/NUNCA nombres marcas/);
+    expect(REFERENCE_EDIT_INSTRUCTIONS).toContain("SE CONSERVAN tal cual");
+    expect(REFERENCE_EDIT_INSTRUCTIONS).toMatch(/8\. ajenos: devuelve siempre la lista vacía/);
   });
 
   it("si uno se cuela, se cambia por el producto y la colaboración queda solo con el producto (vídeo 22)", () => {

@@ -237,7 +237,7 @@ export function localizationGuide(market: Market): string {
     `- Moneda y precios: ${market.currencySymbol}, con el formato de ${market.countryEs} (${market.currency("12,99")}).`,
     `- Calles, rótulos de calle, matrículas, señales y carteles: en el idioma y el estilo de ${market.countryEs}.`,
     `- Banderas: solo las del país de origen → ${market.flag} (la de ${market.countryEs}).`,
-    `- Marcas o productos locales que se vean y no sean el del encargo: equivalentes locales o neutros; nunca marcas de terceros en primer plano.`,
+    `- Marcas o productos de otro país que se vean y no sean el del encargo: su equivalente conocido aquí. Las marcas, tiendas y personajes de terceros se pueden nombrar y mostrar (marketing orgánico, orden del dueño del 25/11/2026).`,
   ].join("\n");
 }
 

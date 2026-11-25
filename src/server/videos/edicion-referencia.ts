@@ -92,12 +92,12 @@ export const REFERENCE_EDIT_INSTRUCTIONS = `Eres el editor de anuncios en vídeo
 2. texto_original: cópialo EXACTO, carácter a carácter, con sus emojis tal cual (mira bien cada emoji: 🤭 no es 🤗, 😍 no es 🥰) y con | donde la referencia salta de línea, también cuando los emojis van solos en su propia línea.
 3. Un rótulo nuevo empieza cuando cambia el texto. desde_s es el tiempo de la PRIMERA muestra en la que se lee el texto nuevo (el primero suele empezar en 0). Si un texto aparece palabra a palabra, cuenta como un solo rótulo desde que empieza.
 4. franja_superior / franja_inferior: entre qué alturas del fotograma (0 arriba, 1 abajo) está ese rótulo.
-5. texto_adaptado: la versión para nuestro anuncio en alemán natural de Alemania, fiel al original: mismo sentido, intención, tono, estructura, mayúsculas y LOS MISMOS SALTOS DE LÍNEA (| en el mismo sitio; si los emojis van en su propia línea, también aquí). Si el original ya está en alemán, déjalo igual salvo la marca o la palabra clave. Cambia SOLO la marca, el producto o la palabra clave ajenos por los nuestros (nombre del producto que te doy). Tienda: si la referencia nombra una tienda o cadena (Aldi, Lidl, Target, Walmart…), en nuestro rótulo va {TIENDA}, la tienda donde pasa nuestro anuncio, con la misma gramática («RENNT zu ALDI!» → «RENNT zu {TIENDA}!»). Una tienda NUNCA se cambia por {PRODUCTO} ni se quita: «zu {PRODUCTO}» no tiene sentido. No inventes tiendas, ofertas, precios ni beneficios que no estén. Emojis: los MISMOS de la referencia, en el mismo orden; cambia solo uno que no encaje con nuestro producto por uno de su nicho (un emoji de uñas no vale para un producto de pelo).
+5. texto_adaptado: la versión para nuestro anuncio en alemán natural de Alemania, fiel al original: mismo sentido, intención, tono, estructura, mayúsculas y LOS MISMOS SALTOS DE LÍNEA (| en el mismo sitio; si los emojis van en su propia línea, también aquí). Si el original ya está en alemán, déjalo igual salvo la marca o la palabra clave. Cambia SOLO el producto que vende la referencia (su nombre, su marca o su palabra clave) por el nuestro (nombre del producto que te doy); el resto de marcas se queda. Tienda: si la referencia nombra una tienda o cadena (Aldi, Lidl, Target, Walmart…), en nuestro rótulo va {TIENDA}, la tienda donde pasa nuestro anuncio, con la misma gramática («RENNT zu ALDI!» → «RENNT zu {TIENDA}!»). Una tienda NUNCA se cambia por {PRODUCTO} ni se quita: «zu {PRODUCTO}» no tiene sentido. No inventes tiendas, ofertas, precios ni beneficios que no estén. Emojis: los MISMOS de la referencia, en el mismo orden; cambia solo uno que no encaje con nuestro producto por uno de su nicho (un emoji de uñas no vale para un producto de pelo).
 6. es_cta: true en el rótulo de llamada a la acción («Comment X…», «Kommentiere…», «Link in bio»…). Su texto_adaptado es la misma llamada con la palabra clave de nuestro producto entre comillas alemanas (p. ej. «Kommentiere, wenn du auch eins willst!» → «Kommentiere „{PRODUCTO}“, wenn du auch eins willst!»), con los emojis y saltos de línea del original tal cual. Si el original no nombra nada, añade solo la palabra clave.
-6b. NUNCA nombres marcas, personajes, películas, series, licencias, famosos ni colaboraciones de terceros que vengan de la referencia (Harry Potter, Disney, Marvel, Pokémon, Barbie, Stanley, Dyson…), aunque el original los nombre: el anuncio es solo de {PRODUCTO}. Una colaboración («X × Harry Potter», «X meets Disney») queda solo con {PRODUCTO}; un personaje o licencia se cambia por una descripción genérica del estilo o el tema (p. ej. «Zauberer-Edition», «magisch»), nunca por el nombre. Las tiendas y cadenas NO son marcas de terceros: van siempre con la regla 5 ({TIENDA}).
+6b. Marketing orgánico (orden de Emmanuel, 25/11/2026): las marcas, tiendas, películas, personajes y famosos de terceros que nombre la referencia SE CONSERVAN tal cual; está permitido nombrarlos. Solo se cambia el producto que vende la referencia (y su marca) por {PRODUCTO}.
 7. traduccion_es: el texto_adaptado en español, para que el dueño lo revise (no se imprime).
 6c. Lugares: el anuncio pasa en {LUGAR}. Cualquier lugar o país que nombre la referencia (USA, Amerika, die Staaten, New York, Texas, London…) se cambia por {LUGAR} con la gramática correcta («in den USA» → «in {LUGAR}»), nunca se deja ni se traduce tal cual. Si la referencia no nombra ningún lugar, no añadas ninguno.
-8. ajenos: la lista de esas marcas, personajes, licencias y colaboraciones de terceros que aparecen en los rótulos originales (vacía si no hay). No incluyas {PRODUCTO} ni la tienda.
+8. ajenos: devuelve siempre la lista vacía (ya no se quita ninguna marca).
 9. lugares: la lista de lugares y países que nombran los rótulos originales, tal cual (vacía si no hay). No incluyas la tienda.
 Responde solo con el JSON pedido.`;
 
@@ -294,9 +294,9 @@ export async function referenceEdit(ctx: ReferenceEditContext): Promise<Referenc
   // montar, para que sus rótulos no cambien: las correcciones valen para las lecturas nuevas y solo entonces se apuntan.
   const learned = await learnedFor("montaje", ctx.product.id || null);
   learned.text += (await preferencesFor("rotulos", { videoId: ctx.videoId, productId: ctx.product.id || null, record: false })).text;
-  const plainKey = cacheKey(ctx.videoId, sha, ctx.product.name, "", ctx.shop ?? "");
+  const plainKey = cacheKey(ctx.videoId, sha, ctx.product.name, "", `${ctx.shop ?? ""}|marcas-permitidas`);
   const plainSaved = learned.text !== "" && ctx.store !== null && (await ctx.store.head(plainKey).catch(() => null)) !== null;
-  const key = plainSaved ? plainKey : cacheKey(ctx.videoId, sha, ctx.product.name, learned.text, ctx.shop ?? "");
+  const key = plainSaved ? plainKey : cacheKey(ctx.videoId, sha, ctx.product.name, learned.text, `${ctx.shop ?? ""}|marcas-permitidas`);
   if (!plainSaved) {
     ctx.learned?.push(...learned.ids);
     await preferencesFor("rotulos", { videoId: ctx.videoId, productId: ctx.product.id || null });
@@ -331,7 +331,7 @@ export async function referenceEdit(ctx: ReferenceEditContext): Promise<Referenc
     let startS = i === 0 && row.desde_s <= 1 / SAMPLES_PER_SECOND ? 0 : Math.min(row.desde_s, durationS);
     if (i > 0 && startS > 0) startS = await refineSwitch(ctx.file, startS - 1 / SAMPLES_PER_SECOND, startS, row.franja_superior, row.franja_inferior);
     if (cues.length > 0 && startS <= cues[cues.length - 1].startS) continue;
-    cues.push({ startS, source: row.texto_original.trim(), text: localizeText(withLocalPlaces(withoutThirdParties(row.texto_adaptado.trim(), answer.data?.ajenos ?? [], ctx.product.name), answer.data?.lugares ?? [], place), marketOf(ctx.product)), es: row.traduccion_es.trim(), cta: row.es_cta });
+    cues.push({ startS, source: row.texto_original.trim(), text: localizeText(withLocalPlaces(row.texto_adaptado.trim(), answer.data?.lugares ?? [], place), marketOf(ctx.product)), es: row.traduccion_es.trim(), cta: row.es_cta });
   }
   const result: ReferenceEdit = { version: 1, durationS, cues, cutsS: await sceneCuts(ctx.file, durationS) };
   if (ctx.store) {

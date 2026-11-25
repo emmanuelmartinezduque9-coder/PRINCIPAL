@@ -14,10 +14,11 @@ describe("tienda en los rótulos", () => {
   it("la tienda va en el rótulo y nunca se cambia por el producto", () => {
     expect(REFERENCE_EDIT_INSTRUCTIONS).toContain("{TIENDA}");
     expect(REFERENCE_EDIT_INSTRUCTIONS).toContain("Una tienda NUNCA se cambia por {PRODUCTO}");
-    expect(REFERENCE_EDIT_INSTRUCTIONS).toContain("Las tiendas y cadenas NO son marcas de terceros");
+    expect(REFERENCE_EDIT_INSTRUCTIONS).toContain("las marcas, tiendas, películas, personajes y famosos de terceros que nombre la referencia SE CONSERVAN");
     expect(REFERENCE_EDIT_INSTRUCTIONS).not.toContain("Conserva la tienda que nombre la referencia si existe en Alemania");
   });
   it("un cambio que pide una tienda la pone", () => {
-    expect(EDIT_CHANGE_INSTRUCTIONS).toContain("Las tiendas y cadenas (Lidl, Aldi");
+    expect(EDIT_CHANGE_INSTRUCTIONS).toContain("Las marcas, tiendas y personajes de terceros se pueden nombrar");
+    expect(EDIT_CHANGE_INSTRUCTIONS).not.toContain("Nunca nombres marcas");
   });
 });

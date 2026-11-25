@@ -39,7 +39,7 @@ describe("productos delegados al móvil",()=>{
    const pubs=await getDb().select().from(schema.publications);
    expect(pubs).toHaveLength(2);expect(pubs.map(p=>p.network).sort()).toEqual(["facebook","instagram"]);
    expect(pubs.every(p=>p.description.includes("#sofa") && !/ikea|amazon|target/i.test(p.description))).toBe(true);
-   expect(mocks.call.mock.calls[0][0].instructions).toContain("única marca permitida");
+   expect(mocks.call.mock.calls[0][0].instructions).not.toContain("No nombres marcas ajenas");
    expect(mocks.call.mock.calls[0][0].tier).toBe("small");
  });
  it("rechazar guarda el motivo y pide el cambio; el remontaje vuelve a pendiente",async()=>{

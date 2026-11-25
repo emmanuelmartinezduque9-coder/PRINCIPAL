@@ -42,7 +42,7 @@ export async function approveEdit(user: AuthUser, videoId: number) {
   if (!edit) throw new HttpError(400, "El vídeo aún no está montado.");
   const answer = await getGateway().call<{ text: string }>({
     tier: "small", stepKey: `publicacion:${edit.id}`, userId: user.id, productId: product.id, rules: [],
-    instructions: "Escribe una descripción orgánica de 2–4 líneas con CTA para comentar y 5–10 hashtags del nicho. Usa exclusivamente el idioma indicado. No nombres marcas ajenas, tiendas ni competidores: la única marca permitida es el nombre del producto. No inventes precios ni promesas. Devuelve {text}.",
+    instructions: "Escribe una descripción orgánica de 2–4 líneas con CTA para comentar y 5–10 hashtags del nicho. Usa exclusivamente el idioma indicado. No inventes precios ni promesas. Devuelve {text}.",
     content: [textPart(JSON.stringify({ producto: product.name, descripcion: product.summary, idioma: product.language, pais: marketOf(product).countryLocal, nicho: product.niche }))],
     maxTokens: 700, schema: z.object({ text: z.string().trim().min(1).max(2200) }),
   });

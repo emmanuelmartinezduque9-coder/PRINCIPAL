@@ -96,3 +96,14 @@ gasta mucho, para que el plan de Claude dure y el coordinador quede libre:
 - **A Claude:** la gestión, las decisiones, el diseño de la web, las conexiones y la revisión final de lo
   que entrega Codex. Lo de Codex se comprueba antes de decir «hecho».
 - Al informar, decir qué se mandó a Codex.
+
+## Reglas fijas del dueño: marcas de terceros y reglas nuevas (Emmanuel, 25/11/2026)
+
+- **Marketing orgánico: se permite nombrar y mostrar marcas, tiendas, películas y personajes de terceros.** Se
+  conservan en rótulos, imágenes y clips (Aldi, Lidl, el Grinch en la tele, un peluche). Solo se cambia el producto
+  que vende la referencia por el suyo. Si Higgsfield bloquea un intento concreto, se reescribe ese intento y se le
+  dice, sin convertirlo en regla.
+- **Nunca se crea, amplía ni generaliza una regla sin su consentimiento expreso.** Una corrección suya vale para su
+  caso; si parece que debería ser general, se le pregunta antes en una frase. Vale también para lo que se encargue a
+  otros chats y a Codex. (Origen: su queja por un rótulo con Harry Potter se convirtió sin preguntarle en «nunca
+  marcas de terceros» y estropeó el lote 10.)

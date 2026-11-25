@@ -18,7 +18,7 @@ diga el encargo (cambios de la tarjeta, adaptación, indicaciones del lote) mand
 - **Calles, rótulos de calle, matrículas, señales y carteles.** En el idioma y el estilo del país.
 - **Banderas.** Solo las del país de origen pasan a la del país de destino.
 - **Marcas o productos locales** que se vean y no sean el del encargo: equivalentes locales o neutros;
-  nunca marcas de terceros en primer plano.
+  las marcas, tiendas y personajes de terceros se pueden nombrar y mostrar (marketing orgánico, orden de Emmanuel del 25/11/2026).
 
 ## Cómo se usa
 
