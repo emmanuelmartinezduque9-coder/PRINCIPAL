@@ -24,8 +24,11 @@ export function RejectDialog({
   open: controlledOpen,
   onOpenChange,
   className,
+  hideTrigger = false,
 }: {
   label: string;
+  /** Sin botón propio: lo abre quien lo usa (`open`), p. ej. desde un menú. */
+  hideTrigger?: boolean;
   submitLabel?: string;
   /** Rehacer a mano (no un rechazo): botón normal con la flecha de rehacer en vez del pulgar abajo. */
   redo?: boolean;
@@ -65,12 +68,14 @@ export function RejectDialog({
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger asChild>
-        <Button variant="outline" className={className ?? "h-10 gap-2 px-4"}>
-          {redo ? <RotateCcw data-icon="inline-start" /> : <ThumbsDown data-icon="inline-start" />}
-          {label}
-        </Button>
-      </DialogTrigger>
+      {hideTrigger ? null : (
+        <DialogTrigger asChild>
+          <Button variant="outline" className={className ?? "h-10 gap-2 px-4"}>
+            {redo ? <RotateCcw data-icon="inline-start" /> : <ThumbsDown data-icon="inline-start" />}
+            {label}
+          </Button>
+        </DialogTrigger>
+      )}
       <DialogContent className="sm:max-w-md">
         <form onSubmit={submit} className="flex flex-col gap-4">
           <DialogHeader>
