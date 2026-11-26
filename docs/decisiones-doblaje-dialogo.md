@@ -179,6 +179,12 @@ la canción: el 65 sonaba «Die ganze Zeit, die Falle in meinem Turm…» y el 6
    (b) una letra traducida anula el `forzar` anterior de ese tramo (si no, el verso se volvía a traducir hasta agotar
    los intentos); (c) una frase de diálogo en un tramo con letra traducida (la canción se coló en su ventana, vídeo 64)
    se dobla sin el margen de 0,25 s a cada lado.
+4. Primer intento real (montajes 165 y 166): los dos reutilizaron el doblaje viejo. En el 65 Claude dio esta vez habla a
+   «I'm a shot alone in my tower» (sola, sin contexto, la decisión bailaba) y la comparación no unió «Magda, machst du
+   nicht zu viel?» del 64 con la canción. Ahora: lo NO conversacional que el separador dejó en la pista de música es
+   canto (la cuenta atrás del 22 y «Oh my God!» del 63, en la música pero conversacionales, siguen habla), y todo
+   diálogo que suena a la vez que un verso se dobla sin margen. `DECISION_VERSION = 5`. Probado con Claude real sobre los
+   lotes 10 y 11: todo el diálogo habla; 49, 50, 64 «Made in the step.», 65 y 66 «And me to be…» canto.
 
 ## Ningún montaje mudo (24/11/2026)
 

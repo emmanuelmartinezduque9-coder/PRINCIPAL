@@ -496,7 +496,7 @@ describe("una canción no se traduce nunca (orden del 24/11/2026)", () => {
     expect(row.notes).toContain("audio:MEZCLA-ALEMANA");
     expect(row.notes).toContain("No se dobla (letra de una canción): «CANTO: I don't want a lot for Christmas»");
     expect(dubCalls()).toHaveLength(1);
-    expect((await dubRows())[0].raw).toMatchObject({ ventanas: [[7, 9]] });
+    expect((await dubRows())[0].raw).toMatchObject({ ventanas: [[7.25, 8.75]] }); // sin margen: suena a la vez que un verso
   });
 
   it("ante la duda, habla (orden del dueño): «Oh no, I'm good.» con un villancico debajo se dobla", async () => {
@@ -679,8 +679,14 @@ describe("trozos de canción pegados a un verso (lote 11, 26/11/2026)", () => {
   it("una frase conversacional sigue siendo habla aunque suene una canción a la vez (lote 10)", () => {
     const phrases = [f(0.14, 1.46, "10 seconds, I promise."), f(2.65, 13.85, "Jingle bell, jingle bell, jingle bell rock")];
     expect(lyricFragments(phrases, ["habla", "canto"], [true, false])).toEqual(["habla", "canto"]);
-    // Sin nada de canción cerca, ante la duda, habla.
+    // Sin nada de canción cerca y en la pista de voz, ante la duda, habla.
     expect(lyricFragments([f(0, 2.5, "And me to be...")], ["habla"], [false])).toEqual(["habla"]);
+  });
+  it("lo no conversacional que el separador dejó en la música es canto; lo conversacional, habla (lote 11, vídeo 65; vídeo 22)", () => {
+    const tower = [{ ...f(0, 4.25, "I'm a shot alone in my tower"), pista: "music" }];
+    expect(lyricFragments(tower, ["habla"], [false])).toEqual(["canto"]);
+    const countdown = [{ ...f(0, 3.45, "Three, two, one."), pista: "music" }];
+    expect(lyricFragments(countdown, ["habla"], [true])).toEqual(["habla"]);
   });
 });
 

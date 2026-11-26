@@ -227,12 +227,12 @@ export const LYRIC_GAP_S = 1;
 
 /**
  * Trozos de canción que Claude dio por habla (lote 11, 26/11/2026: «Made in the step.» detrás de un verso en el vídeo 64):
- * una frase que NO es conversacional (Claude) y que solapa o va pegada (≤ LYRIC_GAP_S) a una frase de canto, o que se
- * repite como un estribillo, es canto. Una frase conversacional sigue siendo habla aunque suene una canción a la vez
+ * una frase que NO es conversacional (Claude) y que está en la pista de música, o solapa o va pegada (≤ LYRIC_GAP_S) a
+ * una frase de canto, o se repite como un estribillo, es canto. Una frase conversacional sigue siendo habla aunque suene una canción a la vez
  * («Ten seconds, I promise.» con «Jingle Bell Rock», lote 10): eso no se toca.
  */
 export function lyricFragments(
-  phrases: Array<{ desde: number; hasta: number; texto: string }>,
+  phrases: Array<{ desde: number; hasta: number; texto: string; pista?: string }>,
   kinds: Array<"habla" | "canto">,
   conversational: boolean[],
 ): Array<"habla" | "canto"> {
@@ -242,6 +242,10 @@ export function lyricFragments(
   return kinds.map((kind, i) => {
     if (kind === "canto" || conversational[i]) return kind;
     const f = phrases[i];
+    // El separador la dejó en la música y no tiene sentido como conversación: es la canción (lote 11, vídeo 65: «I'm a
+    // shot alone in my tower», sola, Claude la daba unas veces habla y otras canto). La cuenta atrás del vídeo 22, en la
+    // música pero conversacional, sigue siendo habla.
+    if (f.pista && f.pista !== "voz") return "canto";
     const nextToSong = phrases.some((g, j) => j !== i && kinds[j] === "canto" && near(f, g));
     const text = norm(f.texto);
     const repeated = text.length > 0 && phrases.some((g, j) => j !== i && norm(g.texto) === text && !overlaps(f, g));
@@ -249,8 +253,8 @@ export function lyricFragments(
   });
 }
 
-/** Versión de la decisión habla/canto (4: 26/11/2026, trozos de canción pegados a un verso): las marcas sin ella se vuelven a mirar. */
-export const DECISION_VERSION = 4;
+/** Versión de la decisión habla/canto (5: 26/11/2026, trozos de canción y lo no conversacional de la música): las marcas sin ella se vuelven a mirar. */
+export const DECISION_VERSION = 5;
 
 type Analysis =
   | { kind: "skip"; record: boolean; why: string; note: string | null; raw: unknown }
@@ -325,7 +329,11 @@ async function analyse(ctx: DubContext, stems: string, userId: number, target: {
     const [a, b] = [f.desde + RESCUE_MARGIN_S, f.hasta - RESCUE_MARGIN_S];
     return b - a >= 0.3 ? [a, b] : [f.desde, f.hasta];
   };
-  const windows = speech.map((f): [number, number] => (singWindows.some((w) => overlaps(f, w)) ? tight(f) : [f.desde, f.hasta]));
+  // También el diálogo que suena a la vez que un verso: sin margen, entra menos canción en lo que se dobla (vídeo 64).
+  const song = classified.filter((f) => f.tipo === "canto").map((f): [number, number] => [f.desde, f.hasta]);
+  const windows = speech.map((f): [number, number] =>
+    singWindows.some((w) => overlaps(f, w)) || song.some((w) => overlaps(f, w)) ? tight(f) : [f.desde, f.hasta],
+  );
   for (const w of forcedWindows) if (!windows.some(([a, b]) => a <= w[0] && w[1] <= b)) windows.push(w);
   const moved = await ctx.doblar([
     "rescatar",
