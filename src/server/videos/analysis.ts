@@ -75,6 +75,71 @@ export function analysisStepKey(productId: number, analysisId: number): string {
 }
 
 const MAX_TOKENS = 16_000;
+
+/** Pide el desglose a Claude (con `extra` al final del contenido, para una reescritura). */
+async function askDesglose(deps: { gateway?: LlmGateway }, ctx: JobContext, callKey: string, user: AuthUser, video: Video, extra: LlmContent) {
+  const product = await getProductFor(user, video.productId);
+  const brief = briefOf(await withProductNotes(video));
+  const variants = await listVariants(user, video.productId);
+  const refs = await manifestRefsFor(user, video, { forAnalysis: true });
+  const content = await buildContent(user, video, brief, product, refs, variants);
+  const answer = await (deps.gateway ?? getGateway()).call({
+    tier: "medium",
+    stepKey: callKey,
+    userId: ctx.userId,
+    productId: ctx.productId,
+    rules: await loadRules(analysisRuleSlugs(brief.kind, brief.clipModel)),
+    instructions: analysisInstructions(brief, hookTiming(video), variants.map((variant) => variant.name), marketOf(product)) + "\nOrden expresa de Emmanuel, 25/11/2026: si hay imagen de entorno elegida o subida a mano, su habitación ES el fondo. En imagePrompt enumera en inglés todos los objetos que ves, uno a uno y con su posición; conserva mobiliario, decoración y objetos reconocibles sin quitar, cambiar ni ordenar nada. Coloca dentro acción, manos y producto de image 1 y reencuadra solo lo necesario. Conserva pantallas con contenido neutro sin personajes ni marcas." + (await preferencesFor("desglose", { videoId: video.id })).text,
+    content: Array.isArray(extra) && extra.length > 0 ? [...(content as Exclude<LlmContent, string>), ...(extra as Exclude<LlmContent, string>)] : content,
+    maxTokens: MAX_TOKENS,
+    schema: analysisSchema,
+  });
+  return { ...answer, brief };
+}
+
+/**
+ * Con variante elegida: comprueba con visión que el desglose describe esa variante y, si no, lo rehace
+ * con el motivo (hasta `MAX_VARIANT_REWRITES`). Cada comprobación y cada reescritura es su propio paso.
+ * Sin variante (o sin poder leer su foto) devuelve el paso tal cual, sin llamar a nadie.
+ */
+async function checkVariant(deps: { gateway?: LlmGateway }, ctx: JobContext, key: string, videoId: number, step: StepResult): Promise<StepResult> {
+  const user = await getActiveUser(ctx.userId);
+  if (!user) return step;
+  const video = await getVideoFor(user, videoId);
+  if (video.variantId === null) return step;
+  const variant = (await listVariants(user, video.productId)).find((one) => one.id === video.variantId);
+  const photoId = variant?.articlePhotoIds[0];
+  if (!variant || photoId === undefined) return step;
+  let photo: Buffer;
+  try {
+    photo = await makeThumbnail((await readProductPhoto(user, photoId)).data, "image", 768);
+  } catch {
+    return step;
+  }
+  const gateway = deps.gateway ?? getGateway();
+  let current = step;
+  for (let rewrite = 1; rewrite <= MAX_VARIANT_REWRITES; rewrite++) {
+    const text = `imagePrompt:\n${current.result.imagePrompt}\n\nvideoPrompt:\n${current.result.videoPrompt}`;
+    const checkKey = `${key}:variante:${rewrite}`;
+    const problem = await runStep(ctx, checkKey, () => variantMismatch(gateway, { stepKey: checkKey, userId: ctx.userId, productId: ctx.productId }, variant.name, text, photo));
+    if (problem === null) break;
+    console.warn(`[desglose] Vídeo ${videoId}: el producto no coincide con la variante «${variant.name}» (${problem}); se reescribe.`);
+    const rewriteKey = `${key}:reescritura:${rewrite}`;
+    const note = textPart(`El desglose anterior describía mal el producto de la variante «${variant.name}»: ${problem}. Vuelve a escribirlo describiendo el color, el acabado y la forma del producto SOLO a partir de sus fotos de artículo.`);
+    current = await runStep(ctx, rewriteKey, async (): Promise<StepResult> => {
+      const answer = await askDesglose(deps, ctx, rewriteKey, user, video, [note]);
+      return { result: answer.data!, brief: step.brief, ruleVersions: answer.ruleVersions, spendEntryId: answer.spendEntryId };
+    });
+  }
+  return current;
+}
+
+/** Las claves de gasto de un desglose: la suya y las de la comprobación de la variante y sus reescrituras. */
+export function analysisStepKeys(productId: number, analysisId: number): string[] {
+  const key = analysisStepKey(productId, analysisId);
+  return [key, ...Array.from({ length: MAX_VARIANT_REWRITES }, (_, i) => [`${key}:variante:${i + 1}`, `${key}:reescritura:${i + 1}`]).flat()];
+}
+
 /** Lado largo de las fotos del producto que se mandan a Claude. */
 const PHOTO_MAX_SIDE = 1024;
 const MAX_PROMPT_CHARS = 20_000;
@@ -901,43 +966,9 @@ export async function runAnalysis(analysisId: number, deps: { gateway?: LlmGatew
         await trySetStatus(analysisId, "failed", REFERENCE_CHANGED);
         throw new StepFailedError(REFERENCE_CHANGED);
       }
-      const product = await getProductFor(user, video.productId);
-      const brief = briefOf(await withProductNotes(video));
-      const variants = await listVariants(user, video.productId);
-      const refs = await manifestRefsFor(user, video, { forAnalysis: true });
-      const content = await buildContent(user, video, brief, product, refs, variants);
-      const gateway = deps.gateway ?? getGateway();
-      const instructions = analysisInstructions(brief, hookTiming(video), variants.map((variant) => variant.name), marketOf(product)) + "\nOrden expresa de Emmanuel, 25/11/2026: si hay imagen de entorno elegida o subida a mano, su habitación ES el fondo. En imagePrompt enumera en inglés todos los objetos que ves, uno a uno y con su posición; conserva mobiliario, decoración y objetos reconocibles sin quitar, cambiar ni ordenar nada. Coloca dentro acción, manos y producto de image 1 y reencuadra solo lo necesario. Conserva pantallas con contenido neutro sin personajes ni marcas." + (await preferencesFor("desglose", { videoId: video.id })).text;
-      const rules = await loadRules(analysisRuleSlugs(brief.kind, brief.clipModel));
       try {
-        const ask = (extra: Array<ReturnType<typeof textPart>>, suffix: string) => gateway.call({
-          tier: "medium",
-          stepKey: `${key}${suffix}`,
-          userId: ctx.userId,
-          productId: ctx.productId,
-          rules,
-          instructions,
-          content: extra.length === 0 ? content : [...(content as Array<ReturnType<typeof textPart>>), ...extra],
-          maxTokens: MAX_TOKENS,
-          schema: analysisSchema,
-        });
-        let answer = await ask([], "");
-        // Con variante, el producto descrito tiene que ser ESA variante (vídeo 71: la azul descrita como
-        // «pink glossy body»). Se comprueba con visión y, si no coincide, se reescribe con el motivo.
-        const variant = variants.find((one) => one.id === video.variantId);
-        const photoId = variant?.articlePhotoIds[0];
-        const photo = photoId === undefined ? null : await makeThumbnail((await readProductPhoto(user, photoId)).data, "image", 768).catch(() => null);
-        for (let rewrite = 1; variant && photo && rewrite <= MAX_VARIANT_REWRITES; rewrite++) {
-          const text = `imagePrompt:\n${answer.data!.imagePrompt}\n\nvideoPrompt:\n${answer.data!.videoPrompt}`;
-          const problem = await variantMismatch(gateway, { stepKey: `${key}:variante:${rewrite}`, userId: ctx.userId, productId: ctx.productId }, variant.name, text, photo);
-          if (problem === null) break;
-          console.warn(`[desglose] Vídeo ${video.id}: el producto no coincide con la variante «${variant.name}» (${problem}); se reescribe.`);
-          answer = await ask(
-            [textPart(`El desglose anterior describía mal el producto de la variante «${variant.name}»: ${problem}. Vuelve a escribirlo describiendo el color, el acabado y la forma del producto SOLO a partir de sus fotos de artículo.`)],
-            `:reescritura:${rewrite}`,
-          );
-        }
-        return { result: answer.data!, brief, ruleVersions: answer.ruleVersions, spendEntryId: answer.spendEntryId };
+        const answer = await askDesglose(deps, ctx, key, user, video, []);
+        return { result: answer.data!, brief: answer.brief, ruleVersions: answer.ruleVersions, spendEntryId: answer.spendEntryId };
       } catch (error) {
         if (!isGatewayFailure(error)) throw error;
         const spent = error instanceof LlmTruncatedError ? error.partial?.spendEntryId : undefined;
@@ -952,6 +983,20 @@ export async function runAnalysis(analysisId: number, deps: { gateway?: LlmGatew
     if (error instanceof JobPausedError) await trySetStatus(analysisId, "paused", PAUSED);
     else if (error instanceof StepFailedError) await trySetStatus(analysisId, "failed", error.message);
     throw error;
+  }
+
+  // Con variante, el producto descrito tiene que ser ESA variante (vídeo 71: la azul descrita como «pink
+  // glossy body»). Se comprueba con visión y, si no coincide, se rehace con el motivo. Cada llamada va en
+  // su propio paso (no se repite ni se cobra otra vez al reanudar) y con su clave (`analysisStepKeys`).
+  try {
+    step = await checkVariant(deps, ctx, key, row.videoId, step);
+  } catch (error) {
+    if (error instanceof JobPausedError) {
+      await trySetStatus(analysisId, "paused", PAUSED);
+      throw error;
+    }
+    // Un fallo de la comprobación o de la reescritura no tumba el desglose: se queda el último bueno.
+    console.warn(`[desglose] Vídeo ${row.videoId}: no se pudo comprobar la variante:`, error);
   }
 
   // Fuera del paso: si esto falla, la cola lo repite y el paso devuelve lo guardado (Claude no cobra otra vez).

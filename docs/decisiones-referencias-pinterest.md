@@ -158,3 +158,7 @@ dueño no se añade nada: lo que traiga su pantalla se queda.
 - **Tele navideña.** El escritor de la sala marca `christmasTv` si el fotograma de la referencia o la
   foto de la sala muestran un salón navideño con tele. La imagen y el clip aplican la regla con esa marca
   aunque el prompt no nombre la tele (`christmasTvSeen`).
+- Revisión de Codex del desglose: la comprobación y cada reescritura van en su propio paso (si se pausa
+  por el tope, al reanudar no se repite ni se cobra otra vez lo hecho). Su coste se suma al del desglose
+  (`analysisStepKeys`). Un fallo al leer la foto o al comprobar no tumba el desglose: se queda el último
+  bueno.

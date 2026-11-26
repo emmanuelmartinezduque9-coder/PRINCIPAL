@@ -2,7 +2,7 @@ import { eq, sql } from "drizzle-orm";
 import { getDb, schema } from "@/db/client";
 import type { AuthUser } from "@/server/auth";
 import { costOfSteps } from "@/server/spend";
-import { analysisStepKey } from "@/server/videos/analysis";
+import { analysisStepKeys } from "@/server/videos/analysis";
 import { getVideoFor, type Video } from "@/server/videos/videos";
 
 /**
@@ -36,7 +36,7 @@ export async function costsOfVideo(video: Video): Promise<VideoCosts> {
     .select({ id: schema.videoAnalyses.id })
     .from(schema.videoAnalyses)
     .where(eq(schema.videoAnalyses.videoId, video.id));
-  const byStep = await costOfSteps(analyses.map(({ id }) => analysisStepKey(video.productId, id)));
+  const byStep = await costOfSteps(analyses.flatMap(({ id }) => analysisStepKeys(video.productId, id)));
   let claudeMicros = 0;
   for (const micros of byStep.values()) claudeMicros += micros;
   return { higgsfieldCredits: credits?.total ?? 0, claudeMicros };
@@ -47,8 +47,8 @@ export async function costsOfVideo(video: Video): Promise<VideoCosts> {
  * `video` ya viene comprobado con `getVideoFor`.
  */
 export async function analysisCostMicros(video: Video, analysis: { id: number; spendEntryId: number | null }): Promise<number | null> {
-  const key = analysisStepKey(video.productId, analysis.id);
-  const micros = (await costOfSteps([key])).get(key);
-  if (micros !== undefined) return micros;
+  // Con las de la comprobación de la variante y sus reescrituras (vídeo 71).
+  const byStep = await costOfSteps(analysisStepKeys(video.productId, analysis.id));
+  if (byStep.size > 0) return [...byStep.values()].reduce((sum, micros) => sum + micros, 0);
   return analysis.spendEntryId === null ? null : 0;
 }
