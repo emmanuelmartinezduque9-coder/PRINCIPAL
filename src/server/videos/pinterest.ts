@@ -18,6 +18,7 @@ import { makeThumbnail } from "@/server/media/ffmpeg";
 import type { PinCandidate, searchPins } from "@/server/pinterest-searches";
 import { readProductPhoto } from "@/server/photos";
 import { getProductFor } from "@/server/products";
+import { getVariantFor } from "@/server/variants";
 import { loadRules, RULE_SLUGS } from "@/server/rules";
 import type { ManifestItem } from "@/server/videos/manifest";
 import { placeOf, tramoKind, tramosOf, type Tramo } from "@/server/videos/tramos";
@@ -757,22 +758,60 @@ async function lastOwnerRejection(videoId: number, tramo = 0): Promise<string | 
   return reason.startsWith("Corrección automática:") ? null : reason;
 }
 
-/** Las fotos del producto que Claude mira al escribir el prompt (artículo, funcionamiento, caja), con su marca de cita. */
-async function productPhotosFor(videoId: number): Promise<Array<{ tag: string; label: string; jpeg: Buffer }>> {
+/** La variante elegida en la tarjeta del vídeo (nombre y fotos), o `null` si usa las fotos de siempre. */
+async function videoVariant(videoId: number): Promise<{ id: number; name: string; articlePhotoIds: number[]; packagingPhotoId: number | null } | null> {
+  const [video] = await getDb()
+    .select({ productId: schema.videos.productId, variantId: schema.videos.variantId, createdBy: schema.videos.createdBy })
+    .from(schema.videos)
+    .where(eq(schema.videos.id, videoId));
+  if (!video || video.variantId === null) return null;
+  const user = await getActiveUser(video.createdBy);
+  if (!user) return null;
+  try {
+    return await getVariantFor(user, video.productId, video.variantId);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Las fotos del producto que Claude mira al escribir el prompt (artículo, funcionamiento, caja), con
+ * su marca de cita. Con variante, las de artículo y la caja son SOLO las de la variante, en su orden
+ * (vídeo 71: con la variante azul, el escritor veía la foto rosa de siempre y describía la máquina rosa).
+ */
+async function productPhotosFor(
+  videoId: number,
+  variant: { name: string; articlePhotoIds: number[]; packagingPhotoId: number | null } | null = null,
+): Promise<Array<{ tag: string; label: string; jpeg: Buffer }>> {
   const [video] = await getDb().select({ productId: schema.videos.productId }).from(schema.videos).where(eq(schema.videos.id, videoId));
   if (!video) return [];
-  const rows = await getDb()
-    .select({ role: schema.productPhotos.role, data: schema.productPhotos.data })
+  const all = await getDb()
+    .select({ id: schema.productPhotos.id, role: schema.productPhotos.role, data: schema.productPhotos.data })
     .from(schema.productPhotos)
-    .where(and(eq(schema.productPhotos.productId, video.productId), inArray(schema.productPhotos.role, ["articulo", "funcionamiento", "embalaje"])))
+    .where(eq(schema.productPhotos.productId, video.productId))
     .orderBy(schema.productPhotos.id);
+  type Photo = { role: string; data: Buffer | Uint8Array };
+  const byId = new Map(all.map((row) => [row.id, row]));
+  // Con variante, como `ofVariant` del manifiesto: sus fotos en su orden, con el papel del hueco que ocupan.
+  const slot = (id: number, role: string): Photo[] => {
+    const row = byId.get(id);
+    return row ? [{ role, data: row.data }] : [];
+  };
+  const rows: Photo[] = variant
+    ? [
+        ...variant.articlePhotoIds.flatMap((id) => slot(id, "articulo")),
+        ...all.filter((row) => row.role === "funcionamiento"),
+        ...(variant.packagingPhotoId === null ? [] : slot(variant.packagingPhotoId, "embalaje")),
+      ]
+    : all.filter((row) => ["articulo", "funcionamiento", "embalaje"].includes(row.role));
+  const of = variant ? ` de la variante «${variant.name}» (su color y su acabado son los que valen)` : "";
   const tags: Record<string, { tag: string; label: string }[]> = {
     articulo: [
-      { tag: "{ARTICLE}", label: "el artículo del encargo (forma, color y materiales exactos)" },
-      { tag: "{ARTICLE2}", label: "otra vista del artículo del encargo" },
+      { tag: "{ARTICLE}", label: `el artículo del encargo${of} (forma, color y materiales exactos)` },
+      { tag: "{ARTICLE2}", label: `otra vista del artículo del encargo${of}` },
     ],
     funcionamiento: [{ tag: "{EFFECT}", label: "el producto del encargo funcionando: su efecto exacto (forma, color, luz)" }],
-    embalaje: [{ tag: "{PACKAGING}", label: "la caja del producto del encargo" }],
+    embalaje: [{ tag: "{PACKAGING}", label: `la caja del producto del encargo${of}` }],
   };
   const out: Array<{ tag: string; label: string; jpeg: Buffer }> = [];
   const used: Record<string, number> = {};
@@ -788,6 +827,24 @@ async function productPhotosFor(videoId: number): Promise<Array<{ tag: string; l
   }
   return out;
 }
+
+/** La huella del prompt base: con variante, también su id (cambiar de variante invalida el prompt guardado). */
+export function basePromptShaOf(imagePrompt: string, variantId: number | null): string {
+  return crypto
+    .createHash("sha256")
+    .update(variantId === null ? imagePrompt : `${imagePrompt}\u0000variante:${variantId}`)
+    .digest("hex");
+}
+
+const variantCheckSchema = z.object({
+  matches: z.boolean().describe("true si el color, el acabado y la forma descritos en el texto coinciden con la foto de la variante."),
+  problem: z.string().nullable().describe("Si no coinciden: qué está mal (p. ej. «dice pink, la foto es turquesa»); si coinciden, null."),
+});
+
+const VARIANT_CHECK_INSTRUCTIONS = `Compruebas el párrafo del producto de un prompt de imagen. El vídeo usa una variante concreta del producto, y la foto adjunta es ESA variante. Mira el color del cuerpo, de las tapas o piezas, el acabado y la forma de la foto, y compáralos con lo que dice el texto (en inglés). matches es false si el texto nombra un color, un acabado o una forma que no es el de la foto (p. ej. dice «pink» y la foto es azul turquesa), o si describe otra variante. Un texto que no nombra colores pero no contradice la foto vale.`;
+
+/** Veces que se reescribe el prompt si la descripción del producto no coincide con la variante. */
+const MAX_VARIANT_REWRITES = 2;
 
 /**
  * Método del sistema anterior, copiado tal cual (orden del dueño, 23/11/2026; ver
@@ -849,6 +906,8 @@ En lighting, además de la luz de la sala, di cómo se vuelve a iluminar el suje
 
 Decide también effectVisible: si en esta toma se ve el efecto del producto funcionando (una proyección, una luz, un resultado) y en los adjuntos hay foto de funcionamiento. Entonces escribe effectPrompt: el prompt corto de un segundo paso de edición, sobre la imagen ya generada (image 1) con la foto del producto funcionando (image 2), que cambia SOLO el efecto. En inglés, así (adaptándolo a lo que ves): «Edit image 1. Change only the [efecto, p. ej. two glowing light projections on the ground on each side of the dog]; keep everything else in image 1 exactly as it is: the same [lugar, luz, personas, manos, objetos], framing and camera. The [efecto] in image 1 may have the wrong shape. Erase it completely and draw instead the exact [efecto] of image 2: [forma, estructura, colores y detalles que ves en la foto de funcionamiento]. [Dónde empieza y cómo se apoya en la escena, en perspectiva, y el tinte de luz que deja cerca.] Not [formas incorrectas, p. ej. feathers, angel wings, dragon wings]. Do not copy the [sujeto], the floor or the background of image 2: from image 2 take only the shape, colours, details and glow of the effect. Vertical 9:16 phone photo, no text, no captions, no watermark.» Sin nombres de marca. Si no se ve el efecto, effectVisible false y effectPrompt null.
 
+TELE EN UN SALÓN NAVIDEÑO (regla del dueño, 26/11/2026): si en la escena hay una televisión, en environment va ENCENDIDA, nunca apagada ni negra, con una película de Navidad reconocible en la pantalla (Home Alone / «Kevin – Allein zu Haus» o The Grinch), y en lighting su luz fría azulada cae suave sobre la sala y las personas. Si la sala es la imagen del dueño y su pantalla ya muestra algo, se queda lo suyo.
+
 No uses palabras de la lista negra de la regla. Nada de títulos en mayúsculas.`;
 
 /**
@@ -883,7 +942,8 @@ async function composeFramePrompt(
     return null;
   }
   const room = await makeThumbnail((await readPinterestImage(refs[0].sha256)).data, "image", 1024);
-  const productPhotos = await productPhotosFor(run.videoId);
+  const variant = await videoVariant(run.videoId);
+  const productPhotos = await productPhotosFor(run.videoId, variant);
   const extras = (await manualReferences(run.videoId)).filter((ref) => ref.role === "ropa" || ref.role === "otro");
   const extraParts: Array<ReturnType<typeof textPart>> = [];
   for (const [i, ref] of extras.entries()) {
@@ -901,6 +961,13 @@ async function composeFramePrompt(
     ...(correction
       ? [textPart(`CORRECCIÓN DEL DUEÑO al rechazar la imagen anterior: «${correction}». Manda sobre el prompt del desglose: aplícala de forma visible en los párrafos que toque.`)]
       : []),
+    ...(variant
+      ? [
+          textPart(
+            `El vídeo usa la variante «${variant.name}» del producto. Describe el color, el acabado y la forma del producto SOLO mirando image {ARTICLE} (la foto de esta variante), nunca el producto de siempre ni otra variante.`,
+          ),
+        ]
+      : []),
     ...productPhotos.flatMap((photo) => [textPart(`image ${photo.tag} — ${photo.label}:`), imagePart(photo.jpeg, "image/jpeg")]),
     ...(frameJpeg ? [textPart("image 1 — fotograma original (composición):"), imagePart(frameJpeg, "image/jpeg")] : []),
     textPart(
@@ -914,20 +981,64 @@ async function composeFramePrompt(
     ...extraParts,
   ];
   const imageRules = await loadRules([RULE_SLUGS.imagen]);
-  const written = await runStep(ctx, stepKey(ctx, "prompt-sala", { runId: run.id, attempt: run.attempts, room: refs[0].sha256 }), async () => {
-    const answer = await gateway.call({
-      tier: "medium",
-      stepKey: stepKey(ctx, "prompt-sala", { runId: run.id, attempt: run.attempts, room: refs[0].sha256 }),
-      userId: ctx.userId,
-      productId: ctx.productId,
-      rules: [...imageRules, ...rules],
-      instructions: COMPOSE_INSTRUCTIONS + (userSelected ? "\nOrden expresa de Emmanuel, 25/11/2026: la foto del dueño manda. En environment enumera TODOS los objetos visibles uno a uno con su posición, sin límite de 6–12 y sin omitir portátil, peluches, platos, mantas ni decoración. No quites, cambies ni ordenes nada. Conserva tal cual lo que muestran sus pantallas y sus peluches, figuras y adornos, también si son personajes: no los neutralices, cambies ni quites (orden de Emmanuel, 25/11/2026). " + ownerEnvironmentParagraph("image {ROOM}") : ""),
-      content,
-      maxTokens: 6_000,
-      schema: composedSchema,
+  const instructions =
+    COMPOSE_INSTRUCTIONS +
+    (userSelected ? "\nOrden expresa de Emmanuel, 25/11/2026: la foto del dueño manda. En environment enumera TODOS los objetos visibles uno a uno con su posición, sin límite de 6–12 y sin omitir portátil, peluches, platos, mantas ni decoración. No quites, cambies ni ordenes nada. Conserva tal cual lo que muestran sus pantallas y sus peluches, figuras y adornos, también si son personajes: no los neutralices, cambies ni quites (orden de Emmanuel, 25/11/2026). " + ownerEnvironmentParagraph("image {ROOM}") : "");
+  // Con variante, las claves llevan su id y sus fotos: si cambian, no se reutiliza un prompt ni una comprobación de otras.
+  const variantKey = variant ? { variant: variant.id, photos: [...variant.articlePhotoIds, variant.packagingPhotoId] } : {};
+  const write = (rewrite: number, problem: string | null) => {
+    const key = stepKey(ctx, "prompt-sala", { runId: run.id, attempt: run.attempts, room: refs[0].sha256, ...variantKey, ...(rewrite > 0 ? { rewrite } : {}) });
+    return runStep(ctx, key, async () => {
+      const answer = await gateway.call({
+        tier: "medium",
+        stepKey: key,
+        userId: ctx.userId,
+        productId: ctx.productId,
+        rules: [...imageRules, ...rules],
+        instructions,
+        content: problem
+          ? [
+              ...content,
+              textPart(
+                `El prompt anterior describía mal el producto de la variante «${variant!.name}»: ${problem}. Vuelve a escribirlo describiendo el color, el acabado y la forma SOLO a partir de image {ARTICLE}.`,
+              ),
+            ]
+          : content,
+        maxTokens: 6_000,
+        schema: composedSchema,
+      });
+      return answer.data!;
     });
-    return answer.data!;
-  });
+  };
+  // Con variante, se comprueba que el párrafo del producto describe ESA variante (color, acabado,
+  // forma); si no, se reescribe (vídeo 71: variante azul descrita como «pink glossy body»).
+  const variantPhoto = variant ? productPhotos.find((photo) => photo.tag === "{ARTICLE}") : undefined;
+  let written = await write(0, null);
+  for (let rewrite = 1; variant && variantPhoto && written.productVisible && rewrite <= MAX_VARIANT_REWRITES; rewrite++) {
+    const product = written.product;
+    const checkKey = stepKey(ctx, "variante-producto", { runId: run.id, attempt: run.attempts, room: refs[0].sha256, ...variantKey, rewrite, product });
+    const check = await runStep(ctx, checkKey, async () => {
+      const answer = await gateway.call({
+        tier: "small",
+        stepKey: checkKey,
+        userId: ctx.userId,
+        productId: ctx.productId,
+        rules: [],
+        instructions: VARIANT_CHECK_INSTRUCTIONS,
+        content: [
+          textPart(`Variante: «${variant.name}». Párrafo del producto:\n${product}`),
+          textPart("Foto de la variante:"),
+          imagePart(variantPhoto.jpeg, "image/jpeg"),
+        ],
+        maxTokens: 400,
+        schema: variantCheckSchema,
+      });
+      return answer.data!;
+    });
+    if (check.matches) break;
+    console.warn(`[pinterest] Vídeo ${run.videoId}: el producto no coincide con la variante «${variant.name}» (${check.problem ?? "sin detalle"}); se reescribe el prompt.`);
+    written = await write(rewrite, check.problem ?? "el color o el acabado no son los de la foto de la variante");
+  }
   const paragraphs = [
     written.composition.trim(),
     written.identity.trim(),
@@ -941,12 +1052,34 @@ async function composeFramePrompt(
   ];
   return {
     prompt: paragraphs.join("\n\n"),
-    baseSha: crypto.createHash("sha256").update(base).digest("hex"),
+    baseSha: basePromptShaOf(base, variant?.id ?? null),
     productHidden: !written.productVisible,
     packagingHidden: !written.packagingVisible,
     effectVisible: written.effectVisible && !!written.effectPrompt,
     effectPrompt: written.effectVisible ? written.effectPrompt : null,
   };
+}
+
+/** Marca de una etiqueta sin foto en el manifiesto (nunca llega al prompt: su frase se quita). */
+const UNRESOLVED = "\u0000";
+
+/**
+ * Quita del prompt resuelto cada frase que cita una etiqueta sin foto (vídeo 71: «image ? shows the
+ * same machine from another view» con {ARTICLE2} sin segunda foto). Nunca se manda «image ?».
+ */
+export function dropUnresolved(prompt: string): string {
+  if (!prompt.includes(UNRESOLVED)) return prompt;
+  return prompt
+    .split(/\n\s*\n/)
+    .map((paragraph) =>
+      paragraph
+        .split(/(?<=[.!?;]["'»”)\]]?)\s+(?=["'«“(]?[A-Z\u0000])/)
+        .filter((sentence) => !sentence.includes(UNRESOLVED))
+        .join(" ")
+        .trim(),
+    )
+    .filter(Boolean)
+    .join("\n\n");
 }
 
 /**
@@ -959,20 +1092,21 @@ export async function framePromptFor(videoId: number, imagePrompt: string, manif
   if (tags.length === 0) return withPinterestRoles(imagePrompt, manifest);
   const analysisId = await latestDoneAnalysisId(videoId);
   const run = analysisId === null ? null : await runOf(videoId, analysisId, tramo);
-  const sha = crypto.createHash("sha256").update(imagePrompt).digest("hex");
+  const [video] = await getDb().select({ variantId: schema.videos.variantId }).from(schema.videos).where(eq(schema.videos.id, videoId));
+  const sha = basePromptShaOf(imagePrompt, video?.variantId ?? null);
   if (!run?.framePrompt || run.basePromptSha !== sha) return withPinterestRoles(imagePrompt, manifest);
-  const number = (item: ManifestItem | undefined) => (item ? String(item.index) : "?");
+  const number = (item: ManifestItem | undefined) => (item ? String(item.index) : UNRESOLVED);
   const byRole = (role: ManifestItem["role"]) => manifest.filter((item) => item.role === role);
   const pins = byRole("pinterest");
   const articles = byRole("articulo");
-  const resolved = run.framePrompt
+  const resolved = dropUnresolved(run.framePrompt
     .replaceAll(ROOM_TAG, number(pins[0]))
     .replaceAll(REALISM_TAG, number(pins[1] ?? pins[0]))
     .replaceAll("{AVATAR}", number(byRole("avatar")[0]))
     .replaceAll("{PACKAGING}", number(byRole("embalaje")[0]))
     .replaceAll("{EFFECT}", number(byRole("funcionamiento")[0]))
     .replace(/\{MANUAL(\d)\}/g, (_, n: string) => number(byRole("referencia")[Number(n) - 1]))
-    .replace(/\{ARTICLE(\d?)\}/g, (_, n: string) => number(articles[(n ? Number(n) : 1) - 1]));
+    .replace(/\{ARTICLE(\d?)\}/g, (_, n: string) => number(articles[(n ? Number(n) : 1) - 1])));
   return manifest.some((item) => item.ownerSelected || item.role === "entorno") ? withPinterestRoles(resolved, manifest) : resolved;
 }
 

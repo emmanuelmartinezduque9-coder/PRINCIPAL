@@ -1,3 +1,5 @@
+import { christmasTvLine, lastWasBlocked } from "@/server/videos/tele-navidad";
+import { tramoKind } from "@/server/videos/tramos";
 import { preferencesFor } from "@/server/videos/aprendizaje/preferencias";
 import { and, eq, gt, isNull, notInArray, sql } from "drizzle-orm";
 import type { HfMediaRef } from "@/connectors/higgsfield";
@@ -200,7 +202,12 @@ export const buildFrameRequest: RequestBuilder = async (user, video, deps) => {
   // Regla fija (23/11/2026, lote 3): un póster con una persona famosa en la pared hizo que Higgsfield
   // bloqueara los clips. Toda imagen inicial lo prohíbe, escriba lo que escriba el desglose.
   // Después, las correcciones aprendidas de los reportes («Mejoras»), literales: así se sabe qué imagen las llevó.
-  const prompt = `${(await framePromptFor(video.id, video.imagePrompt!, manifest, tramo)).trim()} ${manifest.some((item) => item.ownerSelected || item.role === "entorno") ? NO_PEOPLE_PICTURES_OWNER_ROOM : NO_PEOPLE_PICTURES}${await learnedSuffix("frame", video.productId)}${(await preferencesFor("imagen", { videoId: video.id, tramo })).text}`;
+  const ownerRoom = manifest.some((item) => item.ownerSelected || item.role === "entorno");
+  const written = (await framePromptFor(video.id, video.imagePrompt!, manifest, tramo)).trim();
+  // Regla del dueño (26/11/2026): en un salón navideño con tele, la tele encendida con una película de
+  // Navidad; si Higgsfield bloqueó el intento anterior, una escena navideña genérica (`tele-navidad.ts`).
+  const tv = christmasTvLine(written, { ownerRoom, blockedBefore: await lastWasBlocked(video.id, tramoKind("frame", tramo)) });
+  const prompt = `${written}${tv ? ` ${tv}` : ""} ${ownerRoom ? NO_PEOPLE_PICTURES_OWNER_ROOM : NO_PEOPLE_PICTURES}${await learnedSuffix("frame", video.productId)}${(await preferencesFor("imagen", { videoId: video.id, tramo })).text}`;
   if (manifest.some((item) => item.source.kind === "avatar_pending")) throw new HttpError(400, NO_AUTO_AVATAR);
   const errors = checkImagePrompt(prompt, manifest).filter((issue) => issue.level === "error");
   if (errors.length > 0) throw new HttpError(400, errors.map((issue) => issue.message).join(" "), PROMPT_ERROR);

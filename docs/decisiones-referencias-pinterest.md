@@ -120,3 +120,29 @@ lo que escribe el dueño; lo que exige la escena va en `requiredChain`.
 ## Una búsqueda por sitio de la referencia (24/11/2026)
 
 Regla fija de Emmanuel: cada toma conserva su sitio. Con varios sitios en la referencia (`Analysis.places`, ver `docs/sitios-de-la-referencia.md`), `video_pinterest_refs` tiene una búsqueda por sitio (columna `tramo`, única con vídeo y desglose). La escena de cada búsqueda la sigue escribiendo Claude con PLAN_INSTRUCTIONS, pero recibe solo ese sitio: su lugar, su acción, sus objetos, sus tomas y el primer fotograma de ese sitio. Los filtros, la cadena, el último intento y el banco de respaldo no cambian. La referencia de entorno del dueño (`environmentPhotoId` o un «fondo» subido) solo cubre los sitios con `ownerEnvironment`. Un rechazo de la apertura de un sitio borra solo la búsqueda de ese sitio.
+
+## Variante y etiquetas sin foto en el prompt de la imagen (26/11/2026, vídeo 71 del lote 12)
+
+- **La variante manda en la descripción del producto.** El escritor del prompt (`composeFramePrompt`)
+  veía las fotos de artículo de siempre aunque la tarjeta tuviera una variante. Con la variante azul,
+  describía una máquina rosa y salió rosa en todas las rondas. Ahora `productPhotosFor` enseña solo las
+  fotos de la variante (artículo en su orden y su caja), y se le dice cuál es. Tras escribirlo, una
+  comprobación con visión compara el párrafo del producto con la foto de la variante. Si el color, el
+  acabado o la forma no coinciden, se reescribe (hasta 2 veces). La huella del prompt guardado incluye
+  la variante (`basePromptShaOf`): cambiar de variante no reutiliza un prompt escrito para otra. Sin
+  variante, la huella es la de siempre.
+- **Nunca «image ?».** Una etiqueta sin foto en el manifiesto (p. ej. `{ARTICLE2}` con una sola foto
+  de artículo) ya no se resuelve a «?». Su frase se quita del prompt (`dropUnresolved`).
+- Revisión de Codex aplicada: las fotos de la variante toman el papel del hueco que ocupan (como
+  `ofVariant`); las claves de los pasos llevan la variante y sus fotos; `dropUnresolved` respeta
+  comillas, paréntesis y abreviaturas («e.g.»).
+
+## Tele encendida en el salón navideño (26/11/2026, regla de Emmanuel con su consentimiento: «sí, para todos»)
+
+En toda escena de salón navideño con televisión (imagen inicial y clip), la tele va ENCENDIDA con una
+película de Navidad reconocible (Home Alone / «Kevin – Allein zu Haus», o El Grinch) y su luz fría.
+Nunca apagada. Está en `src/server/videos/tele-navidad.ts`: se detecta por el texto del prompt (Navidad +
+salón + tele). Se añade al prompt de la imagen (`frame.ts`) y al del clip (`clip.ts`), y el escritor de la
+sala lo sabe (`COMPOSE_INSTRUCTIONS`). Si el intento anterior lo bloqueó el filtro de Higgsfield, el
+siguiente lleva una escena navideña genérica en la pantalla, sin pararse. Con la imagen de entorno del
+dueño no se añade nada: lo que traiga su pantalla se queda.

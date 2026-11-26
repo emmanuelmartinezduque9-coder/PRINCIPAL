@@ -1,3 +1,4 @@
+import { christmasTvLine, lastWasBlocked } from "@/server/videos/tele-navidad";
 import { preferencesFor } from "@/server/videos/aprendizaje/preferencias";
 import { and, asc, desc, eq } from "drizzle-orm";
 import {
@@ -228,7 +229,13 @@ export const buildClipRequest: RequestBuilder = async (user, video, deps) => {
   const settingPrompt = paragraphs.length ? `\n\n${paragraphs.join("\n\n")}` : "";
   if (manifest.some((item) => item.source.kind === "avatar_pending")) throw new HttpError(409, NO_AUTO_AVATAR);
   // Correcciones aprendidas de los reportes («Mejoras», `src/server/videos/mejoras/`): van literales al final.
-  const prompt = `${wholeVideoPreamble(model, video.segmentDurationMs)}${basePrompt + settingPrompt}${productEverywhere(model, manifest, video.variantId !== null)}${await learnedSuffix("clip", video.productId)}${(await preferencesFor("clip", { videoId: video.id, tramo: 0 })).text}`;
+  // Regla del dueño (26/11/2026): salón navideño con tele → encendida con una película de Navidad
+  // (genérica si Higgsfield bloqueó el clip anterior); el entorno del dueño manda (`tele-navidad.ts`).
+  const tv = christmasTvLine(`${video.videoPrompt ?? ""} ${video.imagePrompt ?? ""}`, {
+    ownerRoom: video.environmentPhotoId !== null || manifest.some((item) => item.ownerSelected),
+    blockedBefore: await lastWasBlocked(video.id, "clip"),
+  });
+  const prompt = `${wholeVideoPreamble(model, video.segmentDurationMs)}${basePrompt + settingPrompt}${tv ? `\n\n${tv}` : ""}${productEverywhere(model, manifest, video.variantId !== null)}${await learnedSuffix("clip", video.productId)}${(await preferencesFor("clip", { videoId: video.id, tramo: 0 })).text}`;
   const error = checkVideoPrompt(prompt, manifest).find((issue) => issue.level === "error");
   if (error) throw new HttpError(400, error.message, PROMPT_ERROR);
 

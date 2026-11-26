@@ -28,6 +28,8 @@ import {
   readyPinterestRefs,
   requirePinterestRefs,
   addApprovedToBank,
+  basePromptShaOf,
+  dropUnresolved,
   phoneShapedFirst,
   runPinterest,
   seedReferenceBank,
@@ -36,6 +38,7 @@ import {
   withPinterestRoles,
   type PinterestDeps,
 } from "@/server/videos/pinterest";
+import { createVariant } from "@/server/variants";
 import { createVideo, getVideoFor, manifestRefsFor, updateVideoChoices, videoView, type Video } from "@/server/videos/videos";
 import { fakeMessages } from "./helpers/fake-llm";
 import { makeProduct, makeUser, seedanceByDefault } from "./helpers/fixtures";
@@ -740,5 +743,94 @@ describe("referencias del clip de otro entorno, sin otra apertura", () => {
     expect(done.refs).toMatchObject([{ sha256: bank[0], sourceUrl: "subida-a-mano" }]);
     expect(search).not.toHaveBeenCalled();
     expect(calls).toHaveLength(1);
+  });
+});
+
+describe("vídeo 71 (lote 12): el prompt de la imagen describe la variante y nunca manda «image ?»", () => {
+  const textOf = (call: unknown) =>
+    ((call as { messages: Array<{ content: unknown }> }).messages[0].content as Array<{ type: string; text?: string }>).map((b) => b.text ?? "").join("\n");
+
+  it("con variante, el escritor ve solo la foto de la variante; si describe otro color, se comprueba y se reescribe", async () => {
+    const azul = (await addProductPhoto(ana, producto.id, makeImage("azul.jpg", "turquoise"), "articulo")).id;
+    const variante = await createVariant(ana, producto.id, { name: "Variante azul", articlePhotoIds: [azul] });
+    // La variante ya estaba elegida al desglosar (cambiarla después pide repetir el desglose).
+    await getPool().query("update videos set variant_id = $2 where id = $1", [v.id, variante.id]);
+    await getPool().query("update video_analyses set variant_id = $2 where video_id = $1", [v.id, variante.id]);
+    await requirePinterestRefs(v.id).catch(() => {});
+    const run = await runOfVideo(v.id);
+    const pink = { ...COMPOSED, productVisible: true, product: "Image {ARTICLE} is the exact selected product: the rounded egg-shaped pink glossy body with a pink cap. Retain its geometry, markings, materials and realistic scale." };
+    const blue = { ...pink, product: "Image {ARTICLE} is the exact selected product: the rounded egg-shaped turquoise blue glossy body with a white cap. Retain its geometry, markings, materials and realistic scale." };
+    const { client, calls } = fakeMessages([
+      { text: JSON.stringify(SCENE) },
+      { text: JSON.stringify({ picks: [{ n: 1, reason: "Salón real de móvil." }], rejected: "" }) },
+      { text: JSON.stringify(pink) },
+      { text: JSON.stringify({ matches: false, problem: "dice pink y la foto de la variante es azul turquesa" }) },
+      { text: JSON.stringify(blue) },
+      { text: JSON.stringify({ matches: true, problem: null }) },
+    ]);
+    await runPinterest(run.id, pinterestDeps({ gateway: createGateway({ client }) }));
+    const done = await runOfVideo(v.id);
+    expect(done.status).toBe("ready");
+    expect(calls).toHaveLength(6);
+    // El escritor ve solo la foto de la variante (una de artículo, no la de siempre) y se le dice cuál es.
+    const compose = textOf(calls[2]);
+    expect(compose).toContain("El vídeo usa la variante «Variante azul»");
+    expect(compose).toContain("de la variante «Variante azul» (su color y su acabado son los que valen)");
+    expect(compose).not.toContain("otra vista del artículo");
+    expect(textOf(calls[3])).toContain("rounded egg-shaped pink glossy body");
+    expect(textOf(calls[4])).toContain("describía mal el producto de la variante «Variante azul»: dice pink y la foto de la variante es azul turquesa");
+    expect(done.framePrompt).toContain("turquoise blue glossy body");
+    expect(done.framePrompt).not.toContain("pink");
+    expect(done.basePromptSha).toBe(basePromptShaOf(PROMPT, variante.id));
+    // El prompt guardado vale para esa variante y se manda con sus números reales.
+    const { request } = await buildFrameRequest(ana, await getVideoFor(ana, v.id), deps);
+    expect((request as { prompt: string }).prompt).toContain("turquoise blue glossy body");
+  });
+
+  it("una etiqueta sin foto quita su frase: nunca «image ?»", async () => {
+    await requirePinterestRefs(v.id).catch(() => {});
+    const run = await runOfVideo(v.id);
+    const composed = {
+      ...COMPOSED,
+      productVisible: true,
+      product: "Image {ARTICLE} is the exact selected product. Image {ARTICLE2} shows the same machine from another view. Retain its geometry, markings, materials and realistic scale.",
+    };
+    const { client } = fakeMessages([
+      { text: JSON.stringify(SCENE) },
+      { text: JSON.stringify({ picks: [{ n: 1, reason: "Salón real de móvil." }], rejected: "" }) },
+      { text: JSON.stringify(composed) },
+    ]);
+    await runPinterest(run.id, pinterestDeps({ gateway: createGateway({ client }) }));
+    expect((await runOfVideo(v.id)).status).toBe("ready");
+    const { request } = await buildFrameRequest(ana, await getVideoFor(ana, v.id), deps);
+    const prompt = (request as { prompt: string }).prompt;
+    expect(prompt).not.toContain("image ?");
+    expect(prompt).not.toContain("\u0000");
+    expect(prompt).not.toContain("from another view");
+    expect(prompt).toMatch(/Image \d+ is the exact selected product\. Retain its geometry/);
+    // Y la función sola: quita solo la frase de la etiqueta sin foto.
+    expect(dropUnresolved("A is fine. Image \u0000 shows X. B stays.\n\nC.")).toBe("A is fine. B stays.\n\nC.");
+    // Revisión de Codex: comillas o paréntesis al cerrar, y abreviaturas como «e.g.».
+    expect(dropUnresolved('Image \u0000 shows another view." Retain the exact geometry.')).toBe("Retain the exact geometry.");
+    expect(dropUnresolved("Image \u0000 shows another view (e.g. the cap). Retain the exact geometry.")).toBe("Retain the exact geometry.");
+  });
+});
+
+describe("tele encendida en el salón navideño (regla del dueño, 26/11/2026)", () => {
+  it("la imagen inicial de un salón navideño con tele la pide encendida con una película de Navidad", async () => {
+    await requirePinterestRefs(v.id).catch(() => {});
+    const run = await runOfVideo(v.id);
+    const christmas = { ...COMPOSED, environment: `${COMPOSED.environment} It is a Christmas living room.` };
+    const { client, calls } = fakeMessages([
+      { text: JSON.stringify(SCENE) },
+      { text: JSON.stringify({ picks: [{ n: 1, reason: "Salón real de móvil." }], rejected: "" }) },
+      { text: JSON.stringify(christmas) },
+    ]);
+    await runPinterest(run.id, pinterestDeps({ gateway: createGateway({ client }) }));
+    expect(JSON.stringify(calls[2])).toContain("TELE EN UN SALÓN NAVIDEÑO");
+    const { request } = await buildFrameRequest(ana, await getVideoFor(ana, v.id), deps);
+    const prompt = (request as { prompt: string }).prompt;
+    expect(prompt).toContain("The television in this Christmas living room is switched ON, never off or black");
+    expect(prompt).toContain("Home Alone");
   });
 });
