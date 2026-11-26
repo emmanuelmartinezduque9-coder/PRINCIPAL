@@ -359,7 +359,9 @@ def comprobar(audio, origen, destino, ventanas=None):
     if w is None:
         return None
     quedan = []
-    for f in frases(w, leer(audio)):
+    oidas = frases(w, leer(audio))
+    comprobar.oidas = oidas  # todo lo oído: `doblaje.ts` mira además si la traducción tiene sentido
+    for f in oidas:
         dentro = ventanas is None or any(f['desde'] < b + RELLENO_S and f['hasta'] > a - RELLENO_S for a, b in ventanas)
         if dentro and en_idioma_original(f, origen, destino):
             quedan.append(dict(desde=f['desde'], hasta=f['hasta'], texto=f['texto'][:120], idioma=f['idioma'], probabilidad=f['prob']))
@@ -479,7 +481,7 @@ def main(argv=None):
         elif a.orden == 'comprobar':
             ventanas = [tuple(float(v) for v in x.split(':')) for x in a.ventanas] if a.ventanas is not None else None
             quedan = comprobar(a.audio, a.origen, a.destino, ventanas)
-            r = dict(ok=True, comprobado=quedan is not None, quedan=quedan or [])
+            r = dict(ok=True, comprobado=quedan is not None, quedan=quedan or [], frases=getattr(comprobar, 'oidas', []))
         elif a.orden == 'rescatar':
             habla = [tuple(float(v) for v in x.split(':')) for x in a.habla] if a.habla is not None else None
             r = rescatar(a.carpeta, [tuple(float(v) for v in x.split(':')) for x in a.tramos], a.video, habla)

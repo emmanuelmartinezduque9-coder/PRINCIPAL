@@ -100,7 +100,11 @@ elif args[0] == 'comprobar':
     quedan = [{'desde': 11.5, 'hasta': 13.2, 'texto': 'Look at her wings!', 'idioma': 'en'}] if fuga and veces == 0 else []
     if Path(args[1]).read_bytes().startswith(b'DOBLAJE-VIEJO-EN'):
         quedan = [{'desde': 0.0, 'hasta': 3.4, 'texto': "3, 2, 1, let's see this guy!", 'idioma': 'en'}]
-    r = {'ok': True, 'comprobado': True, 'quedan': quedan}
+    # Lo que se oye doblado: con una referencia «MALA-TRADUCCION», la primera vez una frase sin sentido.
+    mala = (Path(args[1]).parent / 'referencia-audio.m4a').read_bytes().startswith(b'MALA-TRADUCCION') if (Path(args[1]).parent / 'referencia-audio.m4a').exists() else False
+    oido = 'Ich werde drei, zwei' if mala and veces == 0 else 'Drei, zwei, eins'
+    frases = [{'desde': 0.5, 'hasta': 1.8, 'texto': oido, 'idioma': 'de', 'prob': 0.99, 'no_habla': 0.05, 'confianza': -0.3}]
+    r = {'ok': True, 'comprobado': True, 'quedan': quedan, 'frases': frases}
 elif args[0] == 'verificar':
     # Comprobación final del vídeo montado. Según el «Audio original» de la referencia: «FINAL-EN» deja diálogo en inglés
     # la primera vez (luego, ya doblado, nada); «SIEMPRE-EN», siempre; «FINAL-CANCION», solo la letra de una canción.
@@ -188,6 +192,12 @@ const gateway: LlmGateway = {
     speech.calls += 1;
     speech.instructions = request.instructions;
     if (speech.down) throw new Error("Claude sin saldo");
+    if (request.stepKey.includes(":traduccion:")) {
+      // Revisión de la traducción: lo que lleva «werde» no tiene sentido.
+      const lines = String((request.content as Array<{ text?: string }>)[0]?.text ?? "").split("\n");
+      const data = { frases: lines.map((l, i) => ({ n: i + 1, bien: !l.includes("werde"), motivo: "prueba" })) };
+      return { text: "", data: data as T, model: "prueba", usage: {} as never, costMicros: 0, spendEntryId: 0, ruleVersions: {}, webSources: [] };
+    }
     if (request.stepKey.includes("letra-traducida")) {
       // Comparar lo doblado con la referencia: lo que dice «Turm» traduce la primera frase de canto.
       const text = String((request.content as Array<{ text?: string }>)[0]?.text ?? "");
@@ -410,10 +420,20 @@ describe("que no quede nada en el idioma original", () => {
     const { outcome, row } = await mount(video.id);
     expect(outcome).toBe("done");
     expect(dubCalls()).toHaveLength(2); // el vídeo entero y el trozo
-    expect(row.notes).toContain("Vuelto a doblar porque seguía en el idioma original: «Look at her wings!» (11.5–13.2 s)");
+    expect(row.notes).toContain("Vuelto a doblar: «Look at her wings!» (11.5–13.2 s, seguía en el idioma original)");
     const [dub] = await dubRows();
     expect(dub).toMatchObject({ status: "done", creditsSpent: DUB_CREDITS * 2, error: null });
     expect(dub.raw).toMatchObject({ comprobado: true, quedan: [], reparaciones: [{ desde: 11.5, hasta: 13.2 }] });
+  });
+
+  it("si la traducción no tiene sentido, se vuelve a doblar ese trozo (lote 11, vídeo 64)", async () => {
+    const video = await videoWithAudio({ dubDialogue: true });
+    const bad = Buffer.from("MALA-TRADUCCION-INGLES");
+    await getDb().update(schema.videoReferenceAudio).set({ data: bad, size: bad.length }).where(eq(schema.videoReferenceAudio.videoId, video.id));
+    const { outcome, row } = await mount(video.id);
+    expect(outcome).toBe("done");
+    expect(dubCalls()).toHaveLength(2); // el vídeo entero y el trozo
+    expect(row.notes).toContain("Vuelto a doblar: «Three, two, one» (0.5–1.8 s, la traducción no tenía sentido)");
   });
 
   it("una vez al arrancar, los vídeos con un doblaje sin comprobar vuelven a montarse", async () => {

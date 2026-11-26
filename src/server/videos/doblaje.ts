@@ -606,7 +606,7 @@ export async function dubbedAudio(ctx: DubContext): Promise<DubOutcome> {
     const windows = (row.raw as { ventanas?: Array<[number, number]> } | null)?.ventanas ?? null;
     let voice = dub;
     let extra = 0;
-    const repairs: Array<{ desde: number; hasta: number; texto: string; creditos: number }> = [];
+    const repairs: Array<{ desde: number; hasta: number; texto: string; creditos: number; motivo: string }> = [];
     let left: NonNullable<DoblarResult["quedan"]> = [];
     let checked = false;
     for (let attempt = 0; ; attempt++) {
@@ -621,7 +621,17 @@ export async function dubbedAudio(ctx: DubContext): Promise<DubOutcome> {
       ]);
       checked = check.ok && check.comprobado === true;
       left = check.quedan ?? [];
-      if (!checked || left.length === 0 || attempt >= MAX_REPAIRS) break;
+      if (!checked || attempt >= MAX_REPAIRS) break;
+      let reason = "seguía en el idioma original";
+      if (left.length === 0) {
+        // Y que la traducción tenga sentido (lote 11, vídeo 64: «Okay. Best gift ever.» salió «Ähm, okay, ich werde das
+        // Geschenk aller Zeiten»): Claude compara cada frase de diálogo con lo que se oye doblado en su sitio.
+        const original = (row.raw as { frases?: Array<Phrase & { tipo?: string }> } | null)?.frases ?? [];
+        const wrong = await badTranslations(ctx, userId, target, original, (check as { frases?: Phrase[] }).frases ?? []);
+        if (!wrong.length) break;
+        left = wrong;
+        reason = "la traducción no tenía sentido";
+      }
       const leak = left[0];
       const piece = await ctx.doblar(["tramo", stems, String(leak.desde), String(leak.hasta), path.join(ctx.dir, `tramo-${attempt}.mp4`), ...(ctx.referenceVideo ? ["--video", ctx.referenceVideo] : [])]);
       if (!piece.ok || piece.desde === undefined) break;
@@ -632,12 +642,12 @@ export async function dubbedAudio(ctx: DubContext): Promise<DubOutcome> {
       const graft = await ctx.doblar(["injertar", voice, redone.file, String(piece.desde), grafted]);
       if (!graft.ok) break;
       voice = grafted;
-      repairs.push({ desde: leak.desde, hasta: leak.hasta, texto: leak.texto, creditos: redone.credits });
+      repairs.push({ desde: leak.desde, hasta: leak.hasta, texto: leak.texto, creditos: redone.credits, motivo: reason });
       const remixed = await ctx.doblar(["mezclar", stems, voice, output]);
       if (!remixed.ok) break;
     }
     if (!checked) ctx.notes.push("No se pudo comprobar con Whisper que no quede diálogo en el idioma original");
-    if (repairs.length) ctx.notes.push(`Vuelto a doblar porque seguía en el idioma original: ${repairs.map((r) => `«${r.texto}» (${r.desde}–${r.hasta} s)`).join(", ")}`);
+    if (repairs.length) ctx.notes.push(`Vuelto a doblar: ${repairs.map((r) => `«${r.texto}» (${r.desde}–${r.hasta} s, ${r.motivo})`).join(", ")}`);
     if (left.length) ctx.notes.push(`Sigue en el idioma original: ${left.map((r) => `«${r.texto}» (${r.desde}–${r.hasta} s)`).join(", ")}`);
     const key = `doblajes/${ctx.videoId}/${row.id}.m4a`;
     await ctx.store.putFile(key, output, { contentType: "audio/mp4" });
@@ -653,6 +663,49 @@ export async function dubbedAudio(ctx: DubContext): Promise<DubOutcome> {
   } catch (error) {
     const shown = isHiggsfieldError(error) ? dubFailure(error.message) : dubFailure("error interno del doblaje");
     return { kind: "failed", shown, detail: messageOf(error) };
+  }
+}
+
+const translationCheckSchema = z.object({ frases: z.array(z.object({ n: z.number().int().min(1), bien: z.boolean(), motivo: z.string().max(200) })).max(40) });
+
+/**
+ * Frases de diálogo cuya traducción no vale: Claude compara cada frase de HABLA del original con lo que Whisper oye
+ * doblado en su sitio y dice si dice lo mismo y suena natural en el idioma del anuncio. Devuelve las ventanas que hay que
+ * volver a doblar (como frases), `[]` si todo está bien o no se puede juzgar.
+ */
+async function badTranslations(
+  ctx: DubContext,
+  userId: number,
+  target: { code: string; name: string },
+  original: Array<Phrase & { tipo?: string }>,
+  heard: Phrase[],
+): Promise<Array<{ desde: number; hasta: number; texto: string; idioma: string }>> {
+  const speech = original.filter((f) => f.tipo === "habla" && !f.texto.startsWith("("));
+  const pairs = speech
+    .map((f) => ({ f, dubbed: heard.filter((h) => h.idioma === ctx.language && h.desde < f.hasta + 0.5 && f.desde - 0.5 < h.hasta).map((h) => h.texto).join(" ") }))
+    .filter((p) => p.dubbed.trim());
+  if (pairs.length === 0) return [];
+  const listing = pairs.map((p, i) => `${i + 1}. Original: «${p.f.texto}» → doblado: «${p.dubbed}»`).join("\n");
+  try {
+    const answer = await (ctx.gateway ?? getGateway()).call({
+      tier: "medium",
+      stepKey: `montaje:${ctx.videoId}:traduccion:${crypto.createHash("sha256").update(listing).digest("hex").slice(0, 16)}`,
+      userId,
+      productId: null,
+      rules: [],
+      instructions: [
+        `Revisas un doblaje al ${target.name} de un anuncio corto. Por cada frase te doy el original y lo que Whisper oye doblado (puede tener pequeños errores de transcripción).`,
+        `«bien»: true si lo doblado dice lo mismo que el original y es una frase natural en ${target.name}; false si cambia el sentido, mete palabras que no están, queda sin sentido o en otro idioma. Sé tolerante con sinónimos y con errores leves de Whisper.`,
+      ].join("\n"),
+      content: [textPart(listing)],
+      maxTokens: 1_000,
+      schema: translationCheckSchema,
+    });
+    const byN = new Map((answer.data?.frases ?? []).map((f) => [f.n, f.bien]));
+    return pairs.filter((_, i) => byN.get(i + 1) === false).map((p) => ({ desde: p.f.desde, hasta: p.f.hasta, texto: p.f.texto, idioma: ctx.language }));
+  } catch (error) {
+    console.warn(`[doblaje] Claude no pudo revisar la traducción del vídeo ${ctx.videoId}: ${messageOf(error)}`);
+    return [];
   }
 }
 

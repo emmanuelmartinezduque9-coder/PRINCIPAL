@@ -190,6 +190,11 @@ la canción: el 65 sonaba «Die ganze Zeit, die Falle in meinem Turm…» y el 6
    el campo es obligatorio, y Claude recibe como contexto lo que Whisper oye en el audio entero (`mezcla` de `separar`).
    La comprobación final también escucha el audio entero (en el 65 el alemán cantado no salía en la voz separada).
    `DECISION_VERSION = 6`. Probado 3 veces seguidas con Claude real: 65 canto 3/3; 64, 45, 22 y 63 sin cambios.
+6. El 64 ya no traducía la canción, pero la segunda frase salió en mal alemán («Ähm, okay, ich werde das Geschenk aller
+   Zeiten» por «Okay. Best gift ever.»). La voz que se mandó estaba limpia (la pista de voz en 11,9–13,3 s solo dice
+   «Okay, best gift ever.»): fue la traducción de Higgsfield. Ahora, tras mezclar, Claude compara cada frase de diálogo
+   del original con lo que se oye doblado en su sitio; si no dice lo mismo o no es natural en el idioma del anuncio,
+   ese trozo se vuelve a doblar (la reparación de siempre, `MAX_REPAIRS`) y se comprueba otra vez.
 
 ## Ningún montaje mudo (24/11/2026)
 
