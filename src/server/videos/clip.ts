@@ -14,7 +14,7 @@ import { ensureMedia } from "@/server/higgsfield";
 import { HttpError } from "@/server/http";
 import { readAvatarImage } from "@/server/avatars";
 import { readProductPhoto } from "@/server/photos";
-import { readPinterestImage, readyPinterestRefs, requirePinterestRefs, ownerEnvironmentParagraph } from "@/server/videos/pinterest";
+import { christmasTvSeen, readPinterestImage, readyPinterestRefs, requirePinterestRefs, ownerEnvironmentParagraph } from "@/server/videos/pinterest";
 import { resolveClipModel, SEEDANCE, sourceProblem, wanDurationSeconds, type ClipModel } from "@/lib/clip-models";
 import { getProductFor } from "@/server/products";
 import { listReferences } from "@/server/videos/referencias";
@@ -234,6 +234,7 @@ export const buildClipRequest: RequestBuilder = async (user, video, deps) => {
   const tv = christmasTvLine(`${video.videoPrompt ?? ""} ${video.imagePrompt ?? ""}`, {
     ownerRoom: video.environmentPhotoId !== null || manifest.some((item) => item.ownerSelected),
     blockedBefore: await lastWasBlocked(video.id, "clip"),
+    seen: await christmasTvSeen(video.id),
   });
   const prompt = `${wholeVideoPreamble(model, video.segmentDurationMs)}${basePrompt + settingPrompt}${tv ? `\n\n${tv}` : ""}${productEverywhere(model, manifest, video.variantId !== null)}${await learnedSuffix("clip", video.productId)}${(await preferencesFor("clip", { videoId: video.id, tramo: 0 })).text}`;
   const error = checkVideoPrompt(prompt, manifest).find((issue) => issue.level === "error");

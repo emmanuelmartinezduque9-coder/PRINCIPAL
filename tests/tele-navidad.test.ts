@@ -25,6 +25,13 @@ describe("la tele del salón navideño", () => {
     expect(line).toContain("switched ON");
   });
 
+  it("si Claude vio la tele en la referencia o en la sala, se aplica aunque el prompt no la nombre", () => {
+    const plain = "Reference image 2 is the EXACT requested background. Preserve its sofa on the LEFT.";
+    expect(christmasTvLine(plain, { ownerRoom: false, blockedBefore: false })).toBe("");
+    expect(christmasTvLine(plain, { ownerRoom: false, blockedBefore: false, seen: true })).toBe(CHRISTMAS_TV_ON);
+    expect(christmasTvLine(plain, { ownerRoom: true, blockedBefore: false, seen: true })).toBe("");
+  });
+
   it("la imagen del dueño manda: no se toca su pantalla", () => {
     expect(christmasTvLine(SALON, { ownerRoom: true, blockedBefore: false })).toBe("");
   });

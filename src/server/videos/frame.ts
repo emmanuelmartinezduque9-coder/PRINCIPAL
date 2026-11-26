@@ -20,7 +20,7 @@ import {
 } from "@/server/videos/generations";
 import { imageManifest, type ManifestItem } from "@/server/videos/manifest";
 import { learnedSuffix } from "@/server/videos/mejoras/corrections";
-import { addApprovedToBank, framePromptFor, hasManualEnvironment, readPinterestImage, requirePinterestRefs } from "@/server/videos/pinterest";
+import { addApprovedToBank, christmasTvSeen, framePromptFor, hasManualEnvironment, readPinterestImage, requirePinterestRefs } from "@/server/videos/pinterest";
 import { checkImagePrompt, PROMPT_ERROR } from "@/server/videos/prompt-check";
 import {
   BRIEF_CHANGED,
@@ -206,7 +206,11 @@ export const buildFrameRequest: RequestBuilder = async (user, video, deps) => {
   const written = (await framePromptFor(video.id, video.imagePrompt!, manifest, tramo)).trim();
   // Regla del dueño (26/11/2026): en un salón navideño con tele, la tele encendida con una película de
   // Navidad; si Higgsfield bloqueó el intento anterior, una escena navideña genérica (`tele-navidad.ts`).
-  const tv = christmasTvLine(written, { ownerRoom, blockedBefore: await lastWasBlocked(video.id, tramoKind("frame", tramo)) });
+  const tv = christmasTvLine(written, {
+    ownerRoom,
+    blockedBefore: await lastWasBlocked(video.id, tramoKind("frame", tramo)),
+    seen: await christmasTvSeen(video.id, tramo),
+  });
   const prompt = `${written}${tv ? ` ${tv}` : ""} ${ownerRoom ? NO_PEOPLE_PICTURES_OWNER_ROOM : NO_PEOPLE_PICTURES}${await learnedSuffix("frame", video.productId)}${(await preferencesFor("imagen", { videoId: video.id, tramo })).text}`;
   if (manifest.some((item) => item.source.kind === "avatar_pending")) throw new HttpError(400, NO_AUTO_AVATAR);
   const errors = checkImagePrompt(prompt, manifest).filter((issue) => issue.level === "error");

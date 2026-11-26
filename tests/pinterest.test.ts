@@ -833,4 +833,18 @@ describe("tele encendida en el salón navideño (regla del dueño, 26/11/2026)",
     expect(prompt).toContain("The television in this Christmas living room is switched ON, never off or black");
     expect(prompt).toContain("Home Alone");
   });
+
+  it("también si la tele solo se ve en la referencia o en la foto de la sala (el prompt no la nombra)", async () => {
+    await requirePinterestRefs(v.id).catch(() => {});
+    const run = await runOfVideo(v.id);
+    const plain = { ...COMPOSED, environment: "Reference image {ROOM} is the EXACT requested background, not an inspiration. Preserve its sofa on the LEFT and the rug in the centre.", christmasTv: true };
+    const { client } = fakeMessages([
+      { text: JSON.stringify(SCENE) },
+      { text: JSON.stringify({ picks: [{ n: 1, reason: "Salón real de móvil." }], rejected: "" }) },
+      { text: JSON.stringify(plain) },
+    ]);
+    await runPinterest(run.id, pinterestDeps({ gateway: createGateway({ client }) }));
+    const { request } = await buildFrameRequest(ana, await getVideoFor(ana, v.id), deps);
+    expect((request as { prompt: string }).prompt).toContain("The television in this Christmas living room is switched ON");
+  });
 });

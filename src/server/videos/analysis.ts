@@ -26,6 +26,7 @@ import { activeAvatarSummaries, readAvatarImage } from "@/server/avatars";
 import { readProductPhoto } from "@/server/photos";
 import { getProductFor, type Product } from "@/server/products";
 import { listVariants, type VariantInfo } from "@/server/variants";
+import { MAX_VARIANT_REWRITES, variantMismatch } from "@/server/videos/variante-check";
 import { CLIP_MODEL_LABEL, SEEDANCE, wanDurationSeconds, type ClipModel } from "@/lib/clip-models";
 import { loadRules, RULE_SLUGS, VIDEO_RULE_SLUGS } from "@/server/rules";
 import { analysisStaleness, answersText, briefOf, type AvatarMode, type Brief, type VideoKind } from "@/server/videos/brief";
@@ -523,6 +524,11 @@ async function buildContent(
           ? [
               `Variantes: ${variants.map((variant) => variant.name).join(", ")}`,
               `Variante de este vídeo: ${chosenVariant ? chosenVariant.name : "sin elegir (las fotos de siempre del producto)"}`,
+              ...(chosenVariant
+                ? [
+                    `Las fotos de artículo y de embalaje del manifiesto son las de la variante «${chosenVariant.name}». En imagePrompt y videoPrompt describe el color, el acabado y la forma del producto del encargo SOLO mirando esas fotos, nunca el objeto de la referencia, el producto de siempre ni otra variante.`,
+                  ]
+                : []),
             ]
           : []),
       ].join("\n"),
@@ -569,7 +575,9 @@ async function buildContent(
       throw error;
     }
     content.push(
-      textPart(`${item.tag}${clipTag ? ` · ${clipTag}` : ""} — papel: ${item.ownerSelected ? "Tu imagen de entorno (manda); solo cubre los sitios de este tipo" : roleLabel(item, brief)}`),
+      textPart(
+        `${item.tag}${clipTag ? ` · ${clipTag}` : ""} — papel: ${item.ownerSelected ? "Tu imagen de entorno (manda); solo cubre los sitios de este tipo" : roleLabel(item, brief)}${chosenVariant && (item.role === "articulo" || item.role === "embalaje") ? ` de la variante «${chosenVariant.name}» (su color y su acabado son los que valen)` : ""}`,
+      ),
       imagePart(reduced, "image/jpeg"),
     );
   }
@@ -898,18 +906,37 @@ export async function runAnalysis(analysisId: number, deps: { gateway?: LlmGatew
       const variants = await listVariants(user, video.productId);
       const refs = await manifestRefsFor(user, video, { forAnalysis: true });
       const content = await buildContent(user, video, brief, product, refs, variants);
+      const gateway = deps.gateway ?? getGateway();
+      const instructions = analysisInstructions(brief, hookTiming(video), variants.map((variant) => variant.name), marketOf(product)) + "\nOrden expresa de Emmanuel, 25/11/2026: si hay imagen de entorno elegida o subida a mano, su habitación ES el fondo. En imagePrompt enumera en inglés todos los objetos que ves, uno a uno y con su posición; conserva mobiliario, decoración y objetos reconocibles sin quitar, cambiar ni ordenar nada. Coloca dentro acción, manos y producto de image 1 y reencuadra solo lo necesario. Conserva pantallas con contenido neutro sin personajes ni marcas." + (await preferencesFor("desglose", { videoId: video.id })).text;
+      const rules = await loadRules(analysisRuleSlugs(brief.kind, brief.clipModel));
       try {
-        const answer = await (deps.gateway ?? getGateway()).call({
+        const ask = (extra: Array<ReturnType<typeof textPart>>, suffix: string) => gateway.call({
           tier: "medium",
-          stepKey: key,
+          stepKey: `${key}${suffix}`,
           userId: ctx.userId,
           productId: ctx.productId,
-          rules: await loadRules(analysisRuleSlugs(brief.kind, brief.clipModel)),
-          instructions: analysisInstructions(brief, hookTiming(video), variants.map((variant) => variant.name), marketOf(product)) + "\nOrden expresa de Emmanuel, 25/11/2026: si hay imagen de entorno elegida o subida a mano, su habitación ES el fondo. En imagePrompt enumera en inglés todos los objetos que ves, uno a uno y con su posición; conserva mobiliario, decoración y objetos reconocibles sin quitar, cambiar ni ordenar nada. Coloca dentro acción, manos y producto de image 1 y reencuadra solo lo necesario. Conserva pantallas con contenido neutro sin personajes ni marcas." + (await preferencesFor("desglose", { videoId: video.id })).text,
-          content,
+          rules,
+          instructions,
+          content: extra.length === 0 ? content : [...(content as Array<ReturnType<typeof textPart>>), ...extra],
           maxTokens: MAX_TOKENS,
           schema: analysisSchema,
         });
+        let answer = await ask([], "");
+        // Con variante, el producto descrito tiene que ser ESA variante (vídeo 71: la azul descrita como
+        // «pink glossy body»). Se comprueba con visión y, si no coincide, se reescribe con el motivo.
+        const variant = variants.find((one) => one.id === video.variantId);
+        const photoId = variant?.articlePhotoIds[0];
+        const photo = photoId === undefined ? null : await makeThumbnail((await readProductPhoto(user, photoId)).data, "image", 768).catch(() => null);
+        for (let rewrite = 1; variant && photo && rewrite <= MAX_VARIANT_REWRITES; rewrite++) {
+          const text = `imagePrompt:\n${answer.data!.imagePrompt}\n\nvideoPrompt:\n${answer.data!.videoPrompt}`;
+          const problem = await variantMismatch(gateway, { stepKey: `${key}:variante:${rewrite}`, userId: ctx.userId, productId: ctx.productId }, variant.name, text, photo);
+          if (problem === null) break;
+          console.warn(`[desglose] Vídeo ${video.id}: el producto no coincide con la variante «${variant.name}» (${problem}); se reescribe.`);
+          answer = await ask(
+            [textPart(`El desglose anterior describía mal el producto de la variante «${variant.name}»: ${problem}. Vuelve a escribirlo describiendo el color, el acabado y la forma del producto SOLO a partir de sus fotos de artículo.`)],
+            `:reescritura:${rewrite}`,
+          );
+        }
         return { result: answer.data!, brief, ruleVersions: answer.ruleVersions, spendEntryId: answer.spendEntryId };
       } catch (error) {
         if (!isGatewayFailure(error)) throw error;

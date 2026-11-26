@@ -28,8 +28,10 @@ export const CHRISTMAS_TV_ON_GENERIC =
  * La frase que se añade al prompt (imagen o clip), o "" si no toca: no es un salón navideño con
  * tele, o la imagen del dueño manda (lo que traiga su pantalla se queda).
  */
-export function christmasTvLine(prompt: string, options: { ownerRoom: boolean; blockedBefore: boolean }): string {
-  if (options.ownerRoom || !isChristmasLivingRoomWithTv(prompt)) return "";
+export function christmasTvLine(prompt: string, options: { ownerRoom: boolean; blockedBefore: boolean; seen?: boolean }): string {
+  // `seen`: Claude vio una tele en un salón navideño en el fotograma de la referencia o en la foto de la
+  // sala, aunque el prompt no la nombre.
+  if (options.ownerRoom || !(options.seen || isChristmasLivingRoomWithTv(prompt))) return "";
   return options.blockedBefore ? CHRISTMAS_TV_ON_GENERIC : CHRISTMAS_TV_ON;
 }
 

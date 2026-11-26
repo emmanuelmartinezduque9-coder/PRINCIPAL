@@ -19,6 +19,7 @@ import type { PinCandidate, searchPins } from "@/server/pinterest-searches";
 import { readProductPhoto } from "@/server/photos";
 import { getProductFor } from "@/server/products";
 import { getVariantFor } from "@/server/variants";
+import { MAX_VARIANT_REWRITES, variantMismatch } from "@/server/videos/variante-check";
 import { loadRules, RULE_SLUGS } from "@/server/rules";
 import type { ManifestItem } from "@/server/videos/manifest";
 import { placeOf, tramoKind, tramosOf, type Tramo } from "@/server/videos/tramos";
@@ -332,6 +333,17 @@ export interface PinterestView {
   error: string | null;
   scene: PinterestScene | null;
   refs: Array<PinterestRef & { url: string }>;
+}
+
+/**
+ * ¿Claude vio un salón navideño con tele en el fotograma de la referencia o en la foto de la sala?
+ * (regla de la tele encendida, 26/11/2026; `tele-navidad.ts`).
+ */
+export async function christmasTvSeen(videoId: number, tramo = 0): Promise<boolean> {
+  const analysisId = await latestDoneAnalysisId(videoId);
+  if (analysisId === null) return false;
+  const run = await runOf(videoId, analysisId, tramo);
+  return run?.status === "ready" && (run.scene as { christmasTv?: boolean } | null)?.christmasTv === true;
 }
 
 /** La búsqueda del último desglose hecho del vídeo, para la pantalla; `null` si no hay (o lleva entorno a mano). */
@@ -728,6 +740,7 @@ async function finishWithRefs(
       packagingHidden: composed.packagingHidden,
       effectVisible: composed.effectVisible,
       effectPrompt: composed.effectPrompt,
+      christmasTv: composed.christmasTv,
     },
   });
   console.log(`[pinterest] Prompt con la sala del vídeo ${run.videoId}:\n${composed.prompt}`);
@@ -836,15 +849,6 @@ export function basePromptShaOf(imagePrompt: string, variantId: number | null): 
     .digest("hex");
 }
 
-const variantCheckSchema = z.object({
-  matches: z.boolean().describe("true si el color, el acabado y la forma descritos en el texto coinciden con la foto de la variante."),
-  problem: z.string().nullable().describe("Si no coinciden: qué está mal (p. ej. «dice pink, la foto es turquesa»); si coinciden, null."),
-});
-
-const VARIANT_CHECK_INSTRUCTIONS = `Compruebas el párrafo del producto de un prompt de imagen. El vídeo usa una variante concreta del producto, y la foto adjunta es ESA variante. Mira el color del cuerpo, de las tapas o piezas, el acabado y la forma de la foto, y compáralos con lo que dice el texto (en inglés). matches es false si el texto nombra un color, un acabado o una forma que no es el de la foto (p. ej. dice «pink» y la foto es azul turquesa), o si describe otra variante. Un texto que no nombra colores pero no contradice la foto vale.`;
-
-/** Veces que se reescribe el prompt si la descripción del producto no coincide con la variante. */
-const MAX_VARIANT_REWRITES = 2;
 
 /**
  * Método del sistema anterior, copiado tal cual (orden del dueño, 23/11/2026; ver
@@ -872,6 +876,10 @@ const composedSchema = z.object({
   productVisible: z.boolean().describe("Si el artículo o su efecto se ven en esta toma (false si aún está envuelto, tapado o fuera de plano)."),
   packagingVisible: z.boolean().describe("Si la caja o el envase del producto se ve en esta toma."),
   effectVisible: z.boolean().describe("Si en esta toma se ve el efecto del producto funcionando (proyección, luz, resultado) y hay foto de funcionamiento."),
+  christmasTv: z
+    .boolean()
+    .optional()
+    .describe("true si image 1 (el fotograma original) o la foto de la sala muestran un salón navideño (árbol, luces, adornos de Navidad) con una televisión."),
   effectPrompt: z
     .string()
     .nullable()
@@ -906,7 +914,7 @@ En lighting, además de la luz de la sala, di cómo se vuelve a iluminar el suje
 
 Decide también effectVisible: si en esta toma se ve el efecto del producto funcionando (una proyección, una luz, un resultado) y en los adjuntos hay foto de funcionamiento. Entonces escribe effectPrompt: el prompt corto de un segundo paso de edición, sobre la imagen ya generada (image 1) con la foto del producto funcionando (image 2), que cambia SOLO el efecto. En inglés, así (adaptándolo a lo que ves): «Edit image 1. Change only the [efecto, p. ej. two glowing light projections on the ground on each side of the dog]; keep everything else in image 1 exactly as it is: the same [lugar, luz, personas, manos, objetos], framing and camera. The [efecto] in image 1 may have the wrong shape. Erase it completely and draw instead the exact [efecto] of image 2: [forma, estructura, colores y detalles que ves en la foto de funcionamiento]. [Dónde empieza y cómo se apoya en la escena, en perspectiva, y el tinte de luz que deja cerca.] Not [formas incorrectas, p. ej. feathers, angel wings, dragon wings]. Do not copy the [sujeto], the floor or the background of image 2: from image 2 take only the shape, colours, details and glow of the effect. Vertical 9:16 phone photo, no text, no captions, no watermark.» Sin nombres de marca. Si no se ve el efecto, effectVisible false y effectPrompt null.
 
-TELE EN UN SALÓN NAVIDEÑO (regla del dueño, 26/11/2026): si en la escena hay una televisión, en environment va ENCENDIDA, nunca apagada ni negra, con una película de Navidad reconocible en la pantalla (Home Alone / «Kevin – Allein zu Haus» o The Grinch), y en lighting su luz fría azulada cae suave sobre la sala y las personas. Si la sala es la imagen del dueño y su pantalla ya muestra algo, se queda lo suyo.
+TELE EN UN SALÓN NAVIDEÑO (regla del dueño, 26/11/2026): decide christmasTv (true si image 1 o la foto de la sala muestran un salón navideño con una televisión, aunque el prompt del desglose no la nombre). Si en la escena hay una televisión, en environment va ENCENDIDA, nunca apagada ni negra, con una película de Navidad reconocible en la pantalla (Home Alone / «Kevin – Allein zu Haus» o The Grinch), y en lighting su luz fría azulada cae suave sobre la sala y las personas. Si la sala es la imagen del dueño y su pantalla ya muestra algo, se queda lo suyo.
 
 No uses palabras de la lista negra de la regla. Nada de títulos en mayúsculas.`;
 
@@ -931,6 +939,7 @@ async function composeFramePrompt(
   packagingHidden: boolean;
   effectVisible: boolean;
   effectPrompt: string | null;
+  christmasTv: boolean;
 } | null> {
   const [video] = await getDb()
     .select({ imagePrompt: schema.videos.imagePrompt, segmentDurationMs: schema.videos.segmentDurationMs })
@@ -1017,27 +1026,10 @@ async function composeFramePrompt(
   for (let rewrite = 1; variant && variantPhoto && written.productVisible && rewrite <= MAX_VARIANT_REWRITES; rewrite++) {
     const product = written.product;
     const checkKey = stepKey(ctx, "variante-producto", { runId: run.id, attempt: run.attempts, room: refs[0].sha256, ...variantKey, rewrite, product });
-    const check = await runStep(ctx, checkKey, async () => {
-      const answer = await gateway.call({
-        tier: "small",
-        stepKey: checkKey,
-        userId: ctx.userId,
-        productId: ctx.productId,
-        rules: [],
-        instructions: VARIANT_CHECK_INSTRUCTIONS,
-        content: [
-          textPart(`Variante: «${variant.name}». Párrafo del producto:\n${product}`),
-          textPart("Foto de la variante:"),
-          imagePart(variantPhoto.jpeg, "image/jpeg"),
-        ],
-        maxTokens: 400,
-        schema: variantCheckSchema,
-      });
-      return answer.data!;
-    });
-    if (check.matches) break;
-    console.warn(`[pinterest] Vídeo ${run.videoId}: el producto no coincide con la variante «${variant.name}» (${check.problem ?? "sin detalle"}); se reescribe el prompt.`);
-    written = await write(rewrite, check.problem ?? "el color o el acabado no son los de la foto de la variante");
+    const problem = await runStep(ctx, checkKey, () => variantMismatch(gateway, { stepKey: checkKey, userId: ctx.userId, productId: ctx.productId }, variant.name, product, variantPhoto.jpeg));
+    if (problem === null) break;
+    console.warn(`[pinterest] Vídeo ${run.videoId}: el producto no coincide con la variante «${variant.name}» (${problem}); se reescribe el prompt.`);
+    written = await write(rewrite, problem);
   }
   const paragraphs = [
     written.composition.trim(),
@@ -1057,6 +1049,7 @@ async function composeFramePrompt(
     packagingHidden: !written.packagingVisible,
     effectVisible: written.effectVisible && !!written.effectPrompt,
     effectPrompt: written.effectVisible ? written.effectPrompt : null,
+    christmasTv: written.christmasTv === true,
   };
 }
 

@@ -345,7 +345,8 @@ async function readyReference(videoId: number): Promise<void> {
 /** Pide y hace el desglose con Claude simulado; devuelve la llamada que recibió. */
 async function analyse(videoId: number, extra: Partial<Analysis> = {}): Promise<FakeCall> {
   const { analysisId } = await requestAnalysis(ana, videoId);
-  const { client, calls } = fakeMessages([reply(extra)]);
+  // Con variante elegida, el desglose comprueba con visión que describe esa variante (vídeo 71).
+  const { client, calls } = fakeMessages([reply(extra), { text: JSON.stringify({ matches: true, problem: null }) }]);
   await runAnalysis(analysisId, { gateway: createGateway({ client }) });
   return calls[0];
 }
@@ -517,6 +518,32 @@ describe("avatar de la biblioteca y automático en los vídeos", () => {
     expect(await stale()).toBe("brief");
     // Y la imagen inicial no se pide con un desglose caducado.
     await expect(buildFrameRequest(ana, await getVideoFor(ana, v.id), { higgsfield: createFakeHiggsfield().port })).rejects.toMatchObject({ status: 400 });
+  });
+
+  it("vídeo 71: con variante, el desglose describe esa variante; si dice otro color, se comprueba con visión y se reescribe", async () => {
+    const azul = (await addProductPhoto(ana, producto.id, images.j, "articulo")).id;
+    const variante = await createVariant(ana, producto.id, { name: "Variante azul", articlePhotoIds: [azul] });
+    await updateVideoChoices(ana, v.id, { avatarLibraryId: mujer30.id, variantId: variante.id });
+    const { analysisId } = await requestAnalysis(ana, v.id);
+    const pink = { imagePrompt: `${REPLY.imagePrompt} The machine has a rounded egg-shaped pink glossy body.` };
+    const blue = { imagePrompt: `${REPLY.imagePrompt} The machine has a rounded egg-shaped turquoise blue glossy body.` };
+    const { client, calls } = fakeMessages([
+      reply(pink),
+      { text: JSON.stringify({ matches: false, problem: "dice pink y la foto de la variante es azul turquesa" }) },
+      reply(blue),
+      { text: JSON.stringify({ matches: true, problem: null }) },
+    ]);
+    await runAnalysis(analysisId, { gateway: createGateway({ client }) });
+    expect(calls).toHaveLength(4);
+    const first = texts(calls[0]).join("\n");
+    expect(first).toContain("Las fotos de artículo y de embalaje del manifiesto son las de la variante «Variante azul»");
+    expect(first).toContain("de la variante «Variante azul» (su color y su acabado son los que valen)");
+    expect(texts(calls[1]).join("\n")).toContain("pink glossy body");
+    expect(imageCount(calls[1])).toBe(1);
+    expect(texts(calls[2]).join("\n")).toContain("describía mal el producto de la variante «Variante azul»: dice pink y la foto de la variante es azul turquesa");
+    const video = await getVideoFor(ana, v.id);
+    expect(video.imagePrompt).toContain("turquoise blue glossy body");
+    expect(video.imagePrompt).not.toContain("pink");
   });
 
   it("variante dudosa: con variantes y ninguna elegida, pregunta si la referencia no coincide claramente con una", async () => {

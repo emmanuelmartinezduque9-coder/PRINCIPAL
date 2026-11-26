@@ -146,3 +146,15 @@ salón + tele). Se añade al prompt de la imagen (`frame.ts`) y al del clip (`cl
 sala lo sabe (`COMPOSE_INSTRUCTIONS`). Si el intento anterior lo bloqueó el filtro de Higgsfield, el
 siguiente lleva una escena navideña genérica en la pantalla, sin pararse. Con la imagen de entorno del
 dueño no se añade nada: lo que traiga su pantalla se queda.
+
+## La variante también en el desglose; la tele por lo que se ve (26/11/2026)
+
+- **Desglose (`analysis.ts`).** Las fotos de artículo y de embalaje del manifiesto ya eran las de la
+  variante. Ahora además se nombran como de la variante «X», y se ordena describir el color, el acabado
+  y la forma solo con ellas. Tras el desglose, la misma comprobación con visión que en el escritor de la
+  sala (`variante-check.ts`) mira imagePrompt y videoPrompt contra la foto de la variante. Si no
+  coinciden, se rehace el desglose con el motivo (hasta 2 veces). Así el prompt base ya no dice «pink»
+  cuando la variante es la azul.
+- **Tele navideña.** El escritor de la sala marca `christmasTv` si el fotograma de la referencia o la
+  foto de la sala muestran un salón navideño con tele. La imagen y el clip aplican la regla con esa marca
+  aunque el prompt no nombre la tele (`christmasTvSeen`).
