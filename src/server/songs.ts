@@ -5,7 +5,7 @@ import { MAX_SONG_BYTES } from "@/db/schema";
 import type { AuthUser } from "@/server/auth";
 import { HttpError } from "@/server/http";
 import { MediaError, probeAudio } from "@/server/media/ffmpeg";
-import { releaseSongFromVideos } from "@/server/videos/song-links";
+import { withPersonalizedSongVideo, releaseSongFromVideos } from "@/server/videos/song-links";
 
 /**
  * Biblioteca de canciones («Canciones»). Es común: cualquier persona con sesión la ve, la escucha y
@@ -352,17 +352,13 @@ export async function savePersonalizedSong(input: {
   const probed = await probe(input.bytes);
   if (probed.mime !== "audio/mpeg") throw new Error("La web musical no devolvió un MP3 válido.");
   const sha256 = createHash("sha256").update(input.bytes).digest("hex");
-  return getDb().transaction(async tx => {
-    const [video] = await tx.select().from(schema.videos).where(eq(schema.videos.id, input.videoId)).for("update");
-    if (!video || video.referenceStatus !== "ready" || video.referenceMediaId !== input.referenceMediaId) throw new Error("La referencia cambió durante la creación de la canción.");
-    if (video.songId !== null) return video.songId;
+  return withPersonalizedSongVideo(input.videoId, input.referenceMediaId, async tx => {
     const [song] = await tx.insert(schema.songs).values({
       title: input.song.title, sections: ["canciones-personalizadas", input.productName], durationMs: input.song.durationMs,
       mime: "audio/mpeg", size: input.bytes.length, data: input.bytes, sha256, dropMs: 0, startMs: 0, createdBy: input.userId,
     }).onConflictDoUpdate({ target: schema.songs.sha256, set: { dropMs: 0, startMs: 0, sections: ["canciones-personalizadas", input.productName] } }).returning({ id: schema.songs.id });
     await tx.insert(schema.songLyrics).values({ songId: song.id, lyrics: input.lyrics, sections: input.song.sections, words: input.song.words })
       .onConflictDoUpdate({ target: schema.songLyrics.songId, set: { lyrics: input.lyrics, sections: input.song.sections, words: input.song.words } });
-    await tx.update(schema.videos).set({ songId: song.id, audioMode: "cancion", updatedAt: new Date() }).where(eq(schema.videos.id, video.id));
     return song.id;
   });
 }

@@ -14,7 +14,6 @@ import { afterAll, expect, it } from "vitest";
  */
 
 const DATABASE = "prueba_migracion_0016";
-const url = process.env.DATABASE_URL!.replace(/\/[^/]+$/, `/${DATABASE}`);
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), "migraciones-0015-"));
 
 async function admin(sql: string): Promise<void> {
@@ -28,6 +27,7 @@ async function admin(sql: string): Promise<void> {
 }
 
 async function migrateWith(folder: string): Promise<void> {
+  const url = process.env.DATABASE_URL!.replace(/\/[^/]+$/, `/${DATABASE}`);
   const pool = new Pool({ connectionString: url, max: 1 });
   try {
     await migrate(drizzle(pool), { migrationsFolder: folder });
@@ -54,6 +54,7 @@ it("«no aparece nadie» pasa a avatar_mode = nadie en vídeos y desgloses; lo d
   fs.writeFileSync(journalFile, JSON.stringify(journal));
   await migrateWith(dir);
 
+  const url = process.env.DATABASE_URL!.replace(/\/[^/]+$/, `/${DATABASE}`);
   const db = new Client({ connectionString: url });
   await db.connect();
   try {
@@ -80,6 +81,9 @@ it("«no aparece nadie» pasa a avatar_mode = nadie en vídeos y desgloses; lo d
     }
 
     await migrateWith(source);
+    // La 0068 también se aplica a productos antiguos, sin convertirlos en canciones.
+    expect((await db.query("select kind from products where id = $1", [productId])).rows).toEqual([{ kind: "fisico" }]);
+    expect((await db.query("select count(*)::int as n from song_lyrics")).rows).toEqual([{ n: 0 }]);
 
     const after = await db.query("select id, avatar_mode, avatar_photo_id, kind, adaptation, note from videos order by id");
     expect(after.rows).toEqual([

@@ -305,3 +305,8 @@ export async function productMarketsByIds(ids: number[]): Promise<Map<number, { 
 export async function listCerebroProducts(): Promise<Product[]> {
   return getDb().select().from(schema.products);
 }
+
+/** Lectura interna para los trabajos de canciones, sin sesión HTTP. */
+export async function songProducts(): Promise<Product[]> {
+  return getDb().select().from(schema.products).where(eq(schema.products.kind, "cancion"));
+}

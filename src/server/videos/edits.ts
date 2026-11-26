@@ -4,7 +4,7 @@ import { getDb, getSetting, schema, setSetting } from "@/db/client";
 import { MAX_EDIT_BYTES, MAX_EDIT_TEXT } from "@/db/schema";
 import { getActiveUser, type AuthUser } from "@/server/auth";
 import { HttpError } from "@/server/http";
-import { getProductFor, type Product } from "@/server/products";
+import { getProductFor, songProducts, type Product } from "@/server/products";
 import { parseRange, songSummaries } from "@/server/songs";
 import type { Analysis } from "@/server/videos/analysis";
 import { bodiesOfVideo, productBodyIds } from "@/server/videos/bodies";
@@ -571,14 +571,14 @@ export async function settleBatch(batchId: number | null): Promise<void> {
 
 /** Para el seguimiento de cada minuto: los lotes `listo` que ya pueden quedar `montado`. */
 export async function settleEditedBatches(): Promise<void> {
+  const songProductIds = (await songProducts()).map(product => product.id);
   const ids = await getDb().select({ id: schema.batches.id }).from(schema.batches).where(eq(schema.batches.status, "listo"));
   for (const { id } of ids) {
     // El lote pudo quedar listo mientras `video.cancion` tenía el paso reservado. Su aviso
     // habitual solo despierta lotes en producción; aquí reanuda exclusivamente montajes
     // todavía no iniciados cuya canción acaba de terminar, sin repetir fallos anteriores.
     const pending = await getDb().select({ video: videos }).from(videos)
-      .innerJoin(schema.products, eq(schema.products.id, videos.productId))
-      .where(and(eq(videos.batchId, id), eq(schema.products.kind, "cancion"), sql`${videos.songId} is not null`, sql`${videos.editStatus} is null`, eq(videos.autoSkipped, false)));
+      .where(and(eq(videos.batchId, id), inArray(videos.productId, songProductIds), sql`${videos.songId} is not null`, sql`${videos.editStatus} is null`, eq(videos.autoSkipped, false)));
     for (const { video } of pending) {
       if (video.ownerRedo) continue;
       const creator = await getActiveUser(video.createdBy);

@@ -1,11 +1,11 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq, inArray, isNull } from "drizzle-orm";
 import { z } from "zod";
 import { getDb, schema } from "@/db/client";
-import { enqueueJob } from "@/jobs/boss";
-import { jobKey, runStep, stepKey, type JobContext } from "@/jobs/steps";
+import { runStep, stepKey, type JobContext } from "@/jobs/steps";
+import { songProducts } from "@/server/products";
 import { textPart } from "@/llm/content";
 import { getGateway, type LlmGateway } from "@/llm/gateway";
 import { runProgram } from "@/server/media/programs";
@@ -75,9 +75,10 @@ export const SONG_INSTRUCTIONS = `Adapta una canción personalizada de un reel d
 /** Pasos separados: repetir descarga/guardado nunca vuelve a pedir la composición ya confirmada. */
 export async function ensurePersonalizedSong(videoId: number, deps: CancionDeps = {}): Promise<number | null> {
   const db = getDb();
-  const [row] = await db.select({ video: schema.videos, product: schema.products }).from(schema.videos)
-    .innerJoin(schema.products, eq(schema.products.id, schema.videos.productId)).where(eq(schema.videos.id, videoId));
-  if (!row || row.product.kind !== "cancion") return null;
+  const [video] = await db.select().from(schema.videos).where(eq(schema.videos.id, videoId));
+  const product = video && (await songProducts()).find(product => product.id === video.productId);
+  if (!video || !product) return null;
+  const row = { video, product };
   if (row.video.songId !== null) return row.video.songId;
   if (row.video.referenceStatus !== "ready") throw new Error("La referencia aún no está lista para crear la canción.");
   const [audio] = await db.select().from(schema.videoReferenceAudio).where(eq(schema.videoReferenceAudio.videoId, videoId));
@@ -103,14 +104,11 @@ export async function ensurePersonalizedSong(videoId: number, deps: CancionDeps 
   });
 }
 
-/** Al preparar la referencia y en seguimiento: también recupera referencias anteriores a esta función. */
-export async function queuePendingSongs(): Promise<void> {
-  const rows = await getDb().select({ id: schema.videos.id, userId: schema.videos.createdBy, productId: schema.videos.productId, referenceMediaId: schema.videos.referenceMediaId })
-    .from(schema.videos).innerJoin(schema.products, eq(schema.products.id, schema.videos.productId))
-    .where(and(eq(schema.products.kind, "cancion"), eq(schema.videos.referenceStatus, "ready"), isNull(schema.videos.songId)));
-  for (const row of rows) {
-    const [existing] = await getDb().select({ key: schema.jobSteps.key }).from(schema.jobSteps)
-      .where(eq(schema.jobSteps.key, jobKey(CANCION_JOB, row.userId, row.productId, { videoId: row.id, referenceMediaId: row.referenceMediaId })));
-    if (!existing) await enqueueJob(CANCION_JOB, { userId: row.userId, productId: row.productId }, { videoId: row.id, referenceMediaId: row.referenceMediaId });
-  }
+/** Referencias listas que aún necesitan su canción; la cola se gestiona en src/jobs. */
+export async function pendingSongVideos() {
+  const products = await songProducts();
+  if (!products.length) return [];
+  return getDb().select({ id: schema.videos.id, userId: schema.videos.createdBy, productId: schema.videos.productId, referenceMediaId: schema.videos.referenceMediaId })
+    .from(schema.videos)
+    .where(and(inArray(schema.videos.productId, products.map(product => product.id)), eq(schema.videos.referenceStatus, "ready"), isNull(schema.videos.songId)));
 }

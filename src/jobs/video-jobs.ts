@@ -1,4 +1,5 @@
-import { CANCION_JOB, ensurePersonalizedSong, queuePendingSongs } from "@/server/videos/canciones";
+import { queuePendingSongs } from "@/jobs/canciones";
+import { CANCION_JOB, ensurePersonalizedSong } from "@/server/videos/canciones";
 import { defineJob, defineSchedule } from "@/jobs/registry";
 import { StepFailedError } from "@/jobs/steps";
 import { probeConnections } from "@/server/higgsfield";

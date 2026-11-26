@@ -275,7 +275,9 @@ describe("desglose con Claude", () => {
     const { analysisId } = await requestAnalysis(ana, v.id);
     const { client, calls } = fakeMessages([reply()]);
     await runAnalysis(analysisId, { gateway: createGateway({ client }) });
-    expect(texts(calls[0])).toContain("No hay artículo físico, caja ni variante");
+    expect(calls).toHaveLength(1);
+    expect(texts(calls[0]).join("\n")).toContain("No hay artículo físico, caja ni variante");
+    expect(blocks(calls[0]).filter(block => block.type === "image")).toHaveLength(12);
     expect((await analysisRow(analysisId)).status).toBe("done");
   });
 

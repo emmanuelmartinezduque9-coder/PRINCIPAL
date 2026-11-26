@@ -215,11 +215,13 @@ if spec.get('title')`));
   it("retoma el montaje de un lote listo cuando termina su canción, sin repetir montajes fallidos", async () => {
     const batch = await createBatch(dueno, "Reacciones");
     await getDb().update(schema.batches).set({ status: "listo" }).where(eq(schema.batches.id, batch.id));
-    const product = await makeProduct(dueno, { name: "Suena" });
-    await getDb().update(schema.products).set({ kind: "cancion" }).where(eq(schema.products.id, product.id));
+    const product = await makeProduct(dueno, { name: "Suena", kind: "cancion" });
     const { song } = await uploadSong(dueno, mp3, { title: "Para ti" });
-    const video = await videoWithClip(dueno, { batchId: batch.id, songId: song.id }, product);
-    const failed = await videoWithClip(dueno, { batchId: batch.id, songId: song.id, editStatus: "fallido" }, product);
+    const video = await videoWithClip(dueno, { batchId: batch.id }, product);
+    const failed = await videoWithClip(dueno, { batchId: batch.id, songId: song.id, audioMode: "cancion", editStatus: "fallido" }, product);
+    await settleEditedBatches();
+    expect(await getVideoFor(dueno, video.id)).toMatchObject({ editStatus: null });
+    await getDb().update(schema.videos).set({ songId: song.id, audioMode: "cancion" }).where(eq(schema.videos.id, video.id));
     await settleEditedBatches();
     expect(await getVideoFor(dueno, video.id)).toMatchObject({ editStatus: "en_marcha" });
     expect(await getVideoFor(dueno, failed.id)).toMatchObject({ editStatus: "fallido" });

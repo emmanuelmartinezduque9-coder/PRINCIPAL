@@ -1,4 +1,4 @@
-import { queuePendingSongs } from "@/server/videos/canciones";
+import { queuePendingSongs } from "@/jobs/canciones";
 import { sweepOwnerRedos } from "@/server/videos/owner-redo";
 import { sweepPublications } from "@/server/videos/publications";
 import { and, eq, inArray, lt } from "drizzle-orm";

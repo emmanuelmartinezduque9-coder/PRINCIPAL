@@ -17,3 +17,15 @@ export async function releaseSongFromVideos(tx: Tx, songId: number): Promise<num
     .returning({ id: schema.videos.id });
   return released.length;
 }
+
+/** Bloquea la referencia y confirma el guardado de canción y su enlace en una transacción. */
+export async function withPersonalizedSongVideo(videoId: number, referenceMediaId: string | null, save: (tx: Tx) => Promise<number>): Promise<number> {
+  return getDb().transaction(async tx => {
+    const [video] = await tx.select().from(schema.videos).where(eq(schema.videos.id, videoId)).for("update");
+    if (!video || video.referenceStatus !== "ready" || video.referenceMediaId !== referenceMediaId) throw new Error("La referencia cambió durante la creación de la canción.");
+    if (video.songId !== null) return video.songId;
+    const songId = await save(tx);
+    await tx.update(schema.videos).set({ songId, audioMode: "cancion", updatedAt: new Date() }).where(eq(schema.videos.id, video.id));
+    return songId;
+  });
+}

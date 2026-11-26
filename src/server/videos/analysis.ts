@@ -106,7 +106,7 @@ async function checkVariant(deps: { gateway?: LlmGateway }, ctx: JobContext, key
   const user = await getActiveUser(ctx.userId);
   if (!user) return step;
   const video = await getVideoFor(user, videoId);
-  if (video.variantId === null) return step;
+  if (video.variantId === null || (await getProductFor(user, video.productId)).kind === "cancion") return step;
   const variant = (await listVariants(user, video.productId)).find((one) => one.id === video.variantId);
   const photoId = variant?.articlePhotoIds[0];
   if (!variant || photoId === undefined) return step;
@@ -1004,7 +1004,7 @@ export async function runAnalysis(analysisId: number, deps: { gateway?: LlmGatew
   // Fuera del paso: si esto falla, la cola lo repite y el paso devuelve lo guardado (Claude no cobra otra vez).
   const owner = await getActiveUser(row.createdBy);
   const product = owner ? await getProductFor(owner, row.productId) : null;
-  const variants = owner ? await listVariants(owner, row.productId) : [];
+  const variants = owner && product?.kind !== "cancion" ? await listVariants(owner, row.productId) : [];
   const { extras, autoAvatarId } = product
     ? await analysisExtras(step.result, step.brief, product, variants)
     : { extras: {}, autoAvatarId: null };
