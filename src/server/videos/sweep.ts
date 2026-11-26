@@ -1,3 +1,4 @@
+import { sweepOwnerRedos } from "@/server/videos/owner-redo";
 import { sweepPublications } from "@/server/videos/publications";
 import { and, eq, inArray, lt } from "drizzle-orm";
 import { getDb, schema } from "@/db/client";
@@ -88,6 +89,7 @@ export async function videoSweep(now: Date = new Date(), deps: GenDeps = {}): Pr
     console.error("[videos] No se pudieron revisar las búsquedas de Pinterest:", error);
   }
   try {
+    await sweepOwnerRedos(deps);
     await advanceRunningBatches(deps);
   } catch (error) {
     console.error("[videos] No se pudieron avanzar los lotes:", error);

@@ -9,18 +9,23 @@ const place = (startS: number, endS: number, name: string): AnalysisPlace => ({
 });
 
 describe("un frame, un clip y un Topaz por vídeo", () => {
-  it("conserva índices y tiempos absolutos: ≥ 2 tomas o ≥ 3 s llevan referencias", () => {
-    const sites = clipPlaces([place(0, 3, "room"), place(3, 5, "street"), place(5, 6, "fridge")], 6000,
-      [{ startS: 0 }, { startS: 3 }, { startS: 4 }, { startS: 5 }])!;
-    expect(sites.map((p) => [p.index, p.startMs, p.endMs, p.shortPlaces?.length])).toEqual([
-      [0, 0, 3000, 0], [1, 3000, 5000, 0], [2, 5000, 6000, 1],
-    ]);
-    expect(shortPlacePrompt(sites[2])).toContain("From 5s to 6s the shot cuts to fridge: keep fridge door and the action (take food out) exactly there");
+  it.each([
+    { video: 40, ms: 16650, sites: [place(0, 4.7, "apertura"), place(4.7, 8.2, "cocina"), place(8.2, 16.7, "salón")], shots: [0, 4.7, 5.5, 7, 8.2, 10, 13], short: [false, true, false] },
+    { video: 45, ms: 15100, sites: [place(0, 4, "apertura"), place(4, 9, "cocina"), place(9, 15.1, "calle")], shots: [0, 4, 9], short: [false, true, true] },
+    { video: 47, ms: 13800, sites: [place(0, 8.9, "apertura"), place(8.9, 13.8, "oficina")], shots: [0, 8.9, 11], short: [false, false] },
+    { video: 38, ms: 15400, sites: [place(0, 5, "apertura"), place(5, 7.1, "cocina"), place(7.1, 8.2, "nevera")], shots: [0, 5, 7.1], short: [false, true, true] },
+  ])("lote 10, vídeo $video: solo entornos de ≥2 tomas, ≥4 s y ≥25 %", ({ ms, sites, shots, short }) => {
+    const found = clipPlaces(sites, ms, shots.map((startS) => ({ startS })))!;
+    expect(found.map((p) => !!p.shortPlaces?.length)).toEqual(short);
+    expect(found.map((p) => p.index)).toEqual(sites.map((_, index) => index));
+    for (const p of found.filter((p) => p.shortPlaces?.length)) expect(shortPlacePrompt(p)).toContain(`the shot cuts to ${p.place}`);
   });
-  it("una toma de menos de 3 s es corta y no necesita prompts de frame", () => {
-    const sites = clipPlaces([place(0, 1, "room"), place(1, 3.999, "street"), place(3.999, 7, "kitchen")], 7000)!;
-    expect(sites[1].shortPlaces).toHaveLength(1);
-    expect(sites[2].shortPlaces).toHaveLength(0);
+  it("incluye el límite exacto y excluye un sitio por debajo del 25 %", () => {
+    const sites = [place(0, 1, "opening"), place(1, 5, "room")];
+    const shots = [{ startS: 1 }, { startS: 3 }];
+    expect(clipPlaces(sites, 16000, shots)![1].shortPlaces).toHaveLength(0);
+    expect(clipPlaces(sites, 16001, shots)![1].shortPlaces).toHaveLength(1);
+    expect(clipPlaces(sites, 16000, [{ startS: 1 }])![1].shortPlaces).toHaveLength(1);
   });
   it("clip y Topaz usan el vídeo original entero y rechazan todos los sufijos", async () => {
     const video = { id: 1, referenceMediaId: "whole-source", segmentDurationMs: 6000 } as Video;

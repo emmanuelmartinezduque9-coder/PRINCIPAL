@@ -725,6 +725,8 @@ export const videos = pgTable(
     autoSince: instant("auto_since").defaultNow(),
     /** Por qué el flujo automático se ha parado en este vídeo (p. ej. sin saldo), apto para la persona; `null` si sigue. */
     autoStop: text("auto_stop"),
+    /** Petición explícita del dueño; persiste mientras Pinterest prepara la nueva apertura. */
+    ownerRedo: jsonb("owner_redo").$type<{ kind: "frame" | "clip"; afterId: number }>(),
     createdAt: instant("created_at").notNull().defaultNow(),
     updatedAt: instant("updated_at").notNull().defaultNow(),
   },
@@ -889,6 +891,7 @@ export const generations = pgTable(
       .references(() => videos.id, { onDelete: "cascade" }),
     kind: text("kind").notNull(),
     round: integer("round").notNull(),
+    ownerOverride: boolean("owner_override").notNull().default(false),
     status: text("status").notNull().default("intent"),
     /** Quien paga (con su Higgsfield): siempre quien creó el vídeo. */
     userId: bigint("user_id", { mode: "number" }).notNull(),

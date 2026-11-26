@@ -28,6 +28,10 @@ export interface Tramo {
 /** Como mucho, sitios por vídeo. */
 export const MAX_TRAMOS = 6;
 
+export const LONG_PLACE_MIN_SHOTS = 2;
+export const LONG_PLACE_MIN_MS = 4000;
+export const LONG_PLACE_MIN_SHARE = 0.25;
+
 // ───────────────────────── Tipos de generación ─────────────────────────
 
 export type BaseKind = "frame" | "clip" | "upscale";
@@ -53,7 +57,7 @@ export function clipPlaces(places: AnalysisPlace[] | null | undefined, segmentMs
     .toSorted((a, b) => a.startS - b.startS).slice(0, MAX_TRAMOS).map((p, index) => {
       const startMs = Math.max(0, Math.round(p.startS * 1000));
       const endMs = Math.min(segmentMs, Math.round(p.endS * 1000));
-      const multi = endMs - startMs >= 3000 || shots.filter((shot) => shot.startS * 1000 >= startMs && shot.startS * 1000 < endMs).length >= 2;
+      const multi = endMs - startMs >= LONG_PLACE_MIN_MS && (endMs - startMs) / segmentMs >= LONG_PLACE_MIN_SHARE && shots.filter((shot) => shot.startS * 1000 >= startMs && shot.startS * 1000 < endMs).length >= LONG_PLACE_MIN_SHOTS;
       return { ...p, index, startMs, endMs, shortPlaces: multi || index === 0 ? [] : [{ ...p, startMs, endMs }] };
     });
 }

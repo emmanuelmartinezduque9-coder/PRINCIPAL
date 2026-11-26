@@ -19,7 +19,7 @@ import {
   getImageModel,
   IMAGE_MODEL_SETTING,
   rejectFrame,
-  setImageModel, NO_PEOPLE_PICTURES, NO_PEOPLE_PICTURES_OWNER_ROOM } from "@/server/videos/frame";
+  setImageModel, NO_PEOPLE_PICTURES_OWNER_ROOM } from "@/server/videos/frame";
 import { finalizeGeneration, quoteGeneration, requestGeneration, submitGeneration, type GenDeps } from "@/server/videos/generations";
 import { createVideo, getVideoFor, updateVideoChoices, type Video } from "@/server/videos/videos";
 import { POST as aprobarRoute } from "@/app/api/videos/[videoId]/imagen/aprobar/route";

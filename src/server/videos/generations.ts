@@ -199,8 +199,8 @@ export function registerRequestBuilder(kind: BaseGenerationKind, build: RequestB
  * La petición de ese tipo. Construirla sube fotos y fotogramas al Higgsfield de la persona: sus
  * errores (sin conexión, permiso caducado, Higgsfield caído) se responden igual que al presupuestar.
  */
-async function buildRequest(user: AuthUser, video: Video, kind: GenerationKind, deps: GenDeps) {
-  await requireBatchRunning(video.id);
+async function buildRequest(user: AuthUser, video: Video, kind: GenerationKind, deps: GenDeps, ownerOverride = false) {
+  if (!ownerOverride) await requireBatchRunning(video.id);
   const build = builders.get(baseKindOf(kind));
   if (!build) throw new HttpError(503, NO_BUILDER);
   // Solo la apertura limita el entorno del dueño al tipo de sitio que realmente cubre.
@@ -341,14 +341,20 @@ function rowsOf(db: Db | Tx, videoId: number, kind: GenerationKind) {
  * La ronda que tocaría ahora, o el 409 que lo impide: una en marcha o en duda, el máximo de
  * regeneraciones, o la ronda anterior sin rechazar (salvo que fallara).
  */
-function nextRound(rows: Generation[]): number {
+function countedRounds(rows: Generation[]): number {
+  return rows.filter((row) => SPENT.includes(row.status as GenerationStatus) &&
+    !(row.status === "failed" && row.error === BLOCKED) &&
+    !row.rejectReason?.startsWith(SYSTEM_REJECT_PREFIX) && !row.ownerOverride).length;
+}
+
+function nextRound(rows: Generation[], ownerOverride = false): number {
   if (rows.some((row) => row.status === "unknown")) throw new HttpError(409, CHECKING);
   if (rows.some((row) => ACTIVE.includes(row.status as GenerationStatus))) throw new HttpError(409, BUSY);
   const spent = rows.filter((row) => SPENT.includes(row.status as GenerationStatus));
   // Un bloqueo del filtro de Higgsfield no es una regeneración: Higgsfield lo devuelve (sus
   // movimientos, 23/11/2026) y el lote lo repite solo con el prompt o el modelo corregidos.
-  const counted = spent.filter((row) => !(row.status === "failed" && row.error === BLOCKED) && !row.rejectReason?.startsWith(SYSTEM_REJECT_PREFIX)).length;
-  if (counted + 1 > 1 + MAX_REGENERATIONS) throw new HttpError(409, MAX_REACHED);
+  const counted = countedRounds(rows);
+  if (!ownerOverride && counted + 1 > 1 + MAX_REGENERATIONS) throw new HttpError(409, MAX_REACHED);
   const round = Math.max(spent.length, ...spent.map((row) => row.round)) + 1;
   if (round > 1) {
     const last = spent.reduce((a, b) => (b.round > a.round ? b : a));
@@ -371,14 +377,15 @@ export async function quoteGeneration(
 ): Promise<{ credits: number; balance: number; enough: boolean; round: number; regenerationsLeft: number }> {
   const video = await getVideoFor(user, videoId);
   requireVideoOwner(user, video);
-  const round = nextRound(await rowsOf(getDb(), video.id, kind));
+  const rows = await rowsOf(getDb(), video.id, kind);
+  const round = nextRound(rows);
   const { request, count } = await buildRequest(user, video, kind, deps);
   const port = higgsfieldOf(deps);
   const [{ credits }, { credits: balance }] = await Promise.all([
     price(port, user.id, kind, request, count),
     port.balance(user.id),
   ]).catch(asHttp);
-  return { credits, balance, enough: balance >= credits, round, regenerationsLeft: 1 + MAX_REGENERATIONS - round };
+  return { credits, balance, enough: balance >= credits, round, regenerationsLeft: Math.max(0, MAX_REGENERATIONS - countedRounds(rows)) };
 }
 
 /**
@@ -390,15 +397,17 @@ export async function requestGeneration(
   user: AuthUser,
   videoId: number,
   kind: GenerationKind,
-  input: { expectedCredits: number },
+  input: { expectedCredits: number; ownerOverride?: boolean },
   deps: GenDeps = {},
 ): Promise<{ generationId: number }> {
   const video = await getVideoFor(user, videoId);
   requireVideoOwner(user, video);
+  if (video.ownerRedo && !input.ownerOverride) throw new HttpError(409, BUSY);
+  if (input.ownerOverride && user.role !== "dueno") throw new HttpError(403, "Solo el dueño puede rehacer a mano.");
   if (!Number.isSafeInteger(input.expectedCredits) || input.expectedCredits < 0) throw new HttpError(400, BAD_EXPECTED);
-  nextRound(await rowsOf(getDb(), video.id, kind));
+  nextRound(await rowsOf(getDb(), video.id, kind), input.ownerOverride);
 
-  const { request, count, snapshot } = await buildRequest(user, video, kind, deps);
+  const { request, count, snapshot } = await buildRequest(user, video, kind, deps, input.ownerOverride);
   const port = higgsfieldOf(deps);
   const [{ credits }, { credits: balance }] = await Promise.all([
     price(port, user.id, kind, request, count),
@@ -412,6 +421,7 @@ export async function requestGeneration(
     generationId = await getDb().transaction(async (tx) => {
       await generationLock(tx, video.id);
       const [current] = await tx.select().from(schema.videos).where(eq(schema.videos.id, video.id)).for("no key update");
+      if (current?.ownerRedo && !input.ownerOverride) throw new HttpError(409, BUSY);
       if (snapshot && Object.keys(snapshot).length > 0) {
         const changed =
           !current ||
@@ -421,10 +431,10 @@ export async function requestGeneration(
       // Lo que no es una columna del vídeo (las indicaciones del lote) también puede haber cambiado:
       // si el último desglose ya no vale, no se apunta nada.
       if (current && (await latestDoneAnalysis(current))?.staleReason) throw new HttpError(409, VIDEO_CHANGED);
-      const round = nextRound(await rowsOf(tx, video.id, kind));
+      const round = nextRound(await rowsOf(tx, video.id, kind), input.ownerOverride);
       const [row] = await tx
         .insert(generations)
-        .values({ videoId: video.id, kind, round, status: "intent", userId: video.createdBy, request, count, quotedCredits: credits, intentAt: clock(deps) })
+        .values({ videoId: video.id, kind, round, ownerOverride: input.ownerOverride === true, status: "intent", userId: video.createdBy, request, count, quotedCredits: credits, intentAt: clock(deps) })
         .returning({ id: generations.id });
       return row.id;
     });
@@ -572,7 +582,7 @@ async function settleSend(row: Generation, outcome: { value: HfSubmitResult } | 
  */
 export async function submitGeneration(generationId: number, deps: GenDeps = {}): Promise<void> {
   const [pending] = await getDb().select().from(generations).where(eq(generations.id, generationId));
-  if (!pending || pending.kind.includes(":") || await batchPaused(pending.videoId)) return;
+  if (!pending || pending.kind.includes(":") || (!pending.ownerOverride && await batchPaused(pending.videoId))) return;
   const claimedAt = clock(deps);
   const deadlineMs = deps.submitDeadlineMs ?? SUBMIT_DEADLINE_MS;
   const deadline = Date.now() + deadlineMs;
@@ -607,7 +617,7 @@ export async function submitGeneration(generationId: number, deps: GenDeps = {})
     await settleNotSent(row.id, { error: SEND_TOO_SLOW, finishedAt: clock(deps) });
     return;
   }
-  if (await batchPaused(row.videoId)) {
+  if (!row.ownerOverride && await batchPaused(row.videoId)) {
     await moveFrom(row.id, "submitting", { status: "intent", submitStartedAt: null });
     return;
   }
@@ -1343,7 +1353,7 @@ export async function generationView(video: Video, kind: GenerationKind, viewerI
   // Los candidatos de una duda (miniaturas del Higgsfield de quien creó el vídeo) y resolverla son solo suyos.
   const creator = viewerId === video.createdBy;
   const rows = await rowsOf(getDb(), video.id, kind);
-  const spent = rows.filter((row) => SPENT.includes(row.status as GenerationStatus)).length;
+  const spent = countedRounds(rows);
   const current = rows.at(-1) ?? null;
   const rawList = current
     ? await getDb()

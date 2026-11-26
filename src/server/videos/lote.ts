@@ -161,7 +161,7 @@ const SPENT = ["submitted", "done", "failed"];
 export type Stage = "need" | "busy" | "failed" | "maxed" | "done" | "approved";
 
 export function stageOf(
-  gens: readonly (Pick<Generation, "status" | "rejectReason" | "finishedAt" | "intentAt"> & { error?: string | null })[],
+  gens: readonly (Pick<Generation, "status" | "rejectReason" | "finishedAt" | "intentAt"> & { error?: string | null; ownerOverride?: boolean })[],
   approved: boolean,
   retryAfter: Date,
 ): Stage {
@@ -172,7 +172,7 @@ export function stageOf(
   // Un bloqueo del filtro de Higgsfield no es una ronda gastada: lo devuelve y tiene sus propios reintentos.
   // Tampoco un rechazo que hizo la aplicación para aplicar una corrección.
   const spent = gens.filter(
-    (g) => SPENT.includes(g.status) && !(g.status === "failed" && g.error === BLOCKED) && !g.rejectReason?.startsWith(SYSTEM_REJECT_PREFIX),
+    (g) => SPENT.includes(g.status) && !(g.status === "failed" && g.error === BLOCKED) && !g.rejectReason?.startsWith(SYSTEM_REJECT_PREFIX) && !g.ownerOverride,
   ).length;
   const roundsLeft = spent < 1 + MAX_REGENERATIONS;
   if (last.status === "done" && !last.rejectReason) return "done";
@@ -208,7 +208,7 @@ function retryable(list: readonly Generation[]): boolean {
     if (last.kind !== "frame") return false;
     return list.filter((g) => g.status === "failed" && g.error === BLOCKED).length <= MAX_BLOCKED_RETRIES;
   }
-  return list.filter((g) => SPENT.includes(g.status)).length < 1 + MAX_REGENERATIONS;
+  return list.filter((g) => SPENT.includes(g.status) && !g.ownerOverride).length < 1 + MAX_REGENERATIONS;
 }
 
 const partFrameStage = (row: Row, batch: Batch) => stageOf(row.frames, row.video.approvedFrameResultId !== null, retryAfterOf(batch));
@@ -860,6 +860,7 @@ async function committedCredits(batch: Batch): Promise<number> {
     .where(
       and(
         eq(schema.videos.batchId, batch.id),
+        eq(schema.generations.ownerOverride, false),
         inArray(schema.generations.kind, ["frame", "clip", "upscale"]),
         ne(schema.generations.status, "not_sent"),
         // Un bloqueo del filtro de Higgsfield se devuelve (comprobado en sus movimientos, 23/11/2026).
@@ -959,6 +960,7 @@ async function maxedOnlyByBlocks(pause: NonNullable<Batch["pause"]>): Promise<bo
       and(
         eq(schema.generations.videoId, pause.videoId),
         eq(schema.generations.kind, pause.kindOf),
+        eq(schema.generations.ownerOverride, false),
         inArray(schema.generations.status, SPENT),
         sql`not (${schema.generations.status} = 'failed' and ${schema.generations.error} is not distinct from ${BLOCKED})`,
         sql`coalesce(${schema.generations.rejectReason}, '') not like ${SYSTEM_REJECT_PREFIX + "%"}`,
@@ -1026,6 +1028,7 @@ async function onRequestError(user: AuthUser, batch: Batch, row: Row, kind: Gene
  * `expectedCredits` (el núcleo vuelve a presupuestar, compara, y apunta una sola vez).
  */
 async function requestFor(user: AuthUser, batch: Batch, rows: Row[], row: Row, kind: GenerationKind, deps: GenDeps): Promise<boolean> {
+  if (row.video.ownerRedo) return false;
   // La subida a 1080p de un clip anterior (el clip se rehízo) se descarta como corrección del sistema: si no, el
   // núcleo pide rechazarla antes de regenerar y el vídeo se queda sin subir ni montar (FalterPfote, lote 10).
   if (baseKindOf(kind) === "upscale") {
@@ -1275,6 +1278,7 @@ async function advanceGenerations(user: AuthUser, start: Batch, deps: GenDeps): 
   // sus rondas; sin rondas, o bloqueado por el filtro también con el prompt reescrito, ese vídeo queda
   // fuera con su motivo y los demás siguen.
   const skipFor = async (row: Row, kind: BaseGenerationKind, s: Stage) => {
+    if (row.video.ownerRedo) return false;
     const list = kind === "frame" ? row.frames : row.clips;
     // Un trabajo vencido que Higgsfield aún puede entregar se espera (ni se repite ni se saca el vídeo).
     if (s === "failed" && list.at(-1) && stillMayArrive(list.at(-1)!)) return false;
@@ -1336,6 +1340,7 @@ async function advanceGenerations(user: AuthUser, start: Batch, deps: GenDeps): 
       const row = rows[r];
       const part = row;
       if (slots <= 0) return;
+      if (row.video.ownerRedo) continue;
       const wants = (s: Stage, list: Generation[]) => s === "need" || (s === "failed" && retryable(list));
       if (kind === "frame" && (!wants(partFrameStage(part, batch), part.frames) || waitingAnalysis.has(row.video.id))) continue;
       if (kind === "clip" && (frameStage(row, batch) !== "approved" || !wants(partClipStage(part, batch), part.clips))) continue;
@@ -1388,7 +1393,7 @@ export async function approveAllFrames(user: AuthUser, batchId: number): Promise
 /** Monta cada vídeo del lote cuyo clip ya está hecho y que aún no tiene montaje (ni en marcha). */
 async function startFinishedEdits(user: AuthUser, rows: Row[], batch: Batch): Promise<void> {
   // Se monta con el clip a 1080p: espera a que Topaz termine (o falle del todo; entonces con el de 480p).
-  const ready = rows.filter((row) => row.video.editStatus === null && clipStage(row, batch) === "done" && upscaleSettled(row, batch));
+  const ready = rows.filter((row) => !row.video.ownerRedo && row.video.editStatus === null && clipStage(row, batch) === "done" && upscaleSettled(row, batch));
   for (const row of ready) {
     if (upscaleStage(row, batch) === "given_up") console.warn(`[lotes] Vídeo ${row.video.id}: Topaz falló ${MAX_UPSCALE_ATTEMPTS} veces; se monta con el clip de 480p.`);
   }

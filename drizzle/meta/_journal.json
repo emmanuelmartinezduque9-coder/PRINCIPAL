@@ -470,6 +470,13 @@
       "when": 1795650137207,
       "tag": "0066_aprendizaje_origen_codex",
       "breakpoints": true
+    },
+    {
+      "idx": 67,
+      "version": "7",
+      "when": 1795651330362,
+      "tag": "0067_rehacer_a_mano",
+      "breakpoints": true
     }
   ]
 }

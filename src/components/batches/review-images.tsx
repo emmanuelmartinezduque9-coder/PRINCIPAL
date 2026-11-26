@@ -1,4 +1,5 @@
 "use client";
+import { OwnerRedo } from "./owner-redo";
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, ImageOff, Loader2, SearchX, ThumbsUp } from "lucide-react";
@@ -34,6 +35,7 @@ const reviewable = (row: BatchRowJson) =>
   row.mine && row.frame.current?.status === "done" && row.frame.current.results.length > 0;
 
 function ReviewItem({
+  batchId,
   row,
   focused,
   saving,
@@ -45,6 +47,7 @@ function ReviewItem({
   onZoom,
   onPlaceChanged,
 }: {
+  batchId: number;
   row: BatchRowJson;
   onPlaceChanged: () => Promise<unknown>;
   focused: boolean;
@@ -107,6 +110,7 @@ function ReviewItem({
             className="mt-auto h-9 w-fit gap-2 px-3"
           />
         ) : null}
+        <OwnerRedo batchId={batchId} row={row} />
         {locked ? <p className="text-xs text-muted-foreground">Ya tiene clip.</p> : null}
       </div>
 
@@ -353,6 +357,7 @@ export function ReviewImages({ batchId }: { batchId: number }) {
         <ul className="flex flex-col gap-4" aria-label="Vídeos con candidatas">
           {rows.map((row) => (
             <ReviewItem
+              batchId={batchId}
               key={row.id}
               row={row}
               focused={row.id === focused}

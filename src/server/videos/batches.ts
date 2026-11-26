@@ -510,6 +510,7 @@ export interface BatchRow {
   /** «Adaptación de concepto» sin «Qué adaptación quieres» todavía: no se puede desglosar. */
   needsAdaptation: boolean;
   mine: boolean;
+  ownerCanRedo: boolean;
   createdAt: Date;
   updatedAt: Date;
   referenceStatus: string;
@@ -677,6 +678,7 @@ export async function batchView(user: AuthUser, batchId: number): Promise<BatchV
         bodies: bodiesOf.get(video.id)?.length ?? 0,
         needsAdaptation: video.kind === "adaptacion_concepto" && !video.adaptation,
         mine: video.createdBy === user.id,
+        ownerCanRedo: video.createdBy === user.id && user.role === "dueno",
         createdAt: video.createdAt,
         updatedAt: video.updatedAt,
         referenceStatus: video.referenceStatus,

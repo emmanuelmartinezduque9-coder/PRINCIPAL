@@ -1,6 +1,6 @@
 "use client";
 
-import { Loader2, ThumbsDown } from "lucide-react";
+import { Loader2, RotateCcw, ThumbsDown } from "lucide-react";
 import { useId, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogClose, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
@@ -16,6 +16,8 @@ const MAX_REASON = 300;
  */
 export function RejectDialog({
   label,
+  submitLabel = "Rechazar",
+  redo = false,
   title,
   pending,
   onReject,
@@ -24,6 +26,9 @@ export function RejectDialog({
   className,
 }: {
   label: string;
+  submitLabel?: string;
+  /** Rehacer a mano (no un rechazo): botón normal con la flecha de rehacer en vez del pulgar abajo. */
+  redo?: boolean;
   title: string;
   pending: boolean;
   onReject: (reason: string) => Promise<unknown>;
@@ -62,7 +67,7 @@ export function RejectDialog({
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
         <Button variant="outline" className={className ?? "h-10 gap-2 px-4"}>
-          <ThumbsDown data-icon="inline-start" />
+          {redo ? <RotateCcw data-icon="inline-start" /> : <ThumbsDown data-icon="inline-start" />}
           {label}
         </Button>
       </DialogTrigger>
@@ -88,9 +93,9 @@ export function RejectDialog({
                 Cancelar
               </Button>
             </DialogClose>
-            <Button type="submit" variant="destructive" className="h-10 gap-2 px-4" disabled={!text || pending}>
-              {pending ? <Loader2 className="animate-spin" data-icon="inline-start" /> : <ThumbsDown data-icon="inline-start" />}
-              Rechazar
+            <Button type="submit" variant={redo ? "default" : "destructive"} className="h-10 gap-2 px-4" disabled={!text || pending}>
+              {pending ? <Loader2 className="animate-spin" data-icon="inline-start" /> : redo ? <RotateCcw data-icon="inline-start" /> : <ThumbsDown data-icon="inline-start" />}
+              {submitLabel}
             </Button>
           </DialogFooter>
         </form>

@@ -1,4 +1,4 @@
-import { requireBatchRunning } from "@/server/videos/batch-pause";
+import { requireBatchRunning, ownerRedoPending } from "@/server/videos/batch-pause";
 import { and, desc, eq, inArray, max, sql } from "drizzle-orm";
 import { getDb, getSetting, schema, setSetting } from "@/db/client";
 import { MAX_EDIT_BYTES, MAX_EDIT_TEXT } from "@/db/schema";
@@ -236,8 +236,10 @@ async function lockVideo(tx: Tx, videoId: number): Promise<Video | null> {
  * rótulos que no estaban guardados quedan guardados en el vídeo (para que se puedan cambiar). 409
  * si ya hay uno en marcha o si falta algún clip.
  */
-export async function queueEdit(video: Video, product: Product, requestedBy: number, now: Date): Promise<{ runId: number }> {
-  await requireBatchRunning(video.id);
+export async function queueEdit(video: Video, product: Product, requestedBy: number, now: Date, options: { ownerOverride?: boolean } = {}): Promise<{ runId: number }> {
+  if (options.ownerOverride) {
+    if (requestedBy !== video.createdBy || !await ownerRedoPending(video.id, "clip")) throw new HttpError(403, "No hay un clip pedido por el dueño.");
+  } else await requireBatchRunning(video.id);
   const spec = await buildSpec(video, product);
   return getDb().transaction(async (tx) => {
     const locked = await lockVideo(tx, video.id);
@@ -303,6 +305,7 @@ export async function startBatchEdits(batchId: number, now: Date = new Date()): 
   if (!batch || batch.status === "pausado") return;
   const creator = await getActiveUser(batch.createdBy);
   for (const video of await batchVideos(batch)) {
+    if (video.ownerRedo) continue;
     if (video.editStatus === "en_marcha" || video.editStatus === "hecho") continue;
     if (creator === null) {
       await markFailed(getDb(), video.id, CREATOR_GONE);

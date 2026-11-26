@@ -67,7 +67,7 @@ export const ready = {
 
 /** Con un clip apuntado o hecho, la imagen aprobada ya no cambia. */
 export function frameLocked(row: BatchRowJson): boolean {
-  return row.clip.current !== null && !CLIP_RELEASES_FRAME.includes(row.clip.current.status);
+  return row.clip.current !== null && row.clip.current.rejectReason === null && !CLIP_RELEASES_FRAME.includes(row.clip.current.status);
 }
 
 export type Tone = "off" | "busy" | "review" | "ok" | "error";

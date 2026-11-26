@@ -19,7 +19,6 @@ import { finalizeGeneration, requestGeneration, submitGeneration, TIMED_OUT, typ
 import {
   advanceBatch,
   advanceRunningBatches,
-  answerQuestion,
   includeBatchVideo,
   approveAllFrames,
   AUTO_PARALLEL,

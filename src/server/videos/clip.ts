@@ -181,7 +181,7 @@ export const buildClipRequest: RequestBuilder = async (user, video, deps) => {
   for (const place of places ?? []) {
     if (place.index === 0) continue;
     const approved = video.tramoApprovals?.[`frame:${place.index}`];
-    if (place.shortPlaces?.length && !approved) {
+    if (place.shortPlaces?.length) {
       paragraphs.push(shortPlacePrompt(place));
       continue;
     }
@@ -221,6 +221,10 @@ export const buildClipRequest: RequestBuilder = async (user, video, deps) => {
       paragraphs.push(`${genjutsuImageTag(index)} shows the exact selected product working: whenever the product works in the source, its effect is exactly the one in ${genjutsuImageTag(index)} (same shape, colours and light), replacing the original effect completely; never physical objects, floating graphics or pasted flat artwork. Do not copy the animal, person or background of ${genjutsuImageTag(index)}.`);
     }
   }
+  const [lastClip] = await getDb().select({ reason: schema.generations.rejectReason }).from(schema.generations)
+    .where(and(eq(schema.generations.videoId, video.id), eq(schema.generations.kind, "clip")))
+    .orderBy(desc(schema.generations.id)).limit(1);
+  if (lastClip?.reason) paragraphs.push(`Owner correction for this new clip: ${lastClip.reason}`);
   const settingPrompt = paragraphs.length ? `\n\n${paragraphs.join("\n\n")}` : "";
   if (manifest.some((item) => item.source.kind === "avatar_pending")) throw new HttpError(409, NO_AUTO_AVATAR);
   // Correcciones aprendidas de los reportes («Mejoras», `src/server/videos/mejoras/`): van literales al final.

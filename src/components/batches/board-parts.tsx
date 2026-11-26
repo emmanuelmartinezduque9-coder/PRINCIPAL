@@ -17,6 +17,7 @@ import { linkLabel } from "@/lib/links";
 import { EditReferenceButton, EditReferenceField } from "./edit-reference";
 import { Indications } from "./indications";
 import type { BatchRowJson, BatchViewJson } from "./labels";
+import { OwnerRedo } from "./owner-redo";
 import { Switch } from "@/components/ui/switch";
 
 type GroupJson = BatchViewJson["groups"][number];
@@ -172,6 +173,7 @@ export function RowActions({ batchId, row }: { batchId: number; row: BatchRowJso
 
   return (
     <>
+      <OwnerRedo batchId={batchId} row={row} />
       {row.skipped ? (
         <Button variant="outline" className="h-8 gap-1.5 px-2.5 text-sm" disabled={busy !== null} onClick={() => void run("include")}>
           {busy === "include" ? <Loader2 className="animate-spin" aria-hidden /> : null}

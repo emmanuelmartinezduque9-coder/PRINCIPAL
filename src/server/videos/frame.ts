@@ -1,5 +1,5 @@
 import { preferencesFor } from "@/server/videos/aprendizaje/preferencias";
-import { and, eq, notInArray } from "drizzle-orm";
+import { and, eq, gt, isNull, notInArray, sql } from "drizzle-orm";
 import type { HfMediaRef } from "@/connectors/higgsfield";
 import { getDb, getSetting, schema, setSetting } from "@/db/client";
 import type { AuthUser } from "@/server/auth";
@@ -238,6 +238,9 @@ const noClipOf = (kind: GenerationKind): GenerationGuard => async (tx, video) =>
         eq(schema.generations.videoId, video.id),
         eq(schema.generations.kind, kind),
         notInArray(schema.generations.status, CLIP_RELEASES_FRAME),
+        isNull(schema.generations.rejectReason),
+        // Una apertura rehecha a mano ya no queda atada a clips de aperturas anteriores.
+        gt(schema.generations.id, sql`(select coalesce(max(f.id), 0) from generations f where f.video_id = ${video.id} and f.kind = 'frame')`),
       ),
     )
     .limit(1);

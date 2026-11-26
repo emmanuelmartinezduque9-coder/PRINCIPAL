@@ -1,4 +1,4 @@
-import { batchPaused } from "@/server/videos/batch-pause";
+import { batchPaused, ownerRedoPending } from "@/server/videos/batch-pause";
 import { preferencesFor } from "@/server/videos/aprendizaje/preferencias";
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
@@ -1021,7 +1021,7 @@ export async function runPinterest(runId: number, deps: PinterestDeps = {}): Pro
 
 async function runPinterestOnce(runId: number, deps: PinterestDeps): Promise<void> {
   const [run] = await getDb().select().from(runs).where(eq(runs.id, runId));
-  if (!run || run.status === "ready" || run.status === "failed" || await batchPaused(run.videoId)) return;
+  if (!run || run.status === "ready" || run.status === "failed" || (await batchPaused(run.videoId) && !(run.tramo === 0 && await ownerRedoPending(run.videoId, "frame")))) return;
   const [video] = await getDb().select().from(schema.videos).where(eq(schema.videos.id, run.videoId));
   const [analysis] = await getDb().select().from(schema.videoAnalyses).where(eq(schema.videoAnalyses.id, run.analysisId));
   if (!video || !analysis) return;

@@ -1,4 +1,4 @@
-import { batchPaused } from "@/server/videos/batch-pause";
+import { batchPaused, ownerRedoPending } from "@/server/videos/batch-pause";
 import { createWriteStream } from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
@@ -108,7 +108,7 @@ export async function claimRun(now: Date): Promise<Run | null> {
     where id = (
       select id from edit_runs where status = 'queued'
       and not exists (select 1 from videos v join batches b on b.id = v.batch_id
-        where v.id = edit_runs.video_id and b.status = 'pausado') and available_at <= ${now.toISOString()}::timestamptz
+        where v.id = edit_runs.video_id and b.status = 'pausado' and coalesce(v.owner_redo->>'kind', '') <> 'clip') and available_at <= ${now.toISOString()}::timestamptz
       order by id limit 1 for update skip locked)
     returning id`);
   const id = result.rows[0]?.id;
@@ -377,7 +377,7 @@ async function fallbackSong(dir: string): Promise<(NonNullable<EditSpec["song"]>
  * mal (el vídeo dice por qué) o de vuelta a la cola (esperando un enlace del Mac).
  */
 export async function runEdit(run: Run, deps: MontajeDeps = {}): Promise<"done" | "failed" | "deferred"> {
-  if (await batchPaused(run.videoId)) {
+  if (await batchPaused(run.videoId) && !await ownerRedoPending(run.videoId, "clip")) {
     await defer(run, 60_000, nowOf(deps));
     return "deferred";
   }

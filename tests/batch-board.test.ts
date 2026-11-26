@@ -29,6 +29,7 @@ const gen = (current: Partial<NonNullable<Gen["current"]>> | null, extra: Partia
 
 const row = (over: Partial<BatchRowJson> = {}): BatchRowJson => ({
   pinterest: null,
+  ownerCanRedo: false,
   id: 1,
   title: "Vídeo 1",
   productId: 1,

@@ -50,6 +50,8 @@ import {
   urlNames,
   type GenDeps,
 } from "@/server/videos/generations";
+import { advanceOwnerRedo, redoFromCard } from "@/server/videos/owner-redo";
+import { stageOf } from "@/server/videos/lote";
 import { createVideo, getVideoFor, videoView, type Video } from "@/server/videos/videos";
 import { GET as thumbRoute } from "@/app/api/resultados/[resultId]/miniatura/route";
 import { GET as getVideoRoute } from "@/app/api/videos/[videoId]/route";
@@ -1336,5 +1338,84 @@ describe("rutas", () => {
       expect((await dismissFrameRoute(post(), params("1e3"))).status).toBe(404);
       expect(await statusOf(id)).toBe("unknown");
     });
+  });
+});
+
+
+describe("rehacer a mano desde la tarjeta del dueño", () => {
+  async function cardVideo(kind: "frame" | "clip", maxed: boolean, paused: "maximum" | "manual" | null = null) {
+    const { rows: batches } = await getPool().query(`insert into batches (name, created_by, status, budget_credits, confirmed_at)
+      values ('Manual', $1, $2, 0, now() - interval '1 day') returning id`, [dueno.id, paused ? "pausado" : "clips"]);
+    const batchId = Number(batches[0].id);
+    await getPool().query("update videos set created_by = $2, batch_id = $3, auto_skipped = true, auto_stop = 'máximo' where id = $1", [v.id, dueno.id, batchId]);
+    if (kind === "clip") {
+      const { rows: frame } = await getPool().query(`insert into generations (video_id, user_id, kind, round, status, count, quoted_credits, request)
+        values ($1, $2, 'frame', 1, 'done', 1, 2, '{}') returning id`, [v.id, dueno.id]);
+      const { rows: result } = await getPool().query(`insert into generation_results (generation_id, index, job_id, ok) values ($1, 0, 'approved', true) returning id`, [frame[0].id]);
+      await getPool().query("update videos set approved_frame_result_id = $2 where id = $1", [v.id, result[0].id]);
+    }
+    for (let round = 1; round <= (maxed ? 3 : 1); round++) {
+      await getPool().query(`insert into generations (video_id, user_id, kind, round, status, count, quoted_credits, request, reject_reason)
+        values ($1, $2, $3, $4, 'done', 1, 100, '{}', $5)`, [v.id, dueno.id, kind, round, round < (maxed ? 3 : 1) ? "Anterior" : null]);
+    }
+    if (paused) await getPool().query("update batches set pause = $2::jsonb where id = $1", [batchId, JSON.stringify({ kind: "fallo", from: "clips", videoId: paused === "maximum" ? v.id : null,
+      kindOf: kind, extraCredits: 0, quoted: null, reason: paused === "maximum" ? "Has llegado al máximo de 2 regeneraciones." : "Pausa manual del dueño." })]);
+    return batchId;
+  }
+
+  it.each(["frame", "clip"] as const)("%s: con máximo agotado, la tarjeta guarda la corrección y vuelve a incluir", async (kind) => {
+    const batchId = await cardVideo(kind, true, "maximum");
+    await redoFromCard(dueno, batchId, v.id, kind, "Cambia la luz a natural", deps);
+    const { rows } = await getPool().query("select id, round, owner_override, status, reject_reason from generations where video_id = $1 and kind = $2 order by id", [v.id, kind]);
+    expect(rows.at(-2).reject_reason).toBe("Cambia la luz a natural");
+    expect(rows.at(-1)).toMatchObject({ round: 4, owner_override: true, status: "intent" });
+    expect((await getVideoFor(dueno, v.id)).autoSkipped).toBe(false);
+    expect((await getPool().query("select status from batches where id = $1", [batchId])).rows[0].status).not.toBe("pausado");
+    await submitGeneration(Number(rows.at(-1).id), deps);
+    expect(await statusOf(Number(rows.at(-1).id))).toBe("submitted");
+    // La nueva ronda manual no añade una regeneración al cómputo automático.
+    expect(stageOf([{ status: "done", rejectReason: "Cambiar", intentAt: new Date(), finishedAt: new Date() },
+      { status: "done", rejectReason: "Otra luz", ownerOverride: true, intentAt: new Date(), finishedAt: new Date() }], false, new Date())).toBe("need");
+  });
+
+  it.each(["frame", "clip"] as const)("%s: supera el presupuesto autorizado y envía solo lo pedido durante una pausa manual", async (kind) => {
+    const batchId = await cardVideo(kind, false, "manual");
+    await redoFromCard(dueno, batchId, v.id, kind, "Conserva el encuadre", deps);
+    const { rows } = await getPool().query("select id, owner_override from generations where video_id = $1 and kind = $2 order by id desc limit 1", [v.id, kind]);
+    expect(rows[0].owner_override).toBe(true);
+    await submitGeneration(Number(rows[0].id), deps);
+    expect(await statusOf(Number(rows[0].id))).toBe("submitted");
+    expect((await getPool().query("select status from batches where id = $1", [batchId])).rows[0].status).toBe("pausado");
+    expect((await getVideoFor(dueno, v.id)).autoSkipped).toBe(false);
+  });
+
+  it("varias peticiones manuales conservan las regeneraciones automáticas disponibles", async () => {
+    const batchId = await cardVideo("frame", false);
+    for (let i = 0; i < 3; i++) {
+      await redoFromCard(dueno, batchId, v.id, "frame", `Corrección ${i}`, deps);
+      const { rows } = await getPool().query("select id from generations where video_id = $1 order by id desc limit 1", [v.id]);
+      const id = Number(rows[0].id);
+      await submitGeneration(id, deps);
+      await finish(id);
+      await advanceOwnerRedo(v.id, deps);
+    }
+    await rejectRound(dueno, v.id, "frame", "Otra luz");
+    expect(await quoteGeneration(dueno, v.id, "frame", deps)).toMatchObject({ round: 5, regenerationsLeft: 1 });
+    const { generationId } = await requestGeneration(dueno, v.id, "frame", { expectedCredits: 4 }, deps);
+    expect((await getPool().query("select owner_override from generations where id = $1", [generationId])).rows[0].owner_override).toBe(false);
+  });
+
+  it("un colaborador no puede activar el override, ni desde el núcleo", async () => {
+    await expect(requestGeneration(ana, v.id, "frame", { expectedCredits: 4, ownerOverride: true }, deps)).rejects.toMatchObject({ status: 403 });
+    await expect(redoFromCard(ana, 1, v.id, "frame", "Otra luz", deps)).rejects.toMatchObject({ status: 403 });
+  });
+  it("el dueño no usa el override sobre el vídeo de otra persona", async () => {
+    await expect(requestGeneration(dueno, v.id, "frame", { expectedCredits: 4, ownerOverride: true }, deps)).rejects.toMatchObject({ status: 403 });
+  });
+  it("el saldo real de Higgsfield sigue siendo obligatorio", async () => {
+    const batchId = await cardVideo("frame", true);
+    fake.state.credits = 0;
+    await expect(redoFromCard(dueno, batchId, v.id, "frame", "Otra luz", deps)).rejects.toMatchObject({ status: 409 });
+    expect((await getPool().query("select id from generations where video_id = $1 and owner_override", [v.id])).rows).toHaveLength(0);
   });
 });
