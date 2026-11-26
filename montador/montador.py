@@ -937,7 +937,9 @@ def main():
         zooms, zoom_skipped = ([], [])
         if z['enabled']:
             zooms, zoom_skipped = plan_zooms(z, dur, cuts, beats, downbeats, cues, [t_prod] if t_prod else [])
-        audio_info = render(segs, cues, zooms, z, au, plan, work, out, dur, t_prod)
+        from rotulos_layout import render_lyrics
+        subtitles = render_lyrics(plan['subtitles'], dur, work, plan.get('font', FONT)) if plan.get('subtitles') else []
+        audio_info = render(segs, cues + subtitles, zooms, z, au, plan, work, out, dur, t_prod)
         chk = self_check(out, segs, cues, beats, P, total) if v1 else None
         historial.append(dict(intento=intentos + 1, avisos=chk['avisos'] if chk else [],
                               planos=[(s['start_s'], s['dur_s'], s['section']) for s in segs]))
@@ -993,6 +995,7 @@ def main():
         textos=dict(estilo='06B', font=plan.get('font', FONT), font_sha256=sha256(plan.get('font', FONT)),
                     box_px=BOX, color='#FFFFFF', contorno='negro 0,05 em exterior', interlinea='35/31 em',
                     cues=[{k: v for k, v in c.items() if k != 'png'} for c in cues]),
+        subtitulos=[{k: v for k, v in c.items() if k != 'png'} for c in subtitles],
         export=EXPORT, comprobaciones=checks, autocomprobacion=chk, contactos=str(sheet), tiras_cortes=str(strips),
         notas=plan.get('notas', []), avisos=avisos)
     (rev / f'{out.stem} - plan-aplicado.json').write_text(json.dumps(applied, indent=1, ensure_ascii=False))

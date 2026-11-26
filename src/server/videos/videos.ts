@@ -629,9 +629,11 @@ export async function latestDoneAnalysis(
  * las fotos de Pinterest listas del último desglose hecho (`pinterest.ts`).
  */
 export async function manifestRefsFor(user: AuthUser, video: Video, options: { forAnalysis?: boolean } = {}): Promise<ManifestRefs> {
-  const photos = await listProductPhotos(user, video.productId);
+  const product = await getProductFor(user, video.productId);
+  const allPhotos = await listProductPhotos(user, video.productId);
+  const photos = product.kind === "cancion" ? allPhotos.filter((photo) => !["articulo", "embalaje", "funcionamiento"].includes(photo.role)) : allPhotos;
   let variant: ManifestRefs["variant"] = null;
-  if (video.variantId !== null) {
+  if (product.kind !== "cancion" && video.variantId !== null) {
     try {
       const found = await getVariantFor(user, video.productId, video.variantId);
       variant = { articlePhotoIds: found.articlePhotoIds, packagingPhotoId: found.packagingPhotoId };
@@ -659,8 +661,8 @@ export async function manifestRefsFor(user: AuthUser, video: Video, options: { f
     avatar,
     pinterest: options.forAnalysis ? manualBackgrounds : ready.refs,
     manualEnvironmentRefs: options.forAnalysis ? manualBackgrounds : "manualEnvironmentRefs" in ready ? ready.manualEnvironmentRefs : [],
-    productHidden: ready.productHidden,
-    packagingHidden: ready.packagingHidden,
+    productHidden: product.kind === "cancion" || ready.productHidden,
+    packagingHidden: product.kind === "cancion" || ready.packagingHidden,
     approvedMethod: ready.approvedMethod,
     // Las subidas a mano que no son sala ni realismo (ropa, otra): solo con el prompt del método aprobado, que las cita.
     manualExtras: ready.approvedMethod ? (await listReferences(video.id)).filter((ref) => ref.role === "ropa" || ref.role === "otro") : [],

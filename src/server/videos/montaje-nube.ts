@@ -383,6 +383,18 @@ export async function runEdit(run: Run, deps: MontajeDeps = {}): Promise<"done" 
   }
   const store = deps.store === undefined ? getObjectStore() : deps.store;
   const spec = run.spec as EditSpec;
+  const personalized = spec.product.kind === "cancion";
+  if (personalized) {
+    // También protege fichas antiguas y cambios de doblaje pedidos sobre este tipo de producto.
+    if (!spec.song) {
+      await finishFailed(run, montajeFailure("falta la canción personalizada"), "sin canción", nowOf(deps), []);
+      return "failed";
+    }
+    spec.song = { ...spec.song, dropMs: 0, startMs: 0 };
+    spec.referenceAudio = null;
+    spec.dubDialogue = false;
+    spec.dubForced = false;
+  }
   const notes: string[] = [];
   // Correcciones aprendidas («Mejoras») que use este montaje (rótulos y doblaje): se guardan para medir su efecto.
   const learned: number[] = [];
@@ -508,7 +520,10 @@ export async function runEdit(run: Run, deps: MontajeDeps = {}): Promise<"done" 
         edicion = await referenceEdit({
           place,
           shop,
-          indications,
+          indications: personalized
+            ? `${indications}
+Este producto es una canción personalizada: copia y adapta únicamente el gancho editorial y la llamada final. No incluyas la letra cantada ni sus subtítulos amarillos en los rótulos: la canción nueva lleva su propia capa de letra sincronizada.`
+            : indications,
           scene: sceneText || null,
           song: spec.song?.title ?? null,
           file: referenceFile,
@@ -586,7 +601,7 @@ export async function runEdit(run: Run, deps: MontajeDeps = {}): Promise<"done" 
 
     // Ningún montaje sale mudo (orden del 24/11/2026): sin canción ni audio de la referencia guardado, el audio del
     // vídeo de referencia (el de la réplica o el de edición); si tampoco, una canción de la biblioteca. Y se avisa.
-    if (!spec.song && !referenceAudio) {
+    if (!personalized && !spec.song && !referenceAudio) {
       if (referenceFile) {
         const out = path.join(dir, "referencia-audio-respaldo.m4a");
         try {
@@ -627,7 +642,7 @@ export async function runEdit(run: Run, deps: MontajeDeps = {}): Promise<"done" 
         return { ok: false, error: ran.timedOut ? "tardó demasiado" : (lastLine(ran.stderr) ?? "doblar.py no respondió") };
       }
     };
-    if (spec.dubDialogue && !spec.song && referenceAudio) {
+    if (!personalized && spec.dubDialogue && !spec.song && referenceAudio) {
       if (!store) notes.push("Sin almacén de archivos: el diálogo no se traduce");
       else {
         finalCheck = { audio: referenceAudio.path, origin: null };

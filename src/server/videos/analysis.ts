@@ -80,7 +80,7 @@ const MAX_TOKENS = 16_000;
 async function askDesglose(deps: { gateway?: LlmGateway }, ctx: JobContext, callKey: string, user: AuthUser, video: Video, extra: LlmContent) {
   const product = await getProductFor(user, video.productId);
   const brief = briefOf(await withProductNotes(video));
-  const variants = await listVariants(user, video.productId);
+  const variants = product.kind === "cancion" ? [] : await listVariants(user, video.productId);
   const refs = await manifestRefsFor(user, video, { forAnalysis: true });
   const content = await buildContent(user, video, brief, product, refs, variants);
   const answer = await (deps.gateway ?? getGateway()).call({
@@ -582,6 +582,7 @@ async function buildContent(
     textPart(
       [
         `Producto: ${product.name}`,
+        ...(product.kind === "cancion" ? ["Tipo: infoproducto de canciones personalizadas. Replica la escena de reacción con los avatares y entorno del país de destino. No hay artículo físico, caja ni variante que sustituir ni añadir: conserva los objetos de la escena. La canción nueva y su letra se añaden después en el montaje."] : []),
         `Qué hace: ${product.summary}`,
         `Idioma del anuncio: ${product.language}`,
         `Países: ${product.countries.join(", ")}`,
@@ -732,7 +733,8 @@ export async function missingForAnalysis(user: AuthUser, video: Video, brief: Br
   const manifest = imageManifest(video, await manifestRefsFor(user, video, { forAnalysis: true }));
   const needsAvatar = video.avatarMode === "elegido" || video.avatarMode === "biblioteca";
   if (needsAvatar && !manifest.some((item) => item.role === "avatar")) return NO_AVATAR;
-  if (!manifest.some((item) => item.role === "articulo")) return NO_ARTICLE;
+  const product = await getProductFor(user, video.productId);
+  if (product.kind !== "cancion" && !manifest.some((item) => item.role === "articulo")) return NO_ARTICLE;
   if (brief.kind === "adaptacion_concepto" && brief.adaptation === null) return NO_ADAPTATION;
   // El modelo elegido no admite el tramo: se pregunta antes de gastar en la imagen.
   return clipModelProblem(video);
@@ -848,7 +850,7 @@ export async function autoAnalyzePending(): Promise<number> {
         eq(schema.videos.skipAutoAnalysis, false),
         sql`not exists (select 1 from video_analyses a where a.video_id = ${schema.videos.id} and a.reference_media_id = ${schema.videos.referenceMediaId})`,
         // Los requisitos de `missingForAnalysis`, en SQL.
-        sql`exists (select 1 from product_photos p where p.product_id = ${schema.videos.productId} and p.role = 'articulo')`,
+        sql`(exists (select 1 from products p where p.id = ${schema.videos.productId} and p.kind = 'cancion') or exists (select 1 from product_photos p where p.product_id = ${schema.videos.productId} and p.role = 'articulo'))`,
         sql`(${schema.videos.avatarMode} <> 'elegido' or exists (select 1 from product_photos p where p.id = ${schema.videos.avatarPhotoId} and p.product_id = ${schema.videos.productId} and p.role = 'avatar'))`,
         sql`(${schema.videos.avatarMode} <> 'biblioteca' or ${schema.videos.avatarLibraryId} is not null)`,
         sql`(${schema.videos.kind} <> 'adaptacion_concepto' or nullif(trim(${schema.videos.adaptation}), '') is not null)`,
@@ -885,7 +887,7 @@ function targetWords(target: AvatarTarget): string {
 export async function analysisExtras(
   result: Analysis,
   brief: Brief,
-  product: Pick<Product, "countries">,
+  product: Pick<Product, "countries"> & { kind?: Product["kind"] },
   variants: Array<Pick<VariantInfo, "name">>,
 ): Promise<{ extras: Pick<Analysis, "autoAvatar" | "questions">; autoAvatarId: number | null }> {
   const extras: Pick<Analysis, "autoAvatar" | "questions"> = {};
@@ -910,7 +912,7 @@ export async function analysisExtras(
       });
     }
   }
-  if (variants.length > 0 && brief.variantId === null) {
+  if (product.kind !== "cancion" && variants.length > 0 && brief.variantId === null) {
     const match = result.variantMatch ? variants.find((variant) => fold(variant.name) === fold(result.variantMatch!)) : undefined;
     if (!match) questions.push({ id: "variante", text: "¿Qué variante sale?", options: variants.map((variant) => variant.name) });
   }

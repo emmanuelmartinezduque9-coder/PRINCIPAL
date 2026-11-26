@@ -14,7 +14,7 @@ import { archiveSweep } from "@/server/videos/archive";
 import { CHUNK_BYTES } from "@/server/videos/upload";
 import { createVideo, getVideoFor, videoView, type Video } from "@/server/videos/videos";
 import { batchView, createBatch } from "@/server/videos/batches";
-import { editTextsFor, editVideoResponse, relaunchEditsWithoutClaude, setEditTexts, standardCta, startBatchEdits, startEdit, type EditSpec } from "@/server/videos/edits";
+import { editTextsFor, editVideoResponse, relaunchEditsWithoutClaude, setEditTexts, settleEditedBatches, standardCta, startBatchEdits, startEdit, type EditSpec } from "@/server/videos/edits";
 import { LlmCapReachedError, type LlmGateway } from "@/llm/gateway";
 import {
   claimRun,
@@ -189,6 +189,44 @@ const editRows = (videoId: number) =>
     .orderBy(schema.edits.version);
 
 describe("ficha de montaje", () => {
+  it("canción personalizada: letra propia, audio desde 0 y sin doblaje ni audio original, también con ficha antigua", async () => {
+    const product = await makeProduct(dueno, { name: "Suena" });
+    await getDb().update(schema.products).set({ kind: "cancion" }).where(eq(schema.products.id, product.id));
+    const { song } = await uploadSong(dueno, mp3, { title: "Hildegard", dropMs: 4000, startMs: 1000 });
+    const lyrics = { sections: ["[Chorus]\nHildegard für dich"], words: [{ word: "Hildegard", startMs: 0, endMs: 1000 }, { word: "für", startMs: 1000, endMs: 1000 }, { word: "dich", startMs: 1000, endMs: 2000 }] };
+    await getDb().insert(schema.songLyrics).values({ songId: song.id, lyrics: lyrics.sections.join("\n"), ...lyrics });
+    const video = await videoWithClip(dueno, { songId: song.id, audioMode: "cancion", dubDialogue: true }, product);
+    await getDb().insert(schema.videoReferenceAudio).values({ videoId: video.id, mime: "audio/mp4", size: 3, durationMs: 1000, data: Buffer.from("m4a") });
+    const { runId } = await startEdit(dueno, video.id);
+    const spec = await specOf(runId);
+    expect(spec).toMatchObject({ product: { kind: "cancion" }, song: { id: song.id, dropMs: 0, startMs: 0 }, referenceAudio: null, dubDialogue: false, dubForced: false, lyrics });
+    // Una ficha anterior con offsets o doblaje heredados también se normaliza antes de ejecutar Python.
+    await getDb().update(schema.editRuns).set({ spec: { ...spec, song: { ...spec.song!, startMs: 1000, dropMs: 4000 }, referenceAudio: { source: "web" }, dubDialogue: true } }).where(eq(schema.editRuns.id, runId));
+    const guarded = path.join(sampleDir, `solo-cancion-${runId}`);
+    fs.mkdirSync(guarded);
+    fs.writeFileSync(path.join(guarded, "doblar.py"), "raise RuntimeError('No se debe doblar una canción personalizada')");
+    fs.writeFileSync(path.join(guarded, "montar_auto.py"), FAKE_MONTADOR.replace("if spec.get('title')", `assert spec['song']['startMs'] == 0 and spec['song']['dropMs'] == 0
+assert spec.get('referenceAudio') is None and not spec.get('dubDialogue')
+assert spec['lyrics']['words'][1]['startMs'] == spec['lyrics']['words'][1]['endMs']
+if spec.get('title')`));
+    expect(await runEdit((await claimRun(new Date()))!, deps({ montadorDir: guarded }))).toBe("done");
+  });
+
+  it("retoma el montaje de un lote listo cuando termina su canción, sin repetir montajes fallidos", async () => {
+    const batch = await createBatch(dueno, "Reacciones");
+    await getDb().update(schema.batches).set({ status: "listo" }).where(eq(schema.batches.id, batch.id));
+    const product = await makeProduct(dueno, { name: "Suena" });
+    await getDb().update(schema.products).set({ kind: "cancion" }).where(eq(schema.products.id, product.id));
+    const { song } = await uploadSong(dueno, mp3, { title: "Para ti" });
+    const video = await videoWithClip(dueno, { batchId: batch.id, songId: song.id }, product);
+    const failed = await videoWithClip(dueno, { batchId: batch.id, songId: song.id, editStatus: "fallido" }, product);
+    await settleEditedBatches();
+    expect(await getVideoFor(dueno, video.id)).toMatchObject({ editStatus: "en_marcha" });
+    expect(await getVideoFor(dueno, failed.id)).toMatchObject({ editStatus: "fallido" });
+    await settleEditedBatches();
+    expect(await getDb().select().from(schema.editRuns).where(eq(schema.editRuns.videoId, video.id))).toHaveLength(1);
+  });
+
   it("«Solo gancho»: el gancho y detrás los cuerpos en su orden, con su trabajo; la canción con su drop", async () => {
     const product = await makeProduct(dueno, { name: "EisWerk" });
     const b1 = await body(dueno, product.id, "https://d1abc.cloudfront.net/b1.mp4", "Uno");

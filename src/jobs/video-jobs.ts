@@ -1,3 +1,4 @@
+import { CANCION_JOB, ensurePersonalizedSong, queuePendingSongs } from "@/server/videos/canciones";
 import { defineJob, defineSchedule } from "@/jobs/registry";
 import { StepFailedError } from "@/jobs/steps";
 import { probeConnections } from "@/server/higgsfield";
@@ -32,6 +33,7 @@ defineJob<{ videoId: number; uploadId: string }>(
     if (typeof videoId !== "number" || typeof uploadId !== "string") throw new StepFailedError("Datos del trabajo no válidos.");
     await processReference(videoId, uploadId);
     // Con la referencia lista, el vídeo sigue solo (desglose y lo demás).
+    await queuePendingSongs();
     await kickVideo(videoId);
   },
   "Preparar el vídeo de referencia",
@@ -136,3 +138,10 @@ defineJob<{ runId: number }>(
   },
   "Buscar referencias en Pinterest",
 );
+
+/** Canción nueva de la referencia: pasos reanudables, con los reintentos de la cola. */
+defineJob<{ videoId: number }>(CANCION_JOB, async ({ videoId }) => {
+  if (!Number.isSafeInteger(videoId) || videoId <= 0) throw new StepFailedError("Datos del trabajo no válidos.");
+  await ensurePersonalizedSong(videoId);
+  await kickVideo(videoId);
+}, "Crear la canción personalizada");

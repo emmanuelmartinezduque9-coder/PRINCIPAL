@@ -22,6 +22,7 @@ describe("productos", () => {
 
   it("un producto nuevo nace en alemán para DE, AT y CH", async () => {
     const p = await createProduct(dueno, { name: "Eismaschine", summary: "Hace helado en 2 minutos" });
+    expect(p.kind).toBe("fisico");
     expect(p.language).toBe("de");
     expect(p.countries).toEqual(["DE", "AT", "CH"]);
     expect(p.createdBy).toBe(dueno.id);
@@ -35,6 +36,15 @@ describe("productos", () => {
       countries: ["IT", "CH", "IT"],
     });
     expect(p).toMatchObject({ name: "Gelatiera", summary: "Fa il gelato", language: "it", countries: ["IT", "CH"] });
+  });
+
+  it("permite canciones personalizadas y conserva el tipo al editar otros datos", async () => {
+    const product = await createProduct(dueno, { name: "Melodie", summary: "Canciones para regalar", kind: "cancion" });
+    expect(product.kind).toBe("cancion");
+    expect((await updateProduct(dueno, product.id, { name: "Melodie Neu" })).kind).toBe("cancion");
+    expect((await updateProduct(dueno, product.id, { kind: "fisico" })).kind).toBe("fisico");
+    await expect(updateProduct(dueno, product.id, { kind: "digital" })).rejects.toMatchObject({ status: 400 });
+    await expect(createProduct(dueno, { name: "X", summary: "X", kind: "digital" })).rejects.toMatchObject({ status: 400 });
   });
 
   it("el producto que crea un colaborador queda asignado a él", async () => {

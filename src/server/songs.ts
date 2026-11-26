@@ -341,3 +341,28 @@ export async function readSongFile(songId: number): Promise<{ mime: string; data
   const [song] = await getDb().select({ mime: schema.songs.mime, data: schema.songs.data }).from(schema.songs).where(eq(schema.songs.id, songId));
   return song ? { mime: song.mime, data: Buffer.from(song.data) } : null;
 }
+
+/** Guardado interno del trabajo video.cancion: audio, letra y enlace al vídeo se confirman juntos. */
+export async function savePersonalizedSong(input: {
+  videoId: number; referenceMediaId: string | null; userId: number; productName: string; bytes: Buffer;
+  song: { title: string; durationMs: number; sections: string[]; words: Array<{ word: string; startMs: number; endMs: number }> };
+  lyrics: string;
+}): Promise<number> {
+  if (!input.bytes.length || input.bytes.length > MAX_SONG_BYTES) throw new Error("El audio de la canción no es válido.");
+  const probed = await probe(input.bytes);
+  if (probed.mime !== "audio/mpeg") throw new Error("La web musical no devolvió un MP3 válido.");
+  const sha256 = createHash("sha256").update(input.bytes).digest("hex");
+  return getDb().transaction(async tx => {
+    const [video] = await tx.select().from(schema.videos).where(eq(schema.videos.id, input.videoId)).for("update");
+    if (!video || video.referenceStatus !== "ready" || video.referenceMediaId !== input.referenceMediaId) throw new Error("La referencia cambió durante la creación de la canción.");
+    if (video.songId !== null) return video.songId;
+    const [song] = await tx.insert(schema.songs).values({
+      title: input.song.title, sections: ["canciones-personalizadas", input.productName], durationMs: input.song.durationMs,
+      mime: "audio/mpeg", size: input.bytes.length, data: input.bytes, sha256, dropMs: 0, startMs: 0, createdBy: input.userId,
+    }).onConflictDoUpdate({ target: schema.songs.sha256, set: { dropMs: 0, startMs: 0, sections: ["canciones-personalizadas", input.productName] } }).returning({ id: schema.songs.id });
+    await tx.insert(schema.songLyrics).values({ songId: song.id, lyrics: input.lyrics, sections: input.song.sections, words: input.song.words })
+      .onConflictDoUpdate({ target: schema.songLyrics.songId, set: { lyrics: input.lyrics, sections: input.song.sections, words: input.song.words } });
+    await tx.update(schema.videos).set({ songId: song.id, audioMode: "cancion", updatedAt: new Date() }).where(eq(schema.videos.id, video.id));
+    return song.id;
+  });
+}

@@ -50,6 +50,7 @@ function MarketChips({ product }: { product: ProductView }) {
 function EditProductDialog({ product }: { product: ProductView }) {
   const client = useQueryClient();
   const initial = (): ProductValues => ({
+    kind: product.kind,
     name: product.name,
     summary: product.summary,
     language: product.language,
@@ -282,7 +283,7 @@ export function ProductDetail({ id, initialTab = "fotos" }: { id: string; initia
           <Panel>
             <PhotoManager productId={product.id} onCount={setPhotoCount} />
           </Panel>
-          <VariantsPanel productId={product.id} />
+          {product.kind !== "cancion" ? <VariantsPanel productId={product.id} /> : null}
         </TabsContent>
         <TabsContent value="videos">
           <VideoList productId={product.id} />

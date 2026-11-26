@@ -14,6 +14,8 @@ prueba real `AUTOMATIZACION SEGA/Audio/Pruebas/Df5AlGsNWCn/DE`):
 Railway) en vez de PyTorch, para no meter PyTorch en la imagen. `test_doblar.py` comprueba que da lo mismo.
 
 Uso (`--resultado <archivo.json>` antes de la orden deja también el resultado en ese archivo):
+  python doblar.py transcribir <audio_o_video>
+      → canción entera con Whisper large-v3-turbo, idioma, frases y palabras con tiempos (sin separación ni VAD).
   python doblar.py separar <audio_o_video> <carpeta> [--video <referencia.mp4>]
       → carpeta/{mix,speech,music,sfx}.wav y carpeta/dialogue-only.mp4 (la voz sobre la imagen de la referencia
         si se da; si no, sobre negro). Imprime un JSON con niveles por pista, `voz` (si hay palabras, su idioma y sus
@@ -113,7 +115,7 @@ WHISPER_RATE = 16000
 
 
 def whisper():
-    """El modelo Whisper `base` (faster-whisper, CPU) o `None` si no está instalado."""
+    """El modelo Whisper large-v3-turbo (faster-whisper, CPU) o `None` si no está instalado."""
     try:
         from faster_whisper import WhisperModel
     except ImportError:
@@ -166,6 +168,26 @@ def frases(modelo, x, vad=True, idiomas=()):
             f['probs'] = {i: round(float(p.get(i, 0.0)), 2) for i in idiomas if i}
         out.append(f)
     return out
+
+
+
+def transcribir(fuente):
+    """Canción de referencia entera con Whisper, sin separar pistas ni filtrar el canto con VAD."""
+    if not tiene_audio(fuente):
+        raise Fallo('La referencia no trae audio para crear la canción')
+    w = whisper()
+    if w is None:
+        raise Fallo('Falta Whisper para transcribir la canción de referencia')
+    trozos, info = w.transcribe(str(fuente), vad_filter=False, beam_size=1, word_timestamps=True)
+    lista, words = [], []
+    for t in trozos:
+        lista.append(dict(desde=round(t.start, 3), hasta=round(t.end, 3), texto=t.text.strip()))
+        for word in t.words or []:
+            words.append(dict(word=word.word.strip(), startMs=round(word.start * 1000), endMs=round(word.end * 1000)))
+    texto = ' '.join(f['texto'] for f in lista).strip()
+    if not texto:
+        raise Fallo('Whisper no pudo transcribir la canción de referencia')
+    return dict(ok=True, idioma=info.language, texto=texto, frases=lista, words=words, segundos=duracion(fuente))
 
 
 def en_idioma_original(f, origen, destino):
@@ -439,6 +461,8 @@ def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument('--resultado', type=Path, help='además de imprimirlo, deja el JSON del resultado en este archivo')
     cmds = p.add_subparsers(dest='orden', required=True)
+    tr = cmds.add_parser('transcribir')
+    tr.add_argument('fuente', type=Path)
     s = cmds.add_parser('separar')
     s.add_argument('fuente', type=Path)
     s.add_argument('carpeta', type=Path)
@@ -476,7 +500,9 @@ def main(argv=None):
     m.add_argument('salida', type=Path)
     a = p.parse_args(argv)
     try:
-        if a.orden == 'separar':
+        if a.orden == 'transcribir':
+            r = transcribir(a.fuente)
+        elif a.orden == 'separar':
             r = separar(a.fuente, a.carpeta, a.video, a.destino)
         elif a.orden == 'comprobar':
             ventanas = [tuple(float(v) for v in x.split(':')) for x in a.ventanas] if a.ventanas is not None else None

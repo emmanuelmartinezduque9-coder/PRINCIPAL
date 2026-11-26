@@ -72,7 +72,7 @@ export function validateEmoji(value: unknown): string | null {
  * Las reglas de los datos de un producto (nombre, frase, idioma y países), con los valores por
  * defecto. Lanza 400 con un mensaje para la persona. La usan crear, cambiar y el importador.
  */
-export function validateProductInput(input: { name: string; summary: string; language?: string; countries?: string[] }) {
+export function validateProductInput(input: { name: string; summary: string; language?: string; countries?: string[]; kind?: string }) {
   const name = input.name.trim();
   const summary = input.summary.trim();
   if (!name) throw new HttpError(400, "Escribe el nombre del producto.");
@@ -81,6 +81,8 @@ export function validateProductInput(input: { name: string; summary: string; lan
   if (summary.length > MAX_SUMMARY) {
     throw new HttpError(400, `La frase no puede tener más de ${MAX_SUMMARY} caracteres.`);
   }
+  const kind = input.kind ?? "fisico";
+  if (kind !== "fisico" && kind !== "cancion") throw new HttpError(400, "Tipo de producto no válido.");
   const language = input.language ?? "de";
   if (!(LANGUAGES as readonly string[]).includes(language)) throw new HttpError(400, "Idioma no disponible.");
   const countries = [...new Set(input.countries ?? ["DE", "AT", "CH"])];
@@ -88,13 +90,13 @@ export function validateProductInput(input: { name: string; summary: string; lan
   if (!countries.every((c) => (COUNTRIES as readonly string[]).includes(c))) {
     throw new HttpError(400, "País no disponible.");
   }
-  return { name, summary, language, countries };
+  return { name, summary, language, countries, kind: kind as Product["kind"] };
 }
 
 /** Crea un producto. Si lo crea un colaborador, queda asignado a él en la misma operación. */
 export async function createProduct(
   user: AuthUser,
-  input: { name: string; summary: string; language?: string; countries?: string[] },
+  input: { name: string; summary: string; language?: string; countries?: string[]; kind?: string },
   options: {
     /** Enlace del que sale (alta desde un enlace). */
     sourceUrl?: string;
@@ -155,6 +157,7 @@ export async function allProductNames(): Promise<string[]> {
 }
 
 export interface ProductChanges {
+  kind?: string;
   name?: string;
   summary?: string;
   language?: string;
@@ -238,6 +241,7 @@ export async function updateProduct(user: AuthUser, productId: number, changes: 
     extra.archivedAt = changes.archived ? (current.archivedAt ?? new Date()) : null;
   }
   const values = validateProductInput({
+    kind: changes.kind ?? current.kind,
     name: changes.name ?? current.name,
     summary: changes.summary ?? current.summary,
     language: changes.language ?? current.language,

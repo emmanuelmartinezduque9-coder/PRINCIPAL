@@ -30,6 +30,7 @@ export async function POST(request: Request) {
     const input = body && typeof body === "object" ? body : {};
     const text = (value: unknown) => (typeof value === "string" ? value : "");
     const product = await createProduct(user!, {
+      kind: input.kind === undefined ? undefined : text(input.kind),
       name: text(input.name),
       summary: text(input.summary),
       // Un valor que no es texto o no es una lista se rechaza con el mensaje de siempre.

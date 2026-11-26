@@ -366,7 +366,13 @@ def construir_plan(spec, clips, work, font, gancho=None, pistas=None, con_audio=
             copia = dict(rotulos=rot, drop_t=drop_t, modo=modo, tramos=tramos)
 
     song = spec.get('song')
-    if song:
+    personalized = (spec.get('product') or {}).get('kind') == 'cancion'
+    if personalized and not song:
+        raise Fallo('Falta la canción personalizada: no se monta con el audio original')
+    if personalized:
+        audio = dict(mode='cancion', song=song['path'], drop=0.0, product_shown={'t': 0.0},
+                     music_gain_db=0, peak_limit=0.94)
+    elif song:
         drop_ms = song.get('dropMs')
         if drop_ms is None:
             audio = dict(mode='cancion', song=song['path'], drop=float(song.get('startMs') or 0) / 1000,
@@ -413,6 +419,8 @@ def construir_plan(spec, clips, work, font, gancho=None, pistas=None, con_audio=
         zoom=dict(enabled=False), ritmo=ritmo, font=font, notas=notas,
         work_dir=str(Path(work) / 'montador'), revision_dir=str(Path(work) / 'revision'),
         output=str(Path(work) / SALIDA))
+    if personalized and spec.get('lyrics'):
+        plan['subtitles'] = spec['lyrics']
     return plan, avisos
 
 

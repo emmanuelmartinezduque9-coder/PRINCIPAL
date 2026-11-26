@@ -11,7 +11,7 @@ import { createGateway } from "@/llm/gateway";
 import { login, resetLoginAttempts, type AuthUser } from "@/server/auth";
 import { setPersonDisabled } from "@/server/people";
 import { addProductPhoto, type PhotoRole } from "@/server/photos";
-import type { Product } from "@/server/products";
+import { updateProduct, type Product } from "@/server/products";
 import { seedRules } from "@/server/rules";
 import { setUserCap, spendSummary } from "@/server/spend";
 import { ACCESS_LOST, requestAnalysis, runAnalysis, updatePrompts, type Analysis } from "@/server/videos/analysis";
@@ -266,6 +266,17 @@ describe("desglose con Claude", () => {
     if (caso !== "sin referencia lista") await readyReference(v.id);
     await expect(requestAnalysis(ana, v.id)).rejects.toMatchObject({ status: 400, message });
     expect((await getPool().query("select count(*)::int as n from video_analyses")).rows[0].n).toBe(0);
+  });
+
+  it("un infoproducto de canciones se desglosa sin foto de artículo ni embalaje", async () => {
+    await updateProduct(ana, producto.id, { kind: "cancion" });
+    await updateVideoChoices(ana, v.id, { avatarMode: "sin_sustitucion" });
+    await readyReference(v.id);
+    const { analysisId } = await requestAnalysis(ana, v.id);
+    const { client, calls } = fakeMessages([reply()]);
+    await runAnalysis(analysisId, { gateway: createGateway({ client }) });
+    expect(texts(calls[0])).toContain("No hay artículo físico, caja ni variante");
+    expect((await analysisRow(analysisId)).status).toBe("done");
   });
 
   it("con «sin personas» no hace falta avatar", async () => {

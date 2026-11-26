@@ -951,8 +951,12 @@ async function composeFramePrompt(
     return null;
   }
   const room = await makeThumbnail((await readPinterestImage(refs[0].sha256)).data, "image", 1024);
-  const variant = await videoVariant(run.videoId);
-  const productPhotos = await productPhotosFor(run.videoId, variant);
+  const owner = await getActiveUser(ctx.userId);
+  if (!owner || ctx.productId === null) throw new StepFailedError("No se puede leer el producto del vídeo.");
+  const product = await getProductFor(owner, ctx.productId);
+  const isSong = product.kind === "cancion";
+  const variant = isSong ? null : await videoVariant(run.videoId);
+  const productPhotos = isSong ? [] : await productPhotosFor(run.videoId, variant);
   const extras = (await manualReferences(run.videoId)).filter((ref) => ref.role === "ropa" || ref.role === "otro");
   const extraParts: Array<ReturnType<typeof textPart>> = [];
   for (const [i, ref] of extras.entries()) {
@@ -967,6 +971,7 @@ async function composeFramePrompt(
   const correction = await lastOwnerRejection(run.videoId, run.tramo);
   const content: LlmContent = [
     textPart(`Prompt del desglose (lo que se conserva: acción, identidad, producto):\n${base}`),
+    ...(isSong ? [textPart("Este vídeo vende una canción personalizada: no hay artículo físico, caja ni efecto del producto. Conserva los objetos de la escena de reacción, sin añadir un producto o envase. Devuelve productVisible=false, packagingVisible=false y effectVisible=false; el párrafo product describe la escena sin sustitución de objetos. La canción se incorpora después en el montaje.")] : []),
     ...(correction
       ? [textPart(`CORRECCIÓN DEL DUEÑO al rechazar la imagen anterior: «${correction}». Manda sobre el prompt del desglose: aplícala de forma visible en los párrafos que toque.`)]
       : []),
@@ -1045,10 +1050,10 @@ async function composeFramePrompt(
   return {
     prompt: paragraphs.join("\n\n"),
     baseSha: basePromptShaOf(base, variant?.id ?? null),
-    productHidden: !written.productVisible,
-    packagingHidden: !written.packagingVisible,
-    effectVisible: written.effectVisible && !!written.effectPrompt,
-    effectPrompt: written.effectVisible ? written.effectPrompt : null,
+    productHidden: isSong || !written.productVisible,
+    packagingHidden: isSong || !written.packagingVisible,
+    effectVisible: !isSong && written.effectVisible && !!written.effectPrompt,
+    effectPrompt: !isSong && written.effectVisible ? written.effectPrompt : null,
     christmasTv: written.christmasTv === true,
   };
 }

@@ -19,10 +19,11 @@ let productCounter = 0;
 /** Crea un producto por el camino real (si lo crea un colaborador, queda asignado a él). */
 export async function makeProduct(
   creator: AuthUser,
-  over: { name?: string; summary?: string; language?: string; countries?: string[] } = {},
+  over: { name?: string; summary?: string; language?: string; countries?: string[]; kind?: "fisico" | "cancion" } = {},
 ): Promise<Product> {
   productCounter += 1;
   return createProduct(creator, {
+    kind: over.kind,
     name: over.name ?? `Producto ${productCounter}`,
     summary: over.summary ?? "Hace algo útil",
     language: over.language,

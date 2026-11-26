@@ -157,7 +157,7 @@ function LinkProductForm({ toggle }: { toggle: React.ReactNode }) {
 function ManualProductForm({ toggle }: { toggle: React.ReactNode }) {
   const router = useRouter();
   const client = useQueryClient();
-  const [values, setValues] = useState<ProductValues>({ name: "", summary: "", language: "de", countries: ["DE", "AT", "CH"] });
+  const [values, setValues] = useState<ProductValues>({ kind: "fisico", name: "", summary: "", language: "de", countries: ["DE", "AT", "CH"] });
   const [files, setFiles] = useState<PendingPhoto[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);

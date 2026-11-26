@@ -8,6 +8,7 @@ import { cn } from "@/lib/utils";
 import { COUNTRY_LABELS, LANGUAGE_LABELS } from "./labels";
 
 export interface ProductValues {
+  kind: "fisico" | "cancion";
   name: string;
   summary: string;
   language: string;
@@ -28,6 +29,16 @@ export function ProductFields({
 
   return (
     <div className="flex flex-col gap-5">
+      <div className="flex flex-col gap-2">
+        <Label htmlFor="product-kind">Tipo de producto</Label>
+        <Select value={values.kind} onValueChange={(kind) => set({ kind: kind as ProductValues["kind"] })}>
+          <SelectTrigger id="product-kind" className="w-full data-[size=default]:h-10"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="fisico">Producto físico</SelectItem>
+            <SelectItem value="cancion">Canciones personalizadas</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
       <div className="flex flex-col gap-2">
         <Label htmlFor="name">Nombre</Label>
         <Input

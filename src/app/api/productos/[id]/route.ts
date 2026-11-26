@@ -24,6 +24,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     // Un valor que no es texto o no es una lista se rechaza con el mensaje de siempre.
     const text = (value: unknown) => (value === undefined ? undefined : typeof value === "string" ? value : "");
     const product = await updateProduct(user!, parseId(id), {
+      kind: input.kind === undefined ? undefined : text(input.kind),
       name: text(input.name),
       summary: text(input.summary),
       language: text(input.language),

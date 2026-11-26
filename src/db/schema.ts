@@ -78,6 +78,8 @@ export const products = pgTable("products", {
   /** Horas entre un vídeo publicado y el siguiente en la misma cuenta (3 por defecto; máximo 2 al día). */
   publishGapHours: integer("publish_gap_hours").notNull().default(3),
   name: text("name").notNull(),
+  /** Artículo físico o infoproducto de canciones personalizadas. */
+  kind: text("kind").$type<"fisico" | "cancion">().notNull().default("fisico"),
   /** La frase de qué hace el producto. */
   summary: text("summary").notNull(),
   language: text("language").notNull().default("de"),
@@ -104,6 +106,7 @@ export const products = pgTable("products", {
   audience: text("audience"),
   angle: text("angle"),
 }, (t) => [
+  check("products_kind_valid", sql`${t.kind} in ('fisico', 'cancion')`),
   check("products_emoji_length", sql`${t.emoji} is null or char_length(${t.emoji}) between 1 and 16`),
   check("products_default_avatar_mode_valid", sql`${t.defaultAvatarMode} in ('elegido', 'sin_sustitucion', 'nadie')`),
   check("products_default_avatar_only_chosen", sql`${t.defaultAvatarMode} = 'elegido' or ${t.defaultAvatarPhotoId} is null`),
@@ -552,6 +555,14 @@ export const songs = pgTable(
     check("songs_number_valid", sql`${t.number} is null or ${t.number} > 0`),
   ],
 );
+
+/** Letra y alineación de la canción personalizada; se borran con su audio. */
+export const songLyrics = pgTable("song_lyrics", {
+  songId: bigint("song_id", { mode: "number" }).primaryKey().references(() => songs.id, { onDelete: "cascade" }),
+  lyrics: text("lyrics").notNull(),
+  sections: jsonb("sections").$type<string[]>().notNull(),
+  words: jsonb("words").$type<Array<{ word: string; startMs: number; endMs: number }>>().notNull(),
+});
 
 export const videos = pgTable(
   "videos",

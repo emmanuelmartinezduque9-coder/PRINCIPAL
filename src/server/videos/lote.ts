@@ -9,6 +9,7 @@ import { getActiveUser, type AuthUser } from "@/server/auth";
 import { HttpError } from "@/server/http";
 import { activeAvatarSummaries, type AvatarSummary } from "@/server/avatars";
 import { listProductPhotos, type PhotoInfo } from "@/server/photos";
+import { getProductFor, type Product } from "@/server/products";
 import { listSongs } from "@/server/songs";
 import { listVariants, type VariantInfo } from "@/server/variants";
 import { missingForAnalysis, requestAnalysis, type Analysis } from "@/server/videos/analysis";
@@ -364,6 +365,7 @@ interface AskContext {
   library: AvatarSummary[];
   variants: VariantInfo[];
   songs: Array<{ id: number; label: string }>;
+  productKind?: Product["kind"];
 }
 
 /** Valores de las opciones de las preguntas `avatar` y `variante` del desglose. */
@@ -393,7 +395,7 @@ function choiceQuestion(video: Video, key: string, question: { id: string; text:
       href: null,
     };
   }
-  if (question.id === "variante" && context.variants.length > 0) {
+  if (context.productKind !== "cancion" && question.id === "variante" && context.variants.length > 0) {
     return {
       videoId: video.id,
       key,
@@ -475,7 +477,7 @@ async function askRow(user: AuthUser, row: Row, photos: PhotoInfo[], linkFailed:
       href: null,
     });
   }
-  if (!photos.some((photo) => photo.role === "articulo")) {
+  if (context.productKind !== "cancion" && !photos.some((photo) => photo.role === "articulo")) {
     questions.push({
       key: "sys:articulo",
       kind: "articulo",
@@ -527,7 +529,9 @@ async function askRow(user: AuthUser, row: Row, photos: PhotoInfo[], linkFailed:
 async function askRows(user: AuthUser, rows: Row[]): Promise<Map<number, RowAsk>> {
   const photosOf = new Map<number, PhotoInfo[]>();
   const variantsOf = new Map<number, VariantInfo[]>();
+  const kindsOf = new Map<number, Product["kind"]>();
   for (const productId of new Set(rows.map((row) => row.video.productId))) {
+    kindsOf.set(productId, (await getProductFor(user, productId)).kind);
     photosOf.set(productId, await listProductPhotos(user, productId));
     variantsOf.set(productId, await listVariants(user, productId));
   }
@@ -541,6 +545,7 @@ async function askRows(user: AuthUser, rows: Row[]): Promise<Map<number, RowAsk>
       row.video.id,
       await askRow(user, row, photosOf.get(row.video.productId) ?? [], link?.status === "failed" ? link.error : null, link !== null && link.status !== "failed", {
         library,
+        productKind: kindsOf.get(row.video.productId),
         variants: variantsOf.get(row.video.productId) ?? [],
         songs,
       }),

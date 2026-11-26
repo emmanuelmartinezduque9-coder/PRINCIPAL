@@ -354,6 +354,20 @@ class MontajeDeVerdad(unittest.TestCase):
         applied = json.loads((work / 'revision' / 'salida - plan-aplicado.json').read_text())
         self.assertEqual([round(c['start'], 2) for c in applied['textos']['cues']], [0.0, 3.0])
 
+    def test_cancion_personalizada_renderiza_letra_sin_mover_rotulos(self):
+        spec = dict(SPEC, kind='replicar', hookMs=None,
+                    product=dict(name='Suena', language='de', kind='cancion'),
+                    song=dict(path=str(self.song), dropMs=9320, startMs=1500, durationMs=30000),
+                    clips=[dict(role='clip', path=str(self.body))], edicionReferencia=EDICION,
+                    lyrics=dict(sections=['[Verse]\nOma Hildegard'], words=[
+                        dict(word='Oma', startMs=0, endMs=600), dict(word='Hildegard', startMs=600, endMs=1500)]))
+        code, result, work = self.montar('cancion-personalizada', spec)
+        self.assertEqual(code, 0, result)
+        applied = json.loads((work / 'revision' / 'salida - plan-aplicado.json').read_text())
+        self.assertEqual([round(c['start'], 2) for c in applied['textos']['cues']], [0, 3])
+        self.assertEqual([c['start'] for c in applied['subtitulos']], [0, 0.6])
+        self.assertAlmostEqual(applied['comprobaciones']['song_offset_measured_s'], 0, delta=0.02)
+
     def test_un_fallo_deja_el_motivo(self):
         spec = dict(SPEC, clips=[dict(role='hook', path=str(self.tmp / 'no-existe.mp4'))])
         code, result, _ = self.montar('roto', spec)
@@ -364,6 +378,54 @@ class MontajeDeVerdad(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn('La canción se acaba antes que el vídeo', result['error'])
 
+
+
+class CancionesPersonalizadas(unittest.TestCase):
+    def letra(self):
+        return dict(sections=['[Verse]\nOma Hildegard\nDu bist hier'], words=[
+            dict(word='Oma', startMs=0, endMs=500), dict(word='Hildegard', startMs=500, endMs=1000),
+            dict(word='Du', startMs=1200, endMs=1200), dict(word='bist', startMs=1400, endMs=1600),
+            dict(word='hier', startMs=1600, endMs=2000)])
+
+    def test_lineas_con_tiempos_palabras_y_duracion_cero(self):
+        from rotulos_layout import lyric_lines
+        lines = lyric_lines(self.letra(), 3)
+        self.assertEqual([l['text'] for l in lines], ['Oma Hildegard', 'Du bist hier'])
+        self.assertEqual([(l['start'], l['end']) for l in lines], [(0, 1), (1.2, 2)])
+        self.assertEqual([l['whole_line'] for l in lines], [False, True])
+        self.assertEqual(len(lyric_lines(self.letra(), 0.8)), 1)
+        with self.assertRaises(ValueError):
+            lyric_lines(dict(self.letra(), sections=['[Verse]\nOtra letra']), 3)
+
+    def test_estribillo_repetido_y_linea_entera_con_tiempos_cero(self):
+        from rotulos_layout import lyric_lines
+        result = lyric_lines(dict(sections=['[Chorus]\nOma, Hildegard!\n[Chorus]\nOma, Hildegard!'], words=[
+            dict(word='Oma', startMs=0, endMs=0), dict(word='Hildegard', startMs=0, endMs=0),
+            dict(word='Oma,', startMs=1000, endMs=1500), dict(word='Hildegard!', startMs=1500, endMs=2000)]), 3)
+        self.assertEqual([(line['start'], line['end']) for line in result], [(0, 1), (1, 2)])
+        self.assertTrue(result[0]['whole_line'])
+
+    def test_cancion_desde_cero_aunque_biblioteca_tenga_drop_y_audio_original(self):
+        spec = dict(SPEC, product=dict(name='Suena', language='de', kind='cancion'), lyrics=self.letra(),
+                    referenceAudio=dict(path='/original.mp3'))
+        plan, _ = ma.construir_plan(spec, [('clip', '/clip.mp4')], '/w', '/f.ttf')
+        self.assertEqual(plan['audio']['product_shown'], {'t': 0.0})
+        self.assertEqual(plan['audio']['drop'], 0)
+        self.assertEqual(plan['subtitles'], self.letra())
+        with self.assertRaisesRegex(ma.Fallo, 'Falta la canción personalizada'):
+            ma.construir_plan(dict(spec, song=None), [('clip', '/clip.mp4')], '/w', '/f.ttf', con_audio=True)
+
+    @unittest.skipUnless(HAS_PIL and FONTS, 'falta Pillow o fuente')
+    def test_capa_amarilla_debajo_del_gancho_y_por_palabra(self):
+        from rotulos_layout import render_lyrics
+        from PIL import Image
+        with tempfile.TemporaryDirectory() as work:
+            cues = render_lyrics(self.letra(), 3, work, FONTS[0])
+            self.assertEqual([(c['start'], c['end']) for c in cues], [(0, 0.5), (0.5, 1), (1.2, 2)])
+            image = Image.open(cues[0]['png'])
+            self.assertIsNone(image.crop((0, 0, 886, 318)).getbbox())
+            self.assertGreater(image.getbbox()[1], 318)
+            self.assertIn((255, 214, 0, 255), image.getdata())
 
 if __name__ == '__main__':
     unittest.main(verbosity=1)

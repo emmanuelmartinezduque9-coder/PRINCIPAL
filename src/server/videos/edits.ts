@@ -8,6 +8,7 @@ import { getProductFor, type Product } from "@/server/products";
 import { parseRange, songSummaries } from "@/server/songs";
 import type { Analysis } from "@/server/videos/analysis";
 import { bodiesOfVideo, productBodyIds } from "@/server/videos/bodies";
+import { ensurePersonalizedSong } from "@/server/videos/canciones";
 import { dubDialogueOf } from "@/server/videos/doblaje";
 import { localizeText, marketOf } from "@/server/videos/localization";
 import { getObjectStore } from "@/lib/object-store";
@@ -56,7 +57,9 @@ export interface EditSpec {
   title: string;
   kind: string;
   /** `countries`: dónde se vende (el lugar de los rótulos sin ciudad en la tarjeta, regla 6c); falta en fichas viejas. */
-  product: { name: string; language: string; countries?: string[] };
+  product: { name: string; language: string; countries?: string[]; kind?: "fisico" | "cancion" };
+  /** Letra original de la canción elegida, con tiempos absolutos desde el segundo 0. */
+  lyrics?: { sections: string[]; words: Array<{ word: string; startMs: number; endMs: number }> };
   /**
    * Los clips en orden: con «Solo gancho», el gancho (`hook`) y detrás sus cuerpos (`body`); con los
    * otros tipos, el clip aprobado (`clip`). `jobId` es el trabajo de Higgsfield (su copia en el
@@ -189,18 +192,29 @@ async function buildSpec(video: Video, product: Product): Promise<EditSpec> {
   } else {
     clips.push({ role: "clip", jobId: clip.jobId, url: clip.url });
   }
+  const personalized = product.kind === "cancion";
+  if (personalized && video.songId === null) {
+    const songId = await ensurePersonalizedSong(video.id);
+    if (songId === null) throw new HttpError(409, "La canción personalizada aún no está lista.");
+    video = { ...video, songId };
+  }
   const song = video.songId === null ? null : ((await songSummaries([video.songId])).get(video.songId) ?? null);
-  const original = await referenceAudioSource(video);
+  if (personalized && !song) throw new HttpError(409, "La canción personalizada aún no está lista.");
+  const [lyrics] = song && personalized
+    ? await getDb().select({ sections: schema.songLyrics.sections, words: schema.songLyrics.words }).from(schema.songLyrics).where(eq(schema.songLyrics.songId, song.id))
+    : [];
+  const original = personalized ? null : await referenceAudioSource(video);
   const editReference = await effectiveEditReferenceUrl(video);
   return {
     version: 2,
     videoId: video.id,
     title: video.title,
     kind: video.kind,
-    product: { name: product.name, language: product.language, countries: product.countries },
+    product: { name: product.name, language: product.language, countries: product.countries, kind: product.kind },
     clips,
     hookMs: hookTiming(video)?.hookMs ?? null,
-    song: song ? { id: song.id, title: song.title, dropMs: song.dropMs, startMs: song.startMs, durationMs: song.durationMs } : null,
+    song: song ? { id: song.id, title: song.title, dropMs: personalized ? 0 : song.dropMs, startMs: personalized ? 0 : song.startMs, durationMs: song.durationMs } : null,
+    ...(lyrics ? { lyrics } : {}),
     referenceAudio: original === "web" ? { source: "web" } : original ? { source: "enlace", url: original.link } : null,
     texts: editTextsFor(video, product, await latestAnalysisResult(video.id)),
     // La del vídeo o, si no tiene, la de su producto en el lote.
@@ -212,8 +226,8 @@ async function buildSpec(video: Video, product: Product): Promise<EditSpec> {
         : video.referenceSource === "link" && video.referenceUrl
           ? { source: "enlace", url: video.referenceUrl }
           : null,
-    dubDialogue: await dubDialogueOf(video),
-    dubForced: video.dubDialogue === true,
+    dubDialogue: personalized ? false : await dubDialogueOf(video),
+    dubForced: !personalized && video.dubDialogue === true,
   };
 }
 
@@ -558,7 +572,25 @@ export async function settleBatch(batchId: number | null): Promise<void> {
 /** Para el seguimiento de cada minuto: los lotes `listo` que ya pueden quedar `montado`. */
 export async function settleEditedBatches(): Promise<void> {
   const ids = await getDb().select({ id: schema.batches.id }).from(schema.batches).where(eq(schema.batches.status, "listo"));
-  for (const { id } of ids) await settleBatch(id);
+  for (const { id } of ids) {
+    // El lote pudo quedar listo mientras `video.cancion` tenía el paso reservado. Su aviso
+    // habitual solo despierta lotes en producción; aquí reanuda exclusivamente montajes
+    // todavía no iniciados cuya canción acaba de terminar, sin repetir fallos anteriores.
+    const pending = await getDb().select({ video: videos }).from(videos)
+      .innerJoin(schema.products, eq(schema.products.id, videos.productId))
+      .where(and(eq(videos.batchId, id), eq(schema.products.kind, "cancion"), sql`${videos.songId} is not null`, sql`${videos.editStatus} is null`, eq(videos.autoSkipped, false)));
+    for (const { video } of pending) {
+      if (video.ownerRedo) continue;
+      const creator = await getActiveUser(video.createdBy);
+      if (!creator) continue;
+      try {
+        await queueEdit(video, await getProductFor(creator, video.productId), creator.id, new Date());
+      } catch (error) {
+        if (!(error instanceof HttpError) || error.message !== ALREADY_RUNNING) throw error;
+      }
+    }
+    await settleBatch(id);
+  }
 }
 
 // ───────────────────────── Lo que deja el montador ─────────────────────────

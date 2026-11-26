@@ -151,3 +151,70 @@ class PillowFont:
 
     def layout(self, text, size):
         return [], self.font.getlength(text) * size / FIXED_SIZE
+
+
+# Capa independiente de letra: no participa en la partición ni el estilo 06B.
+def lyric_lines(lyrics, duration_s):
+    """Alinea las líneas de sections con words, en orden (también estribillos repetidos).
+    Una línea con tiempos de duración cero permanece entera hasta la siguiente línea.
+    Los tiempos son absolutos desde el inicio de la canción, nunca pegados a los cortes.
+    """
+    def normalized(text):
+        return ''.join(c.casefold() for c in str(text) if c.isalnum())
+    words = [w for w in (lyrics or {}).get('words', []) if normalized(w.get('word', ''))]
+    lines = [line.strip() for section in (lyrics or {}).get('sections', [])
+             for line in section.splitlines() if line.strip() and not re.fullmatch(r'\s*\[[^]]+\]\s*', line)]
+    cursor, out = 0, []
+    for line in lines:
+        tokens = [normalized(w) for w in line.split() if normalized(w)]
+        matched = []
+        for token in tokens:
+            if cursor >= len(words) or normalized(words[cursor]['word']) != token:
+                raise ValueError('Los tiempos de la canción no coinciden con las líneas de su letra')
+            matched.append(words[cursor])
+            cursor += 1
+        if matched:
+            out.append(dict(text=line, start=max(0, float(matched[0]['startMs']) / 1000),
+                            end=max(float(w['endMs']) / 1000 for w in matched), words=matched))
+    for i, line in enumerate(out):
+        next_start = out[i + 1]['start'] if i + 1 < len(out) else duration_s
+        line['end'] = min(duration_s, max(line['end'], next_start if line['end'] <= line['start'] else line['end']))
+        # Algunas palabras de ElevenLabs no tienen duración: se muestra la línea completa durante su ventana.
+        line['whole_line'] = any(w['startMs'] == w['endMs'] for w in line['words'])
+    return [line for line in out if line['end'] > line['start'] and line['start'] < duration_s]
+
+
+def render_lyrics(lyrics, duration_s, work, font):
+    """PNG transparentes de la capa amarilla debajo de la caja del gancho.
+    Conserva la línea completa y destaca la palabra cantada en amarillo claro.
+    """
+    from pathlib import Path
+    from PIL import Image, ImageDraw, ImageFont
+    folder = Path(work) / 'letra'
+    folder.mkdir(parents=True, exist_ok=True)
+    out = []
+    for line in lyric_lines(lyrics, duration_s):
+        size = 54
+        tokens = line['text'].split()
+        f = ImageFont.truetype(str(font), size)
+        while size > 16 and f.getlength(line['text']) > 850:
+            size -= 1
+            f = ImageFont.truetype(str(font), size)
+        intervals = [(line['start'], line['end'], None)] if line['whole_line'] else [
+            (max(line['start'], w['startMs'] / 1000), min(line['end'], w['endMs'] / 1000), i)
+            for i, w in enumerate(line['words'])]
+        for start, end, active in intervals:
+            if end <= start:
+                continue
+            # El compositor coloca todo en x=112, y=287: la franja transparente conserva el gancho 06B intacto.
+            image = Image.new('RGBA', (886, 460), (0, 0, 0, 0))
+            draw = ImageDraw.Draw(image)
+            x = (886 - f.getlength(line['text'])) / 2
+            for i, token in enumerate(tokens):
+                draw.text((x, 380), token, font=f, fill='#FFFF80' if i == active else '#FFD600',
+                          stroke_width=2, stroke_fill='black')
+                x += f.getlength(token + ' ')
+            png = folder / f'linea-{len(out)}.png'
+            image.save(png)
+            out.append(dict(role='lyrics', text=line['text'], start=start, end=end, png=str(png), active_word=active))
+    return out

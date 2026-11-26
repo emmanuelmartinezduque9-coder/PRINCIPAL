@@ -1,3 +1,4 @@
+import { queuePendingSongs } from "@/server/videos/canciones";
 import { sweepOwnerRedos } from "@/server/videos/owner-redo";
 import { sweepPublications } from "@/server/videos/publications";
 import { and, eq, inArray, lt } from "drizzle-orm";
@@ -50,6 +51,7 @@ async function failStaleAnalyses(now: Date): Promise<number> {
 }
 
 export async function videoSweep(now: Date = new Date(), deps: GenDeps = {}): Promise<void> {
+  try { await queuePendingSongs(); } catch (error) { console.error("[canciones] No se pudieron encolar las canciones pendientes:", error); }
   try { await sweepPublications(now); } catch (error) { console.error("[moviles] No se pudo avanzar la cola:", error); }
   try {
     await sweepGenerations({ now: () => now, ...deps });

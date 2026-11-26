@@ -171,5 +171,29 @@ class Separacion(unittest.TestCase):
             shutil.rmtree(d, ignore_errors=True)
 
 
+
+@unittest.skipUnless(HAS_NUMPY, 'falta numpy')
+class TranscribirCancion(unittest.TestCase):
+    def test_whisper_cancion_entera_sin_vad_con_tiempos(self):
+        from unittest.mock import Mock, patch
+        from types import SimpleNamespace as NS
+        model = Mock()
+        model.transcribe.return_value = ([NS(start=0.2, end=1.8, text=' Oma Hildegard', words=[
+            NS(word=' Oma', start=0.2, end=0.7), NS(word=' Hildegard', start=0.7, end=1.8)])], NS(language='de'))
+        with patch.object(doblar, 'whisper', return_value=model), patch.object(doblar, 'tiene_audio', return_value=True), \
+             patch.object(doblar, 'duracion', return_value=20):
+            result = doblar.transcribir(Path('/referencia.mp4'))
+        model.transcribe.assert_called_once_with('/referencia.mp4', vad_filter=False, beam_size=1, word_timestamps=True)
+        self.assertEqual(result['idioma'], 'de')
+        self.assertEqual(result['texto'], 'Oma Hildegard')
+        self.assertEqual(result['segundos'], 20)
+        self.assertEqual(result['words'][0], dict(word='Oma', startMs=200, endMs=700))
+
+    def test_sin_whisper_falla_en_vez_de_generar_sin_contexto(self):
+        from unittest.mock import patch
+        with patch.object(doblar, 'whisper', return_value=None), patch.object(doblar, 'tiene_audio', return_value=True):
+            with self.assertRaisesRegex(doblar.Fallo, 'Falta Whisper'):
+                doblar.transcribir(Path('/referencia.mp4'))
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)
