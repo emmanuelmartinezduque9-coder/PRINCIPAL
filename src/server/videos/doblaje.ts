@@ -125,6 +125,9 @@ export interface DoblarResult {
   hasta?: number;
 }
 
+/** El margen que `doblar.py rescatar` pone a cada lado de una ventana de habla (`RELLENO_S`). */
+const RESCUE_MARGIN_S = 0.25;
+
 /** Cuántas veces se vuelve a doblar un trozo que quedó en el idioma original. */
 export const MAX_REPAIRS = 2;
 
@@ -316,7 +319,13 @@ async function analyse(ctx: DubContext, stems: string, userId: number, target: {
   const rescue = speech.filter((f) => f.pista !== "voz");
   // Las ventanas del diálogo: las frases de habla y los tramos de la comprobación final (enteros, aunque la frase oída
   // aquí sea más corta).
-  const windows = speech.map((f): [number, number] => [f.desde, f.hasta]);
+  // Una frase de diálogo en un tramo donde se oyó letra traducida: la canción se coló en su ventana (vídeo 64). Se dobla
+  // solo la frase, sin el margen que `rescatar` pone a cada lado.
+  const tight = (f: Phrase): [number, number] => {
+    const [a, b] = [f.desde + RESCUE_MARGIN_S, f.hasta - RESCUE_MARGIN_S];
+    return b - a >= 0.3 ? [a, b] : [f.desde, f.hasta];
+  };
+  const windows = speech.map((f): [number, number] => (singWindows.some((w) => overlaps(f, w)) ? tight(f) : [f.desde, f.hasta]));
   for (const w of forcedWindows) if (!windows.some(([a, b]) => a <= w[0] && w[1] <= b)) windows.push(w);
   const moved = await ctx.doblar([
     "rescatar",
@@ -344,6 +353,9 @@ async function analyse(ctx: DubContext, stems: string, userId: number, target: {
       decision: DECISION_VERSION,
       ...(forcedWindows.length ? { forzar: forcedWindows } : {}),
       ...(singWindows.length ? { cantar: singWindows } : {}),
+      // Lo que ya estaba en el idioma del anuncio (una canción alemana, un diálogo alemán): la comprobación final no lo
+      // toma por letra traducida.
+      nativas: phrases.filter((f) => f.idioma === ctx.language).map((f): [number, number] => [f.desde, f.hasta]),
     },
   };
 }
@@ -770,7 +782,8 @@ async function nativeWindows(videoId: number, audio: string, language: string): 
   type Raw = { frases?: Phrase[]; detalle?: { frases?: Phrase[]; voz?: { frases?: Phrase[] } } } | null;
   const raw = (row?.raw ?? null) as Raw;
   const all = [...(raw?.frases ?? []), ...(raw?.detalle?.frases ?? []), ...(raw?.detalle?.voz?.frases ?? [])];
-  return all.filter((f) => f.idioma === language).map((f): [number, number] => [f.desde, f.hasta]);
+  const nativas = (raw as { nativas?: Array<[number, number]> } | null)?.nativas ?? [];
+  return [...all.filter((f) => f.idioma === language).map((f): [number, number] => [f.desde, f.hasta]), ...nativas];
 }
 
 /**
@@ -796,9 +809,13 @@ export async function requireRedub(
   if (before >= MAX_FINAL_REDUBS) return false;
   const latest = rows[0];
   const previous = (latest?.raw as { forzar?: Array<[number, number]> } | null)?.forzar ?? [];
-  const forzar = [...previous, ...leaks.map((l): [number, number] => [Math.max(0, l.desde - 0.1), l.hasta + 0.1])];
   const sung = (latest?.raw as { cantar?: Array<[number, number]> } | null)?.cantar ?? [];
-  const cantar = [...sung, ...lyrics.map((l): [number, number] => [Math.max(0, l.desde - 0.1), l.hasta + 0.1])];
+  const newSung = lyrics.map((l): [number, number] => [Math.max(0, l.desde - 0.1), l.hasta + 0.1]);
+  const cantar = [...sung, ...newSung];
+  // La letra traducida es lo último que se oyó: un `forzar` anterior en ese tramo (un verso que se tomó por diálogo sin
+  // traducir) deja de valer; si de verdad hay diálogo ahí, la próxima comprobación lo vuelve a pedir.
+  const kept = previous.filter(([a, b]) => !newSung.some(([c, d]) => a < d && c < b));
+  const forzar = [...kept, ...leaks.map((l): [number, number] => [Math.max(0, l.desde - 0.1), l.hasta + 0.1])];
   const what = [
     ...(leaks.length ? [`diálogo sin traducir (${leaks.map((l) => `«${l.texto}»`).join(" · ")})`] : []),
     ...(lyrics.length ? [`letra de la canción traducida (${lyrics.map((l) => `«${l.texto}»`).join(" · ")})`] : []),

@@ -174,6 +174,11 @@ la canción: el 65 sonaba «Die ganze Zeit, die Falle in meinem Turm…» y el 6
    habla/canto) y dice cuál traduce: si traduce una de canto, el montaje no vale. Esos tramos se guardan en `cantar`: al
    volver a doblar, lo que caiga ahí y no sea conversacional es canto. Con `forzar` (diálogo sin traducir) manda el
    diálogo. Tras 2 rehechos se para con el motivo («la letra de la canción sigue traducida…»).
+3. Revisión de Codex del cambio: (a) una canción que ya está en alemán en la referencia no puede tomarse por letra
+   traducida: el análisis guarda `nativas` (lo que ya estaba en el idioma del anuncio) y la comprobación lo ignora;
+   (b) una letra traducida anula el `forzar` anterior de ese tramo (si no, el verso se volvía a traducir hasta agotar
+   los intentos); (c) una frase de diálogo en un tramo con letra traducida (la canción se coló en su ventana, vídeo 64)
+   se dobla sin el margen de 0,25 s a cada lado.
 
 ## Ningún montaje mudo (24/11/2026)
 
