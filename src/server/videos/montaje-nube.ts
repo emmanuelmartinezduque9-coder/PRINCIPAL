@@ -729,7 +729,18 @@ export async function runEdit(run: Run, deps: MontajeDeps = {}): Promise<"done" 
         .from(schema.videos)
         .where(eq(schema.videos.id, spec.videoId));
       const verdict = await checkFinalDialogue(
-        { videoId: spec.videoId, file: output, audio: finalCheck.audio, language: spec.product.language, origin: finalCheck.origin, dir, doblar, gateway: deps.gateway, learned },
+        {
+          videoId: spec.videoId,
+          file: output,
+          audio: finalCheck.audio,
+          language: spec.product.language,
+          origin: finalCheck.origin,
+          forced: spec.dubForced === true,
+          dir,
+          doblar,
+          gateway: deps.gateway,
+          learned,
+        },
         owner?.createdBy ?? run.requestedBy,
         owner?.productId ?? null,
       );
@@ -738,18 +749,22 @@ export async function runEdit(run: Run, deps: MontajeDeps = {}): Promise<"done" 
         return "failed";
       }
       if (verdict.kind === "leak") {
-        const said = verdict.leaks.map((l) => `«${l.texto}» (${l.desde}–${l.hasta} s)`).join(", ");
-        if (!(await requireRedub(spec.videoId, finalCheck.audio, spec.product.language, verdict.leaks))) {
+        const said = [...verdict.leaks, ...verdict.lyrics].map((l) => `«${l.texto}» (${l.desde}–${l.hasta} s)`).join(", ");
+        if (!(await requireRedub(spec.videoId, finalCheck.audio, spec.product.language, verdict.leaks, verdict.lyrics))) {
           await finishFailed(
             run,
-            montajeFailure(`el diálogo sigue sin traducir después de doblarlo otra vez (${said.slice(0, 200)}); no se entrega. Vuelve a montar para intentarlo de nuevo`),
+            montajeFailure(
+              verdict.leaks.length
+                ? `el diálogo sigue sin traducir después de doblarlo otra vez (${said.slice(0, 200)}); no se entrega. Vuelve a montar para intentarlo de nuevo`
+                : `la letra de la canción sigue traducida después de doblarlo otra vez (${said.slice(0, 200)}); no se entrega. Vuelve a montar para intentarlo de nuevo`,
+            ),
             `comprobación final: ${said}`,
             nowOf(deps),
             notes,
           );
           return "failed";
         }
-        console.warn(`[montaje] Vídeo ${spec.videoId}: la comprobación final oyó diálogo sin traducir (${said}); se vuelve a doblar y a montar`);
+        console.warn(`[montaje] Vídeo ${spec.videoId}: la comprobación final oyó diálogo sin traducir o letra traducida (${said}); se vuelve a doblar y a montar`);
         await defer(run, 0, nowOf(deps));
         return "deferred";
       }

@@ -13,7 +13,7 @@ import { LocalStore, setObjectStoreForTests } from "@/lib/object-store";
 import type { AuthUser } from "@/server/auth";
 import { uploadSong } from "@/server/songs";
 
-import { DUB_UNKNOWN } from "@/server/videos/doblaje";
+import { DUB_UNKNOWN, lyricFragments } from "@/server/videos/doblaje";
 import { recheckDubbedEdits, reclassifyDubbedEdits, redubTodaysEdits, remountDubbedWithoutEdit, startEdit, type EditSpec } from "@/server/videos/edits";
 import { createBatch } from "@/server/videos/batches";
 import { claimRun, runEdit, type MontajeDeps } from "@/server/videos/montaje-nube";
@@ -119,7 +119,14 @@ elif args[0] == 'verificar':
         quedan = [dict(dialogo, desde=0.6, hasta=1.7, texto='What about your fingers?', prob=0.62, pista='music')]
     elif audio.startswith(b'FINAL-CANCION'):
         quedan = [cancion]
-    r = {'ok': True, 'comprobado': True, 'quedan': quedan, 'frases': quedan + [{'desde': 0.0, 'hasta': 2.0, 'texto': 'Zehn Sekunden, versprochen.', 'idioma': 'de', 'prob': 0.99, 'no_habla': 0.05, 'confianza': -0.3, 'pista': 'voz'}]}
+    letra = []
+    if b'TURM' in audio and veces == 0:
+        # Higgsfield tradujo el verso de la canción (vídeo 65): suena en alemán y es conversacional en apariencia.
+        letra = [{'desde': 4.0, 'hasta': 11.0, 'texto': 'Die ganze Zeit allein in meinem Turm', 'idioma': 'de', 'prob': 0.9, 'no_habla': 0.1, 'confianza': -0.5, 'pista': 'voz'}]
+    if b'LETRA-TRADUCIDA' in audio and veces == 0:
+        # Un trozo de la canción se dobló: suena en alemán y es canto.
+        letra = [{'desde': 11.9, 'hasta': 13.5, 'texto': 'CANTO: Gemacht im Schritt.', 'idioma': 'de', 'prob': 0.9, 'no_habla': 0.1, 'confianza': -0.5, 'pista': 'voz'}]
+    r = {'ok': True, 'comprobado': True, 'quedan': quedan, 'frases': quedan + letra + [{'desde': 0.0, 'hasta': 2.0, 'texto': 'Zehn Sekunden, versprochen.', 'idioma': 'de', 'prob': 0.99, 'no_habla': 0.05, 'confianza': -0.3, 'pista': 'voz'}]}
 elif args[0] == 'tramo':
     shutil.copy(Path(args[1]) / 'dialogue-only.mp4', args[4])
     r = {'ok': True, 'desde': float(args[2]) - 0.25, 'hasta': float(args[3]) + 0.25}
@@ -181,6 +188,16 @@ const gateway: LlmGateway = {
     speech.calls += 1;
     speech.instructions = request.instructions;
     if (speech.down) throw new Error("Claude sin saldo");
+    if (request.stepKey.includes("letra-traducida")) {
+      // Comparar lo doblado con la referencia: lo que dice «Turm» traduce la primera frase de canto.
+      const text = String((request.content as Array<{ text?: string }>)[0]?.text ?? "");
+      const [original, dubbedPart] = text.split("Frases que se oyen dobladas");
+      const ref = original.split("\n").filter((l) => /^\d+\. /.test(l));
+      const song = ref.findIndex((l) => l.includes("[canto]")) + 1;
+      const lines = dubbedPart.split("\n").filter((l) => /^\d+\. /.test(l));
+      const data = { frases: lines.map((l, i) => ({ n: i + 1, traduce: l.includes("Turm") ? song : null, motivo: "prueba" })) };
+      return { text: "", data: data as T, model: "prueba", usage: {} as never, costMicros: 0, spendEntryId: 0, ruleVersions: {}, webSources: [] };
+    }
     const lines = String((request.content as Array<{ text?: string }>)[0]?.text ?? "").split("\n");
     const data = {
       frases: lines.map((line, i) =>
@@ -622,10 +639,48 @@ describe("comprobación final del vídeo montado (orden del dueño, 25/11/2026)"
     expect(dubCalls()).toHaveLength(1);
   });
 
+  it("si en el vídeo montado suena la letra de la canción traducida, no se entrega: ese tramo queda como canción y se vuelve a doblar (lote 11, vídeo 64)", async () => {
+    const video = await withAudio(Buffer.from("VOZ-INGLES LETRA-TRADUCIDA"));
+    const first = await mount(video.id);
+    expect(first.outcome).toBe("deferred");
+    const [marked] = await dubRows();
+    expect(marked.error).toMatch(/^Comprobación final: el vídeo montado tenía letra de la canción traducida \(«CANTO: Gemacht im Schritt\.»\)/);
+    expect(marked.raw).toMatchObject({ cantar: [[11.8, 13.6]] });
+    const second = await again();
+    expect(second.outcome).toBe("done");
+    expect((await dubRows())[1].raw).toMatchObject({ cantar: [[11.8, 13.6]] });
+  });
+
+  it("una frase doblada que traduce un verso de la canción no se entrega: ese tramo queda como canción (lote 11, vídeo 65)", async () => {
+    const video = await withAudio(Buffer.from("MUSICA-HABLA TURM"));
+    const first = await mount(video.id);
+    expect(first.outcome).toBe("deferred");
+    const [marked] = await dubRows();
+    expect(marked.error).toMatch(/letra de la canción traducida \(«Die ganze Zeit allein in meinem Turm»\)/);
+    expect(marked.raw).toMatchObject({ cantar: [[3.9, 11.1]] });
+    expect((await again()).outcome).toBe("done");
+  });
+
   it("apagado en la tarjeta: no se comprueba", async () => {
     const video = await videoWithAudio({ dubDialogue: false });
     await getDb().update(schema.videoReferenceAudio).set({ data: Buffer.from("SIEMPRE-EN") }).where(eq(schema.videoReferenceAudio.videoId, video.id));
     expect((await mount(video.id)).outcome).toBe("done");
+  });
+});
+
+describe("trozos de canción pegados a un verso (lote 11, 26/11/2026)", () => {
+  const f = (desde: number, hasta: number, texto: string) => ({ desde, hasta, texto });
+  it("una frase no conversacional pegada a un verso, o que se repite como un estribillo, es canto", () => {
+    const phrases = [f(6.4, 11.6, "A place on a lover with a fire in its heart."), f(11.9, 13.55, "Made in the step."), f(11.86, 13.56, "Okay. Best gift ever.")];
+    expect(lyricFragments(phrases, ["canto", "habla", "habla"], [false, false, true])).toEqual(["canto", "canto", "habla"]);
+    const chorus = [f(0, 2, "Hooray to downtown!"), f(2.4, 5.6, "Hooray to downtown!")];
+    expect(lyricFragments(chorus, ["habla", "habla"], [false, false])).toEqual(["canto", "canto"]);
+  });
+  it("una frase conversacional sigue siendo habla aunque suene una canción a la vez (lote 10)", () => {
+    const phrases = [f(0.14, 1.46, "10 seconds, I promise."), f(2.65, 13.85, "Jingle bell, jingle bell, jingle bell rock")];
+    expect(lyricFragments(phrases, ["habla", "canto"], [true, false])).toEqual(["habla", "canto"]);
+    // Sin nada de canción cerca, ante la duda, habla.
+    expect(lyricFragments([f(0, 2.5, "And me to be...")], ["habla"], [false])).toEqual(["habla"]);
   });
 });
 

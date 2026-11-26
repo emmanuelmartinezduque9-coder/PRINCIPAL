@@ -154,6 +154,27 @@ las 28 frases de los lotes 6 y 10) acertaba el 46 % dejando cada vídeo fuera de
 meten TensorFlow en la imagen y tampoco separan «habla sobre música» de «canto» con fiabilidad. Forzar el idioma en
 Whisper y comparar probabilidades tampoco: traduce en vez de transcribir.
 
+## Lote 11: trozos de canción dados por diálogo (26/11/2026)
+
+Emmanuel: el resto del lote 11 quedó muy bien, pero en el **64** se dobló «Made in the step.» (un trozo mal transcrito
+de la canción, pegado a «A place on a lover with a fire in its heart») y en el **65** el verso «I'm a shot alone in my
+tower». Causa: «ante la duda, habla» con letra transcrita a medias. Y, al escuchar los montajes, Higgsfield había traducido
+la canción: el 65 sonaba «Die ganze Zeit, die Falle in meinem Turm…» y el 64 empezaba con «Magda macht ihr nicht so viel so».
+
+1. **Claude dice además si cada frase es conversacional** (tiene sentido como algo que una persona de la escena dice a
+   otra o a cámara). `lyricFragments`: una frase NO conversacional que solapa o va pegada (≤ 1 s) a un verso, o que se
+   repite como un estribillo, es canto. Una conversacional sigue siendo habla aunque suene una canción a la vez («10
+   seconds, I promise.» del lote 10). El prompt añade la primera persona poética sin interlocutor y los trozos sin
+   sentido pegados a un verso. `DECISION_VERSION = 4`.
+   Probado con Claude real sobre las frases guardadas de los lotes 10 y 11 (20 vídeos): 64 «Made in the step.» → canto
+   («That's it?» y «Okay. Best gift ever.» → habla); 65 → canto; 49 «Hooray to downtown!» ×4 → canto; todo el diálogo
+   del lote 10 (44–48, 63) sigue habla y las canciones (48, 51, 60, 61, 67, 68) canto.
+2. **La comprobación final busca también letra traducida**: (a) frases en el idioma del anuncio que, con la misma
+   decisión, son canto; (b) Claude compara cada frase doblada del montaje con las frases de la referencia (con su
+   habla/canto) y dice cuál traduce: si traduce una de canto, el montaje no vale. Esos tramos se guardan en `cantar`: al
+   volver a doblar, lo que caiga ahí y no sea conversacional es canto. Con `forzar` (diálogo sin traducir) manda el
+   diálogo. Tras 2 rehechos se para con el motivo («la letra de la canción sigue traducida…»).
+
 ## Ningún montaje mudo (24/11/2026)
 
 Sin canción y sin el audio de la referencia guardado, el montaje usa el audio del vídeo de referencia (el de la réplica

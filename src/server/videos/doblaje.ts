@@ -99,6 +99,11 @@ export interface DubContext {
    * original: son habla sí o sí y se doblan (con lo que haya en la voz o en la música). Los pone `dubbedAudio`.
    */
   forceWindows?: Array<[number, number]>;
+  /**
+   * Tramos en los que la comprobación final oyó una letra de canción traducida (alemán cantado o un trozo de verso
+   * doblado): ahí todo es canto y no se dobla. Los pone `dubbedAudio` (de `raw.cantar`).
+   */
+  singWindows?: Array<[number, number]>;
   /** Claude (pruebas: uno simulado) para decidir si la voz es habla o una canción. */
   gateway?: LlmGateway;
   /** Aquí se apuntan las correcciones aprendidas («Mejoras», paso `doblaje`) que se usaron. */
@@ -138,11 +143,12 @@ export const SPEECH_INSTRUCTIONS = [
   "Decides si cada frase que oyó Whisper en el audio de un vídeo corto de redes es HABLA (una persona hablando: diálogo, exclamación, narración a cámara) o CANTO (un verso de la letra de una canción).",
   "Reglas fijas del dueño: se dobla el diálogo y una canción no se traduce nunca. Ante la duda gana HABLA. Con una canción de fondo, el diálogo se dobla igual.",
   "Por frase te doy la pista de la que sale («voz»: la pista de diálogo del separador; «music»/«sfx»: voz que quedó dentro de la música), el texto (Whisper large-v3-turbo) y cuánto dura.",
-  "CANTO si la frase es un verso de una canción: de una que puedes nombrar (da su título en «cancion» y en «verso» la línea de la letra; Whisper puede transcribirla mal: «Sad is frightful» es «Oh, the weather outside is frightful» de «Let It Snow») o letra claramente cantada aunque no conozcas la canción: versos que riman o tienen métrica de canción, un estribillo que se repite («Come on, come on, rock your body», «Baby, baby, baby…»), frases poéticas que no se dirigen a nadie de la escena («The angels up in the clouds are jealous knowing we found…»). Entonces «cancion» puede ser null.",
+  "CANTO si la frase es un verso de una canción: de una que puedes nombrar (da su título en «cancion» y en «verso» la línea de la letra; Whisper puede transcribirla mal: «Sad is frightful» es «Oh, the weather outside is frightful» de «Let It Snow») o letra claramente cantada aunque no conozcas la canción: versos que riman o tienen métrica de canción, un estribillo que se repite («Come on, come on, rock your body», «Baby, baby, baby…», «Hooray to downtown!» varias veces), frases poéticas en primera persona que no se dirigen a nadie de la escena («The angels up in the clouds are jealous knowing we found…», «I'm a shot alone in my tower»). Entonces «cancion» puede ser null.",
+  "Whisper transcribe a medias los versos que suenan pegados a otros versos: una frase sin sentido como conversación justo antes, durante o después de un verso («Made in the step.» detrás de «A place on a lover with a fire in its heart») es un trozo de la canción.",
   "Una frase conversacional es HABLA aunque a la vez suene una canción: alguien que habla con otra persona de la escena o a cámara, con preguntas, respuestas, promesas, exclamaciones o comentarios sobre lo que pasa («Ten seconds, I promise.», «Oh no, I'm good.», «Wait, what?», «Oh, you're buying it.», «I got one last week. Best thing ever. Enjoy!», «How many are you getting?», «Excuse me, ma'am. Where'd you get those?», «I got it online.», «This one's just for me.», «You deserve it, mama.», «Three, two, one, let's go!», «Oh my God! Look at her wings!»). Solo es CANTO si es literalmente un verso de una canción (por ejemplo «Who let the dogs out?» es el estribillo de «Who Let the Dogs Out»).",
   "Cada frase se juzga sola: que otras frases sean una canción no convierte en canto a las demás. Que la frase salga de la pista «music» no la hace canto (el separador mete a veces el diálogo en la música), ni salir de «voz» la hace habla (a veces se cuela un verso).",
   "Ejemplos de CANTO: «Last Christmas, I gave you my heart» (Last Christmas), «Rockin' around the Christmas tree» (Rockin' Around the Christmas Tree), «Jingle bell, jingle bell, jingle bell rock» (Jingle Bell Rock), «All I want for Christmas is you» (All I Want for Christmas Is You), «Oh, the weather outside is frightful» (Let It Snow).",
-  "Si de verdad no puedes decidir, es HABLA. Responde por cada frase (n desde 1) tipo «habla» o «canto»; si es canto, «cancion» y «verso» si los sabes (si no, null), y un motivo corto.",
+  "Si de verdad no puedes decidir, es HABLA. Responde por cada frase (n desde 1) tipo «habla» o «canto»; «conversacional»: true si tiene sentido como algo que una persona de la escena dice a otra o a cámara (pregunta, respuesta, reacción, comentario sobre lo que pasa), false si no lo tiene (poético, sin interlocutor, palabras sueltas o sin sentido); si es canto, «cancion» y «verso» si los sabes (si no, null), y un motivo corto.",
 ].join("\n");
 
 const speechSchema = z.object({
@@ -151,6 +157,7 @@ const speechSchema = z.object({
       z.object({
         n: z.number().int().min(1),
         tipo: z.enum(["habla", "canto", "duda"]),
+        conversacional: z.boolean().optional(),
         cancion: z.string().max(120).nullable().optional(),
         verso: z.string().max(200).nullable().optional(),
         motivo: z.string().max(200),
@@ -171,6 +178,17 @@ export async function classifySpeech(
   productId: number | null,
   phrases: Array<Phrase & { pista: string }>,
 ): Promise<Array<"habla" | "canto"> | null> {
+  const detailed = await classifySpeechDetailed(ctx, userId, productId, phrases);
+  return detailed ? detailed.map((d) => d.kind) : null;
+}
+
+/** Como `classifySpeech`, con si cada frase es conversacional (Claude). */
+export async function classifySpeechDetailed(
+  ctx: Pick<DubContext, "videoId" | "gateway" | "learned">,
+  userId: number,
+  productId: number | null,
+  phrases: Array<Phrase & { pista: string }>,
+): Promise<Array<{ kind: "habla" | "canto"; conversational: boolean }> | null> {
   if (phrases.length === 0) return [];
   const listing = phrases
     .map((f, i) => `${i + 1}. [${f.pista}] ${f.desde.toFixed(1)}–${f.hasta.toFixed(1)} s (${(f.hasta - f.desde).toFixed(1)} s): «${f.texto}»`)
@@ -192,18 +210,44 @@ export async function classifySpeech(
       schema: speechSchema,
     });
     const byN = new Map((answer.data?.frases ?? []).map((f) => [f.n, f]));
-    return phrases.map((_, i) => {
-      const f = byN.get(i + 1);
-      return f?.tipo === "canto" ? "canto" : "habla";
-    });
+    const kinds = phrases.map((_, i) => (byN.get(i + 1)?.tipo === "canto" ? ("canto" as const) : ("habla" as const)));
+    const conversational = phrases.map((_, i) => byN.get(i + 1)?.conversacional !== false);
+    return lyricFragments(phrases, kinds, conversational).map((kind, i) => ({ kind, conversational: conversational[i] }));
   } catch (error) {
     console.warn(`[doblaje] Claude no pudo decir si el vídeo ${ctx.videoId} tiene habla o canto: ${messageOf(error)}`);
     return null;
   }
 }
 
-/** Versión de la decisión habla/canto (3: 25/11/2026, canto solo con la canción nombrada): las marcas sin ella se vuelven a mirar. */
-export const DECISION_VERSION = 3;
+/** Lo que se considera «pegado» a un verso (s): Whisper corta los versos y deja trozos sueltos a su lado. */
+export const LYRIC_GAP_S = 1;
+
+/**
+ * Trozos de canción que Claude dio por habla (lote 11, 26/11/2026: «Made in the step.» detrás de un verso en el vídeo 64):
+ * una frase que NO es conversacional (Claude) y que solapa o va pegada (≤ LYRIC_GAP_S) a una frase de canto, o que se
+ * repite como un estribillo, es canto. Una frase conversacional sigue siendo habla aunque suene una canción a la vez
+ * («Ten seconds, I promise.» con «Jingle Bell Rock», lote 10): eso no se toca.
+ */
+export function lyricFragments(
+  phrases: Array<{ desde: number; hasta: number; texto: string }>,
+  kinds: Array<"habla" | "canto">,
+  conversational: boolean[],
+): Array<"habla" | "canto"> {
+  const norm = (t: string) => t.toLowerCase().replace(/[^\p{L}\p{N} ]/gu, "").replace(/\s+/g, " ").trim();
+  const near = (a: { desde: number; hasta: number }, b: { desde: number; hasta: number }) => a.desde < b.hasta + LYRIC_GAP_S && b.desde < a.hasta + LYRIC_GAP_S;
+  const overlaps = (a: { desde: number; hasta: number }, b: { desde: number; hasta: number }) => a.desde < b.hasta && b.desde < a.hasta;
+  return kinds.map((kind, i) => {
+    if (kind === "canto" || conversational[i]) return kind;
+    const f = phrases[i];
+    const nextToSong = phrases.some((g, j) => j !== i && kinds[j] === "canto" && near(f, g));
+    const text = norm(f.texto);
+    const repeated = text.length > 0 && phrases.some((g, j) => j !== i && norm(g.texto) === text && !overlaps(f, g));
+    return nextToSong || repeated ? "canto" : "habla";
+  });
+}
+
+/** Versión de la decisión habla/canto (4: 26/11/2026, trozos de canción pegados a un verso): las marcas sin ella se vuelven a mirar. */
+export const DECISION_VERSION = 4;
 
 type Analysis =
   | { kind: "skip"; record: boolean; why: string; note: string | null; raw: unknown }
@@ -232,14 +276,23 @@ async function analyse(ctx: DubContext, stems: string, userId: number, target: {
   }
   const [owner] = await getDb().select({ productId: schema.videos.productId }).from(schema.videos).where(eq(schema.videos.id, ctx.videoId));
   // Con «Doblar el diálogo» encendido a propósito en la tarjeta, el dueño ya ha dicho que es diálogo: se dobla todo.
-  const kinds = ctx.forced ? foreign.map(() => "habla" as const) : await classifySpeech(ctx, userId, owner?.productId ?? null, foreign);
+  const detailed = ctx.forced ? foreign.map(() => ({ kind: "habla" as const, conversational: true })) : await classifySpeechDetailed(ctx, userId, owner?.productId ?? null, foreign);
+  const kinds = detailed?.map((d) => d.kind) ?? null;
   if (kinds === null) return { kind: "skip", record: false, why: "sin Claude", note: "No se pudo decidir si la voz es habla o una canción: no se dobla", raw: null };
   // Cada frase vale por sí sola: una canción que suena a la vez NO convierte el diálogo en canto (lote 10: «Ten seconds,
   // I promise» con «Jingle Bell Rock» debajo). Lo que la comprobación final oyó en el idioma original es habla.
   const overlaps = (f: { desde: number; hasta: number }, [a, b]: [number, number]) => f.desde < b && a < f.hasta;
-  const classified: Array<Phrase & { pista: string; tipo: "habla" | "canto" }> = foreign.map((f, i) => ({
+  const singWindows = ctx.singWindows ?? [];
+  // Donde la comprobación final oyó una letra traducida, canto; salvo una frase conversacional (el diálogo que suena
+  // junto a la canción se sigue doblando: «That's it?» en el vídeo 64).
+  const classified: Array<Phrase & { pista: string; tipo: "habla" | "canto"; conversacional?: boolean }> = foreign.map((f, i) => ({
     ...f,
-    tipo: forcedWindows.some((w) => overlaps(f, w)) ? ("habla" as const) : kinds[i],
+    conversacional: detailed?.[i]?.conversational,
+    tipo: forcedWindows.some((w) => overlaps(f, w))
+      ? ("habla" as const)
+      : singWindows.some((w) => overlaps(f, w)) && !detailed?.[i]?.conversational
+        ? ("canto" as const)
+        : kinds[i],
   }));
   // Un tramo de la comprobación final sin ninguna frase de habla aquí (Whisper no la oyó en la referencia): se dobla igual,
   // con la voz que haya en la música en ese tramo.
@@ -283,7 +336,15 @@ async function analyse(ctx: DubContext, stems: string, userId: number, target: {
   return {
     kind: "speech",
     origin,
-    raw: { origen: origin, ventanas: windows, frases: classified, clasificado: true, decision: DECISION_VERSION, ...(forcedWindows.length ? { forzar: forcedWindows } : {}) },
+    raw: {
+      origen: origin,
+      ventanas: windows,
+      frases: classified,
+      clasificado: true,
+      decision: DECISION_VERSION,
+      ...(forcedWindows.length ? { forzar: forcedWindows } : {}),
+      ...(singWindows.length ? { cantar: singWindows } : {}),
+    },
   };
 }
 
@@ -360,6 +421,8 @@ export async function dubbedAudio(ctx: DubContext): Promise<DubOutcome> {
     // Tramos que la comprobación final del montaje oyó en el idioma original: se doblan sí o sí.
     const forzar = (row?.raw as { forzar?: Array<[number, number]> } | null)?.forzar ?? [];
     if (forzar.length) ctx = { ...ctx, forceWindows: forzar };
+    const cantar = (row?.raw as { cantar?: Array<[number, number]> } | null)?.cantar ?? [];
+    if (cantar.length) ctx = { ...ctx, singWindows: cantar };
 
     // Ya se vio que no hace falta doblar este audio: nada. Las marcas de antes de decidir frase a frase habla o canto
     // (sin `decision: 2`; p. ej. «voz casi muda» con el diálogo en la música) se vuelven a mirar.
@@ -577,6 +640,8 @@ export interface FinalCheckContext {
   language: string;
   /** El idioma original del diálogo si se sabe (el del doblaje); si no, cualquier otro idioma cuenta. */
   origin: string | null;
+  /** «Doblar el diálogo» encendido a propósito en la tarjeta: todo es diálogo, no se buscan letras traducidas. */
+  forced?: boolean;
   dir: string;
   doblar: (args: string[]) => Promise<DoblarResult & { frases?: Array<Phrase & { pista: string }> }>;
   gateway?: LlmGateway;
@@ -585,7 +650,13 @@ export interface FinalCheckContext {
 
 export type FinalCheck =
   | { kind: "ok"; heard: string }
-  | { kind: "leak"; leaks: Array<{ desde: number; hasta: number; texto: string; idioma: string | null }> }
+  | {
+      kind: "leak";
+      /** Diálogo que sigue en el idioma original: se dobla sí o sí. */
+      leaks: Array<{ desde: number; hasta: number; texto: string; idioma: string | null }>;
+      /** Letra de una canción traducida (en el idioma del anuncio y canto): ahí no se dobla. */
+      lyrics: Array<{ desde: number; hasta: number; texto: string; idioma: string | null }>;
+    }
   | { kind: "error"; detail: string };
 
 /**
@@ -605,20 +676,86 @@ export async function checkFinalDialogue(ctx: FinalCheckContext, userId: number,
   // Lo que en la referencia ya se decía en el idioma del anuncio no cuenta (vídeo 20: «Guck mal, die hat Engelsflügel»
   // salió «en» al 0,62 en la voz sacada de la música): sería volver a doblar alemán al alemán.
   const native = await nativeWindows(ctx.videoId, ctx.audio, ctx.language);
-  const left = ((result.quedan ?? []) as Array<Phrase & { pista?: string }>).filter((f) => !native.some(([a, b]) => f.desde < b && a < f.hasta));
-  if (left.length === 0) return { kind: "ok", heard };
-  // Claude decide con TODO lo que se oyó en otro idioma (el contexto: los versos de alrededor), no con la frase suelta
-  // (vídeo 46: «I.» sola no se reconocía como parte de «Let It Snow»).
+  const inNative = (f: Phrase) => native.some(([a, b]) => f.desde < b && a < f.hasta);
+  const left = ((result.quedan ?? []) as Array<Phrase & { pista?: string }>).filter((f) => !inNative(f));
+  // También lo que suena en el idioma del anuncio: una letra traducida (lote 11, vídeo 64: «Made in the step», trozo de
+  // la canción, se dobló) es canto en alemán y no puede quedarse.
+  const dubbed = ctx.forced ? [] : ((result.frases ?? []) as Array<Phrase & { pista?: string }>).filter((f) => f.idioma === ctx.language && !inNative(f));
+  if (left.length === 0 && dubbed.length === 0) return { kind: "ok", heard };
+  // Claude decide con TODO lo que se oyó (el contexto: los versos de alrededor), no con la frase suelta (vídeo 46: «I.»
+  // sola no se reconocía como parte de «Let It Snow»).
   const same = (a: Phrase, b: Phrase) => a.desde === b.desde && a.hasta === b.hasta && a.texto === b.texto;
-  const context = ((result.frases ?? []) as Array<Phrase & { pista?: string }>).filter((f) => f.idioma !== ctx.language || left.some((g) => same(f, g)));
+  const context = (result.frases ?? []) as Array<Phrase & { pista?: string }>;
   const all = [...context, ...left.filter((f) => !context.some((g) => same(f, g)))];
   const phrases = all.map((f) => ({ ...f, pista: f.pista ?? "voz", prob: f.prob ?? 0, no_habla: f.no_habla ?? 0, confianza: f.confianza ?? 0 }));
   const kinds = await classifySpeech({ videoId: ctx.videoId, gateway: ctx.gateway, learned: ctx.learned }, userId, productId, phrases);
-  if (kinds === null) return { kind: "error", detail: "Claude no pudo decir si lo que sigue en el idioma original es diálogo o una canción" };
-  const leaks = phrases
-    .filter((f, i) => kinds[i] === "habla" && left.some((g) => same(f, g)))
-    .map((f) => ({ desde: f.desde, hasta: f.hasta, texto: f.texto, idioma: f.idioma }));
-  return leaks.length ? { kind: "leak", leaks } : { kind: "ok", heard };
+  if (kinds === null) return { kind: "error", detail: "Claude no pudo decir si lo que se oye es diálogo o una canción" };
+  const pick = (f: Phrase) => ({ desde: f.desde, hasta: f.hasta, texto: f.texto, idioma: f.idioma });
+  const leaks = phrases.filter((f, i) => kinds[i] === "habla" && left.some((g) => same(f, g))).map(pick);
+  const lyrics = phrases.filter((f, i) => kinds[i] === "canto" && dubbed.some((g) => same(f, g))).map(pick);
+  // Y una frase doblada que traduce una frase de CANTO de la referencia (lote 11: «Die ganze Zeit, die Falle in meinem
+  // Turm…» del vídeo 65 es «I'm a shot alone in my tower»): Claude compara lo doblado con lo que se decidió al doblar.
+  const translated = await translatedLyrics(ctx, userId, productId, dubbed.filter((f) => !lyrics.some((g) => g.desde === f.desde && g.hasta === f.hasta && g.texto === f.texto)));
+  if (translated === null) return { kind: "error", detail: "Claude no pudo comparar lo doblado con la referencia" };
+  lyrics.push(...translated.map(pick));
+  return leaks.length || lyrics.length ? { kind: "leak", leaks, lyrics } : { kind: "ok", heard };
+}
+
+const translationSchema = z.object({ frases: z.array(z.object({ n: z.number().int().min(1), traduce: z.number().int().min(1).nullable(), motivo: z.string().max(200) })).max(40) });
+
+/**
+ * Las frases dobladas (`dubbed`, en el idioma del anuncio) que traducen una frase de CANTO de la referencia (la decisión
+ * guardada al doblar, `raw.frases` con su `tipo`). `[]` si no hay canto en la referencia o nada doblado; `null` si Claude
+ * no contesta.
+ */
+async function translatedLyrics(ctx: FinalCheckContext, userId: number, productId: number | null, dubbed: Phrase[]): Promise<Phrase[] | null> {
+  if (dubbed.length === 0) return [];
+  const reference = await referencePhrases(ctx.videoId, ctx.audio, ctx.language);
+  if (!reference.some((f) => f.tipo === "canto") || !reference.some((f) => f.tipo === "habla")) return [];
+  const listing = [
+    "Frases de la referencia (original):",
+    ...reference.map((f, i) => `${i + 1}. [${f.tipo}] ${f.desde.toFixed(1)}–${f.hasta.toFixed(1)} s: «${f.texto}»`),
+    "",
+    "Frases que se oyen dobladas en el vídeo montado:",
+    ...dubbed.map((f, i) => `${i + 1}. ${f.desde.toFixed(1)}–${f.hasta.toFixed(1)} s: «${f.texto}»`),
+  ].join("\n");
+  try {
+    const answer = await (ctx.gateway ?? getGateway()).call({
+      tier: "medium",
+      stepKey: `montaje:${ctx.videoId}:letra-traducida:${crypto.createHash("sha256").update(listing).digest("hex").slice(0, 16)}`,
+      userId,
+      productId,
+      rules: [],
+      instructions: [
+        "Comparas un doblaje con su original. El original tiene frases de HABLA (diálogo, se dobla) y de CANTO (la letra de una canción, que no se traduce nunca).",
+        "Para cada frase doblada (n desde 1) di en «traduce» el número de la frase ORIGINAL que traduce (por el sentido y el momento; Whisper transcribe con errores), o null si no traduce ninguna. Si una frase doblada mezcla un trozo de diálogo y un trozo de la canción, di la de canto.",
+      ].join("\n"),
+      content: [textPart(listing)],
+      maxTokens: 1_000,
+      schema: translationSchema,
+    });
+    const byN = new Map((answer.data?.frases ?? []).map((f) => [f.n, f.traduce]));
+    return dubbed.filter((_, i) => {
+      const k = byN.get(i + 1);
+      return k != null && reference[k - 1]?.tipo === "canto";
+    });
+  } catch (error) {
+    console.warn(`[doblaje] Claude no pudo comparar el doblaje del vídeo ${ctx.videoId}: ${messageOf(error)}`);
+    return null;
+  }
+}
+
+/** Las frases de la referencia con su decisión habla/canto (las de la fila viva o la última de `dubs`). */
+async function referencePhrases(videoId: number, audio: string, language: string): Promise<Array<Phrase & { tipo?: string }>> {
+  const sha = await sha256File(audio);
+  const [row] = await getDb()
+    .select({ raw: dubs.raw })
+    .from(dubs)
+    .where(and(eq(dubs.videoId, videoId), eq(dubs.sourceSha256, sha), eq(dubs.language, dubLanguageOf(language).code)))
+    .orderBy(desc(LIVE), desc(dubs.id))
+    .limit(1);
+  const raw = (row?.raw ?? null) as { frases?: Array<Phrase & { tipo?: string }>; detalle?: { frases?: Array<Phrase & { tipo?: string }> } } | null;
+  return [...(raw?.frases ?? raw?.detalle?.frases ?? [])].filter((f) => f.tipo === "habla" || f.tipo === "canto").sort((a, b) => a.desde - b.desde);
 }
 
 /** Tramos [desde, hasta] de la referencia que ya estaban en el idioma del anuncio (de su última fila en `dubs`). */
@@ -646,6 +783,7 @@ export async function requireRedub(
   audio: string,
   language: string,
   leaks: Array<{ desde: number; hasta: number; texto: string }>,
+  lyrics: Array<{ desde: number; hasta: number; texto: string }> = [],
 ): Promise<boolean> {
   const sha = await sha256File(audio);
   const code = dubLanguageOf(language).code;
@@ -659,14 +797,21 @@ export async function requireRedub(
   const latest = rows[0];
   const previous = (latest?.raw as { forzar?: Array<[number, number]> } | null)?.forzar ?? [];
   const forzar = [...previous, ...leaks.map((l): [number, number] => [Math.max(0, l.desde - 0.1), l.hasta + 0.1])];
-  const error = `${FINAL_CHECK}: el vídeo montado seguía con diálogo sin traducir (${leaks.map((l) => `«${l.texto}»`).join(" · ")})`.slice(0, 500);
+  const sung = (latest?.raw as { cantar?: Array<[number, number]> } | null)?.cantar ?? [];
+  const cantar = [...sung, ...lyrics.map((l): [number, number] => [Math.max(0, l.desde - 0.1), l.hasta + 0.1])];
+  const what = [
+    ...(leaks.length ? [`diálogo sin traducir (${leaks.map((l) => `«${l.texto}»`).join(" · ")})`] : []),
+    ...(lyrics.length ? [`letra de la canción traducida (${lyrics.map((l) => `«${l.texto}»`).join(" · ")})`] : []),
+  ].join(" y ");
+  const error = `${FINAL_CHECK}: el vídeo montado tenía ${what}`.slice(0, 500);
+  const extra = { forzar, ...(cantar.length ? { cantar } : {}) };
   if (latest && latest.status !== "submitting" && latest.status !== "submitted") {
-    await update(latest.id, { status: "failed", error, raw: { ...((latest.raw as object | null) ?? {}), forzar } });
+    await update(latest.id, { status: "failed", error, raw: { ...((latest.raw as object | null) ?? {}), ...extra } });
   } else {
     const [video] = await getDb().select({ createdBy: schema.videos.createdBy }).from(schema.videos).where(eq(schema.videos.id, videoId));
     await getDb()
       .insert(dubs)
-      .values({ videoId, userId: video?.createdBy ?? 0, sourceSha256: sha, language: code, status: "failed", quotedCredits: 0, error, raw: { forzar } });
+      .values({ videoId, userId: video?.createdBy ?? 0, sourceSha256: sha, language: code, status: "failed", quotedCredits: 0, error, raw: extra });
   }
   return true;
 }
