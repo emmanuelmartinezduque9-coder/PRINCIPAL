@@ -120,3 +120,11 @@ entorno solo valen para las tomas de ese mismo tipo de sitio. Caso real: HaarZau
 Si elige una variante (p. ej. la amarilla y la referencia es la máquina rosa), esa variante sale en TODO el vídeo, en
 todas las tomas y hasta el último fotograma; el producto o el color de la referencia no aparece nunca. Cada clip lleva
 una frase fija que lo exige (`productEverywhere` en `src/server/videos/clip.ts`, prueba en `tests/clip-sitios.test.ts`).
+
+## Regla fija del dueño: la tele encendida en los salones navideños (Emmanuel, 26/11/2026)
+
+En toda escena de salón navideño (imagen inicial y clip), si hay una televisión, va ENCENDIDA con una película de
+Navidad reconocible (El Grinch o Solo en casa, «Kevin – Allein zu Haus» en Alemania), con su luz en la habitación;
+nunca apagada. Si Higgsfield bloquea al personaje, ese intento se repite con una escena navideña genérica en la
+pantalla, sin parar nada. Si la imagen que él sube ya trae algo en la pantalla, se queda lo suyo. Caso real: EisWerk
+vídeo 24 del lote 12.
