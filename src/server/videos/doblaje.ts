@@ -208,22 +208,40 @@ export async function classifySpeechDetailed(
   const learned = await learnedFor("doblaje", productId);
   learned.text += (await preferencesFor("doblaje", { videoId: ctx.videoId, productId })).text;
   ctx.learned?.push(...learned.ids);
+  const hash = crypto.createHash("sha256").update(listing + learned.text).digest("hex").slice(0, 16);
+  // Tres votos y gana la mayoría, frase a frase (lote 11, vídeo 65: con la misma entrada Claude dijo canto tres veces en
+  // la prueba y habla en el montaje). Un voto que falla no cuenta; sin ninguno, no se sabe.
+  const vote = async (k: number) => {
+    try {
+      const answer = await (ctx.gateway ?? getGateway()).call({
+        tier: "medium",
+        stepKey: `montaje:${ctx.videoId}:habla-o-canto:${hash}:${k}`,
+        userId,
+        productId,
+        rules: [],
+        instructions: SPEECH_INSTRUCTIONS + learned.text,
+        content: [textPart(listing)],
+        maxTokens: 2_000,
+        schema: speechSchema,
+      });
+      const byN = new Map((answer.data?.frases ?? []).map((f) => [f.n, f]));
+      const kinds = phrases.map((_, i) => (byN.get(i + 1)?.tipo === "canto" ? ("canto" as const) : ("habla" as const)));
+      const conversational = phrases.map((_, i) => byN.get(i + 1)?.conversacional !== false);
+      return lyricFragments(phrases, kinds, conversational).map((kind, i) => ({ kind, conversational: conversational[i] }));
+    } catch (error) {
+      console.warn(`[doblaje] Claude no pudo decir si el vídeo ${ctx.videoId} tiene habla o canto: ${messageOf(error)}`);
+      return null;
+    }
+  };
   try {
-    const answer = await (ctx.gateway ?? getGateway()).call({
-      tier: "medium",
-      stepKey: `montaje:${ctx.videoId}:habla-o-canto:${crypto.createHash("sha256").update(listing + learned.text).digest("hex").slice(0, 16)}`,
-      userId,
-      productId,
-      rules: [],
-      instructions: SPEECH_INSTRUCTIONS + learned.text,
-      content: [textPart(listing)],
-      maxTokens: 2_000,
-      schema: speechSchema,
+    const votes = (await Promise.all([1, 2, 3].map(vote))).filter((v): v is NonNullable<typeof v> => v !== null);
+    if (votes.length === 0) return null;
+    return phrases.map((_, i) => {
+      const sung = votes.filter((v) => v[i].kind === "canto").length;
+      const talk = votes.filter((v) => v[i].conversational).length;
+      // Empate (con dos votos): ante la duda, habla.
+      return { kind: sung * 2 > votes.length ? ("canto" as const) : ("habla" as const), conversational: talk * 2 >= votes.length };
     });
-    const byN = new Map((answer.data?.frases ?? []).map((f) => [f.n, f]));
-    const kinds = phrases.map((_, i) => (byN.get(i + 1)?.tipo === "canto" ? ("canto" as const) : ("habla" as const)));
-    const conversational = phrases.map((_, i) => byN.get(i + 1)?.conversacional !== false);
-    return lyricFragments(phrases, kinds, conversational).map((kind, i) => ({ kind, conversational: conversational[i] }));
   } catch (error) {
     console.warn(`[doblaje] Claude no pudo decir si el vídeo ${ctx.videoId} tiene habla o canto: ${messageOf(error)}`);
     return null;

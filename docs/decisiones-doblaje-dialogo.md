@@ -195,6 +195,10 @@ la canción: el 65 sonaba «Die ganze Zeit, die Falle in meinem Turm…» y el 6
    «Okay, best gift ever.»): fue la traducción de Higgsfield. Ahora, tras mezclar, Claude compara cada frase de diálogo
    del original con lo que se oye doblado en su sitio; si no dice lo mismo o no es natural en el idioma del anuncio,
    ese trozo se vuelve a doblar (la reparación de siempre, `MAX_REPAIRS`) y se comprueba otra vez.
+7. Tercer intento real: 64 bien («Das war's.», «Ähm, okay, bestes Geschenk aller Zeiten.», la canción en inglés). El 65
+   se volvió a doblar porque esta vez Claude dijo habla con la misma entrada con la que en la prueba dijo canto tres
+   veces; la comprobación final lo cazó («Die ganze Zeit als Zeller in meiner Tante…», letra traducida) y el montaje se
+   paró sin entregarse. Ahora la decisión habla/canto son tres votos y gana la mayoría, frase a frase (empate: habla).
 
 ## Ningún montaje mudo (24/11/2026)
 
