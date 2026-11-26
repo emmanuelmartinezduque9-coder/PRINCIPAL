@@ -117,6 +117,8 @@ export interface DoblarResult {
   voz?: { hay: boolean; idioma: string | null; probabilidad: number | null; texto: string; motivo: string | null; frases?: Phrase[] } | null;
   /** Frases en el idioma del diálogo que BandIt dejó en la música (sin mover): Claude decide si son habla. */
   candidatas?: Array<Phrase & { pista: string }>;
+  /** Lo que Whisper oye en el audio entero (contexto para decidir habla o canto). */
+  mezcla?: Array<Phrase & { pista: string }>;
   /** `comprobar`: si se pudo comprobar y las frases que siguen en el idioma original. */
   comprobado?: boolean;
   quedan?: Array<{ desde: number; hasta: number; texto: string; idioma: string }>;
@@ -145,6 +147,7 @@ export interface Phrase {
 export const SPEECH_INSTRUCTIONS = [
   "Decides si cada frase que oyó Whisper en el audio de un vídeo corto de redes es HABLA (una persona hablando: diálogo, exclamación, narración a cámara) o CANTO (un verso de la letra de una canción).",
   "Reglas fijas del dueño: se dobla el diálogo y una canción no se traduce nunca. Ante la duda gana HABLA. Con una canción de fondo, el diálogo se dobla igual.",
+  "Te puede llegar también lo que se oye en el AUDIO ENTERO (solo contexto, no se clasifica): úsalo para ver si una frase forma parte de una canción que sigue sonando (un verso suelto rodeado de más versos es canto).",
   "Por frase te doy la pista de la que sale («voz»: la pista de diálogo del separador; «music»/«sfx»: voz que quedó dentro de la música), el texto (Whisper large-v3-turbo) y cuánto dura.",
   "CANTO si la frase es un verso de una canción: de una que puedes nombrar (da su título en «cancion» y en «verso» la línea de la letra; Whisper puede transcribirla mal: «Sad is frightful» es «Oh, the weather outside is frightful» de «Let It Snow») o letra claramente cantada aunque no conozcas la canción: versos que riman o tienen métrica de canción, un estribillo que se repite («Come on, come on, rock your body», «Baby, baby, baby…», «Hooray to downtown!» varias veces), frases poéticas en primera persona que no se dirigen a nadie de la escena («The angels up in the clouds are jealous knowing we found…», «I'm a shot alone in my tower»). Entonces «cancion» puede ser null.",
   "Whisper transcribe a medias los versos que suenan pegados a otros versos: una frase sin sentido como conversación justo antes, durante o después de un verso («Made in the step.» detrás de «A place on a lover with a fire in its heart») es un trozo de la canción.",
@@ -160,7 +163,7 @@ const speechSchema = z.object({
       z.object({
         n: z.number().int().min(1),
         tipo: z.enum(["habla", "canto", "duda"]),
-        conversacional: z.boolean().optional(),
+        conversacional: z.boolean(),
         cancion: z.string().max(120).nullable().optional(),
         verso: z.string().max(200).nullable().optional(),
         motivo: z.string().max(200),
@@ -180,8 +183,9 @@ export async function classifySpeech(
   userId: number,
   productId: number | null,
   phrases: Array<Phrase & { pista: string }>,
+  context: Phrase[] = [],
 ): Promise<Array<"habla" | "canto"> | null> {
-  const detailed = await classifySpeechDetailed(ctx, userId, productId, phrases);
+  const detailed = await classifySpeechDetailed(ctx, userId, productId, phrases, context);
   return detailed ? detailed.map((d) => d.kind) : null;
 }
 
@@ -191,11 +195,15 @@ export async function classifySpeechDetailed(
   userId: number,
   productId: number | null,
   phrases: Array<Phrase & { pista: string }>,
+  context: Phrase[] = [],
 ): Promise<Array<{ kind: "habla" | "canto"; conversational: boolean }> | null> {
   if (phrases.length === 0) return [];
-  const listing = phrases
-    .map((f, i) => `${i + 1}. [${f.pista}] ${f.desde.toFixed(1)}–${f.hasta.toFixed(1)} s (${(f.hasta - f.desde).toFixed(1)} s): «${f.texto}»`)
-    .join("\n");
+  const listing = [
+    ...phrases.map((f, i) => `${i + 1}. [${f.pista}] ${f.desde.toFixed(1)}–${f.hasta.toFixed(1)} s (${(f.hasta - f.desde).toFixed(1)} s): «${f.texto}»`),
+    ...(context.length
+      ? ["", "AUDIO ENTERO (solo contexto, no se clasifica):", ...context.map((f) => `- ${f.desde.toFixed(1)}–${f.hasta.toFixed(1)} s: «${f.texto}»`)]
+      : []),
+  ].join("\n");
   // Correcciones aprendidas de los reportes sobre el doblaje («Mejoras»): van al final de las instrucciones.
   const learned = await learnedFor("doblaje", productId);
   learned.text += (await preferencesFor("doblaje", { videoId: ctx.videoId, productId })).text;
@@ -253,8 +261,8 @@ export function lyricFragments(
   });
 }
 
-/** Versión de la decisión habla/canto (5: 26/11/2026, trozos de canción y lo no conversacional de la música): las marcas sin ella se vuelven a mirar. */
-export const DECISION_VERSION = 5;
+/** Versión de la decisión habla/canto (6: 26/11/2026, con el audio entero como contexto): las marcas sin ella se vuelven a mirar. */
+export const DECISION_VERSION = 6;
 
 type Analysis =
   | { kind: "skip"; record: boolean; why: string; note: string | null; raw: unknown }
@@ -283,7 +291,9 @@ async function analyse(ctx: DubContext, stems: string, userId: number, target: {
   }
   const [owner] = await getDb().select({ productId: schema.videos.productId }).from(schema.videos).where(eq(schema.videos.id, ctx.videoId));
   // Con «Doblar el diálogo» encendido a propósito en la tarjeta, el dueño ya ha dicho que es diálogo: se dobla todo.
-  const detailed = ctx.forced ? foreign.map(() => ({ kind: "habla" as const, conversational: true })) : await classifySpeechDetailed(ctx, userId, owner?.productId ?? null, foreign);
+  const detailed = ctx.forced
+    ? foreign.map(() => ({ kind: "habla" as const, conversational: true }))
+    : await classifySpeechDetailed(ctx, userId, owner?.productId ?? null, foreign, separated.mezcla ?? []);
   const kinds = detailed?.map((d) => d.kind) ?? null;
   if (kinds === null) return { kind: "skip", record: false, why: "sin Claude", note: "No se pudo decidir si la voz es habla o una canción: no se dobla", raw: null };
   // Cada frase vale por sí sola: una canción que suena a la vez NO convierte el diálogo en canto (lote 10: «Ten seconds,
@@ -705,10 +715,13 @@ export async function checkFinalDialogue(ctx: FinalCheckContext, userId: number,
   // Claude decide con TODO lo que se oyó (el contexto: los versos de alrededor), no con la frase suelta (vídeo 46: «I.»
   // sola no se reconocía como parte de «Let It Snow»).
   const same = (a: Phrase, b: Phrase) => a.desde === b.desde && a.hasta === b.hasta && a.texto === b.texto;
-  const context = (result.frases ?? []) as Array<Phrase & { pista?: string }>;
+  const heardAll = (result.frases ?? []) as Array<Phrase & { pista?: string }>;
+  // Las del audio entero son contexto, salvo las que hay que juzgar (quedan o dobladas).
+  const mix = heardAll.filter((f) => f.pista === "mezcla" && !left.some((g) => same(f, g)) && !dubbed.some((g) => same(f, g)));
+  const context = heardAll.filter((f) => !mix.includes(f));
   const all = [...context, ...left.filter((f) => !context.some((g) => same(f, g)))];
   const phrases = all.map((f) => ({ ...f, pista: f.pista ?? "voz", prob: f.prob ?? 0, no_habla: f.no_habla ?? 0, confianza: f.confianza ?? 0 }));
-  const kinds = await classifySpeech({ videoId: ctx.videoId, gateway: ctx.gateway, learned: ctx.learned }, userId, productId, phrases);
+  const kinds = await classifySpeech({ videoId: ctx.videoId, gateway: ctx.gateway, learned: ctx.learned }, userId, productId, phrases, mix);
   if (kinds === null) return { kind: "error", detail: "Claude no pudo decir si lo que se oye es diálogo o una canción" };
   const pick = (f: Phrase) => ({ desde: f.desde, hasta: f.hasta, texto: f.texto, idioma: f.idioma });
   const leaks = phrases.filter((f, i) => kinds[i] === "habla" && left.some((g) => same(f, g))).map(pick);

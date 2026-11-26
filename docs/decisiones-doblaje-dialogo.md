@@ -185,6 +185,11 @@ la canción: el 65 sonaba «Die ganze Zeit, die Falle in meinem Turm…» y el 6
    canto (la cuenta atrás del 22 y «Oh my God!» del 63, en la música pero conversacionales, siguen habla), y todo
    diálogo que suena a la vez que un verso se dobla sin margen. `DECISION_VERSION = 5`. Probado con Claude real sobre los
    lotes 10 y 11: todo el diálogo habla; 49, 50, 64 «Made in the step.», 65 y 66 «And me to be…» canto.
+5. Segundo intento real (168 y 169): 64 bien («Das war's.», «Okay, bestes Geschenk aller Zeiten», la canción en inglés);
+   el 65 se volvió a doblar: Claude a veces no contestaba si la frase era conversacional y eso contaba como «sí». Ahora
+   el campo es obligatorio, y Claude recibe como contexto lo que Whisper oye en el audio entero (`mezcla` de `separar`).
+   La comprobación final también escucha el audio entero (en el 65 el alemán cantado no salía en la voz separada).
+   `DECISION_VERSION = 6`. Probado 3 veces seguidas con Claude real: 65 canto 3/3; 64, 45, 22 y 63 sin cambios.
 
 ## Ningún montaje mudo (24/11/2026)
 

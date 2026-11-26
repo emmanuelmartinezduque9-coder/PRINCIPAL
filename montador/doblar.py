@@ -324,7 +324,10 @@ def separar(fuente, carpeta, video=None, destino=None):
                     candidatas.append(dict(f, pista=nombre, desde=a, hasta=b))
     dialogo = carpeta / 'dialogue-only.mp4'
     video_dialogo(carpeta, video, dialogo)
-    r.update(dialogo=str(dialogo), voz=voz, candidatas=candidatas)
+    # Lo que se oye en el audio entero (contexto para decidir habla o canto: una frase sola no dice si es un verso;
+    # lote 11, vídeo 65).
+    mezcla = [dict(f, pista='mezcla') for f in frases(w, x)] if w is not None else []
+    r.update(dialogo=str(dialogo), voz=voz, candidatas=candidatas, mezcla=mezcla)
     return r
 
 
@@ -378,7 +381,9 @@ def verificar(video, carpeta, destino, origen=None):
     effects, sesion = modelo()
     pistas = np.stack([effects.separate(np.ascontiguousarray(x[:, c]), sesion) for c in range(2)], axis=-1)
     oidas, quedan = [], []
-    fuentes = [('voz', pistas[0])] + [(n, voces_mdx(pistas[i])[0]) for i, n in ((1, 'music'), (2, 'sfx'))]
+    # También el audio entero: una letra traducida cantada sobre la música no siempre queda en la voz ni en las voces de
+    # la música (lote 11, vídeo 65).
+    fuentes = [('voz', pistas[0])] + [(n, voces_mdx(pistas[i])[0]) for i, n in ((1, 'music'), (2, 'sfx'))] + [('mezcla', x)]
     for nombre, pista in fuentes:
         if rms_db(pista) < UMBRAL_VOZ_DB:
             continue
