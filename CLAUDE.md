@@ -128,3 +128,10 @@ Navidad reconocible (El Grinch o Solo en casa, «Kevin – Allein zu Haus» en A
 nunca apagada. Si Higgsfield bloquea al personaje, ese intento se repite con una escena navideña genérica en la
 pantalla, sin parar nada. Si la imagen que él sube ya trae algo en la pantalla, se queda lo suyo. Caso real: EisWerk
 vídeo 24 del lote 12.
+
+## Regla fija del dueño: doblajes con ElevenLabs, nunca con Higgsfield (Emmanuel, 27/11/2026)
+
+**JAMÁS se gastan créditos de Higgsfield en traducciones o doblajes** (modelo `dubbing` / «Video Translation»).
+El doblaje del diálogo va con ElevenLabs Dubbing (clave `ELEVENLABS_API_KEY`, autorizada por él). `submitDubbing` de
+Higgsfield está bloqueado en `src/connectors/higgsfield/adapter.ts`. Caso real: vídeo 83 de KreuzKapuze, tres doblajes
+de Higgsfield (198 créditos por 21 s) porque la comprobación final reintentaba sola.
