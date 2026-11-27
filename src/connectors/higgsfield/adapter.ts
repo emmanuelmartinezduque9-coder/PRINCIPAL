@@ -77,6 +77,8 @@ const num = (value: unknown): number | null => {
  * nivel de anidación; si no reconoce un número de créditos, `null` (nunca inventa un saldo).
  * Los créditos son enteros: una fracción se redondea hacia abajo.
  */
+export const HIGGSFIELD_DUBBING_FORBIDDEN = "El doblaje con Higgsfield está prohibido (orden del dueño, 27/11/2026): se dobla con ElevenLabs.";
+
 export function readBalance(data: unknown): HfBalance | null {
   if (!data || typeof data !== "object") return null;
   const root = data as Record<string, unknown>;
@@ -653,8 +655,10 @@ export function createHiggsfieldPort(
     async quoteDubbing(userId, request) {
       return quote(userId, "estimate_video_cost", dubParams(request));
     },
-    async submitDubbing(userId, request) {
-      return submit(userId, "generate_video_batch", [{ index: 0, params: { ...dubParams(request), count: 1 } }]);
+    // Orden de Emmanuel (27/11/2026): JAMÁS se gastan créditos de Higgsfield en traducciones o doblajes.
+    // El doblaje va con ElevenLabs; aquí nunca se envía nada.
+    async submitDubbing() {
+      throw new Error(HIGGSFIELD_DUBBING_FORBIDDEN);
     },
     async jobs(userId, jobIds, waitSeconds) {
       if (jobIds.length === 0) return [];
