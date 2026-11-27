@@ -342,6 +342,8 @@ export async function autoStatusOf(user: AuthUser, video: Video): Promise<AutoSt
   if (video.autoSince === null) return { state: "off" };
   if (video.autoStop !== null) return { state: "question", text: video.autoStop, retry: true };
   if (video.editStatus === "hecho") return { state: "done" };
+  // Un montaje fallido no se queda como «montando»: se ve el motivo y se puede repetir.
+  if (video.editStatus === "fallido") return { state: "question", text: video.editError ?? "El montaje falló.", retry: true };
   if (video.editStatus !== null) return { state: "working", step: "montaje" };
   if (video.referenceStatus !== "ready" || referenceOutdated(video)) return { state: "working", step: "desglose" };
   const missing = await missingForAnalysis(user, video, briefOf(await withProductNotes(video)));

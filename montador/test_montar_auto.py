@@ -394,8 +394,17 @@ class CancionesPersonalizadas(unittest.TestCase):
         self.assertEqual([(l['start'], l['end']) for l in lines], [(0, 1), (1.2, 2)])
         self.assertEqual([l['whole_line'] for l in lines], [False, True])
         self.assertEqual(len(lyric_lines(self.letra(), 0.8)), 1)
-        with self.assertRaises(ValueError):
-            lyric_lines(dict(self.letra(), sections=['[Verse]\nOtra letra']), 3)
+        # Una letra que no casa con los tiempos no tumba el montaje: no se pinta.
+        self.assertEqual(lyric_lines(dict(self.letra(), sections=['[Verse]\nOtra letra']), 3), [])
+
+    def test_palabras_cambiadas_omitidas_o_cortadas_no_tumban_el_montaje(self):
+        from rotulos_layout import lyric_lines
+        letra = dict(sections=['[Verse]\nOma Hildegard bleib\nDu bist hier\n[Outro]\nDanke Oma'], words=[
+            dict(word='Oma', startMs=0, endMs=500), dict(word='Hilde', startMs=500, endMs=700), dict(word='gard', startMs=700, endMs=900),
+            dict(word='bleib', startMs=900, endMs=1100), dict(word='Du', startMs=1200, endMs=1300), dict(word='hier', startMs=1600, endMs=2000)])
+        lines = lyric_lines(letra, 3)
+        self.assertEqual([l['text'] for l in lines], ['Oma Hildegard bleib', 'Du bist hier'])
+        self.assertEqual([(l['start'], l['end']) for l in lines], [(0, 1.1), (1.2, 2)])
 
     def test_estribillo_repetido_y_linea_entera_con_tiempos_cero(self):
         from rotulos_layout import lyric_lines

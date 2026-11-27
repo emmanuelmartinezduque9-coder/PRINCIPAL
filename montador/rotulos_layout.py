@@ -164,15 +164,21 @@ def lyric_lines(lyrics, duration_s):
     words = [w for w in (lyrics or {}).get('words', []) if normalized(w.get('word', ''))]
     lines = [line.strip() for section in (lyrics or {}).get('sections', [])
              for line in section.splitlines() if line.strip() and not re.fullmatch(r'\s*\[[^]]+\]\s*', line)]
+    # Alineación tolerante: ElevenLabs puede partir, cambiar u omitir alguna palabra y la canción se
+    # recorta a la duración del vídeo; una palabra que no casa se salta (se busca unas pocas por delante)
+    # y nunca tumba el montaje. Las líneas sin ninguna palabra casada no se pintan.
+    LOOKAHEAD = 6
     cursor, out = 0, []
     for line in lines:
         tokens = [normalized(w) for w in line.split() if normalized(w)]
         matched = []
         for token in tokens:
-            if cursor >= len(words) or normalized(words[cursor]['word']) != token:
-                raise ValueError('Los tiempos de la canción no coinciden con las líneas de su letra')
-            matched.append(words[cursor])
-            cursor += 1
+            found = next((j for j in range(cursor, min(len(words), cursor + LOOKAHEAD))
+                          if normalized(words[j]['word']) == token), None)
+            if found is None:
+                continue
+            matched.append(words[found])
+            cursor = found + 1
         if matched:
             out.append(dict(text=line, start=max(0, float(matched[0]['startMs']) / 1000),
                             end=max(float(w['endMs']) / 1000 for w in matched), words=matched))
