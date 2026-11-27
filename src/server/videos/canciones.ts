@@ -29,7 +29,7 @@ export function normalizeTiming(entries: TimingEntry[], durationMs: number): Tim
   return out;
 }
 export const musicalSongSchema = z.object({
-  id: z.string().min(1), title: z.string().min(1).max(200), durationMs: z.number().int().positive(),
+  id: z.string().min(1), title: z.string().max(200).nullish().transform(title => title?.trim() || "Canción personalizada"), durationMs: z.number().int().positive(),
   sections: z.array(z.string()).min(1), words: z.array(wordSchema).min(1),
   timingReport: z.array(z.object({ atMs: z.number().finite(), text: z.string(), actualMs: z.number().finite(), offsetMs: z.number().finite() })).optional(),
   verification: z.object({ heardRatio: z.number().finite(), nameHeard: z.boolean(), attempts: z.number().int().nonnegative(), transcript: z.string(), passed: z.boolean() }).optional(),

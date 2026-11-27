@@ -132,3 +132,8 @@ it("junta las secciones a menos de 3 s, empieza en 0 y no deja nada fuera de la 
   expect(normalizeTiming([{ atMs: 9000, text: "C" }, { atMs: 400, text: "A" }, { atMs: 2000, text: "B" }, { atMs: 31000, text: "D" }], 30600))
     .toEqual([{ atMs: 0, text: "A\nB" }, { atMs: 9000, text: "C\nD" }]);
 });
+
+it("acepta una canción sin título de la web musical (le pone uno)", async () => {
+  const fetcher = vi.fn<typeof fetch>().mockResolvedValue(Response.json({ ...musical, title: null }, { status: 201 }));
+  expect((await composeSong({ ...composition, language: "de", durationSeconds: 20 }, fetcher)).title).toBe("Canción personalizada");
+});
