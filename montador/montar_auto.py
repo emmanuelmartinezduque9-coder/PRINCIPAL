@@ -346,6 +346,14 @@ def construir_plan(spec, clips, work, font, gancho=None, pistas=None, con_audio=
     else:
         tipo = 'replica'
         plan_clips = [dict(role='replica', auto=True, path=p) for _, p in clips[:1]]
+        if (spec.get('product') or {}).get('kind') == 'cancion' and len(clips) == 1:
+            # Canción personalizada: el clip ENTERO, sin cortes ni patrón de virales (la letra va sincronizada
+            # con las reacciones de todo el clip; tarjeta 89 salía troceada en 17 planos y 16 s).
+            try:
+                entero_s = m.video_frames(clips[0][1]) / m.FPS
+            except (Exception, SystemExit):
+                entero_s = 600.0
+            plan_clips = [dict(role='replica', auto=True, path=clips[0][1], ventanas=[[0.0, entero_s]])]
         if len(clips) > 1:
             plan_clips += [dict(role='body', auto=True, path=p) for _, p in clips[1:]]
     edicion = spec.get('edicionReferencia') or None
