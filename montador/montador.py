@@ -604,11 +604,16 @@ def max_volume(path, af=''):
     return float(re.findall(r'Peak level dB:\s+(-?[0-9.]+|-inf)', log)[-1])
 
 
+SONG_SHORT_TOLERANCE_S = 2.0
+
+
 def build_song_mix(au, segs, dur, t_prod, work):
     song = au['song']
     offset = float(au['drop']) - t_prod                    # inicio del fragmento = drop - t_producto
     song_dur = float(probe(song)['format']['duration'])
-    if song_dur - offset < dur:
+    # Hasta 2 s de diferencia se rellenan con silencio (apad): la canción personalizada dura lo que la
+    # referencia y el clip de Genjutsu puede salir algo más largo (tarjeta 89). Más que eso es un fallo real.
+    if song_dur - offset < dur - SONG_SHORT_TOLERANCE_S:
         sys.exit('La canción se acaba antes que el vídeo con este desfase')
     gm = float(au.get('music_gain_db', 0))
     start = f'atrim=start={offset:.6f},' if offset >= 0 else f'adelay={int(round(-offset * 1000))}:all=1,'

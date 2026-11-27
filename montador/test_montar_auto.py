@@ -373,7 +373,7 @@ class MontajeDeVerdad(unittest.TestCase):
         code, result, _ = self.montar('roto', spec)
         self.assertEqual((code, result), (1, dict(ok=False, error='Falta un clip descargado')))
         short = dict(SPEC, kind='replicar', clips=[dict(role='clip', path=str(self.body))],
-                     song=dict(path=str(self.song), dropMs=29000, startMs=0, durationMs=30000))
+                     song=dict(path=str(self.song), dropMs=29900, startMs=0, durationMs=30000))
         code, result, _ = self.montar('corta', short)
         self.assertEqual(code, 1)
         self.assertIn('La canción se acaba antes que el vídeo', result['error'])
