@@ -1,13 +1,12 @@
 import { preferencesFor } from "@/server/videos/aprendizaje/preferencias";
 import crypto from "node:crypto";
-import { createReadStream, createWriteStream } from "node:fs";
+import { createReadStream } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { and, desc, eq, sql } from "drizzle-orm";
 import { getDb, schema } from "@/db/client";
-import { getHiggsfield, HiggsfieldRejectedError, HiggsfieldUnknownOutcomeError, isHiggsfieldError, type HiggsfieldPort } from "@/connectors/higgsfield";
+import { getElevenLabs, ElevenLabsUnknownOutcomeError, type ElevenLabsPort } from "@/connectors/elevenlabs";
 import { z } from "zod";
 import { textPart } from "@/llm/content";
 import { getGateway, type LlmGateway } from "@/llm/gateway";
@@ -15,48 +14,35 @@ import { learnedFor } from "@/server/videos/mejoras/corrections";
 import type { ObjectStore } from "@/lib/object-store";
 
 /**
- * «Traducir el diálogo al alemán» en el montaje. Copia del método que funcionó en Codex el 19/11/2026
- * (`EDITOR/dialogue_stems.py` + `EDITOR/reference_dubbing.py`; prueba real
- * `AUTOMATIZACION SEGA/Audio/Pruebas/Df5AlGsNWCn/DE`), en la nube:
- *
- * 1. `montador/doblar.py separar`: BandIt v2 separa el «Audio original» (el de la referencia) en voz,
- *    música y efectos, y hace `dialogue-only.mp4` (SOLO la voz).
- * 2. Ese vídeo se sube a Higgsfield y se dobla con el modelo `dubbing` (`target_language: deu`). GASTA
- *    créditos (66 por 12 s en la prueba de Codex): se presupuesta, se mira el saldo y se envía UNA vez.
- * 3. `montador/doblar.py mezclar`: la voz alemana sobre la música y los efectos ORIGINALES (la canción
- *    no se toca), con la duración del original. Ese audio pasa a ser el «Audio original» del montaje.
- *
- * Una fila de `dubs` por vídeo y audio de partida: volver a montar el mismo vídeo reutiliza el doblaje
- * (del almacén) y no paga otra vez. Un envío del que no se sabe si llegó no se repite solo: el montaje
- * se para con el motivo y, si la persona vuelve a montar, se intenta de nuevo.
+ * Diálogo con ElevenLabs (orden del dueño, 27/11/2026): nunca gastar Higgsfield en doblajes.
+ * Separar con montador/doblar.py separar, enviar SOLO la voz, mezclar sobre música y efectos
+ * originales con doblar.py mezclar y comprobar el resultado. dubs conserva el trabajo y el audio
+ * para reutilizarlos. Un envío dudoso detiene el montaje; la comprobación final permite como
+ * máximo un segundo doblaje completo.
  */
-
-/**
- * Idioma del anuncio (`products.language`, ISO 639-1) → el código de Higgsfield `dubbing` (ISO 639-3) y su nombre.
- * Regla fija del dueño (24/11/2026): el diálogo se dobla POR DEFECTO al idioma del país del producto.
- */
-export const DUB_LANGUAGES: Record<string, { code: string; name: string }> = {
-  de: { code: "deu", name: "alemán" },
-  it: { code: "ita", name: "italiano" },
-  fr: { code: "fra", name: "francés" },
-  es: { code: "spa", name: "español" },
-  en: { code: "eng", name: "inglés" },
-  pt: { code: "por", name: "portugués" },
-  pl: { code: "pol", name: "polaco" },
-  sv: { code: "swe", name: "sueco" },
-  fi: { code: "fin", name: "finés" },
-  tr: { code: "tur", name: "turco" },
+/** ISO 639-3 para las filas existentes e ISO 639-1 para ElevenLabs. */
+export const DUB_LANGUAGES: Record<string, { code: string; iso6391: string; name: string }> = {
+  de: { code: "deu", iso6391: "de", name: "alemán" },
+  it: { code: "ita", iso6391: "it", name: "italiano" },
+  fr: { code: "fra", iso6391: "fr", name: "francés" },
+  es: { code: "spa", iso6391: "es", name: "español" },
+  en: { code: "eng", iso6391: "en", name: "inglés" },
+  pt: { code: "por", iso6391: "pt", name: "portugués" },
+  pl: { code: "pol", iso6391: "pl", name: "polaco" },
+  sv: { code: "swe", iso6391: "sv", name: "sueco" },
+  fi: { code: "fin", iso6391: "fi", name: "finés" },
+  tr: { code: "tur", iso6391: "tr", name: "turco" },
 };
 export const dubLanguageOf = (language: string) => DUB_LANGUAGES[language] ?? DUB_LANGUAGES.de;
-/** Lo que se espera a Higgsfield dentro de un mismo montaje antes de devolverlo a la cola (Codex: 20 min). */
+/** Lo que se espera a ElevenLabs dentro de un mismo montaje antes de devolverlo a la cola (Codex: 20 min). */
 export const DUB_WAIT_IN_RUN_MS = 10 * 60_000;
-/** Desde el envío, lo más que se espera un doblaje antes de darlo por fallido. */
+/** Desde el envío, lo más que se espera un doblaje antes de detener el montaje. */
 export const DUB_MAX_MS = 60 * 60_000;
 /** Cada cuánto se vuelve a mirar un doblaje que sigue en marcha cuando el montaje vuelve a la cola. */
 export const DUB_RECHECK_MS = 2 * 60_000;
 
 export const DUB_UNKNOWN =
-  "No sabemos si el doblaje llegó a Higgsfield. Vuelve a montar el vídeo para intentarlo otra vez (puede cobrarse de nuevo).";
+  "No sabemos si el doblaje llegó a ElevenLabs. Vuelve a montar el vídeo para intentarlo otra vez (puede cobrarse de nuevo).";
 export const dubFailure = (detail: string) => `No se pudo doblar el diálogo: ${detail}`;
 
 const dubs = schema.dubs;
@@ -87,10 +73,10 @@ export interface DubContext {
   notes: string[];
   /** Corre `doblar.py` con sus argumentos; `{ ok, error?, … }` de su última línea. */
   doblar: (args: string[]) => Promise<DoblarResult>;
-  higgsfield?: HiggsfieldPort;
+  elevenlabs?: ElevenLabsPort;
   fetch?: typeof fetch;
   now?: () => Date;
-  /** Lo que `jobs_wait` espera en cada pregunta a Higgsfield (0–15 s; por defecto 15). */
+  /** Lo que `jobs_wait` espera en cada pregunta a ElevenLabs (0–15 s; por defecto 15). */
   pollSeconds?: number;
   /** El dueño encendió «Doblar el diálogo» a propósito en la tarjeta: es diálogo, se dobla todo sin clasificar. */
   forced?: boolean;
@@ -416,39 +402,28 @@ async function update(id: number, values: Partial<Dub>): Promise<void> {
   await getDb().update(dubs).set({ ...values, updatedAt: new Date() }).where(eq(dubs.id, id));
 }
 
-/**
- * Vuelve a doblar un trozo (`file`, solo esa voz) y lo deja en `out`: subir, presupuestar, mirar el saldo, enviar y
- * esperar como mucho `DUB_WAIT_IN_RUN_MS`. `null` si no se pudo (no hay saldo, Higgsfield no lo hizo…): el montaje sigue
- * con lo que hay y lo dice. Los créditos se suman al doblaje del vídeo.
- */
-async function redubPiece(ctx: DubContext, higgsfield: HiggsfieldPort, userId: number, language: string, file: string, out: string): Promise<{ file: string; credits: number } | null> {
+/** Reparación de una frase: solo su voz, sin créditos de Higgsfield. */
+async function redubPiece(ctx: DubContext, elevenlabs: ElevenLabsPort, userId: number, language: string, file: string, out: string): Promise<{ file: string; credits: number } | null> {
   try {
-    const { mediaId } = await higgsfield.uploadMedia(userId, { bytes: await fs.readFile(file), filename: "dialogue-piece.mp4", contentType: "video/mp4", type: "video" });
-    const request = { mediaId, targetLanguage: language };
-    const quote = await higgsfield.quoteDubbing(userId, request);
-    if ((await higgsfield.balance(userId)).credits < quote.credits) return null;
-    const sent = await higgsfield.submitDubbing(userId, request);
-    const jobId = sent.jobIds[0];
+    const { dubbingId } = await elevenlabs.submitDubbing(userId, { bytes: await fs.readFile(file), filename: "dialogue-piece.mp4", contentType: "video/mp4", targetLanguage: language });
     const started = nowOf(ctx).getTime();
     for (;;) {
-      const [job] = await higgsfield.jobs(userId, [jobId], ctx.pollSeconds ?? 15);
-      if (job?.status === "done" && job.urls[0]) {
-        const response = await (ctx.fetch ?? fetch)(job.urls[0]);
-        if (!response.ok || !response.body) return null;
-        await pipeline(Readable.fromWeb(response.body as import("node:stream/web").ReadableStream), createWriteStream(out));
-        return { file: out, credits: quote.credits };
+      const status = await elevenlabs.status(userId, dubbingId, ctx.pollSeconds ?? 15);
+      if (status === "dubbed") {
+        await fs.writeFile(out, await elevenlabs.audio(userId, dubbingId, language));
+        return { file: out, credits: 0 };
       }
-      if (job?.status === "failed" || nowOf(ctx).getTime() - started > DUB_WAIT_IN_RUN_MS) return null;
+      if (status === "failed" || nowOf(ctx).getTime() - started > DUB_WAIT_IN_RUN_MS) return null;
     }
-  } catch (error) {
-    console.warn(`[doblaje] No se pudo volver a doblar un trozo del vídeo ${ctx.videoId}: ${messageOf(error)}`);
+  } catch {
+    ctx.notes.push("No se pudo reparar la frase con ElevenLabs");
     return null;
   }
 }
 
 /** El «Audio original» con el diálogo doblado al idioma del anuncio (ver arriba). Nunca lanza: dice si está, si hay que esperar o por qué no. */
 export async function dubbedAudio(ctx: DubContext): Promise<DubOutcome> {
-  const higgsfield = ctx.higgsfield ?? getHiggsfield();
+  const elevenlabs = ctx.elevenlabs ?? getElevenLabs();
   const [video] = await getDb().select({ createdBy: schema.videos.createdBy }).from(schema.videos).where(eq(schema.videos.id, ctx.videoId));
   if (!video) return { kind: "failed", shown: dubFailure("el vídeo ya no existe"), detail: "sin vídeo" };
   const userId = video.createdBy;
@@ -532,6 +507,12 @@ export async function dubbedAudio(ctx: DubContext): Promise<DubOutcome> {
     }
 
     if (!row || row.status === "failed") {
+      const history = await getDb().select().from(dubs)
+        .where(and(eq(dubs.videoId, ctx.videoId), eq(dubs.sourceSha256, sha), eq(dubs.language, target.code)));
+      const attempts = history.filter((r) => (r.raw as { provider?: string } | null)?.provider === "elevenlabs");
+      if (attempts.length >= 2) {
+        return { kind: "failed", shown: dubFailure("agotados los dos intentos con ElevenLabs para este audio"), detail: "límite de intentos" };
+      }
       // ¿Hace falta? Sin habla (o solo una canción), o ya en el idioma del anuncio, no se envía nada (no se gasta).
       const decided = await analyse(ctx, stems, userId, target);
       if (decided.kind === "skip") {
@@ -546,67 +527,51 @@ export async function dubbedAudio(ctx: DubContext): Promise<DubOutcome> {
       }
       ctx.notes.push(`Diálogo de la referencia en «${decided.origin}»: se dobla al ${target.name}`);
       const bytes = await fs.readFile(path.join(stems, "dialogue-only.mp4"));
-      const { mediaId } = await higgsfield.uploadMedia(userId, { bytes, filename: "dialogue-only.mp4", contentType: "video/mp4", type: "video" });
-      const request = { mediaId, targetLanguage: target.code };
-      const quote = await higgsfield.quoteDubbing(userId, request);
-      const { credits } = await higgsfield.balance(userId);
-      if (credits < quote.credits) {
-        return {
-          kind: "failed",
-          shown: dubFailure(`no hay saldo en Higgsfield (hacen falta ${quote.credits} créditos y quedan ${credits})`),
-          detail: "sin saldo",
-        };
-      }
+      const request = { bytes, filename: "dialogue-only.mp4", contentType: "video/mp4", targetLanguage: target.iso6391 };
       const [created] = await getDb()
         .insert(dubs)
-        .values({ videoId: ctx.videoId, userId, sourceSha256: sha, language: target.code, status: "submitting", mediaId, quotedCredits: quote.credits })
+        .values({ videoId: ctx.videoId, userId, sourceSha256: sha, language: target.code, status: "submitting", quotedCredits: 0, creditsSpent: 0, raw: { ...decided.raw, provider: "elevenlabs" } })
         .returning();
       row = created;
       try {
-        const sent = await higgsfield.submitDubbing(userId, request);
-        await update(row.id, { status: "submitted", jobId: sent.jobIds[0], raw: { envio: sent.raw ?? null, ...decided.raw } });
-        row = { ...row, status: "submitted", jobId: sent.jobIds[0], raw: { envio: sent.raw ?? null, ...decided.raw } };
-        ctx.notes.push(`Diálogo en ${target.name}: doblaje enviado a Higgsfield (${quote.credits} créditos)`);
+        const sent = await elevenlabs.submitDubbing(userId, request);
+        await update(row.id, { status: "submitted", jobId: sent.dubbingId, raw: { ...decided.raw, provider: "elevenlabs" } });
+        row = { ...row, status: "submitted", jobId: sent.dubbingId, raw: { ...decided.raw, provider: "elevenlabs" } };
+        ctx.notes.push(`Diálogo en ${target.name}: doblaje enviado a ElevenLabs (autorizado por el dueño)`);
       } catch (error) {
-        if (error instanceof HiggsfieldUnknownOutcomeError) {
+        if (error instanceof ElevenLabsUnknownOutcomeError) {
           await update(row.id, { status: "unknown", error: "No se sabe si el envío llegó" });
           return { kind: "failed", shown: DUB_UNKNOWN, detail: `doblaje ${row.id} en duda` };
         }
         await update(row.id, { status: "failed", error: messageOf(error) });
-        const reason = error instanceof HiggsfieldRejectedError ? `Higgsfield no lo aceptó (${error.reason})` : messageOf(error);
+        const reason = messageOf(error);
         return { kind: "failed", shown: dubFailure(reason.slice(0, 250)), detail: messageOf(error) };
       }
     }
 
+    // Los trabajos antiguos de Higgsfield no son identificadores de ElevenLabs.
+    if ((row.raw as { provider?: string } | null)?.provider !== "elevenlabs") {
+      return { kind: "failed", shown: dubFailure("trabajo pendiente del proveedor anterior; requiere revisión"), detail: "proveedor anterior" };
+    }
     // Enviado: se espera el resultado.
     const jobId = row.jobId;
     if (!jobId) return { kind: "failed", shown: DUB_UNKNOWN, detail: `doblaje ${row.id} sin trabajo` };
     const started = nowOf(ctx).getTime();
-    let url: string | null = null;
     for (;;) {
-      const [job] = await higgsfield.jobs(userId, [jobId], ctx.pollSeconds ?? 15);
-      if (job?.status === "done") {
-        url = job.urls[0] ?? null;
-        break;
-      }
-      if (job?.status === "failed") {
-        await update(row.id, { status: "failed", error: job.error ?? job.failure ?? "failed" });
-        return { kind: "failed", shown: dubFailure(`Higgsfield no pudo doblarlo${job.error ? ` (${job.error})` : ""}. Vuelve a montar para intentarlo`), detail: job.error ?? "failed" };
+      const status = await elevenlabs.status(userId, jobId, ctx.pollSeconds ?? 15);
+      if (status === "dubbed") break;
+      if (status === "failed") {
+        await update(row.id, { status: "failed", error: "ElevenLabs no pudo doblarlo" });
+        return { kind: "failed", shown: dubFailure("ElevenLabs no pudo doblarlo"), detail: "failed" };
       }
       const now = nowOf(ctx).getTime();
       if (now - row.createdAt.getTime() > DUB_MAX_MS) {
-        await update(row.id, { status: "failed", error: "Higgsfield tardó más de una hora" });
-        return { kind: "failed", shown: dubFailure("Higgsfield tardó más de una hora. Vuelve a montar para intentarlo"), detail: "más de una hora" };
+        return { kind: "failed", shown: dubFailure("ElevenLabs tardó más de una hora"), detail: "más de una hora" };
       }
       if (now - started > DUB_WAIT_IN_RUN_MS) return { kind: "defer", delayMs: DUB_RECHECK_MS };
     }
-    if (!url) return { kind: "failed", shown: dubFailure("Higgsfield no dio el resultado"), detail: "sin dirección" };
-
-    // El resultado, mezclado sobre la música y los efectos originales.
     const dub = path.join(ctx.dir, "dub.mp4");
-    const response = await (ctx.fetch ?? fetch)(url);
-    if (!response.ok || !response.body) return { kind: "failed", shown: dubFailure("no se pudo descargar el doblaje"), detail: `HTTP ${response.status}` };
-    await pipeline(Readable.fromWeb(response.body as import("node:stream/web").ReadableStream), createWriteStream(dub));
+    await fs.writeFile(dub, await elevenlabs.audio(userId, jobId, target.iso6391));
     const haveStems = await fs.stat(path.join(stems, "music.wav")).then(() => true, () => false);
     if (!haveStems) {
       // Enviado en un montaje anterior: se vuelve a separar (da lo mismo: mismo audio, mismo modelo).
@@ -615,7 +580,7 @@ export async function dubbedAudio(ctx: DubContext): Promise<DubOutcome> {
     }
     const mixed = await ctx.doblar(["mezclar", stems, dub, output]);
     if (!mixed.ok) {
-      await update(row.id, { status: "failed", error: mixed.error ?? "mezclar" });
+      await update(row.id, { error: mixed.error ?? "mezclar" });
       return { kind: "failed", shown: dubFailure(mixed.error ?? "no se pudo mezclar"), detail: mixed.error ?? "mezclar" };
     }
 
@@ -653,7 +618,7 @@ export async function dubbedAudio(ctx: DubContext): Promise<DubOutcome> {
       const leak = left[0];
       const piece = await ctx.doblar(["tramo", stems, String(leak.desde), String(leak.hasta), path.join(ctx.dir, `tramo-${attempt}.mp4`), ...(ctx.referenceVideo ? ["--video", ctx.referenceVideo] : [])]);
       if (!piece.ok || piece.desde === undefined) break;
-      const redone = await redubPiece(ctx, higgsfield, userId, target.code, path.join(ctx.dir, `tramo-${attempt}.mp4`), path.join(ctx.dir, `tramo-${attempt}-doblado.mp4`));
+      const redone = await redubPiece(ctx, elevenlabs, userId, target.iso6391, path.join(ctx.dir, `tramo-${attempt}.mp4`), path.join(ctx.dir, `tramo-${attempt}-doblado.mp4`));
       if (!redone) break;
       extra += redone.credits;
       const grafted = path.join(ctx.dir, `voz-${attempt}.wav`);
@@ -679,7 +644,7 @@ export async function dubbedAudio(ctx: DubContext): Promise<DubOutcome> {
     ctx.notes.push(`Diálogo traducido al ${target.name}; la música es la original`);
     return { kind: "ready", path: output, origin: origen };
   } catch (error) {
-    const shown = isHiggsfieldError(error) ? dubFailure(error.message) : dubFailure("error interno del doblaje");
+    const shown = dubFailure("no se pudo completar el doblaje con ElevenLabs");
     return { kind: "failed", shown, detail: messageOf(error) };
   }
 }
@@ -728,7 +693,7 @@ async function badTranslations(
 }
 
 /** Cuántas veces, como mucho, la comprobación final manda volver a doblar un mismo audio antes de parar el montaje. */
-export const MAX_FINAL_REDUBS = 2;
+export const MAX_FINAL_REDUBS = 1;
 const FINAL_CHECK = "Comprobación final";
 
 export interface FinalCheckContext {

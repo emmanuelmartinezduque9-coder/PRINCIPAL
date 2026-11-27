@@ -11,7 +11,7 @@ import { prohibitsThirdParty, type ProblemType } from "@/lib/mejoras";
 /**
  * `frame` y `clip`: prompts de Higgsfield (en inglés). `montaje`: la lectura y adaptación de los rótulos de la
  * referencia (`edicion-referencia.ts`). `doblaje`: la decisión de habla o canto (`doblaje.ts`). La traducción hablada
- * la hace el modelo `dubbing` de Higgsfield sin texto nuestro: ahí no entra ninguna instrucción.
+ * la hace ElevenLabs Dubbing API sin texto nuestro: ahí no entra ninguna instrucción.
  */
 export type CorrectionStage = "frame" | "clip" | "montaje" | "doblaje";
 export const CORRECTION_STAGES: readonly CorrectionStage[] = ["frame", "clip", "montaje", "doblaje"];

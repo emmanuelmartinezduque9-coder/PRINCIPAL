@@ -7,6 +7,7 @@ import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { and, desc, eq, inArray, lt, sql } from "drizzle-orm";
 import { getDb, schema } from "@/db/client";
+import type { ElevenLabsPort } from "@/connectors/elevenlabs";
 import type { HiggsfieldPort } from "@/connectors/higgsfield";
 import { getObjectStore, type ObjectStore } from "@/lib/object-store";
 import { LlmCapReachedError } from "@/llm/gateway";
@@ -91,8 +92,10 @@ export interface MontajeDeps {
   runYtDlp?: FetchDeps["runYtDlp"];
   /** Claude (pruebas: uno simulado) para leer la edición de la referencia. */
   gateway?: import("@/llm/gateway").LlmGateway;
-  /** Higgsfield (pruebas: el simulado) y la espera de cada pregunta, para el doblaje del diálogo. */
+  /** Dependencia de Higgsfield conservada para los consumidores existentes del montaje. */
   higgsfield?: HiggsfieldPort;
+  /** ElevenLabs para el doblaje y las reparaciones de diálogo. */
+  elevenlabs?: ElevenLabsPort;
   dubPollSeconds?: number;
 }
 
@@ -656,7 +659,7 @@ Este producto es una canción personalizada: copia y adapta únicamente el ganch
           dir,
           store,
           notes,
-          higgsfield: deps.higgsfield,
+          elevenlabs: deps.elevenlabs,
           fetch: deps.fetch,
           now: deps.now,
           pollSeconds: deps.dubPollSeconds,

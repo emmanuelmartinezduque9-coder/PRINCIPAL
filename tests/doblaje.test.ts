@@ -4,8 +4,9 @@ import os from "node:os";
 import path from "node:path";
 import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { createFakeHiggsfield, DUB_CREDITS, type FakeHiggsfield } from "@/connectors/higgsfield/fake";
-import { HiggsfieldUnknownOutcomeError } from "@/connectors/higgsfield";
+import { createFakeHiggsfield, type FakeHiggsfield } from "@/connectors/higgsfield/fake";
+import { ElevenLabsUnknownOutcomeError } from "@/connectors/elevenlabs";
+import { createFakeElevenLabs, type FakeElevenLabs } from "@/connectors/elevenlabs/fake";
 import { getDb, schema } from "@/db/client";
 import { stopWorker } from "@/jobs/boss";
 import type { LlmCall, LlmGateway, LlmResult } from "@/llm/gateway";
@@ -13,7 +14,7 @@ import { LocalStore, setObjectStoreForTests } from "@/lib/object-store";
 import type { AuthUser } from "@/server/auth";
 import { uploadSong } from "@/server/songs";
 
-import { DUB_UNKNOWN, lyricFragments } from "@/server/videos/doblaje";
+import { DUB_UNKNOWN, lyricFragments, requireRedub } from "@/server/videos/doblaje";
 import { recheckDubbedEdits, reclassifyDubbedEdits, redubTodaysEdits, remountDubbedWithoutEdit, startEdit, type EditSpec } from "@/server/videos/edits";
 import { createBatch } from "@/server/videos/batches";
 import { claimRun, runEdit, type MontajeDeps } from "@/server/videos/montaje-nube";
@@ -25,7 +26,7 @@ import { makeSampleVideo } from "./helpers/sample-video";
 
 /**
  * «Traducir el diálogo al alemán» (`doblaje.ts`, copia del método de Codex del 19/11/2026): la opción
- * en la tarjeta y en el lote, y el montaje en la nube con un Higgsfield simulado, un `doblar.py` de
+ * en la tarjeta y en el lote, y el montaje en la nube con ElevenLabs simulado, un `doblar.py` de
  * prueba (separar/mezclar) y un montador de prueba que apunta qué audio recibió. `doblar.py` de
  * verdad tiene sus pruebas en Python (`montador/test_doblar.py`), que también se lanzan aquí.
  */
@@ -151,6 +152,7 @@ let mp4: Buffer;
 let mp3: Buffer;
 let store: LocalStore;
 let hf: FakeHiggsfield;
+let el: FakeElevenLabs;
 
 const fakeFetch: typeof fetch = async () => new Response(new Uint8Array(mp4));
 
@@ -177,6 +179,7 @@ beforeEach(async () => {
   store = new LocalStore(path.join(sampleDir, `objetos-${Math.random().toString(36).slice(2)}`), Buffer.alloc(32, 3));
   setObjectStoreForTests(store);
   hf = createFakeHiggsfield({}, { autoComplete: true });
+  el = createFakeElevenLabs({ autoComplete: true });
   speech.calls = 0;
   speech.down = false;
   dueno = await makeUser("dueno");
@@ -229,6 +232,7 @@ const deps = (over: Partial<MontajeDeps> = {}): MontajeDeps => ({
   font: fontPath,
   montadorDir,
   higgsfield: hf.port,
+  elevenlabs: el.port,
   dubPollSeconds: 0,
   gateway,
   ...over,
@@ -258,7 +262,7 @@ async function mount(videoId: number, over: Partial<MontajeDeps> = {}) {
 }
 
 const dubRows = () => getDb().select().from(schema.dubs).orderBy(schema.dubs.id);
-const dubCalls = () => hf.calls.filter((c) => c.method === "submitDubbing");
+const dubCalls = () => el.calls.filter((c) => c.method === "submitDubbing");
 
 describe("caché de numba", () => {
   it("cada montaje usa su propia caché de numba (una compartida se corrompe y el montador muere con SIGSEGV)", async () => {
@@ -320,19 +324,17 @@ describe("cuándo no hace falta doblar (no se gasta)", () => {
 });
 
 describe("el montaje con el diálogo traducido", () => {
-  it("separa, dobla SOLO la voz con Higgsfield (`dubbing`, deu) una vez y el montaje usa el audio mezclado", async () => {
+  it("separa, dobla SOLO la voz con ElevenLabs (de) una vez y el montaje usa el audio mezclado", async () => {
     const video = await videoWithAudio({ dubDialogue: true });
     const first = await mount(video.id);
     expect(first.outcome).toBe("done");
     expect(first.spec.dubDialogue).toBe(true);
     expect(first.row.notes).toContain("audio:MEZCLA-ALEMANA");
-    // A Higgsfield se sube el vídeo con solo la voz y se pide el doblaje al alemán, presupuestado antes.
-    const methods = hf.calls.map((c) => c.method);
-    expect(methods.indexOf("quoteDubbing")).toBeLessThan(methods.indexOf("submitDubbing"));
-    expect(hf.calls.find((c) => c.method === "uploadMedia")?.args).toMatchObject({ filename: "dialogue-only.mp4", type: "video" });
-    expect(dubCalls().map((c) => c.args)).toEqual([{ request: { mediaId: "media-1", targetLanguage: "deu" } }]);
+    expect(hf.calls).toEqual([]);
+    expect(dubCalls()[0].args.request).toMatchObject({ filename: "dialogue-only.mp4", targetLanguage: "de" });
+    expect(Buffer.from(dubCalls()[0].args.request!.bytes)).toEqual(ORIGINAL);
     const [dub] = await dubRows();
-    expect(dub).toMatchObject({ status: "done", quotedCredits: DUB_CREDITS, creditsSpent: DUB_CREDITS, storageKey: `doblajes/${video.id}/${dub.id}.m4a` });
+    expect(dub).toMatchObject({ status: "done", quotedCredits: 0, creditsSpent: 0, storageKey: `doblajes/${video.id}/${dub.id}.m4a` });
     await store.download(dub.storageKey!, path.join(sampleDir, "d.m4a"));
     expect(fs.readFileSync(path.join(sampleDir, "d.m4a"), "utf8")).toBe("MEZCLA-ALEMANA");
 
@@ -367,19 +369,18 @@ describe("el montaje con el diálogo traducido", () => {
     expect(await dubRows()).toEqual([]);
   });
 
-  it("sin saldo para el doblaje, se para con el motivo y no envía nada", async () => {
-    hf.state.credits = 10;
+  it("el doblaje nunca llama a submitDubbing ni al saldo de Higgsfield", async () => {
+    hf.state.credits = 0;
+    hf.port.submitDubbing = vi.fn(() => { throw new Error("PROHIBIDO"); });
     const video = await videoWithAudio({ dubDialogue: true });
-    const { outcome } = await mount(video.id);
-    expect(outcome).toBe("failed");
-    expect((await getVideoFor(dueno, video.id)).editError).toBe(
-      `No se pudo doblar el diálogo: no hay saldo en Higgsfield (hacen falta ${DUB_CREDITS} créditos y quedan 10)`,
-    );
-    expect(dubCalls()).toEqual([]);
+    expect((await mount(video.id)).outcome).toBe("done");
+    expect(hf.port.submitDubbing).not.toHaveBeenCalled();
+    expect(hf.calls).toEqual([]);
+    expect(dubCalls()).toHaveLength(1);
   });
 
   it("si no se sabe si el envío llegó, no se repite solo; al volver a montar, sí", async () => {
-    hf.failNext("submitDubbing", new HiggsfieldUnknownOutcomeError());
+    el.failNext("submitDubbing", new ElevenLabsUnknownOutcomeError());
     const video = await videoWithAudio({ dubDialogue: true });
     const { outcome } = await mount(video.id);
     expect(outcome).toBe("failed");
@@ -392,21 +393,21 @@ describe("el montaje con el diálogo traducido", () => {
     expect((await dubRows()).map((r) => r.status)).toEqual(["failed", "done"]);
   });
 
-  it("si Higgsfield aún no ha terminado, el montaje vuelve a la cola y luego recoge el mismo trabajo", async () => {
+  it("si ElevenLabs aún no ha terminado, el montaje vuelve a la cola y luego recoge el mismo trabajo", async () => {
     const video = await videoWithAudio({ dubDialogue: true });
     let t = Date.now();
     const clock = () => new Date((t += 6 * 60_000));
-    const slow = createFakeHiggsfield();
-    const { outcome, row } = await mount(video.id, { higgsfield: slow.port, now: clock });
+    const slow = createFakeElevenLabs();
+    const { outcome, row } = await mount(video.id, { elevenlabs: slow.port, now: clock });
     expect(outcome).toBe("deferred");
     expect(row.status).toBe("queued");
     const [dub] = await dubRows();
     expect(dub.status).toBe("submitted");
     // Terminó: el siguiente intento lo recoge sin volver a enviar.
-    slow.state.jobs[dub.jobId!] = { jobId: dub.jobId!, status: "done", failure: null, error: null, urls: ["https://cdn.higgsfield.ai/dub.mp4"] };
+    slow.state.jobs[dub.jobId!] = "dubbed";
     await getDb().update(schema.editRuns).set({ availableAt: new Date(0) }).where(eq(schema.editRuns.id, row.id));
     const run = (await claimRun(new Date()))!;
-    expect(await runEdit(run, deps({ higgsfield: slow.port }))).toBe("done");
+    expect(await runEdit(run, deps({ elevenlabs: slow.port }))).toBe("done");
     expect(slow.calls.filter((c) => c.method === "submitDubbing")).toHaveLength(1);
     expect((await dubRows())[0].status).toBe("done");
   });
@@ -422,7 +423,7 @@ describe("que no quede nada en el idioma original", () => {
     expect(dubCalls()).toHaveLength(2); // el vídeo entero y el trozo
     expect(row.notes).toContain("Vuelto a doblar: «Look at her wings!» (11.5–13.2 s, seguía en el idioma original)");
     const [dub] = await dubRows();
-    expect(dub).toMatchObject({ status: "done", creditsSpent: DUB_CREDITS * 2, error: null });
+    expect(dub).toMatchObject({ status: "done", creditsSpent: 0, error: null });
     expect(dub.raw).toMatchObject({ comprobado: true, quedan: [], reparaciones: [{ desde: 11.5, hasta: 13.2 }] });
   });
 
@@ -632,7 +633,6 @@ describe("comprobación final del vídeo montado (orden del dueño, 25/11/2026)"
   it("si después de volver a doblar sigue el inglés, se para con el motivo y no se entrega", async () => {
     const video = await withAudio(Buffer.from("SIEMPRE-EN"));
     expect((await mount(video.id)).outcome).toBe("deferred");
-    expect((await again()).outcome).toBe("deferred");
     const last = await again();
     expect(last.outcome).toBe("failed");
     expect((await getVideoFor(dueno, video.id)).editError).toMatch(/el diálogo sigue sin traducir después de doblarlo otra vez \(«Ten seconds, I promise\.»/);
@@ -738,4 +738,20 @@ describe.skipIf(python.status !== 0)("doblar.py", () => {
     expect(run.status, `${run.stdout}\n${run.stderr}`).toBe(0);
     expect(run.stderr).toMatch(/\nOK/);
   }, 320_000);
+});
+
+describe("límite persistente del doblaje completo", () => {
+  it("la comprobación final permite un segundo intento y después para sin pagar otro", async () => {
+    const video = await videoWithAudio({ dubDialogue: true });
+    expect((await mount(video.id)).outcome).toBe("done");
+    const audio = path.join(sampleDir, "limite-original.m4a");
+    fs.writeFileSync(audio, ORIGINAL);
+    const leak = [{ desde: 0.5, hasta: 1.8, texto: "Three, two, one" }];
+    expect(await requireRedub(video.id, audio, "de", leak)).toBe(true);
+    expect((await mount(video.id)).outcome).toBe("done");
+    expect(await requireRedub(video.id, audio, "de", leak)).toBe(false);
+    expect(dubCalls()).toHaveLength(2);
+    await mount(video.id);
+    expect(dubCalls()).toHaveLength(2);
+  });
 });
