@@ -190,6 +190,9 @@ def lyric_lines(lyrics, duration_s):
     return [line for line in out if line['end'] > line['start'] and line['start'] < duration_s]
 
 
+MIN_LYRIC_SECONDS = 0.12
+
+
 def render_lyrics(lyrics, duration_s, work, font):
     """PNG transparentes de la capa amarilla debajo de la caja del gancho.
     Conserva la línea completa y destaca la palabra cantada en amarillo claro.
@@ -209,8 +212,23 @@ def render_lyrics(lyrics, duration_s, work, font):
         intervals = [(line['start'], line['end'], None)] if line['whole_line'] else [
             (max(line['start'], w['startMs'] / 1000), min(line['end'], w['endMs'] / 1000), i)
             for i, w in enumerate(line['words'])]
-        for start, end, active in intervals:
-            if end <= start:
+        # Cada palabra dura hasta la siguiente (sin parpadeos) y ninguna imagen dura menos de
+        # MIN_LYRIC_SECONDS ni pasa del final del vídeo: ffmpeg rompe con trozos de 0,02 s o fuera
+        # del vídeo (tarjeta 87: el final se cantaba en 30,5 s de un clip de 30 s).
+        merged = []
+        for k, (start, end, active) in enumerate(intervals):
+            if k + 1 < len(intervals):
+                end = max(end, intervals[k + 1][0])
+            else:
+                end = max(end, line['end'])
+            start, end = max(0.0, start), min(duration_s - 0.05, end)
+            if end - start < MIN_LYRIC_SECONDS:
+                if merged and start - merged[-1][1] < MIN_LYRIC_SECONDS:
+                    merged[-1] = (merged[-1][0], max(merged[-1][1], end), merged[-1][2])
+                continue
+            merged.append((start, end, active))
+        for start, end, active in merged:
+            if end - start < MIN_LYRIC_SECONDS:
                 continue
             # El compositor coloca todo en x=112, y=287: la franja transparente conserva el gancho 06B intacto.
             image = Image.new('RGBA', (886, 460), (0, 0, 0, 0))
