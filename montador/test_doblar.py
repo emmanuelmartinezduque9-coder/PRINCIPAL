@@ -101,6 +101,21 @@ class Mezcla(unittest.TestCase):
         f = np.fft.rfftfreq(len(salida), 1 / RATE)
         self.assertLess(espectro[np.abs(f - 500) < 3].max(), espectro[np.abs(f - 700) < 3].max() / 50)
 
+    def test_con_ventanas_la_voz_doblada_solo_suena_en_el_dialogo(self):
+        # Vídeo 83: el servicio de doblaje metió voz donde no había diálogo; fuera de las ventanas no entra.
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            carpeta = d / 'stems'
+            carpeta.mkdir()
+            for nombre in ('speech', 'music', 'sfx'):
+                tono(carpeta / f'{nombre}.wav', 300, 6.0, volumen=0.0001)
+            tono(d / 'doblaje.wav', 900, 6.0)
+            self.assertEqual(doblar.main(['mezclar', str(carpeta), str(d / 'doblaje.wav'), str(d / 'm.m4a'), '--ventanas', '1:2']), 0)
+            x = leer(d / 'm.m4a')[:, 0]
+            nivel = lambda a, b: float(np.sqrt(np.mean(x[int(a * RATE):int(b * RATE)] ** 2)))
+            self.assertGreater(nivel(1.0, 2.0), 0.1)   # en la ventana, la voz doblada
+            self.assertLess(nivel(3.5, 5.5), 0.01)     # fuera (más allá del margen), nada
+
     def test_un_doblaje_de_otra_duracion_no_se_mezcla(self):
         tono(self.dir / 'corta.wav', 700, 2)
         video_con(self.dir / 'corta.wav', self.dir / 'dub.mp4', 2)

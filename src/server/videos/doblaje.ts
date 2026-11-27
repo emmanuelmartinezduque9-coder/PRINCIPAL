@@ -580,7 +580,10 @@ export async function dubbedAudio(ctx: DubContext): Promise<DubOutcome> {
       const separated = await ctx.doblar(["separar", ctx.audio, stems, "--destino", ctx.language, ...(ctx.referenceVideo ? ["--video", ctx.referenceVideo] : [])]);
       if (!separated.ok) return { kind: "failed", shown: dubFailure(separated.error ?? "no se pudo separar la voz"), detail: separated.error ?? "separar" };
     }
-    const mixed = await ctx.doblar(["mezclar", stems, dub, output]);
+    // La voz doblada solo dentro de las ventanas de diálogo: lo que ElevenLabs genere fuera no entra (vídeo 83).
+    const dialogue = (row.raw as { ventanas?: Array<[number, number]> } | null)?.ventanas ?? [];
+    const onlyDialogue = dialogue.length ? ["--ventanas", ...dialogue.map(([a, b]) => `${a}:${b}`)] : [];
+    const mixed = await ctx.doblar(["mezclar", stems, dub, output, ...onlyDialogue]);
     if (!mixed.ok) {
       await update(row.id, { error: mixed.error ?? "mezclar" });
       return { kind: "failed", shown: dubFailure(mixed.error ?? "no se pudo mezclar"), detail: mixed.error ?? "mezclar" };
@@ -628,7 +631,7 @@ export async function dubbedAudio(ctx: DubContext): Promise<DubOutcome> {
       if (!graft.ok) break;
       voice = grafted;
       repairs.push({ desde: leak.desde, hasta: leak.hasta, texto: leak.texto, creditos: redone.credits, motivo: reason });
-      const remixed = await ctx.doblar(["mezclar", stems, voice, output]);
+      const remixed = await ctx.doblar(["mezclar", stems, voice, output, ...onlyDialogue]);
       if (!remixed.ok) break;
     }
     if (!checked) ctx.notes.push("No se pudo comprobar con Whisper que no quede diálogo en el idioma original");
@@ -803,7 +806,10 @@ export async function checkFinalDialogue(ctx: FinalCheckContext, userId: number,
   const pick = (f: Phrase) => ({ desde: f.desde, hasta: f.hasta, texto: f.texto, idioma: f.idioma });
   // Diálogo sin traducir: solo una frase conversacional de la VOZ. Lo que suena en inglés en la música o en la mezcla es,
   // salvo prueba en contra, la canción, y forzarlo a habla tradujo canciones (lote 12: vídeos 72, 83 y 86).
-  const leaks = phrases.filter((f, i) => kinds[i] === "habla" && detailed[i].conversational && f.pista === "voz" && left.some((g) => same(f, g))).map(pick);
+  const candidates = phrases.filter((f, i) => kinds[i] === "habla" && detailed[i].conversational && f.pista === "voz" && left.some((g) => same(f, g)));
+  // Whisper confunde el idioma de frases cortas dobladas («Gott segne.» salió «en» en el vídeo 83): solo cuenta si el
+  // TEXTO está en otro idioma que el del anuncio.
+  const leaks = (await notInLanguage(ctx, userId, productId, candidates)).map(pick);
   const lyrics = phrases.filter((f, i) => kinds[i] === "canto" && dubbed.some((g) => same(f, g))).map(pick);
   // Y una frase doblada que traduce una frase de CANTO de la referencia (lote 11: «Die ganze Zeit, die Falle in meinem
   // Turm…» del vídeo 65 es «I'm a shot alone in my tower»): Claude compara lo doblado con lo que se decidió al doblar.
@@ -811,6 +817,32 @@ export async function checkFinalDialogue(ctx: FinalCheckContext, userId: number,
   if (translated === null) return { kind: "error", detail: "Claude no pudo comparar lo doblado con la referencia" };
   lyrics.push(...translated.map(pick));
   return leaks.length || lyrics.length ? { kind: "leak", leaks, lyrics } : { kind: "ok", heard };
+}
+
+const textLanguageSchema = z.object({ frases: z.array(z.object({ n: z.number().int().min(1), idioma: z.string().min(2).max(3) })).max(40) });
+
+/** Las frases cuyo TEXTO no está en el idioma del anuncio (Claude). Si Claude no contesta, todas (no se deja pasar nada). */
+async function notInLanguage(ctx: FinalCheckContext, userId: number, productId: number | null, phrases: Phrase[]): Promise<Phrase[]> {
+  if (phrases.length === 0) return [];
+  const listing = phrases.map((f, i) => `${i + 1}. «${f.texto}»`).join("\n");
+  try {
+    const answer = await (ctx.gateway ?? getGateway()).call({
+      tier: "medium",
+      stepKey: `montaje:${ctx.videoId}:idioma-texto:${crypto.createHash("sha256").update(listing).digest("hex").slice(0, 16)}`,
+      userId,
+      productId,
+      rules: [],
+      instructions: "Di en qué idioma está escrito cada texto (código ISO 639-1: de, en, es…). Es una transcripción automática: si mezcla idiomas, el de la mayoría de las palabras.",
+      content: [textPart(listing)],
+      maxTokens: 500,
+      schema: textLanguageSchema,
+    });
+    const byN = new Map((answer.data?.frases ?? []).map((f) => [f.n, f.idioma.toLowerCase()]));
+    return phrases.filter((_, i) => byN.get(i + 1) !== ctx.language);
+  } catch (error) {
+    console.warn(`[doblaje] Claude no pudo decir el idioma del texto en el vídeo ${ctx.videoId}: ${messageOf(error)}`);
+    return phrases;
+  }
 }
 
 const translationSchema = z.object({ frases: z.array(z.object({ n: z.number().int().min(1), traduce: z.number().int().min(1).nullable(), motivo: z.string().max(200) })).max(40) });

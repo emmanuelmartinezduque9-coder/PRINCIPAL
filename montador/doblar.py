@@ -459,14 +459,27 @@ def restaurar(doblado, original, salida, ventanas):
     return dict(ok=True, salida=str(salida), ventanas=[[a, b] for a, b in ventanas])
 
 
-def mezclar(carpeta, doblaje, salida):
-    """Música y efectos originales + la voz doblada → `salida` (AAC), con la duración del original (filtro de Codex)."""
+ANTES_S, DESPUES_S = 0.5, 0.8  # margen de la voz doblada alrededor de cada ventana de diálogo
+
+
+def mezclar(carpeta, doblaje, salida, ventanas=None):
+    """Música y efectos originales + la voz doblada → `salida` (AAC), con la duración del original (filtro de Codex).
+    Con `ventanas` [(desde, hasta)], la voz doblada SOLO suena en esas ventanas de diálogo (con ANTES_S/DESPUES_S de
+    margen): lo que el servicio de doblaje genere fuera (vídeo 83: «Ich bin da» donde no había diálogo) no entra, y ahí
+    sigue sonando el original."""
     carpeta = Path(carpeta)
     largo = duracion(carpeta / 'speech.wav')
     if not tiene_audio(doblaje):
-        raise Fallo('El doblaje de Higgsfield no trae audio')
+        raise Fallo('El doblaje no trae audio')
     if abs(duracion(doblaje) - largo) > TOLERANCIA_S:
         raise Fallo(f'El doblaje dura {duracion(doblaje):.2f} s y el original {largo:.2f} s: no se mezcla')
+    if ventanas:
+        voz = leer(doblaje)
+        peso = np.zeros(len(voz), np.float32)
+        for a, b in ventanas:
+            peso = np.maximum(peso, ventana(len(voz), int((a - ANTES_S) * RATE), int((b + DESPUES_S) * RATE)))
+        doblaje = carpeta / 'voz-doblada-en-ventanas.wav'
+        escribir_wav(doblaje, voz * peso[:, None])
     ffmpeg('-i', carpeta / 'music.wav', '-i', carpeta / 'sfx.wav', '-i', doblaje,
            '-filter_complex', '[0:a][1:a][2:a]amix=inputs=3:duration=first:normalize=0,alimiter=limit=0.98:level=0:latency=1[a]',
            '-map', '[a]', '-c:a', 'aac', '-b:a', '256k', '-ar', RATE, '-t', f'{largo:.3f}', salida)
@@ -519,6 +532,7 @@ def main(argv=None):
     m.add_argument('carpeta', type=Path)
     m.add_argument('doblaje', type=Path)
     m.add_argument('salida', type=Path)
+    m.add_argument('--ventanas', nargs='*', help='desde:hasta del diálogo: la voz doblada solo suena ahí')
     a = p.parse_args(argv)
     try:
         if a.orden == 'transcribir':
@@ -541,7 +555,8 @@ def main(argv=None):
         elif a.orden == 'verificar':
             r = verificar(a.video, a.carpeta, a.destino, a.origen)
         else:
-            r = mezclar(a.carpeta, a.doblaje, a.salida)
+            ventanas = [tuple(float(v) for v in x.split(':')) for x in a.ventanas] if a.ventanas else None
+            r = mezclar(a.carpeta, a.doblaje, a.salida, ventanas)
     except Fallo as error:
         r = dict(ok=False, error=str(error))
     print(json.dumps(r, ensure_ascii=False))
