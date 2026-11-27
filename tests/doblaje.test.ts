@@ -201,7 +201,7 @@ const gateway: LlmGateway = {
     if (request.stepKey.includes(":idioma-texto:")) {
       // Idioma del texto: lo que lleva palabras alemanas es «de»; el resto, «en».
       const lines = String((request.content as Array<{ text?: string }>)[0]?.text ?? "").split("\n");
-      const data = { frases: lines.map((l, i) => ({ n: i + 1, idioma: /Sekunden|Gott|Ich /.test(l) ? "de" : "en" })) };
+      const data = { frases: lines.map((l, i) => ({ n: i + 1, idioma: /Sekunden|Gott|Ich |Gemacht|Zeit|Turm/.test(l) ? "de" : "en" })) };
       return { text: "", data: data as T, model: "prueba", usage: {} as never, costMicros: 0, spendEntryId: 0, ruleVersions: {}, webSources: [] };
     }
     if (request.stepKey.includes(":traduccion:")) {

@@ -789,7 +789,11 @@ export async function checkFinalDialogue(ctx: FinalCheckContext, userId: number,
   const left = ((result.quedan ?? []) as Array<Phrase & { pista?: string }>).filter((f) => !inNative(f));
   // También lo que suena en el idioma del anuncio: una letra traducida (lote 11, vídeo 64: «Made in the step», trozo de
   // la canción, se dobló) es canto en alemán y no puede quedarse.
-  const dubbed = ctx.forced ? [] : ((result.frases ?? []) as Array<Phrase & { pista?: string }>).filter((f) => f.idioma === ctx.language && !inNative(f));
+  // Lo doblado se reconoce por el idioma del TEXTO (Claude), no por el que adivina Whisper: «Mein Gott, was du mir
+  // zuhörst?» del vídeo 64 (un verso traducido) salió «en».
+  const heardForeign = ((result.frases ?? []) as Array<Phrase & { pista?: string }>).filter((f) => !inNative(f));
+  const textLanguages = ctx.forced ? [] : await languagesOf(ctx, userId, productId, heardForeign);
+  const dubbed = ctx.forced ? [] : heardForeign.filter((f, i) => (textLanguages[i] ?? f.idioma) === ctx.language);
   if (left.length === 0 && dubbed.length === 0) return { kind: "ok", heard };
   // Claude decide con TODO lo que se oyó (el contexto: los versos de alrededor), no con la frase suelta (vídeo 46: «I.»
   // sola no se reconocía como parte de «Let It Snow»).
@@ -809,7 +813,10 @@ export async function checkFinalDialogue(ctx: FinalCheckContext, userId: number,
   const candidates = phrases.filter((f, i) => kinds[i] === "habla" && detailed[i].conversational && f.pista === "voz" && left.some((g) => same(f, g)));
   // Whisper confunde el idioma de frases cortas dobladas («Gott segne.» salió «en» en el vídeo 83): solo cuenta si el
   // TEXTO está en otro idioma que el del anuncio.
-  const leaks = (await notInLanguage(ctx, userId, productId, candidates)).map(pick);
+  // Donde ya se devolvió el original por una letra traducida manda la canción: el diálogo que caiga ahí no fuerza otro
+  // doblaje entero (si no, volvería a traducirse el verso).
+  const restored = await restoredWindows(ctx.videoId, ctx.audio, ctx.language);
+  const leaks = (await notInLanguage(ctx, userId, productId, candidates.filter((f) => !restored.some(([a, b]) => f.desde < b && a < f.hasta)))).map(pick);
   const lyrics = phrases.filter((f, i) => kinds[i] === "canto" && dubbed.some((g) => same(f, g))).map(pick);
   // Y una frase doblada que traduce una frase de CANTO de la referencia (lote 11: «Die ganze Zeit, die Falle in meinem
   // Turm…» del vídeo 65 es «I'm a shot alone in my tower»): Claude compara lo doblado con lo que se decidió al doblar.
@@ -820,6 +827,30 @@ export async function checkFinalDialogue(ctx: FinalCheckContext, userId: number,
 }
 
 const textLanguageSchema = z.object({ frases: z.array(z.object({ n: z.number().int().min(1), idioma: z.string().min(2).max(3) })).max(40) });
+
+/** El idioma del TEXTO de cada frase (Claude); `null` donde no contesta. */
+async function languagesOf(ctx: FinalCheckContext, userId: number, productId: number | null, phrases: Phrase[]): Promise<Array<string | null>> {
+  if (phrases.length === 0) return [];
+  const listing = phrases.map((f, i) => `${i + 1}. «${f.texto}»`).join("\n");
+  try {
+    const answer = await (ctx.gateway ?? getGateway()).call({
+      tier: "medium",
+      stepKey: `montaje:${ctx.videoId}:idioma-texto:${crypto.createHash("sha256").update(listing).digest("hex").slice(0, 16)}`,
+      userId,
+      productId,
+      rules: [],
+      instructions: "Di en qué idioma está escrito cada texto (código ISO 639-1: de, en, es…). Es una transcripción automática: si mezcla idiomas, el de la mayoría de las palabras.",
+      content: [textPart(listing)],
+      maxTokens: 500,
+      schema: textLanguageSchema,
+    });
+    const byN = new Map((answer.data?.frases ?? []).map((f) => [f.n, f.idioma.toLowerCase()]));
+    return phrases.map((_, i) => byN.get(i + 1) ?? null);
+  } catch (error) {
+    console.warn(`[doblaje] Claude no pudo decir el idioma del texto en el vídeo ${ctx.videoId}: ${messageOf(error)}`);
+    return phrases.map(() => null);
+  }
+}
 
 /** Las frases cuyo TEXTO no está en el idioma del anuncio (Claude). Si Claude no contesta, todas (no se deja pasar nada). */
 async function notInLanguage(ctx: FinalCheckContext, userId: number, productId: number | null, phrases: Phrase[]): Promise<Phrase[]> {
@@ -900,6 +931,18 @@ async function referencePhrases(videoId: number, audio: string, language: string
     .limit(1);
   const raw = (row?.raw ?? null) as { frases?: Array<Phrase & { tipo?: string }>; detalle?: { frases?: Array<Phrase & { tipo?: string }> } } | null;
   return [...(raw?.frases ?? raw?.detalle?.frases ?? [])].filter((f) => f.tipo === "habla" || f.tipo === "canto").sort((a, b) => a.desde - b.desde);
+}
+
+/** Tramos en los que ya se devolvió el original por letra traducida (`raw.restaurados` del doblaje hecho). */
+async function restoredWindows(videoId: number, audio: string, language: string): Promise<Array<[number, number]>> {
+  const sha = await sha256File(audio);
+  const [row] = await getDb()
+    .select({ raw: dubs.raw })
+    .from(dubs)
+    .where(and(eq(dubs.videoId, videoId), eq(dubs.sourceSha256, sha), eq(dubs.language, dubLanguageOf(language).code), eq(dubs.status, "done")))
+    .orderBy(desc(dubs.id))
+    .limit(1);
+  return ((row?.raw ?? null) as { restaurados?: Array<[number, number]> } | null)?.restaurados ?? [];
 }
 
 /** Tramos [desde, hasta] de la referencia que ya estaban en el idioma del anuncio (de su última fila en `dubs`). */

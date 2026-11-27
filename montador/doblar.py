@@ -459,7 +459,7 @@ def restaurar(doblado, original, salida, ventanas):
     return dict(ok=True, salida=str(salida), ventanas=[[a, b] for a, b in ventanas])
 
 
-ANTES_S, DESPUES_S = 0.5, 0.8  # margen de la voz doblada alrededor de cada ventana de diálogo
+ANTES_S, DESPUES_S = 0.25, 0.5  # margen de la voz doblada alrededor de cada ventana de diálogo
 
 
 def mezclar(carpeta, doblaje, salida, ventanas=None):
