@@ -777,6 +777,41 @@ def contact_sheets(out, rev, stem, dur, cuts):
     return sheet, strips
 
 
+def overlay_track(cues, dur, work):
+    """Una sola pista de capas: en cada tramo entre cambios se funden las imágenes activas (en su orden)
+    y el concat de imágenes con duración la reproduce. Devuelve la lista para `-f concat`."""
+    from PIL import Image
+    folder = Path(work) / 'capas'
+    folder.mkdir(parents=True, exist_ok=True)
+    imgs = [Image.open(c['png']).convert('RGBA') for c in cues]
+    w = max(i.width for i in imgs)
+    h = max(i.height for i in imgs)
+    marks = sorted({0.0, float(dur)} | {min(max(float(t), 0.0), float(dur)) for c in cues for t in (c['start'], c['end'])})
+    lines, last = [], None
+    for k in range(len(marks) - 1):
+        a, b = marks[k], marks[k + 1]
+        if b - a <= 1e-6:
+            continue
+        mid = (a + b) / 2
+        frame = Image.new('RGBA', (w, h), (0, 0, 0, 0))
+        for c, im in zip(cues, imgs):
+            if float(c['start']) <= mid < float(c['end']):
+                frame.alpha_composite(im)
+        path = folder / f'capa-{k:04d}.png'
+        frame.save(path)
+        lines += [f"file '{path}'", f'duration {b - a:.6f}']
+        last = path
+    if last is None:
+        path = folder / 'capa-vacia.png'
+        Image.new('RGBA', (w, h), (0, 0, 0, 0)).save(path)
+        lines += [f"file '{path}'", f'duration {float(dur):.6f}']
+        last = path
+    lines.append(f"file '{last}'")  # el concat de imágenes necesita repetir la última
+    lista = folder / 'capas.txt'
+    lista.write_text('\n'.join(lines) + '\n')
+    return lista
+
+
 # ---------------------------------------------------------------- render
 def render(segs, cues, zooms, z, au, plan, work, out, dur, t_prod):
     inputs, graph = [], []
@@ -794,15 +829,20 @@ def render(segs, cues, zooms, z, au, plan, work, out, dur, t_prod):
         graph.append(f"[cat]scale={2 * W}:{2 * H}:flags=lanczos,zoompan=z='{zoom_expr(zooms)}':"
                      f"x='(iw-iw/zoom)*{cx}':y='(ih-ih/zoom)*{cy}':d=1:s={W}x{H}:fps={FPS},setsar=1[zm]")
         last = 'zm'
-    for k, c in enumerate(cues):
-        inputs += ['-i', c['png']]
-        graph.append(f"[{last}][{len(segs) + k}:v]overlay={BOX['x']}:{BOX['y']}:"
-                     f"enable='gte(t,{c['start']})*lt(t,{c['end']})'[t{k}]")
-        last = f't{k}'
+    # Todas las capas (rótulos y letra) van en la misma caja: se componen ANTES en una sola pista con
+    # transparencia (concat de imágenes con su duración). Con una entrada por imagen, ffmpeg abría decenas
+    # de decodificadores (letra palabra a palabra) y rompía al reconfigurar filtros o por hilos (tarjetas 87 y 89).
+    n_cues = 0
+    if cues:
+        lista = overlay_track(cues, dur, work)
+        inputs += ['-f', 'concat', '-safe', '0', '-i', str(lista)]
+        graph.append(f"[{len(segs)}:v]fps={FPS},format=rgba[capas]")
+        graph.append(f"[{last}][capas]overlay={BOX['x']}:{BOX['y']}:eof_action=pass[tcap]")
+        last, n_cues = 'tcap', 1
     graph.append(f'[{last}]format=yuv420p[vout]')
     vargs = ['-c:v', EXPORT['vcodec'], '-profile:v', EXPORT['profile'], '-pix_fmt', EXPORT['pix_fmt'],
              '-crf', str(EXPORT['crf']), '-preset', EXPORT['preset'], '-r', str(FPS)]
-    aidx = len(segs) + len(cues)
+    aidx = len(segs) + n_cues
     if au['mode'] == 'original':
         s = segs[0]
         whole = len(segs) == 1 and s['speed'] == 1 and not s['in_frame'] and s['out_frame'] == s['src_frames']
