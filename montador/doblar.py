@@ -443,6 +443,22 @@ def injertar(doblaje, trozo, desde, salida):
     return dict(ok=True, salida=str(salida))
 
 
+def restaurar(doblado, original, salida, ventanas):
+    """El audio doblado con el ORIGINAL puesto en `ventanas` [(desde, hasta)] (letra de una canción que se tradujo: vuelve
+    tal cual, sin doblar otra vez), con fundidos. Misma duración que el doblado."""
+    d, o = leer(doblado), leer(original)
+    n = len(d)
+    o = np.pad(o[:n], ((0, max(0, n - len(o))), (0, 0)))
+    peso = np.zeros(n, np.float32)
+    for a, b in ventanas:
+        peso = np.maximum(peso, ventana(n, int(a * RATE), int(b * RATE)))
+    tmp = Path(salida).with_suffix('.wav')
+    escribir_wav(tmp, d * (1 - peso[:, None]) + o * peso[:, None])
+    ffmpeg('-i', tmp, '-c:a', 'aac', '-b:a', '256k', '-ar', RATE, salida)
+    tmp.unlink(missing_ok=True)
+    return dict(ok=True, salida=str(salida), ventanas=[[a, b] for a, b in ventanas])
+
+
 def mezclar(carpeta, doblaje, salida):
     """Música y efectos originales + la voz doblada → `salida` (AAC), con la duración del original (filtro de Codex)."""
     carpeta = Path(carpeta)
@@ -494,6 +510,11 @@ def main(argv=None):
     v.add_argument('carpeta', type=Path)
     v.add_argument('--destino', required=True)
     v.add_argument('--origen')
+    rt = cmds.add_parser('restaurar')
+    rt.add_argument('doblado', type=Path)
+    rt.add_argument('original', type=Path)
+    rt.add_argument('salida', type=Path)
+    rt.add_argument('--ventanas', nargs='+', required=True, help='desde:hasta donde vuelve el audio original')
     m = cmds.add_parser('mezclar')
     m.add_argument('carpeta', type=Path)
     m.add_argument('doblaje', type=Path)
@@ -515,6 +536,8 @@ def main(argv=None):
             r = tramo(a.carpeta, a.desde, a.hasta, a.salida, a.video)
         elif a.orden == 'injertar':
             r = injertar(a.doblaje, a.trozo, a.desde, a.salida)
+        elif a.orden == 'restaurar':
+            r = restaurar(a.doblado, a.original, a.salida, [tuple(float(v) for v in x.split(':')) for x in a.ventanas])
         elif a.orden == 'verificar':
             r = verificar(a.video, a.carpeta, a.destino, a.origen)
         else:

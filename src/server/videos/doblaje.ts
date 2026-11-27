@@ -309,17 +309,20 @@ async function analyse(ctx: DubContext, stems: string, userId: number, target: {
   const classified: Array<Phrase & { pista: string; tipo: "habla" | "canto"; conversacional?: boolean }> = foreign.map((f, i) => ({
     ...f,
     conversacional: detailed?.[i]?.conversational,
-    tipo: forcedWindows.some((w) => overlaps(f, w))
-      ? ("habla" as const)
-      : singWindows.some((w) => overlaps(f, w)) && !detailed?.[i]?.conversational
-        ? ("canto" as const)
-        : kinds[i],
+    // Un tramo que la comprobación final oyó sin traducir hace habla una frase de la voz, nunca una que la decisión da por
+    // canto (lote 12: así se tradujeron «Rockin' around the Christmas tree» del 72 y «I never lose a car on you» del 86).
+    tipo:
+      forcedWindows.some((w) => overlaps(f, w)) && kinds[i] !== "canto"
+        ? ("habla" as const)
+        : singWindows.some((w) => overlaps(f, w)) && !detailed?.[i]?.conversational
+          ? ("canto" as const)
+          : kinds[i],
   }));
-  // Un tramo de la comprobación final sin ninguna frase de habla aquí (Whisper no la oyó en la referencia): se dobla igual,
-  // con la voz que haya en la música en ese tramo.
+  // Un tramo de diálogo que oyó la comprobación final (siempre de la VOZ) sin frase aquí: se dobla lo que tenga la voz en
+  // ese tramo; nunca la voz de la música (así entraban canciones).
   for (const w of forcedWindows) {
-    if (!classified.some((f) => f.tipo === "habla" && overlaps(f, w))) {
-      classified.push({ desde: w[0], hasta: w[1], texto: "(diálogo oído en la comprobación final)", idioma: null, prob: 0, no_habla: 0, confianza: 0, pista: "music", tipo: "habla" });
+    if (!classified.some((f) => overlaps(f, w))) {
+      classified.push({ desde: w[0], hasta: w[1], texto: "(diálogo oído en la comprobación final)", idioma: null, prob: 0, no_habla: 0, confianza: 0, pista: "voz", tipo: "habla" });
     }
   }
   const speech = classified.filter((f) => f.tipo === "habla");
@@ -348,7 +351,6 @@ async function analyse(ctx: DubContext, stems: string, userId: number, target: {
   const windows = speech.map((f): [number, number] =>
     singWindows.some((w) => overlaps(f, w)) || song.some((w) => overlaps(f, w)) ? tight(f) : [f.desde, f.hasta],
   );
-  for (const w of forcedWindows) if (!windows.some(([a, b]) => a <= w[0] && w[1] <= b)) windows.push(w);
   const moved = await ctx.doblar([
     "rescatar",
     stems,
@@ -692,6 +694,44 @@ async function badTranslations(
   }
 }
 
+/** Cuántas veces, como mucho, se devuelve el original a tramos con letra traducida antes de parar el montaje. */
+export const MAX_RESTORES = 3;
+
+/**
+ * Letra de una canción traducida en el vídeo montado (orden del dueño, 27/11/2026): se arregla SOLO ese tramo, poniendo el
+ * audio original en el doblaje guardado (`doblar.py restaurar`), sin otro doblaje. El tramo queda además en `cantar` para
+ * que una decisión nueva lo dé por canto. `false` si no hay doblaje que arreglar o ya se restauró MAX_RESTORES veces.
+ */
+export async function restoreOriginal(
+  ctx: { videoId: number; audio: string; language: string; dir: string; store: ObjectStore; doblar: (args: string[]) => Promise<DoblarResult> },
+  lyrics: Array<{ desde: number; hasta: number; texto: string }>,
+): Promise<boolean> {
+  const sha = await sha256File(ctx.audio);
+  const [row] = await getDb()
+    .select()
+    .from(dubs)
+    .where(and(eq(dubs.videoId, ctx.videoId), eq(dubs.sourceSha256, sha), eq(dubs.language, dubLanguageOf(ctx.language).code), eq(dubs.status, "done")))
+    .orderBy(desc(dubs.id))
+    .limit(1);
+  if (!row?.storageKey) return false;
+  const raw = (row.raw as { restaurados?: Array<[number, number]>; cantar?: Array<[number, number]> } | null) ?? {};
+  const done = raw.restaurados ?? [];
+  if (done.length >= MAX_RESTORES * 4) return false;
+  const windows = lyrics.map((l): [number, number] => [Math.max(0, l.desde - 0.15), l.hasta + 0.15]);
+  const dubbed = path.join(ctx.dir, "doblaje-a-restaurar.m4a");
+  const fixed = path.join(ctx.dir, "doblaje-restaurado.m4a");
+  await ctx.store.download(row.storageKey, dubbed);
+  const out = await ctx.doblar(["restaurar", dubbed, ctx.audio, fixed, "--ventanas", ...windows.map(([a, b]) => `${a}:${b}`)]);
+  if (!out.ok) return false;
+  const key = `doblajes/${ctx.videoId}/${row.id}-r${done.length / Math.max(1, windows.length) + 1}-${Date.now()}.m4a`;
+  await ctx.store.putFile(key, fixed, { contentType: "audio/mp4" });
+  await update(row.id, {
+    storageKey: key,
+    raw: { ...raw, restaurados: [...done, ...windows], cantar: [...(raw.cantar ?? []), ...windows] },
+  });
+  return true;
+}
+
 /** Cuántas veces, como mucho, la comprobación final manda volver a doblar un mismo audio antes de parar el montaje. */
 export const MAX_FINAL_REDUBS = 1;
 const FINAL_CHECK = "Comprobación final";
@@ -757,10 +797,13 @@ export async function checkFinalDialogue(ctx: FinalCheckContext, userId: number,
   const context = heardAll.filter((f) => !mix.includes(f));
   const all = [...context, ...left.filter((f) => !context.some((g) => same(f, g)))];
   const phrases = all.map((f) => ({ ...f, pista: f.pista ?? "voz", prob: f.prob ?? 0, no_habla: f.no_habla ?? 0, confianza: f.confianza ?? 0 }));
-  const kinds = await classifySpeech({ videoId: ctx.videoId, gateway: ctx.gateway, learned: ctx.learned }, userId, productId, phrases, mix);
-  if (kinds === null) return { kind: "error", detail: "Claude no pudo decir si lo que se oye es diálogo o una canción" };
+  const detailed = await classifySpeechDetailed({ videoId: ctx.videoId, gateway: ctx.gateway, learned: ctx.learned }, userId, productId, phrases, mix);
+  if (detailed === null) return { kind: "error", detail: "Claude no pudo decir si lo que se oye es diálogo o una canción" };
+  const kinds = detailed.map((d) => d.kind);
   const pick = (f: Phrase) => ({ desde: f.desde, hasta: f.hasta, texto: f.texto, idioma: f.idioma });
-  const leaks = phrases.filter((f, i) => kinds[i] === "habla" && left.some((g) => same(f, g))).map(pick);
+  // Diálogo sin traducir: solo una frase conversacional de la VOZ. Lo que suena en inglés en la música o en la mezcla es,
+  // salvo prueba en contra, la canción, y forzarlo a habla tradujo canciones (lote 12: vídeos 72, 83 y 86).
+  const leaks = phrases.filter((f, i) => kinds[i] === "habla" && detailed[i].conversational && f.pista === "voz" && left.some((g) => same(f, g))).map(pick);
   const lyrics = phrases.filter((f, i) => kinds[i] === "canto" && dubbed.some((g) => same(f, g))).map(pick);
   // Y una frase doblada que traduce una frase de CANTO de la referencia (lote 11: «Die ganze Zeit, die Falle in meinem
   // Turm…» del vídeo 65 es «I'm a shot alone in my tower»): Claude compara lo doblado con lo que se decidió al doblar.

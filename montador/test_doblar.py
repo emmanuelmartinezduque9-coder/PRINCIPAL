@@ -118,6 +118,22 @@ class Mezcla(unittest.TestCase):
 
 @unittest.skipUnless(HAS_NUMPY and FFMPEG, 'faltan numpy o ffmpeg')
 class Reparar(unittest.TestCase):
+    def test_restaurar_pone_el_original_solo_en_las_ventanas(self):
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            tono(d / 'doblado.wav', 300, 3.0)
+            tono(d / 'original.wav', 900, 3.0)
+            r = doblar.main(['restaurar', str(d / 'doblado.wav'), str(d / 'original.wav'), str(d / 'r.m4a'), '--ventanas', '1:2'])
+            self.assertEqual(r, 0)
+            x = leer(d / 'r.m4a')[:, 0]
+            def tono_de(a, b):
+                seg = x[int(a * RATE):int(b * RATE)]
+                f = np.fft.rfftfreq(len(seg), 1 / RATE)
+                return f[np.argmax(np.abs(np.fft.rfft(seg)))]
+            self.assertAlmostEqual(tono_de(0.2, 0.8), 300, delta=10)   # fuera: el doblado
+            self.assertAlmostEqual(tono_de(1.2, 1.8), 900, delta=10)   # dentro: el original
+            self.assertAlmostEqual(tono_de(2.2, 2.8), 300, delta=10)
+
     def test_injertar_pone_el_trozo_nuevo_en_su_sitio_y_deja_el_resto(self):
         d = Path(tempfile.mkdtemp(prefix='doblar-injertar-'))
         try:

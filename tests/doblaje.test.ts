@@ -132,6 +132,9 @@ elif args[0] == 'verificar':
         # Un trozo de la canción se dobló: suena en alemán y es canto.
         letra = [{'desde': 11.9, 'hasta': 13.5, 'texto': 'CANTO: Gemacht im Schritt.', 'idioma': 'de', 'prob': 0.9, 'no_habla': 0.1, 'confianza': -0.5, 'pista': 'voz'}]
     r = {'ok': True, 'comprobado': True, 'quedan': quedan, 'frases': quedan + letra + [{'desde': 0.0, 'hasta': 2.0, 'texto': 'Zehn Sekunden, versprochen.', 'idioma': 'de', 'prob': 0.99, 'no_habla': 0.05, 'confianza': -0.3, 'pista': 'voz'}]}
+elif args[0] == 'restaurar':
+    Path(args[3]).write_bytes(b'RESTAURADO')
+    r = {'ok': True}
 elif args[0] == 'tramo':
     shutil.copy(Path(args[1]) / 'dialogue-only.mp4', args[4])
     r = {'ok': True, 'desde': float(args[2]) - 0.25, 'hasta': float(args[3]) + 0.25}
@@ -609,8 +612,8 @@ describe("comprobación final del vídeo montado (orden del dueño, 25/11/2026)"
   };
 
   it("si en el vídeo montado se oye diálogo en inglés, no se entrega: se dobla ese tramo sí o sí y se vuelve a montar", async () => {
-    // La primera decisión dijo «canción» (no se dobló); la comprobación final oye «Ten seconds, I promise.» en inglés.
-    const video = await withAudio(Buffer.from("CANCION-FINAL-EN"));
+    // La referencia no dio diálogo (no se dobló); la comprobación final oye en la VOZ «Ten seconds, I promise.» en inglés.
+    const video = await withAudio(Buffer.from("SIN-VOZ FINAL-EN"));
     const first = await mount(video.id);
     expect(first.outcome).toBe("deferred");
     expect(await getDb().select().from(schema.edits)).toEqual([]);
@@ -628,6 +631,16 @@ describe("comprobación final del vídeo montado (orden del dueño, 25/11/2026)"
     const redone = (await dubRows())[1].raw as { forzar: unknown; ventanas: unknown[] };
     expect(redone.forzar).toEqual([[0, 2.1]]);
     expect(redone.ventanas).toContainEqual([0, 2.1]);
+  });
+
+  it("lo que la decisión da por canción no se dobla aunque la comprobación final lo oiga en inglés (lote 12: 72, 86)", async () => {
+    const video = await withAudio(Buffer.from("CANCION-FINAL-EN"));
+    const first = await mount(video.id);
+    expect(first.outcome).toBe("deferred");
+    const second = await again();
+    expect(second.outcome).toBe("done");
+    expect(second.row.notes).toContain("audio:CANCION-FINAL-EN");
+    expect(dubCalls()).toHaveLength(0);
   });
 
   it("si después de volver a doblar sigue el inglés, se para con el motivo y no se entrega", async () => {
@@ -659,26 +672,27 @@ describe("comprobación final del vídeo montado (orden del dueño, 25/11/2026)"
     expect(dubCalls()).toHaveLength(1);
   });
 
-  it("si en el vídeo montado suena la letra de la canción traducida, no se entrega: ese tramo queda como canción y se vuelve a doblar (lote 11, vídeo 64)", async () => {
+  it("si en el vídeo montado suena la letra de la canción traducida, vuelve el original en ese tramo, sin otro doblaje (orden del dueño, 27/11)", async () => {
     const video = await withAudio(Buffer.from("VOZ-INGLES LETRA-TRADUCIDA"));
     const first = await mount(video.id);
     expect(first.outcome).toBe("deferred");
-    const [marked] = await dubRows();
-    expect(marked.error).toMatch(/^Comprobación final: el vídeo montado tenía letra de la canción traducida \(«CANTO: Gemacht im Schritt\.»\)/);
-    expect(marked.raw).toMatchObject({ cantar: [[11.8, 13.6]] });
+    const [dub] = await dubRows();
+    expect(dub.status).toBe("done");
+    expect(dub.raw).toMatchObject({ restaurados: [[11.75, 13.65]], cantar: [[11.75, 13.65]] });
     const second = await again();
     expect(second.outcome).toBe("done");
-    expect((await dubRows())[1].raw).toMatchObject({ cantar: [[11.8, 13.6]] });
+    expect(second.row.notes).toContain("audio:RESTAURADO");
+    expect(dubCalls()).toHaveLength(1);
   });
 
   it("una frase doblada que traduce un verso de la canción no se entrega: ese tramo queda como canción (lote 11, vídeo 65)", async () => {
     const video = await withAudio(Buffer.from("MUSICA-HABLA TURM"));
     const first = await mount(video.id);
     expect(first.outcome).toBe("deferred");
-    const [marked] = await dubRows();
-    expect(marked.error).toMatch(/letra de la canción traducida \(«Die ganze Zeit allein in meinem Turm»\)/);
-    expect(marked.raw).toMatchObject({ cantar: [[3.9, 11.1]] });
+    const [dub] = await dubRows();
+    expect(dub.raw).toMatchObject({ restaurados: [[3.85, 11.15]] });
     expect((await again()).outcome).toBe("done");
+    expect(dubCalls()).toHaveLength(1);
   });
 
   it("apagado en la tarjeta: no se comprueba", async () => {

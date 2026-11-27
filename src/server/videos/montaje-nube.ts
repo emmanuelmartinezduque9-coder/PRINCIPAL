@@ -18,7 +18,7 @@ import { killPrograms, lastLine, runProgram } from "@/server/media/programs";
 import { latestSongWithDrop, readSongFile } from "@/server/songs";
 import { storedOriginalKey } from "@/server/videos/archive";
 import { openClipStream } from "@/server/videos/clip";
-import { checkFinalDialogue, dubbedAudio, requireRedub } from "@/server/videos/doblaje";
+import { checkFinalDialogue, dubbedAudio, requireRedub, restoreOriginal } from "@/server/videos/doblaje";
 import { referenceEdit, targetPlace, withLocalPlaces, type ReferenceEdit } from "@/server/videos/edicion-referencia";
 import { applyEditChange, saveEditChange, type EditChangeResult } from "@/server/videos/cambio-montaje";
 import { localizeText, marketOf, shopOfLocalization, type LocalizationItem } from "@/server/videos/localization";
@@ -766,9 +766,20 @@ Este producto es una canción personalizada: copia y adapta únicamente el ganch
         await finishFailed(run, montajeFailure(`no se pudo comprobar que el diálogo esté traducido (${verdict.detail.slice(0, 160)}). Vuelve a montar`), verdict.detail, nowOf(deps), notes);
         return "failed";
       }
+      if (verdict.kind === "leak" && verdict.lyrics.length) {
+        // Letra traducida: vuelve el audio original en esos tramos, sin doblar otra vez (orden del dueño, 27/11/2026).
+        const said = verdict.lyrics.map((l) => `«${l.texto}» (${l.desde}–${l.hasta} s)`).join(", ");
+        if (store && (await restoreOriginal({ videoId: spec.videoId, audio: finalCheck.audio, language: spec.product.language, dir, store, doblar }, verdict.lyrics))) {
+          console.warn(`[montaje] Vídeo ${spec.videoId}: letra traducida (${said}); vuelve el original en esos tramos y se monta otra vez`);
+          await defer(run, 0, nowOf(deps));
+          return "deferred";
+        }
+        await finishFailed(run, montajeFailure(`la letra de la canción sigue traducida (${said.slice(0, 200)}); no se entrega`), `comprobación final: ${said}`, nowOf(deps), notes);
+        return "failed";
+      }
       if (verdict.kind === "leak") {
-        const said = [...verdict.leaks, ...verdict.lyrics].map((l) => `«${l.texto}» (${l.desde}–${l.hasta} s)`).join(", ");
-        if (!(await requireRedub(spec.videoId, finalCheck.audio, spec.product.language, verdict.leaks, verdict.lyrics))) {
+        const said = verdict.leaks.map((l) => `«${l.texto}» (${l.desde}–${l.hasta} s)`).join(", ");
+        if (!(await requireRedub(spec.videoId, finalCheck.audio, spec.product.language, verdict.leaks, []))) {
           await finishFailed(
             run,
             montajeFailure(
