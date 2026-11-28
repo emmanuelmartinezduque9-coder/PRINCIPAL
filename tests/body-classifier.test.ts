@@ -98,4 +98,20 @@ describe("cuerpos automáticos", () => {
     expect(await classifyLibraryClips(user, gateway([]))).toBe(40);
     expect(await classifyLibraryClips(user, gateway([]))).toBe(5);
   });
+  it("una tanda con respuesta inválida se reintenta clip a clip y la que sigue fallando queda como «otro»", async () => {
+    const user = await makeUser("colaborador"), product = await makeProduct(user);
+    await addProductPhoto(user, product.id, Buffer.from("/9j/4AAQSkZJRgABAQ", "base64"), "articulo").catch(() => null);
+    const a = await clip(user.id), b = await clip(user.id);
+    const call = vi.fn(async (request: LlmCall<unknown>) => {
+      const ids = String(request.stepKey).split(":").pop()!.split("-").map(Number);
+      if (ids.length > 1) throw new Error("La respuesta de Claude no tiene el formato esperado.");
+      if (ids[0] === b.id) throw new Error("La respuesta de Claude no tiene el formato esperado.");
+      return { data: { clips: [{ clipId: a.id, productId: product.id, role: "cuerpo", confidence: 95, label: "Uso" }] } };
+    });
+    expect(await classifyLibraryClips(user, { gateway: { call } as unknown as LlmGateway })).toBe(2);
+    const rows = await getDb().select().from(schema.libraryClips);
+    expect(rows.find((r) => r.id === a.id)).toMatchObject({ detectedProductId: product.id, classifiedRole: "cuerpo" });
+    expect(rows.find((r) => r.id === b.id)).toMatchObject({ detectedProductId: null, classifiedRole: "otro", confidence: 0 });
+    expect(await listProductBodies(user, product.id)).toHaveLength(1);
+  });
 });
