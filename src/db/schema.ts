@@ -1648,6 +1648,11 @@ export interface EditOverride {
   pendiente: { texto: string; por: number; reportId: number | null; at: string } | null;
   rotulos: Array<{ desde_s: number; texto: string; cta: boolean }> | null;
   cambios: Array<{ texto: string; por: number; reportId: number | null; at: string; resumen: string }>;
+  /**
+   * Hasta qué segundo se usa el clip replicado delante de los cuerpos (p. ej. «replica solo hasta que saca el buzo de
+   * la caja»). Sin él, el clip entero. Opcional: las filas antiguas no lo tienen.
+   */
+  ganchoHastaS?: number | null;
 }
 
 /**

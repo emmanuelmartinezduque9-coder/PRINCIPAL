@@ -15,7 +15,7 @@ describe("indicaciones de cuerpos para montaje", () => {
   it("usa los dos últimos planos y marca el tramo automático", async () => {
     const { input, call } = setup("utiliza del cuerpo los dos últimos clips");
     expect(await bodyTrimFromNote(input)).toEqual({ fromS: 5, toS: 12, automatic: true });
-    expect(call.mock.calls[0][0]).toMatchObject({ tier: "small", schema: expect.anything() });
+    expect(call).not.toHaveBeenCalled(); // «los dos últimos clips» se calcula con los cortes, sin Claude
   });
   it("no analiza ni sustituye un tramo manual", async () => {
     const { input, call, inspect } = setup("utiliza del cuerpo los dos últimos clips");
@@ -34,5 +34,16 @@ describe("indicaciones de cuerpos para montaje", () => {
     const { input } = setup("cuerpo: últimos planos");
     input.gateway.call = vi.fn(async () => ({ data: { trim: { fromS: 3, toS: 12 } } })) as unknown as LlmGateway["call"];
     await expect(bodyTrimFromNote(input)).resolves.toBeUndefined();
+  });
+});
+
+describe("«los N últimos/primeros clips» sin Claude (KreuzKapuze 16)", () => {
+  it("calcula el tramo directamente con los cortes", async () => {
+    const { lastOrFirstShots } = await import("@/server/videos/body-note-trims");
+    const b = [0, 2.917, 4.5, 6, 6.708, 8.042, 10.375, 13.042];
+    expect(lastOrFirstShots("del cuerpo que te adjunte solo usa los dos ultimos clips que es donde se lo esta poniendo", b)).toEqual({ fromS: 8.042, toS: 13.042 });
+    expect(lastOrFirstShots("usa los 3 primeros planos del cuerpo", b)).toEqual({ fromS: 0, toS: 6 });
+    expect(lastOrFirstShots("usa el último clip", b)).toBeNull();
+    expect(lastOrFirstShots("nada de cuerpos", b)).toBeNull();
   });
 });

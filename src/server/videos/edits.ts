@@ -215,7 +215,7 @@ async function buildSpec(video: Video, product: Product): Promise<EditSpec> {
     product: { name: product.name, language: product.language, countries: product.countries, kind: product.kind },
     clips,
     hookMs: video.kind === "adaptacion_concepto" && clips.some((clip) => clip.role === "body")
-      ? video.segmentDurationMs
+      ? (video.editOverride?.ganchoHastaS ? Math.round(video.editOverride.ganchoHastaS * 1000) : video.segmentDurationMs)
       : hookTiming(video)?.hookMs ?? null,
     song: song ? { id: song.id, title: song.title, dropMs: personalized ? 0 : song.dropMs, startMs: personalized ? 0 : song.startMs, durationMs: song.durationMs } : null,
     ...(lyrics ? { lyrics } : {}),
