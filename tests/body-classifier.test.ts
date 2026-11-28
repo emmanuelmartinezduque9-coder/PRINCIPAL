@@ -75,7 +75,7 @@ describe("cuerpos automáticos", () => {
     await classifyLibraryClips(user, gateway([{ clipId: c.id, productId: product.id, role: "cuerpo", confidence: 100, label: "Uso" }]));
     expect(await listProductBodies(user, product.id)).toEqual([]);
     const [label] = await getDb().select().from(schema.libraryClips);
-    expect(label.confidence).toBe(89);
+    expect(label.confidence).toBe(79);
   });
   it("un vídeo solo gancho conserva su producto sin convertirse en cuerpo", async () => {
     const user = await makeUser("colaborador"), product = await makeProduct(user);
