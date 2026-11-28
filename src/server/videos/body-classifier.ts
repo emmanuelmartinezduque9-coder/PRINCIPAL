@@ -8,7 +8,7 @@ import { listProductPhotos, readProductPhoto } from "@/server/photos";
 
 export const CLASSIFICATION_LIMIT = 40;
 export const VISION_BATCH_SIZE = 8;
-export const BODY_CONFIDENCE = 90;
+export const BODY_CONFIDENCE = 80;
 const output = z.object({ clips: z.array(z.object({
   clipId: z.number().int(), productId: z.number().int().nullable(),
   role: z.enum(["cuerpo", "gancho", "otro"]), confidence: z.number().int().min(0).max(100),
@@ -77,7 +77,7 @@ async function classifyPending(user: AuthUser, deps: ClassifierDeps, clipIds?: n
       throw new Error("Clasificación de biblioteca inválida");
     }
     for (const label of parsed.clips) labels.set(label.clipId, { ...label,
-      confidence: batch.find(c => c.id === label.clipId)!.thumbUrl ? label.confidence : Math.min(label.confidence, 89), method: "vision" });
+      confidence: batch.find(c => c.id === label.clipId)!.thumbUrl ? label.confidence : Math.min(label.confidence, BODY_CONFIDENCE - 1), method: "vision" });
   }
   await db.transaction(async tx => {
     for (const [id, label] of labels) {
