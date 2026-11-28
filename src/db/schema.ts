@@ -627,7 +627,7 @@ export const videos = pgTable(
      * Los cuerpos (`product_bodies.id`) que se pegan detrás del gancho, en orden. Solo cuentan con
      * `kind = solo_gancho` o `adaptacion_concepto`. Sin clave ajena (es una lista): un cuerpo desmarcado deja de salir.
      */
-    bodyClipTrims: jsonb("body_clip_trims").$type<Record<string, { fromS: number; toS: number }>>().notNull().default({}),
+    bodyClipTrims: jsonb("body_clip_trims").$type<Record<string, { fromS: number; toS: number; automatic?: true }>>().notNull().default({}),
     bodyClipIds: jsonb("body_clip_ids").$type<number[]>().notNull().default([]),
     /** Prompt de la imagen inicial (en inglés): lo propone el desglose y la persona lo puede cambiar. */
     imagePrompt: text("image_prompt"),

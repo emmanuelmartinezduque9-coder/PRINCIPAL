@@ -1,3 +1,5 @@
+import { bodyTrimFromNote } from "@/server/videos/body-note-trims";
+import { productNotesOf } from "@/server/videos/videos";
 import { batchPaused, ownerRedoPending } from "@/server/videos/batch-pause";
 import { createWriteStream } from "node:fs";
 import fs from "node:fs/promises";
@@ -13,7 +15,7 @@ import { getObjectStore, type ObjectStore } from "@/lib/object-store";
 import { LlmCapReachedError } from "@/llm/gateway";
 import { macOnline } from "@/server/agent-tasks";
 import { downloadLinkMedia, ensureLinkMedia, fetchInCloud, macTaskStatus, requestFromMac, saveBreakdown, type FetchDeps } from "@/server/link-media";
-import { extractAudio, MediaError, probeVideo } from "@/server/media/ffmpeg";
+import { detectCuts, extractAudio, MediaError, probeVideo } from "@/server/media/ffmpeg";
 import { killPrograms, lastLine, runProgram } from "@/server/media/programs";
 import { latestSongWithDrop, readSongFile } from "@/server/songs";
 import { storedOriginalKey } from "@/server/videos/archive";
@@ -426,7 +428,33 @@ export async function runEdit(run: Run, deps: MontajeDeps = {}): Promise<"done" 
         await finishFailed(run, montajeFailure("no se pudo descargar un clip"), messageOf(error), nowOf(deps), notes);
         return "failed";
       }
-      clips.push({ role: clip.role, path: target, ...(clip.trim ? { trim: clip.trim } : {}) });
+      let trim = clip.trim;
+      if (clip.role === "body" && clip.bodyId !== undefined) {
+        const [video] = await getDb().select().from(schema.videos).where(eq(schema.videos.id, spec.videoId));
+        if (!video) throw new Error("El vídeo ya no existe.");
+        const note = `Producto: ${await productNotesOf(video) ?? ""}\nTarjeta: ${video.note ?? ""}`;
+        // Leer la nota nunca tumba el montaje: si falla, el cuerpo va como estaba.
+        const proposed = await bodyTrimFromNote({
+          note, bodyId: clip.bodyId, userId: video.createdBy, productId: video.productId,
+          existing: video.bodyClipTrims[String(clip.bodyId)], gateway: deps.gateway,
+          inspect: async () => ({ durationS: (await probeVideo(target)).durationMs / 1000, cutsS: (await detectCuts(target)).map((ms) => ms / 1000) }),
+        }).catch((error) => {
+          console.error("[montaje] No se pudo leer la nota del cuerpo; se usa como estaba:", error);
+          return video.bodyClipTrims[String(clip.bodyId)];
+        });
+        // Bloquear y releer: una edición manual hecha durante la llamada siempre prevalece.
+        trim = await getDb().transaction(async (tx) => {
+          const [latest] = await tx.select().from(schema.videos).where(eq(schema.videos.id, video.id)).for("update");
+          if (!latest) throw new Error("El vídeo ya no existe.");
+          const current = latest.bodyClipTrims[String(clip.bodyId)];
+          if (current && !current.automatic) return current;
+          if (proposed?.automatic) {
+            await tx.update(schema.videos).set({ bodyClipTrims: { ...latest.bodyClipTrims, [String(clip.bodyId)]: proposed } }).where(eq(schema.videos.id, video.id));
+          }
+          return proposed;
+        });
+      }
+      clips.push({ role: clip.role, path: target, ...(trim ? { trim } : {}) });
     }
     let song: (NonNullable<EditSpec["song"]> & { path: string }) | null = null;
     if (spec.song) {
