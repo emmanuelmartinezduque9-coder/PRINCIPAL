@@ -1,3 +1,4 @@
+import type { ReferencePerson, AutoPersonAvatar } from "@/lib/video-people";
 import { isClipModel, resolveClipModel, SEEDANCE, type ClipModel } from "@/lib/clip-models";
 import type { PhotoInfo, PhotoRole } from "@/server/photos";
 import type { Video } from "@/server/videos/videos";
@@ -41,6 +42,7 @@ export interface ManifestItem {
   tag: string;
   /** Entorno elegido o subido a mano: manda sobre cualquier sugerencia de estilo. */
   ownerSelected?: boolean;
+  person?: ReferencePerson;
   source:
     | { kind: "reference_frame" }
     | { kind: "reference_video" }
@@ -64,6 +66,9 @@ export interface ManifestItem {
  * su sitio vacío con «Automático» (`pending`); `null` en los demás modos.
  */
 export interface ManifestRefs {
+  people?: ReferencePerson[];
+  autoAvatars?: AutoPersonAvatar[];
+  importedOpening?: boolean;
   photos: PhotoInfo[];
   variant: { articlePhotoIds: number[]; packagingPhotoId: number | null } | null;
   avatar: { kind: "library"; avatarId: number } | { kind: "pending" } | null;
@@ -90,7 +95,7 @@ export interface ManifestRefs {
 /** Solo fotos (sin variante ni avatar de la biblioteca) o todo. */
 const refsOf = (refs: ManifestRefs | PhotoInfo[]): ManifestRefs => (Array.isArray(refs) ? { photos: refs, variant: null, avatar: null } : refs);
 
-type Ref = { source: ManifestItem["source"]; role: ManifestItem["role"] };
+type Ref = { person?: ReferencePerson; source: ManifestItem["source"]; role: ManifestItem["role"] };
 
 function chosen(photos: PhotoInfo[], photoId: number | null, role: PhotoRole): Ref[] {
   const photo = photoId === null ? undefined : photos.find((p) => p.id === photoId && p.role === role);
@@ -113,7 +118,17 @@ function ofVariant(photos: PhotoInfo[], ids: number[], role: PhotoRole, max: num
     .map((photoId): Ref => ({ source: { kind: "photo", photoId }, role }));
 }
 
-function avatarRefs(video: Video, refs: ManifestRefs): Ref[] {
+function avatarRefs(video: Video, refs: ManifestRefs, clip = false): Ref[] {
+  if (refs.people?.length && refs.autoAvatars?.length) {
+    const ownerOpening = video.avatarMode === "elegido" && !(clip && refs.importedOpening)
+      ? chosen(refs.photos, video.avatarPhotoId, "avatar").map((ref) => ({ ...ref, person: refs.people!.find((p) => p.opening) })) : [];
+    return [...ownerOpening, ...refs.autoAvatars.flatMap((assignment): Ref[] => {
+      const person = refs.people!.find((p) => p.id === assignment.personId);
+      if (!person || (!clip && !person.opening) || (clip && refs.importedOpening && person.opening)) return [];
+      return [{ source: { kind: "avatar", avatarId: assignment.avatarId }, role: "avatar", person }];
+    })];
+  }
+  if (clip && refs.importedOpening) return [];
   if (video.avatarMode === "elegido") return chosen(refs.photos, video.avatarPhotoId, "avatar");
   if (video.avatarMode !== "biblioteca" && video.avatarMode !== "automatico") return [];
   if (refs.avatar?.kind === "library") return [{ source: { kind: "avatar", avatarId: refs.avatar.avatarId }, role: "avatar" }];
@@ -126,10 +141,10 @@ function avatarRefs(video: Video, refs: ManifestRefs): Ref[] {
  * sustitución» las personas salen de la referencia y con «nadie» no hay), artículo (≤ 4) y
  * embalaje (≤ 2). Con variante, solo sus fotos: las de artículo en su orden y su embalaje.
  */
-function productRefs(video: Video, refs: ManifestRefs): Ref[] {
+function productRefs(video: Video, refs: ManifestRefs, clip = false): Ref[] {
   const { photos, variant } = refs;
   return [
-    ...avatarRefs(video, refs),
+    ...avatarRefs(video, refs, clip),
     ...(variant ? ofVariant(photos, variant.articlePhotoIds, "articulo", MAX_ARTICLE_REFS) : firstOf(photos, "articulo", MAX_ARTICLE_REFS)),
     ...(variant
       ? ofVariant(photos, variant.packagingPhotoId === null ? [] : [variant.packagingPhotoId], "embalaje", MAX_PACKAGING_REFS)
@@ -151,7 +166,7 @@ export function imageManifest(video: Video, input: ManifestRefs | PhotoInfo[]): 
   const all = [...productRefs(video, refs), ...working, ...environment];
   const items: ManifestItem[] = [
     { index: 1, tag: "image 1", source: { kind: "reference_frame" }, role: "composicion" },
-    ...all.map((ref, i): ManifestItem => ({ index: i + 2, tag: `image ${i + 2}`, source: ref.source, role: ref.role })),
+    ...all.map((ref, i): ManifestItem => ({ index: i + 2, tag: `image ${i + 2}`, source: ref.source, role: ref.role, ...(ref.person ? { person: ref.person } : {}) })),
   ];
   // Con una referencia de entorno puesta a mano no va Pinterest (excepción del dueño).
   if (environment.length === 0) {
@@ -192,7 +207,7 @@ function codexOrder(video: Video, refs: ManifestRefs, bank: string[]): ManifestI
   const ordered: Ref[] = [...product, pin(bank[0]), ...avatarRefs(video, refs), ...extras, ...bank.slice(1).map(pin)];
   return [
     { index: 1, tag: "image 1", source: { kind: "reference_frame" }, role: "composicion" },
-    ...ordered.map((ref, i): ManifestItem => ({ index: i + 2, tag: `image ${i + 2}`, source: ref.source, role: ref.role })),
+    ...ordered.map((ref, i): ManifestItem => ({ index: i + 2, tag: `image ${i + 2}`, source: ref.source, role: ref.role, ...(ref.person ? { person: ref.person } : {}) })),
   ];
 }
 
@@ -229,7 +244,7 @@ export function clipManifest(
     numbered
       ? { index: 1, tag: "@Image1", source: { kind: "approved_frame" }, role: "imagen_aprobada" }
       : { index: 0, tag: START_IMAGE_TAG, source: { kind: "approved_frame" }, role: "imagen_aprobada" },
-    ...productRefs(video, refs).map((ref, i): ManifestItem => ({ index: i + first, tag: `@Image${i + first}`, source: ref.source, role: ref.role })),
+    ...productRefs(video, refs, true).map((ref, i): ManifestItem => ({ index: i + first, tag: `@Image${i + first}`, source: ref.source, role: ref.role, ...(ref.person ? { person: ref.person } : {}) })),
   ];
 }
 
@@ -257,10 +272,11 @@ function genjutsuClipManifest(video: Video, refs: ManifestRefs, model: Exclude<C
         ? environment
         : (refs.pinterest ?? []).slice(0, refs.clipSetting ? undefined : 1).map((sha256): Ref => ({ source: { kind: "pinterest", sha256 }, role: "pinterest" }));
   const frame: Ref = { source: { kind: "approved_frame" }, role: "imagen_aprobada" };
-  const images: Ref[] = [frame, ...productRefs(video, refs), ...room].slice(0, MAX_IMAGE_REFS[model]);
+  if (avatarRefs(video, refs, true).length + 1 > MAX_IMAGE_REFS[model]) throw new Error("El modelo no admite todas las personas de la referencia; no se pueden omitir avatares.");
+  const images: Ref[] = [frame, ...productRefs(video, refs, true), ...room].slice(0, MAX_IMAGE_REFS[model]);
   return markOwner([
     { index: 1, tag: SOURCE_VIDEO_TAG, source: { kind: "reference_video" }, role: "video_referencia" },
-    ...images.map((ref, i): ManifestItem => ({ index: i + 1, tag: genjutsuImageTag(i + 1), source: ref.source, role: ref.role })),
+    ...images.map((ref, i): ManifestItem => ({ index: i + 1, tag: genjutsuImageTag(i + 1), source: ref.source, role: ref.role, ...(ref.person ? { person: ref.person } : {}) })),
   ], refs);
 }
 
@@ -277,6 +293,7 @@ function roleSentence(item: ManifestItem): string | null {
     case "imagen_aprobada":
       return `Use ${tag} as the exact human-approved clean opening frame, preserving its hand placement, camera angle, lighting and scene.`;
     case "avatar":
+      if (item.person) return `Use ${tag} only as the identity of person ${item.person.id} (${item.person.notes}) during ${item.person.appearances.map((a) => `${a.startS}s to ${a.endS}s${a.shot ? `, shot ${a.shot}` : ""}`).join("; ")}. ${item.person.opening ? "This person appears in the opening." : "This person enters later; do not add them to the opening."} Keep every person's face distinct from every other person; preserve each source shot's action, location, camera and timing. Never apply this identity to other people.`;
       return `Replace the main person with the person in ${tag}, using that portrait only for identity; preserve the original action and camera framing.`;
     case "articulo":
       return `Replace every visible instance of the unboxed physical product with ${tag}, preserving realistic size relative to the hands and surroundings.`;
@@ -302,7 +319,7 @@ export function clipPromptFor(prompt: string, manifest: ManifestItem[], setting 
   // Un desglose que citó al estilo de Seedance: misma numeración de imágenes (la aprobada es la 1).
   prompt = prompt.replace(/@\s*Video\s*1\b/gi, "the source video").replace(/@\s*Image\s*(\d+)/gi, "image [$1]");
   const missing = manifest
-    .filter((item) => item.tag !== SOURCE_VIDEO_TAG && !cites(prompt, item.index))
+    .filter((item) => item.tag !== SOURCE_VIDEO_TAG && (item.person || !cites(prompt, item.index)))
     .map((item) => setting && item.role === "imagen_aprobada" ? `Use ${item.tag} only for the person, product, outfit and look.` : setting && (item.role === "entorno" || item.role === "pinterest") ? null : roleSentence(item))
     .filter((sentence): sentence is string => sentence !== null);
   // Regla fija (lote 6, 24/11/2026): la caja que se ve, también al abrirla, es la impresa de la
@@ -315,4 +332,29 @@ export function clipPromptFor(prompt: string, manifest: ManifestItem[], setting 
   const closing = /\s*No text overlays, no captions\.?\s*$/i;
   const match = closing.exec(text);
   return match ? `${text.slice(0, match.index)} ${missing.join(" ")} ${match[0].trim()}` : `${text} ${missing.join(" ")}`;
+}
+
+/** Translate analysis-time numbers to the actual attachment order after assigning the cast. */
+export function remapPeopleReferences(prompt: string, before: ManifestItem[], after: ManifestItem[], importedOpening = false): string {
+  return prompt.replace(/(?:@Image\s*(\d+)|image\s*\[?\s*(\d+)\s*\]?)/gi, (text, at: string, plain: string) => {
+    const old = before.find((m) => m.role !== "video_referencia" && m.index === Number(at ?? plain));
+    if (!old) return text;
+    const ordinal = before.filter((m) => m.role === old.role).indexOf(old);
+    const replacement = (importedOpening && old.role === "avatar" ? after.find((m) => m.role === "imagen_aprobada") : undefined) ?? after.filter((m) => m.role === old.role)[ordinal] ??
+      (old.role === "avatar" ? after.find((m) => m.role === "imagen_aprobada" || m.role === "composicion") : undefined);
+    return replacement?.tag ?? text;
+  });
+}
+
+export function openingPeoplePrompt(manifest: ManifestItem[], people: ReferencePerson[] = []): string {
+  if (!people.length) return "";
+  const opening = people.filter((p) => p.opening);
+  return ` Opening cast (authoritative): ${opening.length ? opening.map((p) => {
+    const item = manifest.find((m) => m.person?.id === p.id) ?? manifest.find((m) => m.role === "avatar" && m.source.kind === "photo");
+    return `${p.id}: ${item?.tag ?? "the composition reference"} (${p.notes})`;
+  }).join("; ") : "no people"}. Only these people appear in the initial image. Do not include later entrants. Keep their faces distinct.`;
+}
+
+export function importedPeoplePrompt(people: ReferencePerson[] = []): string {
+  return ` The approved opening image is the authority for ALL opening people's identities: preserve their exact faces, never replace them with a library avatar or a later entrant. ${people.filter((p) => p.opening).map((p) => `Person ${p.id} keeps the identity from image [1] during ${p.appearances.map((a) => `${a.startS}s to ${a.endS}s`).join(", ")}.`).join(" ")} Keep each person's source action and location in every shot. This identity schedule overrides any earlier blanket identity instruction.`;
 }

@@ -18,7 +18,7 @@ import {
   type GenerationKind,
   type RequestBuilder,
 } from "@/server/videos/generations";
-import { imageManifest, type ManifestItem } from "@/server/videos/manifest";
+import { imageManifest, openingPeoplePrompt, remapPeopleReferences, type ManifestItem } from "@/server/videos/manifest";
 import { learnedSuffix } from "@/server/videos/mejoras/corrections";
 import { addApprovedToBank, christmasTvSeen, framePromptFor, hasManualEnvironment, readPinterestImage, requirePinterestRefs } from "@/server/videos/pinterest";
 import { checkImagePrompt, PROMPT_ERROR } from "@/server/videos/prompt-check";
@@ -203,7 +203,9 @@ export const buildFrameRequest: RequestBuilder = async (user, video, deps) => {
   // bloqueara los clips. Toda imagen inicial lo prohíbe, escriba lo que escriba el desglose.
   // Después, las correcciones aprendidas de los reportes («Mejoras»), literales: así se sabe qué imagen las llevó.
   const ownerRoom = manifest.some((item) => item.ownerSelected || item.role === "entorno");
-  const written = (await framePromptFor(video.id, video.imagePrompt!, manifest, tramo)).trim();
+  const beforeCast = imageManifest(video, { ...refs, people: undefined, autoAvatars: undefined });
+  const imageText = refs.people?.length ? remapPeopleReferences(video.imagePrompt!, beforeCast, manifest) : video.imagePrompt!;
+  const written = (await framePromptFor(video.id, imageText, manifest, tramo)).trim() + openingPeoplePrompt(manifest, refs.people);
   // Regla del dueño (26/11/2026): en un salón navideño con tele, la tele encendida con una película de
   // Navidad; si Higgsfield bloqueó el intento anterior, una escena navideña genérica (`tele-navidad.ts`).
   const tv = christmasTvLine(written, {

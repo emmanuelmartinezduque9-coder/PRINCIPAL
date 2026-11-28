@@ -1520,3 +1520,51 @@ export async function sweepPinterest(now: Date = new Date()): Promise<number> {
   }
   return queued;
 }
+
+/** Real portraits only: shares Pinterest search, vertical filters and photo decoding with environments. */
+export async function findRealAvatar(input: {
+  target: import("@/lib/avatar-choice").AvatarTarget;
+  countries: string[];
+  userId: number;
+  productId: number;
+  key: string;
+  excludedHashes?: string[];
+  excludedPortraits?: Array<{ data: Buffer; mime: string }>;
+}, deps: PinterestDeps = {}): Promise<import("@/server/avatars").AvatarInfo> {
+  const { countryTraits } = await import("@/lib/avatar-groups");
+  const { storeRealAvatar } = await import("@/server/avatars");
+  const sex = input.target.group === "mujer" ? "Frau woman" : input.target.group === "hombre" ? "Mann man" : input.target.group === "nina" ? "girl" : "boy";
+  const country = input.countries.some((c) => ["DE", "AT", "CH"].includes(c)) ? "deutsche German" : input.countries.join(" ");
+  const search = deps.search ?? (await import("@/server/pinterest-searches")).searchPins;
+  const fetchImage = deps.fetchImage ?? fetchBytes;
+  const query = `${country} ${sex} ${input.target.age ?? 30} selfie iphone candid portrait`;
+  const state = await search(query, { now: deps.now });
+  if (state.status !== "ready") throw new Error(`Pinterest avatar: ${state.status}; se reintentará la búsqueda real.`);
+  const shown: Array<{ candidate: PinCandidate; jpeg: Buffer }> = [];
+  for (const candidate of phoneShapedFirst(state.candidates).slice(0, MAX_CANDIDATES)) {
+    try {
+      const jpeg = await makeThumbnail(await fetchImage(candidate.imageUrl), "image", STORED_SIDE);
+      if (input.excludedHashes?.includes(sha256(jpeg))) continue;
+      shown.push({ candidate, jpeg });
+    } catch { /* Try the next actual photograph. */ }
+  }
+  if (!shown.length) throw new Error("Pinterest no tiene retratos reales verticales válidos; no se inventan caras.");
+  const answer = await (deps.gateway ?? getGateway()).call({
+    tier: "medium", stepKey: input.key, userId: input.userId, productId: input.productId,
+    rules: [], maxTokens: 2000,
+    instructions: "Elige UNA foto REAL de una sola persona, vertical, orgánica, cotidiana de iPhone, con cara reconocible. Rechaza IA, ilustraciones, montajes, catálogo, filtros de belleza, texto y marcas de agua. Rechaza también cualquier persona con la misma cara que los retratos excluidos, aunque sea otra foto. Debe encajar en sexo y edad aproximada pedidos, y ser una referencia visual adecuada para el mercado indicado; no afirmes nacionalidad por la cara. Devuelve n=0 si ninguna vale. Describe rasgos y edad observados.",
+    content: [...(input.excludedPortraits ?? []).slice(-24).flatMap((p) => [textPart("Persona EXCLUIDA: no elegir esta misma cara en otra foto."), imagePart(p.data, p.mime as "image/jpeg")]), textPart(`Buscamos ${query}; edad ±12 años. Países del producto: ${input.countries.join(", ")}.`),
+      ...shown.flatMap((s, i) => [textPart(`Foto ${i + 1}`), imagePart(s.jpeg, "image/jpeg")])],
+    schema: z.object({ n: z.number().int().min(0), age: z.number().int().min(0).max(120), description: z.string() }),
+  });
+  const pick = answer.data!;
+  const chosen = shown[pick.n - 1];
+  if (!chosen || (input.target.age !== null && Math.abs(pick.age - input.target.age) > 12)) throw new Error("Ningún retrato real encaja en Pinterest.");
+  const hash = sha256(chosen.jpeg);
+  const { avatar } = await storeRealAvatar(input.userId, chosen.jpeg, {
+    name: `Pinterest ${hash.slice(0, 16)}`, group: input.target.group, ageYears: pick.age,
+    tags: [...countryTraits(input.countries), ...input.countries.map((c) => c.toLowerCase()), "pinterest", "foto_real"],
+    description: `${pick.description}. Pinterest: ${chosen.candidate.imageUrl}`.slice(0, 500),
+  });
+  return avatar;
+}

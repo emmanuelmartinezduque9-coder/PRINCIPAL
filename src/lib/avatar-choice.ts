@@ -1,17 +1,8 @@
 import { countryTraits, fold, type AvatarGroup } from "@/lib/avatar-groups";
 
-/**
- * Elección automática del avatar («Automático»), en código y siempre igual para los mismos datos:
- *
- * 1. A quién se busca (`avatarTarget`): si las indicaciones del vídeo nombran un público o un
- *    ángulo («abuela», «mamá», «niño», «hombre mayor»…; `audienceFromText`), eso manda; si no, el
- *    público que Claude dice que pide el encargo (`angleAudience`); y lo que falte, de la persona
- *    principal de la referencia (`personaRef`).
- * 2. Entre los avatares no retirados de ese grupo (`mujer`, `hombre`, y `nina`/`nino` por debajo de
- *    13 años): los de edad conocida a ±12 años, prefiriendo los que llevan los rasgos del país del
- *    producto (DE/AT/CH → `aleman`) y después la edad más cercana. Si no hay ninguno y se busca un
- *    adulto de 18 a 55 años, valen los de edad sin poner (la biblioteca es de adultos jóvenes y
- *    medianos). Si aun así no hay, no se adivina: `avatarId = null` y el desglose pregunta.
+/** Automatic selection: demographic validity first, then recent product/global usage.
+ * Number only breaks ties between equally unused, equally suitable portraits.
+ * The server reserves choices across concurrent videos and expands the library with real photos.
  */
 
 export type Gender = "mujer" | "hombre";
@@ -115,28 +106,32 @@ const byNumber = (a: ChoosableAvatar, b: ChoosableAvatar) => (a.number ?? Infini
  * El avatar más parecido de `avatars` (ya sin los retirados) para `target` y los países del
  * producto, o `null` si ninguno encaja.
  */
-export function pickAvatar(target: AvatarTarget | null, avatars: ChoosableAvatar[], countries: readonly string[]): ChoosableAvatar | null {
+export interface AvatarUsage {
+  avatarId: number;
+  productId: number;
+  batchId: number | null;
+  usedAt: number;
+}
+
+export function pickAvatar(target: AvatarTarget | null, avatars: ChoosableAvatar[], countries: readonly string[], options: {
+  usage?: AvatarUsage[]; productId?: number; batchId?: number | null; exclude?: number[];
+} = {}): ChoosableAvatar | null {
   if (!target) return null;
   const traits = countryTraits(countries);
-  const tagged = (avatar: ChoosableAvatar) => (avatar.tags.some((tag) => traits.includes(tag)) ? 0 : 1);
-  const group = avatars.filter((avatar) => avatar.group === target.group);
-  if (group.length === 0) return null;
-
-  if (target.age === null) {
-    const distance = (avatar: ChoosableAvatar) => (avatar.ageYears === null ? 1 : 0);
-    return [...group].sort((a, b) => tagged(a) - tagged(b) || distance(a) - distance(b) || byNumber(a, b))[0];
-  }
-  const age = target.age;
-  const near = group.filter((avatar) => avatar.ageYears !== null && Math.abs(avatar.ageYears - age) <= AGE_TOLERANCE);
-  if (near.length > 0) {
-    const gap = (avatar: ChoosableAvatar) => Math.abs(avatar.ageYears! - age);
-    return near.sort((a, b) => tagged(a) - tagged(b) || gap(a) - gap(b) || byNumber(a, b))[0];
-  }
-  if (age >= ADULT_MIN && age <= ADULT_MAX) {
-    const unknown = group.filter((avatar) => avatar.ageYears === null);
-    if (unknown.length > 0) return unknown.sort((a, b) => tagged(a) - tagged(b) || byNumber(a, b))[0];
-  }
-  return null;
+  let valid = avatars.filter((a) => a.group === target.group && !options.exclude?.includes(a.id) &&
+    (target.age === null || (a.ageYears === null ? target.age >= ADULT_MIN && target.age <= ADULT_MAX : Math.abs(a.ageYears - target.age) <= AGE_TOLERANCE)));
+  // An explicitly incompatible country is not a valid alternative. Untagged legacy portraits remain usable.
+  valid = valid.filter((a) => !traits.length || !a.tags.some((t) => ["aleman", "italiano"].includes(t)) || a.tags.some((t) => traits.includes(t)));
+  const usage = options.usage ?? [];
+  const local = usage.filter((u) => u.productId === options.productId).sort((a, b) => b.usedAt - a.usedAt);
+  const last = local[0]?.avatarId;
+  const alternatives = valid.filter((a) => a.id !== last && !(options.batchId != null && usage.some((u) => u.batchId === options.batchId && u.avatarId === a.id)));
+  if (alternatives.length) valid = alternatives;
+  const count = (id: number, rows: AvatarUsage[]) => rows.filter((u) => u.avatarId === id).length;
+  const tagged = (a: ChoosableAvatar) => a.tags.some((t) => traits.includes(t)) ? 0 : 1;
+  const gap = (a: ChoosableAvatar) => target.age === null ? 0 : a.ageYears === null ? AGE_TOLERANCE : Math.abs(a.ageYears - target.age);
+  return valid.sort((a, b) => count(a.id, local) - count(b.id, local) || count(a.id, usage) - count(b.id, usage) ||
+    tagged(a) - tagged(b) || gap(a) - gap(b) || byNumber(a, b))[0] ?? null;
 }
 
 /**

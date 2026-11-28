@@ -608,7 +608,7 @@ export const BRIEF_CHANGED = "Las indicaciones del vídeo cambiaron; repite el d
  */
 export async function latestDoneAnalysis(
   seen: Video,
-): Promise<{ id: number; staleReason: "reference" | "brief" | null; avatarMode: string; autoAvatarId: number | null } | null> {
+): Promise<{ id: number; staleReason: "reference" | "brief" | null; avatarMode: string; autoAvatarId: number | null; result: unknown } | null> {
   // Un vídeo visto desde uno de sus sitios (`tramos.ts`): el desglose es el del vídeo de verdad.
   const video = (seen as { tramo?: { base: Video } }).tramo?.base ?? seen;
   const [done] = await getDb()
@@ -618,7 +618,7 @@ export async function latestDoneAnalysis(
     .orderBy(desc(schema.videoAnalyses.version))
     .limit(1);
   return done
-    ? { id: done.id, staleReason: analysisStaleness(done, await withProductNotes(video)), avatarMode: done.avatarMode, autoAvatarId: done.autoAvatarId }
+    ? { id: done.id, staleReason: analysisStaleness(done, await withProductNotes(video)), avatarMode: done.avatarMode, autoAvatarId: done.autoAvatarId, result: done.result }
     : null;
 }
 
@@ -650,12 +650,24 @@ export async function manifestRefsFor(user: AuthUser, video: Video, options: { f
       if (done && done.staleReason === null && done.autoAvatarId !== null) avatar = { kind: "library", avatarId: done.autoAvatarId };
     }
   }
+  const castAnalysis = options.forAnalysis ? null : await latestDoneAnalysis(video);
+  const cast = castAnalysis?.staleReason === null ? castAnalysis.result as { people?: import("@/lib/video-people").ReferencePerson[]; autoAvatars?: import("@/lib/video-people").AutoPersonAvatar[] } : null;
+  let importedOpening = false;
+  if (video.approvedFrameResultId !== null) {
+    const [approved] = await getDb().select({ request: schema.generations.request }).from(schema.generationResults)
+      .innerJoin(schema.generations, eq(schema.generations.id, schema.generationResults.generationId))
+      .where(and(eq(schema.generationResults.id, video.approvedFrameResultId), eq(schema.generations.videoId, video.id)));
+    importedOpening = Boolean((approved?.request as { importada?: unknown } | null)?.importada);
+  }
   // Las fotos de Pinterest del último desglose (no en el propio desglose: aún no existen).
   const manualBackgrounds = options.forAnalysis ? (await listReferences(video.id)).filter((ref) => ref.role === "fondo").map((ref) => ref.sha256) : [];
   const ready = options.forAnalysis
     ? { refs: [], productHidden: false, packagingHidden: false, approvedMethod: false }
     : await readyPinterest(video.id, (video as Video & { tramo?: { index: number } }).tramo?.index ?? 0);
   return {
+    people: cast?.people,
+    autoAvatars: cast?.autoAvatars,
+    importedOpening,
     photos,
     variant,
     avatar,

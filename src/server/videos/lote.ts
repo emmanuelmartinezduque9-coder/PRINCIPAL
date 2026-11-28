@@ -609,7 +609,9 @@ export async function answerQuestion(user: AuthUser, batchId: number, input: { v
     if (question.kind === "biblioteca") await updateVideoChoices(user, video.id, { avatarLibraryId: Number(value.slice(LIBRARY_PREFIX.length)) });
     else await updateVideoChoices(user, video.id, { variantId: value === NO_VARIANT ? null : Number(value.slice(VARIANT_PREFIX.length)) });
     const label = question.options.find((o) => o.value === value)?.label ?? value;
-    await saveAnswer(video.id, { key: question.key, question: question.text, answer: label, inBrief: false });
+    // «Fotos de siempre» también concreta el encargo aunque variantId siga siendo null.
+    // El nuevo desglose debe recibir esa decisión y rehacerse con ella.
+    await saveAnswer(video.id, { key: question.key, question: question.text, answer: label, inBrief: question.kind === "variante" });
   } else if (question.kind === "cancion") {
     if (!question.options.some((o) => o.value === value)) throw new HttpError(400, BAD_ANSWER);
     if (value !== ORIGINAL_AUDIO) await setVideoSong(user, video.id, Number(value.slice(SONG_PREFIX.length)));

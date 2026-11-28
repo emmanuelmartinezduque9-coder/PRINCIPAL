@@ -213,6 +213,11 @@ const NAME_TAKEN = (name: string) => `Ya hay un avatar «${name}».`;
  */
 export async function uploadAvatar(user: AuthUser, bytes: Buffer, input: AvatarMetaInput): Promise<{ avatar: AvatarInfo; created: boolean }> {
   requireOwner(user);
+  return storeRealAvatar(user.id, bytes, input);
+}
+
+/** Internal ingestion of a real, vision-approved Pinterest photo; never an image generator. */
+export async function storeRealAvatar(userId: number, bytes: Buffer, input: AvatarMetaInput): Promise<{ avatar: AvatarInfo; created: boolean }> {
   if (bytes.length > MAX_AVATAR_BYTES) throw new HttpError(413, "La imagen pesa demasiado (máximo 8 MB).");
   const mime = checkPhotoBytes(bytes);
   const sha256 = createHash("sha256").update(bytes).digest("hex");
@@ -239,7 +244,7 @@ export async function uploadAvatar(user: AuthUser, bytes: Buffer, input: AvatarM
         size: bytes.length,
         sha256,
         data: bytes,
-        createdBy: user.id,
+        createdBy: userId,
       })
       // La misma imagen subida dos veces a la vez: la segunda no crea otra.
       .onConflictDoNothing({ target: schema.avatars.sha256 })

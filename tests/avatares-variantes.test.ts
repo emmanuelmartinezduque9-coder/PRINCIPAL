@@ -1,3 +1,4 @@
+import * as pinterestAvatars from "@/server/videos/pinterest";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
@@ -21,7 +22,7 @@ import { requestAnalysis, runAnalysis, type Analysis } from "@/server/videos/ana
 import { addVideoToBatch, batchView, createBatch, duplicateBatchVideo } from "@/server/videos/batches";
 import { buildClipRequest } from "@/server/videos/clip";
 import { buildFrameRequest } from "@/server/videos/frame";
-import { createVideo, getVideoFor, updateVideoChoices, videoView, type Video } from "@/server/videos/videos";
+import { createVideo, getVideoFor, updateVideoChoices, videoView, manifestRefsFor, type Video } from "@/server/videos/videos";
 import { GET as listAvatarsRoute, POST as uploadAvatarRoute } from "@/app/api/avatares/route";
 import { PATCH as patchAvatarRoute } from "@/app/api/avatares/[avatarId]/route";
 import { GET as avatarImageRoute } from "@/app/api/avatares/[avatarId]/imagen/route";
@@ -94,6 +95,7 @@ const productParams = (id: number) => ({ params: Promise.resolve({ id: String(id
 const videoParams = (videoId: number) => ({ params: Promise.resolve({ videoId: String(videoId) }) });
 
 beforeEach(async () => {
+  vi.restoreAllMocks();
   await truncateAll();
   // Regla fija: la imagen lleva siempre Pinterest; aquí se resuelve al momento con una foto.
   instantPinterest(() => images.k);
@@ -451,28 +453,39 @@ describe("avatar de la biblioteca y automático en los vídeos", () => {
     expect(view.analysis!.result!.autoAvatar!.target).toMatchObject({ source: "indicaciones", label: "abuela", age: 70 });
   });
 
-  it("«Automático» sin ninguno que encaje: pregunta (contrato `questions`) y no deja generar hasta elegir", async () => {
+  it("«Automático» sin ninguno que encaje: busca una persona real de Pinterest y continúa sin elegir una edad inválida", async () => {
     await updateAvatar(dueno, mujer70.id, { retired: true });
+    const search = vi.spyOn(pinterestAvatars, "findRealAvatar").mockImplementation(async () => addAvatar("i", { name: "Pinterest abuela", group: "mujer", ageYears: 70, tags: ["aleman", "pinterest"] }));
     await updateVideoChoices(ana, v.id, { avatarMode: "automatico", note: "für Omas" });
     await analyse(v.id, { personaRef: { present: true, gender: "mujer", approxAge: 30, notes: "" } });
-    let view = await videoView(ana, v.id);
-    expect(view.analysis!.autoAvatar).toBeNull();
-    expect(view.analysis!.questions).toEqual([
-      { id: "avatar", text: "Ningún avatar encaja (mujer, ~70 años (abuela)). ¿Cuál sale?", options: ["mujer 7", "mujer 1", "hombre 2"] },
-    ]);
-    expect(view.imageManifest[1].source).toEqual({ kind: "avatar_pending" });
-    v = await getVideoFor(ana, v.id);
-    await expect(buildFrameRequest(ana, v, { higgsfield: createFakeHiggsfield().port })).rejects.toMatchObject({
-      status: 400,
-      message: "Ningún avatar encaja: elige uno antes de generar.",
+    const view = await videoView(ana, v.id);
+    expect(search).toHaveBeenCalledWith(expect.objectContaining({ countries: ["DE", "AT", "CH"], target: expect.objectContaining({ age: 70, group: "mujer" }) }));
+    expect(view.analysis!.autoAvatar?.name).toBe("Pinterest abuela");
+    expect(view.analysis!.questions).toEqual([]);
+    expect(view.imageManifest[1].source).toMatchObject({ kind: "avatar", avatarId: view.analysis!.autoAvatar!.id });
+    search.mockRestore();
+  });
+
+  it("apertura importada: generations.request.importada preserva la conductora y solo adjunta la persona posterior", async () => {
+    await updateVideoChoices(ana, v.id, { avatarMode: "automatico" });
+    await analyse(v.id, {
+      personaRef: { present: true, gender: "mujer", approxAge: 30, notes: "conductora" },
+      people: [
+        { id: "conductora", gender: "mujer", approxAge: 30, notes: "conductora", opening: true, appearances: [{ startS: 0, endS: 2 }] },
+        { id: "companera", gender: "mujer", approxAge: 30, notes: "compañera", opening: false, appearances: [{ startS: 2, endS: 6 }] },
+      ],
     });
     await approveFakeFrame(v.id);
-    await expect(buildClipRequest(ana, await getVideoFor(ana, v.id), { higgsfield: createFakeHiggsfield().port })).rejects.toMatchObject({ status: 409 });
-
-    // Elegir uno a mano (otro que el automático, que no eligió ninguno) deja el desglose por repetir.
-    await updateVideoChoices(ana, v.id, { avatarLibraryId: mujer30.id });
-    view = await videoView(ana, v.id);
-    expect(view.analysis).toMatchObject({ stale: true, staleReason: "brief" });
+    await getPool().query("update generations set request = '{\"importada\":true}'::jsonb where video_id = $1 and kind = 'frame'", [v.id]);
+    const actual = await getVideoFor(ana, v.id);
+    const refs = await manifestRefsFor(ana, actual);
+    expect(refs.importedOpening).toBe(true);
+    const { clipManifest, clipPromptFor } = await import("@/server/videos/manifest");
+    const manifest = clipManifest(actual, refs, undefined, "hf_mult_motion_control");
+    const cast = manifest.filter((m) => m.role === "avatar");
+    expect(cast).toHaveLength(1);
+    expect(cast[0].person?.id).toBe("companera");
+    expect(clipPromptFor("", manifest)).toContain("image [2] only as the identity of person companera");
   });
 
   it("caducidad: cambiar el avatar o la variante deja el desglose por repetir; fijar justo el automático no", async () => {
@@ -610,6 +623,7 @@ describe("avatar de la biblioteca y automático en los vídeos", () => {
     await createVariant(ana, producto.id, { name: "rosa", articlePhotoIds: [rosaFoto] });
     await createVariant(ana, producto.id, { name: "azul", articlePhotoIds: [(await addProductPhoto(ana, producto.id, images.j, "articulo")).id] });
     await updateAvatar(dueno, mujer70.id, { retired: true });
+    const search = vi.spyOn(pinterestAvatars, "findRealAvatar").mockImplementation(async () => addAvatar("i", { name: "Pinterest abuela lote", group: "mujer", ageYears: 70, tags: ["aleman"] }));
     const batch = await createBatch(ana, "Lote", { autoAnalyze: false });
     const video = await addVideoToBatch(ana, batch.id, { productId: producto.id, avatarPhotoId: null, avatarMode: "automatico", note: "für Omas" });
     await readyReference(video.id);
@@ -619,13 +633,14 @@ describe("avatar de la biblioteca y automático en los vídeos", () => {
       questions: [{ id: "luz", text: "¿Cocina de día o de noche?", options: ["día", "noche"] }],
     });
     // Las de Claude se conservan junto a las de la aplicación.
-    expect((await videoView(ana, video.id)).analysis!.questions.map((q) => q.id)).toEqual(["luz", "avatar", "variante"]);
+    expect((await videoView(ana, video.id)).analysis!.questions.map((q) => q.id)).toEqual(["luz", "variante"]);
     await getPool().query("update batches set status = 'preguntas' where id = $1", [batch.id]);
 
     // Nunca se enseñan (orden del 24/11/2026): el lote las resuelve solo con la primera sugerida y las fotos de siempre.
     expect(await batchQuestions(ana, batch.id)).toEqual([]);
     await advanceBatch(batch.id);
-    expect(await getVideoFor(ana, video.id)).toMatchObject({ avatarMode: "biblioteca", avatarLibraryId: mujer33Aleman.id, variantId: null });
+    expect(await getVideoFor(ana, video.id)).toMatchObject({ avatarMode: "automatico", avatarLibraryId: null, variantId: null });
+    search.mockRestore();
     expect(await batchQuestions(ana, batch.id)).toEqual([]);
     // Y el desglose se rehace solo con lo elegido.
     expect((await videoView(ana, video.id)).analysis).toMatchObject({ version: 2, status: "queued" });

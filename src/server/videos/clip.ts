@@ -20,7 +20,7 @@ import { getProductFor } from "@/server/products";
 import { listReferences } from "@/server/videos/referencias";
 import { fileSlug } from "@/server/videos/filename";
 import { asHttp, registerRequestBuilder, type GenDeps, type RequestBuilder } from "@/server/videos/generations";
-import { clipManifest, clipPromptFor, MAX_IMAGE_REFS, genjutsuImageTag, type ManifestItem } from "@/server/videos/manifest";
+import { clipManifest, clipPromptFor, remapPeopleReferences, importedPeoplePrompt, MAX_IMAGE_REFS, genjutsuImageTag, type ManifestItem } from "@/server/videos/manifest";
 import { learnedSuffix } from "@/server/videos/mejoras/corrections";
 import { checkVideoPrompt, PROMPT_ERROR } from "@/server/videos/prompt-check";
 import { tramosOf, shortPlacePrompt } from "@/server/videos/tramos";
@@ -175,7 +175,10 @@ export const buildClipRequest: RequestBuilder = async (user, video, deps) => {
   const manifest = clipManifest(video, refs, undefined, model);
   // Las frases de papel de lo de siempre (apertura, persona, producto…), antes de añadir las fotos de cada
   // entorno: esas llevan su propio párrafo con sus tiempos (nunca «sustituye todo el sitio»).
-  const basePrompt = clipPromptFor(video.videoPrompt ?? "", manifest);
+  const beforeCast = clipManifest(video, { ...refs, people: undefined, autoAvatars: undefined, importedOpening: false }, undefined, model);
+  const adaptedPrompt = refs.people?.length || refs.importedOpening
+    ? remapPeopleReferences(video.videoPrompt ?? "", beforeCast, manifest, refs.importedOpening) : video.videoPrompt ?? "";
+  const basePrompt = clipPromptFor(adaptedPrompt, manifest) + (refs.importedOpening ? importedPeoplePrompt(refs.people) : "");
   const places = await tramosOf(video);
   const paragraphs: string[] = [];
   const manual = (await listReferences(video.id)).filter((ref) => ref.role === "fondo");
@@ -210,7 +213,7 @@ export const buildClipRequest: RequestBuilder = async (user, video, deps) => {
       manifest.push({ index, tag: genjutsuImageTag(index), source, role: "entorno", ownerSelected: place.ownerEnvironment || !!approved });
     }
     if (place.ownerEnvironment && manifest.length > first) paragraphs.push(`From ${place.startMs / 1000}s to ${place.endMs / 1000}s: ${ownerEnvironmentParagraph(genjutsuImageTag(first))}`);
-    if (manifest.length > first) paragraphs.push(`From ${place.startMs / 1000}s to ${place.endMs / 1000}s the scene takes place in ${place.place}: rebuild that setting from images [${first}]..[${manifest.length - 1}] (real photos of it), localized to the target country; keep the action (${place.action}) and ${place.keepObjects.join(", ")}. Image [1] only supplies the person, the product, the outfit and the look for that part; do not carry its background there.${placeChanges(place.videoPrompt, first, place.startMs, place.endMs)}`);
+    if (manifest.length > first) paragraphs.push(`From ${place.startMs / 1000}s to ${place.endMs / 1000}s the scene takes place in ${place.place}: rebuild that setting from images [${first}]..[${manifest.length - 1}] (real photos of it), localized to the target country; keep the action (${place.action}) and ${place.keepObjects.join(", ")}. Image [1] only supplies the opening cast, the product, the outfit and the look; follow the per-person identity schedule for later entrants; do not carry its background there.${placeChanges(place.videoPrompt, first, place.startMs, place.endMs)}`);
   }
   // La foto del producto funcionando (su efecto: la proyección de FalterPfote), como la adjuntaba Codex al clip
   // de Object Swap: sin ella, Genjutsu conserva el efecto de la fuente o lo inventa (lote 10, 25/11/2026).

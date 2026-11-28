@@ -1,3 +1,5 @@
+import type { ReferencePerson, AutoPersonAvatar } from "@/lib/video-people";
+import { assignPeople, type AssignmentContext } from "@/server/videos/avatar-assignment";
 import { batchPaused, requireBatchRunning } from "@/server/videos/batch-pause";
 import { readPinterestImage } from "@/server/videos/pinterest";
 import { preferencesFor } from "@/server/videos/aprendizaje/preferencias";
@@ -184,6 +186,8 @@ export interface Analysis {
   places?: AnalysisPlace[] | null;
   /** La persona principal de los fotogramas de la referencia (para elegir el avatar solo). */
   personaRef?: PersonaRef;
+  people?: ReferencePerson[];
+  autoAvatars?: AutoPersonAvatar[];
   /** El público o ángulo que pide el encargo, si pide uno (manda sobre la referencia). */
   angleAudience?: AngleAudience | null;
   /** La variante del producto que se ve claramente en la referencia (su nombre), o `null`. */
@@ -290,6 +294,14 @@ export const analysisSchema: z.ZodType<Analysis> = z.object({
     .nullable()
     .optional()
     .describe("Los sitios distintos de la referencia, en orden; null si todo pasa en un solo sitio."),
+  people: z.array(z.object({
+    id: filled,
+    gender: z.enum(["mujer", "hombre", "otro", "desconocido"]),
+    approxAge: z.number().int().min(0).max(120).nullable(),
+    notes: z.string(),
+    opening: z.boolean(),
+    appearances: z.array(z.object({ startS: seconds, endS: seconds, shot: z.number().int().min(1).optional() }).refine((a) => a.endS > a.startS, "Intervalo de persona vacío o invertido")).min(1),
+  })).refine((people) => new Set(people.map((p) => p.id)).size === people.length, "Los ids de personas deben ser únicos").optional(),
   personaRef: z
     .object({
       present: z.boolean().describe("Si en los fotogramas de la referencia sale una persona principal."),
@@ -435,7 +447,8 @@ ${seedance ? "5. frameUse: según la regla de vídeo: si el clip es de un solo p
 6. imagePrompt: el prompt de la imagen inicial según la regla de imagen y, por encima de todo, sus «Reglas fijas del frame», en prosa y en párrafos corridos, sin títulos en mayúsculas, de unos 4.900 caracteres. La imagen muestra la escena inicial del clip y es una réplica del primer fotograma de la referencia con cambios acotados, no una escena nueva. Sigue este orden: (a) el papel de cada referencia del manifiesto de imagen, citada como «image N» con su número real (${identity.image1}); (b) lo que se conserva exactamente de image 1: recorte, distancia, ángulo, postura, qué mano sujeta qué y por dónde, lado de cada objeto, proporciones dentro del encuadre y estado de la acción, mirando el fotograma y describiendo lo que de verdad se ve; (c) el producto: el aparato que se ve en el original se sustituye SIEMPRE por el artículo del encargo, aunque parezca el mismo, copiado exactamente de sus fotos de artículo (forma, piezas y su número, asa, color, estampado, orientación), en la misma posición, tamaño y agarre que en image 1; di qué variante se ve en el original y cuál es la del encargo; el embalaje solo si se ve en esta toma; y cuántas personas se ven en image 1 y dónde (también una segunda persona de la que solo asoman piernas o un brazo), que se conservan; (d) lo que cambia, cada cosa como «elemento original → elemento nuevo» (identidad, ropa, variante, decorado), conservando el ambiente que es estilo de la cuenta; (e) la luz del lugar; (f) la estética de móvil de la regla (cámara principal a 1x, fondo legible, sin distorsión, sin bordes curvados ni esquinas oscuras, sin ruido fuerte); (g) sin texto sobreimpreso: se quitan los rótulos del fotograma original y se conservan los textos físicos de la escena; (h) en paredes, espejos y fondos, ningún cuadro, póster, foto, pantalla ni figura con personas, caras, famosos o personajes, y ninguna marca ajena: si el fotograma original los tiene, se sustituyen por pared lisa o decoración sin personas (Higgsfield bloquea el clip si los ve). Cómo se nombra el producto (como el método aprobado, para que Higgsfield no lo bloquee como marca ajena): nunca por su nombre de marca ni por el nombre o la marca del producto de la referencia; se cita por su papel, «image N is the exact selected product» (y su caja, «its exact retail packaging»), con «Retain its geometry, markings, materials and realistic scale», y se describe con palabras genéricas (p. ej. «the small black collar projector»). La marca propia solo aparece como marca física impresa en el producto, su caja o una tela («a small physical logo printed on the box»). Nada de frases tipo «replace brand X with brand Y».
 ${seedance ? `7. videoPrompt: el prompt del clip según la plantilla de la regla de vídeo, con menos de 4.000 caracteres. Escríbelo con párrafos o con las etiquetas entre corchetes de la plantilla, nunca con títulos en mayúsculas. Cita cada referencia con @ del manifiesto del clip exactamente como @Video1 y @ImageN (mayúscula inicial, sin espacio) y ninguna otra. ${identity.video1} La imagen inicial aprobada (la que saldrá del prompt de imagen) es la que el manifiesto del clip marca así, y se describe según frameUse. La geometría del producto es fija: forma, proporciones y etiqueta no cambian. No pidas texto en pantalla, subtítulos ni rótulos.` : sourceVideoPromptItem(model)}
 
-8. personaRef: la persona principal que sale en los fotogramas de la referencia: si sale alguien (present), su sexo (mujer, hombre, otro o desconocido), su edad aproximada en años y sus rasgos visibles en una frase. Si no sale nadie, present false, gender desconocido y approxAge null.
+8. people: enumera TODAS las personas distintas que aparecen a lo largo del vídeo, también las que entran en las últimas tomas. No confundas cambios de plano de una misma persona con personas distintas. Cada persona tiene id único estable, gender, approxAge, notes (rasgos visibles), opening (si está en el primer fotograma) y appearances [{startS, endS, shot}] para TODAS sus apariciones (shot empieza en 1). La primera es la persona principal. Caras distintas siguen siendo distintas en la adaptación. La imagen inicial solo contiene las personas con opening=true; las demás entran únicamente en sus tomas y segundos del clip, conservando la acción y el sitio. Nunca usar una única identidad para todas.
+8b. personaRef: la persona principal que sale en los fotogramas de la referencia: si sale alguien (present), su sexo (mujer, hombre, otro o desconocido), su edad aproximada en años y sus rasgos visibles en una frase. Si no sale nadie, present false, gender desconocido y approxAge null.
 9. angleAudience: si el encargo (sus indicaciones, su adaptación o sus cambios) pide un público o un ángulo con una persona concreta (p. ej. «abuelas», «para mamás», «un niño»), su sexo, su edad aproximada y cómo lo nombra; si no pide ninguno, null.${variantNames.length > 0 ? `
 10. variantMatch: de las variantes del producto (${variantNames.map((name) => `«${name}»`).join(", ")}), la que coincide claramente por color o forma con el objeto que se ve en la referencia, escrita igual; si no coincide claramente ninguna, null.` : ""}
 
@@ -889,8 +902,9 @@ export async function analysisExtras(
   brief: Brief,
   product: Pick<Product, "countries"> & { kind?: Product["kind"] },
   variants: Array<Pick<VariantInfo, "name">>,
-): Promise<{ extras: Pick<Analysis, "autoAvatar" | "questions">; autoAvatarId: number | null }> {
-  const extras: Pick<Analysis, "autoAvatar" | "questions"> = {};
+  context?: AssignmentContext,
+): Promise<{ extras: Pick<Analysis, "autoAvatar" | "autoAvatars" | "questions">; autoAvatarId: number | null }> {
+  const extras: Pick<Analysis, "autoAvatar" | "autoAvatars" | "questions"> = {};
   const questions: AnalysisQuestion[] = [];
   let autoAvatarId: number | null = null;
   if (brief.avatarMode === "automatico") {
@@ -898,10 +912,16 @@ export async function analysisExtras(
     const target = avatarTarget({
       // Las respuestas del dueño a «Preguntas del lote» cuentan como indicaciones del vídeo.
       texts: [brief.note, brief.answers, brief.adaptation, brief.productNotes],
-      personaRef: result.personaRef,
+      personaRef: result.personaRef ?? (result.people?.[0] ? { ...result.people[0], present: true } : undefined),
       angleAudience: result.angleAudience,
     });
-    const picked = pickAvatar(target, avatars, product.countries);
+    let picked = pickAvatar(target, avatars, product.countries);
+    if (context && (target || result.people?.length)) {
+      const people = result.people?.length ? result.people : [{ id: "principal", gender: result.personaRef?.gender ?? "desconocido", approxAge: target?.age ?? null, notes: result.personaRef?.notes ?? "", opening: true, appearances: [{ startS: 0, endS: 999 }] }];
+      extras.autoAvatars = await assignPeople(context, people, target, product.countries);
+      const id = extras.autoAvatars[0]?.avatarId;
+      picked = id ? { ...(avatars.find((a) => a.id === id) ?? { id, name: "Pinterest", group: target?.group ?? "otro", number: null, ageYears: target?.age ?? null, tags: [] }) } : null;
+    }
     autoAvatarId = picked?.id ?? null;
     extras.autoAvatar = { avatarId: autoAvatarId, target };
     if (!picked) {
@@ -911,6 +931,10 @@ export async function analysisExtras(
         options: closestAvatarNames(target, avatars),
       });
     }
+  }
+  if (context && result.people && result.people.length > 1 && (brief.avatarMode === "biblioteca" || brief.avatarMode === "elegido")) {
+    extras.autoAvatars = await assignPeople({ ...context, fixedPrimaryId: brief.avatarLibraryId, preserveOpening: brief.avatarMode === "elegido" }, result.people,
+      avatarTarget({ texts: [], personaRef: { ...result.people[0], present: true }, angleAudience: null }), product.countries);
   }
   if (product.kind !== "cancion" && variants.length > 0 && brief.variantId === null) {
     const match = result.variantMatch ? variants.find((variant) => fold(variant.name) === fold(result.variantMatch!)) : undefined;
@@ -1002,11 +1026,15 @@ export async function runAnalysis(analysisId: number, deps: { gateway?: LlmGatew
   }
 
   // Fuera del paso: si esto falla, la cola lo repite y el paso devuelve lo guardado (Claude no cobra otra vez).
+  if (!step.result.personaRef && step.result.people?.[0]) step.result.personaRef = { ...step.result.people[0], present: true };
   const owner = await getActiveUser(row.createdBy);
   const product = owner ? await getProductFor(owner, row.productId) : null;
   const variants = owner && product?.kind !== "cancion" ? await listVariants(owner, row.productId) : [];
   const { extras, autoAvatarId } = product
-    ? await analysisExtras(step.result, step.brief, product, variants)
+    ? await analysisExtras(step.result, step.brief, product, variants, {
+      videoId: row.videoId, analysisId, productId: row.productId, userId: row.createdBy,
+      batchId: (await getVideoFor(owner!, row.videoId)).batchId,
+    })
     : { extras: {}, autoAvatarId: null };
 
   const finished = await getDb().transaction(async (tx) => {
