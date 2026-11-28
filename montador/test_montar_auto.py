@@ -292,6 +292,14 @@ class MontajeDeVerdad(unittest.TestCase):
                              capture_output=True, text=True, check=True).stdout
         return json.loads(out)
 
+    def test_gancho_y_cuerpo_con_tramo_fijo_no_rompe_los_rotulos(self):
+        # Ningún clip «auto» (gancho fijo + cuerpo con tramo): antes rompía con KeyError 'start' (KreuzKapuze 14 y 16).
+        spec = dict(SPEC, hookMs=3000, clips=[dict(role='hook', path=str(self.hook)), dict(role='body', path=str(self.body), trim=dict(fromS=1, toS=3.5))],
+                    song=dict(path=str(self.song), dropMs=8000, startMs=0, durationMs=30000))
+        code, result, work = self.montar('tramo-fijo', spec)
+        self.assertEqual(code, 0, result)
+        self.assertTrue(result['ok'])
+
     def test_gancho_y_cuerpo_con_cancion(self):
         spec = dict(SPEC, hookMs=3000, clips=[dict(role='hook', path=str(self.hook)), dict(role='body', path=str(self.body))],
                     song=dict(path=str(self.song), dropMs=8000, startMs=0, durationMs=30000), avisos=['aviso del agente'])

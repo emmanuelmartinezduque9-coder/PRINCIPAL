@@ -973,7 +973,9 @@ def main():
             p = au['product_shown']
             t_prod = out_time_of(segs, p['clip'], segs[p['clip']]['in_frame'] + p.get('frame', 0))
         cuts = [s['out_first'] / FPS for s in segs[1:]]
-        if v1:
+        # Sin tiempos en los rótulos (p. ej. gancho fijo + cuerpo con tramo fijado: ningún clip «auto»), se
+        # calculan como en el modo normal en vez de romper (KeyError 'start', KreuzKapuze 14 y 16).
+        if v1 or any('start' not in t for t in plan.get('texts', [])):
             cues_t = text_timing(plan.get('texts', []), cuts, dur, P)
         else:
             cues_t = [dict(t, start=r4(t['start']), end=r4(min(float(t['end']), dur) if t.get('end') is not None else dur),
