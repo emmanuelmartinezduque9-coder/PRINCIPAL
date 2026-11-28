@@ -113,6 +113,27 @@ export interface DoblarResult {
   hasta?: number;
 }
 
+/** Umbrales para aceptar como diálogo una frase que el separador dejó en la música o en los efectos. */
+export const MUSIC_SPEECH_MIN_WORDS = 4;
+export const MUSIC_SPEECH_MIN_WORDS_PER_S = 1.2;
+export const MUSIC_SPEECH_CLEAR_CONFIDENCE = -0.35;
+
+/**
+ * Una frase de la pista de voz vale como diálogo según su clasificación. Una de la música o de los efectos solo si
+ * Claude la da por conversacional y suena a habla de verdad: al menos 4 palabras a ritmo de habla (≥ 1,2 palabras/s,
+ * como «Three, two, one, let's go!» del vídeo 22), o 3 palabras oídas con claridad. Lo que Whisper «oye» sobre un canto
+ * sale con pocas palabras repartidas en mucho tiempo («Yes! Last one!» en 4 s, «It's like some foodie» en 12 s, lote 14).
+ * Mejor dejar sin doblar una frase dudosa que traducir un trozo de canción.
+ */
+export function musicPhraseIsSpeech(f: { pista?: string; confianza?: number | null; texto: string; conversacional?: boolean; desde?: number; hasta?: number }): boolean {
+  if (!f.pista || f.pista === "voz") return true;
+  if (f.conversacional === false) return false;
+  const words = f.texto.split(/\s+/).filter((w) => /[\p{L}\p{N}]/u.test(w)).length;
+  const seconds = Math.max(0.5, (f.hasta ?? 0) - (f.desde ?? 0));
+  const rate = words / seconds;
+  return (words >= MUSIC_SPEECH_MIN_WORDS && rate >= MUSIC_SPEECH_MIN_WORDS_PER_S) || (words >= 3 && (f.confianza ?? -1) >= MUSIC_SPEECH_CLEAR_CONFIDENCE && rate >= 0.8);
+}
+
 /** El margen que `doblar.py rescatar` pone a cada lado de una ventana de habla (`RELLENO_S`). */
 const RESCUE_MARGIN_S = 0.25;
 
@@ -318,6 +339,10 @@ async function analyse(ctx: DubContext, stems: string, userId: number, target: {
           ? ("canto" as const)
           : kinds[i],
   }));
+  // Lo que sale de la pista de MÚSICA solo es diálogo si se entiende claro, tiene varias palabras y es conversacional
+  // (lote 14: «Yes! Last one!», «PLEASE», «Yeah.» y «It's like some foodie» eran la canción y se doblaron).
+  // Con «Doblar el diálogo» encendido a propósito, manda el dueño: no se filtra.
+  if (!ctx.forced) for (const f of classified) if (f.tipo === "habla" && !musicPhraseIsSpeech(f)) f.tipo = "canto";
   // Un tramo de diálogo que oyó la comprobación final (siempre de la VOZ) sin frase aquí: se dobla lo que tenga la voz en
   // ese tramo; nunca la voz de la música (así entraban canciones).
   for (const w of forcedWindows) {

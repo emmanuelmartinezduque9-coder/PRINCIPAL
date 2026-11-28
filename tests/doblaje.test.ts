@@ -775,3 +775,16 @@ describe("límite persistente del doblaje completo", () => {
     expect(dubCalls()).toHaveLength(2);
   });
 });
+
+describe("la voz de la música solo es diálogo si está clara (lote 14)", () => {
+  it("trozos de canción del lote 14 no se doblan; la voz de la pista de voz sí", async () => {
+    const { musicPhraseIsSpeech } = await import("@/server/videos/doblaje");
+    expect(musicPhraseIsSpeech({ pista: "music", confianza: -0.68, texto: "Yes! Last one!", conversacional: true, desde: 2.6, hasta: 6.75 })).toBe(false);
+    expect(musicPhraseIsSpeech({ pista: "music", confianza: -0.9, texto: "PLEASE", conversacional: true, desde: 0, hasta: 2.6 })).toBe(false);
+    expect(musicPhraseIsSpeech({ pista: "music", confianza: -0.46, texto: "Yeah.", conversacional: true, desde: 5.65, hasta: 7.65 })).toBe(false);
+    expect(musicPhraseIsSpeech({ pista: "music", confianza: -0.77, texto: "It's like some foodie", conversacional: true, desde: 1, hasta: 13.6 })).toBe(false);
+    // Diálogo real que el separador dejó en la música (vídeo 22): sí se dobla.
+    expect(musicPhraseIsSpeech({ pista: "music", confianza: -0.8, texto: "Three, two, one, let's go!", conversacional: true, desde: 0, hasta: 3.5 })).toBe(true);
+    expect(musicPhraseIsSpeech({ pista: "voz", confianza: -0.9, texto: "Yeah", conversacional: true })).toBe(true);
+  });
+});
