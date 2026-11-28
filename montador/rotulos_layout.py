@@ -25,7 +25,7 @@ def _tokens(text, glue=True):
     return words, hints
 
 
-def balanced_lines(font, text, size=FIXED_SIZE, max_lines=MAX_LINES, glue=True):
+def balanced_lines(font, text, size=FIXED_SIZE, max_lines=MAX_LINES, glue=True, min_lines=1):
     """Mínimas líneas que caben; sin palabras sueltas si se puede; la de arriba ≤ 1,15 × la de abajo si se puede; y
     entre esas, las líneas más parejas (menor diferencia entre la más larga y la más corta). Con un 3 % del ancho útil
     de margen, gana el corte en puntuación o en un `|` de la referencia."""
@@ -35,7 +35,7 @@ def balanced_lines(font, text, size=FIXED_SIZE, max_lines=MAX_LINES, glue=True):
     @lru_cache(None)
     def width(a, b):
         return font.layout(' '.join(words[a:b]), size)[1]
-    for n in range(1, min(max_lines, len(words)) + 1):
+    for n in range(min(min_lines, len(words)), min(max_lines, len(words)) + 1):
         candidates = []
         for cuts in combinations(range(1, len(words)), n - 1):
             edges = (0,) + cuts + (len(words),)
@@ -101,6 +101,24 @@ def _split(font, text, size, max_lines, glue):
     return None if result is None else result[5]
 
 
+# Orden de Emmanuel (28/11/2026): cada texto de la referencia sale ENTERO en una pantalla, en 2 líneas, y el
+# tamaño solo varía un poco (de MIN_TEXT_SIZE a FIXED_SIZE) para que no se note. Nunca se parte una frase
+# en varios rótulos («Este regalo lo necesitan mucho» + «mamás» perdía el sentido).
+MIN_TEXT_SIZE = 62
+
+
+def two_line_block(font, text):
+    """[[líneas]], tamaño: el texto entero en 2 líneas (1 si es una sola palabra) al mayor tamaño entre
+    FIXED_SIZE y MIN_TEXT_SIZE; si a ese mínimo no cabe en 2, en 3 líneas; si tampoco, None (se reparte)."""
+    for lines_wanted in (2, 3):
+        for size in range(FIXED_SIZE, MIN_TEXT_SIZE - 1, -2):
+            for glue in (True, False):
+                lines = balanced_lines(font, text, size, max_lines=lines_wanted, glue=glue, min_lines=lines_wanted)
+                if lines:
+                    return [lines], size
+    return None
+
+
 def prepare_cues(font, cues):
     """Copia metadatos y reparte el intervalo exacto, con mínimo 0,8 s si hay tiempo."""
     out = []
@@ -110,9 +128,13 @@ def prepare_cues(font, cues):
         if cue.get('lines') and ' '.join(cue['lines']) == text.replace('|', ' '):
             text = ' | '.join(cue['lines'])
         size = FIXED_SIZE
-        try:
+        parts = two_line_block(font, text)
+        if parts is not None:
+            parts, size = parts
+        else:
+          try:
             parts = split_cue_texts(font, text)
-        except ValueError:
+          except ValueError:
             # Solo si UNA palabra sola no cabe al tamaño fijo (rarísimo): ese rótulo, al mayor tamaño en que cabe.
             parts = [[w] for w in _tokens(text, False)[0]]
             parts = [sum(parts[i:i + MAX_LINES], []) for i in range(0, len(parts), MAX_LINES)]
