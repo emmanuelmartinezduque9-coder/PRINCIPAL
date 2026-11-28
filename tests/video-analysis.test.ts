@@ -281,6 +281,17 @@ describe("desglose con Claude", () => {
     expect((await analysisRow(analysisId)).status).toBe("done");
   });
 
+  it("una adaptación con cuerpos termina su desglose (no se da por indicaciones cambiadas; lote 14)", async () => {
+    await addPhoto("articulo");
+    await updateVideoChoices(ana, v.id, { avatarMode: "sin_sustitucion" });
+    await getPool().query("update videos set kind = 'adaptacion_concepto', adaptation = 'Para la oficina', body_clip_ids = '[1]'::jsonb where id = $1", [v.id]);
+    await readyReference(v.id);
+    const { analysisId } = await requestAnalysis(ana, v.id);
+    const { client } = fakeMessages([reply()]);
+    await runAnalysis(analysisId, { gateway: createGateway({ client }) });
+    expect((await analysisRow(analysisId)).status).toBe("done");
+  });
+
   it("con «sin personas» no hace falta avatar", async () => {
     await addPhoto("articulo");
     await updateVideoChoices(ana, v.id, { avatarMode: "nadie" });

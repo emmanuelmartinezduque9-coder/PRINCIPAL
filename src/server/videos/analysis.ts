@@ -1059,6 +1059,8 @@ export async function runAnalysis(analysisId: number, deps: { gateway?: LlmGatew
         batchId: schema.videos.batchId,
         productId: schema.videos.productId,
         ownerAnswers: schema.videos.ownerAnswers,
+        // Sin esto, una adaptación con cuerpos se daba siempre por «indicaciones cambiadas» (lote 14).
+        bodyClipIds: schema.videos.bodyClipIds,
       })
       .from(schema.videos)
       .where(eq(schema.videos.id, row.videoId))
