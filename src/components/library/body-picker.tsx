@@ -125,6 +125,8 @@ function BodyThumb({
       <span className={cn("line-clamp-2 min-h-7 text-[11px] leading-[0.875rem] break-words", picked ? "font-medium" : "text-muted-foreground")} title={body.label}>
         {body.label}
       </span>
+      {body.auto ? <span className="text-[10px] text-muted-foreground">Automático</span> : null}
+      {body.accountName ? <span className="truncate text-[10px] text-muted-foreground" title={body.accountName}>{body.accountName}</span> : null}
       {picked && !readOnly && count > 1 ? (
         <span className="flex gap-0.5">
           <button type="button" className={move} aria-label={`Mover ${body.label} antes`} disabled={order === 1} onClick={() => onMove(-1)}>

@@ -1,3 +1,6 @@
+import { queueClipClassification } from "@/jobs/body-classifier";
+import { getActiveUser } from "@/server/auth";
+import { listCredentialUsers } from "@/server/credentials";
 import { and, count, desc, eq, inArray, lt, or, sql } from "drizzle-orm";
 import {
   getHiggsfield,
@@ -181,7 +184,11 @@ export async function refreshLibrary(user: AuthUser, deps: LibraryDeps = {}): Pr
   try {
     const result = await loadHistory(user, deps.higgsfield ?? getHiggsfield(), now);
     await finishRefresh(user.id, now);
-    return { ...result, skipped: false };
+    if (result.newIds.length) {
+      try { await queueClipClassification(user.id, result.newIds.slice(0, 40)); }
+      catch (error) { console.error("[biblioteca] No se pudo encolar la clasificación:", error); }
+    }
+    return { added: result.added, pages: result.pages, skipped: false };
   } catch (error) {
     await releaseRefresh(user.id, now);
     throw error;
@@ -189,7 +196,7 @@ export async function refreshLibrary(user: AuthUser, deps: LibraryDeps = {}): Pr
 }
 
 /** Lee el historial hasta donde toca y lo guarda todo junto. Devuelve cuántos clips eran nuevos y cuántas páginas pidió. */
-async function loadHistory(user: AuthUser, port: HiggsfieldPort, now: Date): Promise<{ added: number; pages: number }> {
+async function loadHistory(user: AuthUser, port: HiggsfieldPort, now: Date): Promise<{ added: number; pages: number; newIds: number[] }> {
   const db = getDb();
   const { refreshedAt } = await refreshState(user.id);
   const settledBefore = refreshedAt ? refreshedAt.getTime() - LIBRARY_LATE_MARGIN_MS : null;
@@ -244,7 +251,9 @@ async function loadHistory(user: AuthUser, port: HiggsfieldPort, now: Date): Pro
           and g.user_id = ${user.id} and g.kind = 'clip'`);
     });
   }
-  return { added: rows.filter((row) => !knownIds.has(row.jobId)).length, pages };
+  const newJobs = rows.filter(row => !knownIds.has(row.jobId)).map(row => row.jobId);
+  const newClips = newJobs.length ? await db.select({ id: clips.id }).from(clips).where(and(eq(clips.userId, user.id), inArray(clips.jobId, newJobs))) : [];
+  return { added: newJobs.length, pages, newIds: newClips.map(c => c.id) };
 }
 
 export interface LibraryBody {
@@ -272,6 +281,7 @@ export interface LibraryClip {
   video: { id: number; productId: number } | null;
   /** De qué productos (de los que ve quien mira) es cuerpo. */
   bodies: LibraryBody[];
+  detectedProduct?: { id: number; name: string } | null;
 }
 
 export interface LibraryPage {
@@ -362,6 +372,7 @@ export async function listLibrary(
       prompt: row.userId === user.id ? row.prompt : null,
       mine: row.userId === user.id,
       video: row.videoId === null ? null : (videoOf.get(row.videoId) ?? null),
+      detectedProduct: row.detectedProductId !== null && products.has(row.detectedProductId) ? { id: row.detectedProductId, name: products.get(row.detectedProductId)! } : null,
       bodies: marks
         .filter((mark) => mark.libraryClipId === row.id && products.has(mark.productId))
         .map((mark) => ({
@@ -377,4 +388,23 @@ export async function listLibrary(
     refreshedAt,
     stale: refreshedAt === null || now.getTime() - refreshedAt.getTime() > LIBRARY_STALE_MS,
   };
+}
+
+/** La reserva de 30 minutos también limita los reintentos de una conexión caducada. */
+export async function refreshConnectedLibraries(now: Date = new Date(), higgsfield?: HiggsfieldPort): Promise<void> {
+  for (const userId of await listCredentialUsers(HIGGSFIELD_KIND)) {
+    const user = await getActiveUser(userId);
+    if (!user) continue;
+    const state = await refreshState(userId);
+    const latest = Math.max(state.startedAt?.getTime() ?? 0, state.refreshedAt?.getTime() ?? 0);
+    if (now.getTime() - latest < 30 * 60_000) continue;
+    const claim = await getDb().execute(sql`
+      insert into settings (key, value) values (${`biblioteca.automatica:${userId}`}, jsonb_build_object('at', ${now.toISOString()}::text))
+      on conflict (key) do update set value = excluded.value
+      where settings.value->>'at' <= ${new Date(now.getTime() - 30 * 60_000).toISOString()}
+      returning key`);
+    if (!claim.rows.length) continue;
+    try { await refreshLibrary(user, { now: () => now, higgsfield }); }
+    catch (error) { console.error(`[biblioteca] No se pudo sincronizar ${userId}:`, error); }
+  }
 }

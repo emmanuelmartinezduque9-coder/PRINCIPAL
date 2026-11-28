@@ -1,3 +1,5 @@
+import { refreshConnectedLibraries } from "@/server/videos/library";
+import { sweepClipClassification } from "@/server/videos/body-classifier";
 import { queuePendingSongs } from "@/jobs/canciones";
 import { sweepOwnerRedos } from "@/server/videos/owner-redo";
 import { sweepPublications } from "@/server/videos/publications";
@@ -51,6 +53,8 @@ async function failStaleAnalyses(now: Date): Promise<number> {
 }
 
 export async function videoSweep(now: Date = new Date(), deps: GenDeps = {}): Promise<void> {
+  try { await refreshConnectedLibraries(now, deps.higgsfield); } catch (error) { console.error("[biblioteca] Sincronización:", error); }
+  try { await sweepClipClassification(); } catch (error) { console.error("[biblioteca] Clasificación:", error); }
   try { await queuePendingSongs(); } catch (error) { console.error("[canciones] No se pudieron encolar las canciones pendientes:", error); }
   try { await sweepPublications(now); } catch (error) { console.error("[moviles] No se pudo avanzar la cola:", error); }
   try {

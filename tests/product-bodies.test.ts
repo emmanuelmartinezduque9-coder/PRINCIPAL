@@ -69,7 +69,7 @@ describe("marcar y desmarcar cuerpos", () => {
     const body = await markBody(ana, producto.id, { clipId, label: "  Demostración   en  mano " });
     expect(body.label).toBe("Demostración en mano");
     expect(await listProductBodies(ana, producto.id)).toEqual([
-      { id: body.id, productId: producto.id, label: "Demostración en mano", thumbUrl: `${CDN}/hf-1_min.webp`, videoUrl: `${CDN}/hf-1.mp4`, previewUrl: null, canRemove: true },
+      { accountName: null, auto: false, id: body.id, productId: producto.id, label: "Demostración en mano", thumbUrl: `${CDN}/hf-1_min.webp`, videoUrl: `${CDN}/hf-1.mp4`, previewUrl: null, canRemove: true },
     ]);
     // Sin nombre, «Cuerpo N».
     const second = await markBody(ana, producto.id, { clipId: await libraryClip(ana) });

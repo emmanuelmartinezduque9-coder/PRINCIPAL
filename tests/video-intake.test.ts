@@ -275,7 +275,7 @@ describe("sustituir una referencia", () => {
     const slow = {
       ...fake.port,
       async uploadMedia(userId: number, file: Parameters<typeof fake.port.uploadMedia>[1]) {
-        await videoSweep(new Date(Date.now() + 61 * 60_000));
+        await videoSweep(new Date(Date.now() + 61 * 60_000), { higgsfield: fake.port });
         newUpload = (await startUpload(ana, v.id, { filename: "nueva.mp4", totalBytes: 100 }, { higgsfield: fake.port })).uploadId;
         return fake.port.uploadMedia(userId, file);
       },

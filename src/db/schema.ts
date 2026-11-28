@@ -1045,6 +1045,11 @@ export const libraryClips = pgTable(
     videoId: bigint("video_id", { mode: "number" }).references((): AnyPgColumn => videos.id, { onDelete: "set null" }),
     /** Última vez que se vio en el historial. */
     fetchedAt: instant("fetched_at").notNull().defaultNow(),
+    detectedProductId: bigint("detected_product_id", { mode: "number" }).references(() => products.id, { onDelete: "set null" }),
+    classifiedRole: text("classified_role"),
+    confidence: integer("confidence"),
+    classifiedAt: instant("classified_at"),
+    classificationMethod: text("classification_method"),
   },
   (t) => [
     unique("library_clips_user_job").on(t.userId, t.jobId),
@@ -1069,6 +1074,7 @@ export const productBodies = pgTable(
       .references(() => libraryClips.id, { onDelete: "cascade" }),
     /** Nombre corto para reconocerlo en el selector (1–60 caracteres). */
     label: text("label").notNull(),
+    auto: boolean("auto").notNull().default(false),
     createdBy: bigint("created_by", { mode: "number" }).notNull(),
     createdAt: instant("created_at").notNull().defaultNow(),
   },

@@ -29,7 +29,7 @@ function ClipTile({ clip, filterProductId, onOpen }: { clip: LibraryClipJson; fi
   const date = new Date(clip.createdAt);
   // Con el filtro de un producto, el nombre del cuerpo; sin filtro, de qué producto es cuerpo.
   const mark = filterProductId === null ? clip.bodies[0] : clip.bodies.find((body) => body.productId === filterProductId);
-  const markText = mark ? (filterProductId === null ? mark.productName : mark.label) : null;
+  const markText = mark ? (filterProductId === null ? mark.productName : mark.label) : clip.detectedProduct?.name ?? null;
   const more = filterProductId === null ? clip.bodies.length - 1 : 0;
   return (
     <li>
@@ -52,6 +52,7 @@ function ClipTile({ clip, filterProductId, onOpen }: { clip: LibraryClipJson; fi
           <time dateTime={clip.createdAt}>{format(date, "d MMM", { locale: es })}</time>
         </span>
       </button>
+      {clip.detectedProduct ? <span className="mt-1 block truncate text-[11px] text-muted-foreground" title={`Producto detectado: ${clip.detectedProduct.name}`}>{clip.detectedProduct.name}</span> : null}
     </li>
   );
 }

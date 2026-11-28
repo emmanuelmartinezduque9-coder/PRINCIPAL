@@ -31,6 +31,8 @@ export interface ProductBody {
   id: number;
   productId: number;
   label: string;
+  auto: boolean;
+  accountName: string | null;
   thumbUrl: string | null;
   videoUrl: string;
   /** Vista ligera (MP4 pequeño sin sonido) del almacén propio; `null` si aún no está copiado. */
@@ -56,12 +58,12 @@ const isId = (value: unknown): value is number => typeof value === "number" && N
 export async function listProductBodies(user: AuthUser, productId: number): Promise<ProductBody[]> {
   const product = await getProductFor(user, productId);
   const rows = await getDb()
-    .select({ id: bodies.id, productId: bodies.productId, label: bodies.label, createdBy: bodies.createdBy, jobId: clips.jobId, thumbUrl: clips.thumbUrl, videoUrl: clips.videoUrl })
+    .select({ id: bodies.id, productId: bodies.productId, label: bodies.label, auto: bodies.auto, createdBy: bodies.createdBy, jobId: clips.jobId, thumbUrl: clips.thumbUrl, videoUrl: clips.videoUrl })
     .from(bodies)
     .innerJoin(clips, eq(clips.id, bodies.libraryClipId))
     .where(eq(bodies.productId, product.id))
     .orderBy(asc(bodies.id));
-  return (await withStoredLinks(rows)).map(({ createdBy, ...row }) => ({ ...row, canRemove: createdBy === user.id || user.role === "dueno" }));
+  return (await withStoredLinks(rows)).map(({ createdBy, ...row }) => ({ ...row, accountName: product.instagramAccount, canRemove: createdBy === user.id || user.role === "dueno" }));
 }
 
 /**
@@ -99,7 +101,7 @@ export async function markBody(user: AuthUser, productId: number, input: { clipI
 async function getBodyFor(user: AuthUser, bodyId: number) {
   if (!isId(bodyId)) throw new HttpError(404, NOT_FOUND);
   const [body] = await getDb()
-    .select({ id: bodies.id, productId: bodies.productId, label: bodies.label, createdBy: bodies.createdBy, jobId: clips.jobId, videoUrl: clips.videoUrl })
+    .select({ id: bodies.id, productId: bodies.productId, label: bodies.label, auto: bodies.auto, createdBy: bodies.createdBy, jobId: clips.jobId, videoUrl: clips.videoUrl })
     .from(bodies)
     .innerJoin(clips, eq(clips.id, bodies.libraryClipId))
     .where(eq(bodies.id, bodyId));

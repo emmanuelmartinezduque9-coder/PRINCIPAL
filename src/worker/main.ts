@@ -1,3 +1,4 @@
+import "@/jobs/body-classifier";
 import { startWorker, stopWorker } from "@/jobs/boss";
 import "@/jobs/system-check";
 import "@/jobs/video-jobs";
