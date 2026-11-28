@@ -524,7 +524,7 @@ function RowCard({
         {(row.kind === "solo_gancho" || row.kind === "adaptacion_concepto") && productId !== null ? (
           <div className="flex flex-wrap items-start gap-x-4 gap-y-3">
             {row.kind === "solo_gancho" ? <HookStepper value={row.hookSeconds} onChange={(hookSeconds) => onChange({ hookSeconds })} disabled={busy} /> : null}
-            <BodyPicker productId={productId} value={row.bodies} onChange={(bodies) => onChange({ bodies })} className="min-w-0 flex-1" />
+            <BodyPicker productId={productId} value={row.bodies} trims={row.bodyClipTrims} onTrimsChange={(bodyClipTrims) => onChange({ bodyClipTrims })} onChange={(bodies) => onChange({ bodies })} className="min-w-0 flex-1" />
           </div>
         ) : null}
         {imagesOpen || (row.refs?.length ?? 0) > 0 ? (
@@ -873,7 +873,7 @@ export function NewBatch() {
                 kind: row.kind,
                 adaptation: row.kind === "adaptacion_concepto" ? row.adaptation.trim() : null,
                 ...(row.kind === "solo_gancho" ? { hookSeconds: row.hookSeconds } : {}),
-                ...(["solo_gancho", "adaptacion_concepto"].includes(row.kind) ? { bodyClipIds: row.bodies } : {}),
+                ...(["solo_gancho", "adaptacion_concepto"].includes(row.kind) ? { bodyClipIds: row.bodies, bodyClipTrims: Object.fromEntries(Object.entries(row.bodyClipTrims ?? {}).filter(([id]) => row.bodies.includes(Number(id)))) } : {}),
                 note: row.note.trim() || null,
                 songId: row.song?.id ?? null,
                 // El modelo del vídeo: el de la tarjeta o, en «Automático», el de su grupo.
@@ -947,7 +947,7 @@ export function NewBatch() {
               busy={busy}
               // Otro producto: su avatar habitual, sus variantes y sus propios cuerpos.
               onProduct={(productId) =>
-                updateGroup(group.key, (g) => ({ ...g, productId, variant: null, rows: g.rows.map((row) => ({ ...row, avatar: null, variant: null, bodies: [] })) }))
+                updateGroup(group.key, (g) => ({ ...g, productId, variant: null, rows: g.rows.map((row) => ({ ...row, avatar: null, variant: null, bodies: [], bodyClipTrims: {} })) }))
               }
               onChange={(change) => updateGroup(group.key, (g) => ({ ...g, ...change }))}
               onRemove={() => removeGroup(group)}

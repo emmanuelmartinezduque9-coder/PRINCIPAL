@@ -22,11 +22,11 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   return handle(async (user) => {
     const { id } = await params;
     const body = (await request.json().catch(() => null)) as Record<string, unknown> | null;
-    const { productId, avatarPhotoId, avatarLibraryId, avatarMode, variantId, kind, adaptation, hookSeconds, bodyClipIds, note, linkUrl, songId, editReferenceUrl, clipModel, references, regenerateFrom } = body ?? {};
+    const { productId, avatarPhotoId, avatarLibraryId, avatarMode, variantId, kind, adaptation, hookSeconds, bodyClipIds, bodyClipTrims, note, linkUrl, songId, editReferenceUrl, clipModel, references, regenerateFrom } = body ?? {};
     if (!isId(productId)) return badRequest("Elige el producto.");
     if (avatarPhotoId !== null && !isId(avatarPhotoId)) return badRequest("Elige una foto con papel «Avatar» de este producto.");
     // El tipo, la adaptación, el gancho, los cuerpos, los cambios, quién sale y el enlace los comprueba `addVideoToBatch` (400).
-    const video = await addVideoToBatch(user!, parseId(id), { productId, avatarPhotoId, avatarLibraryId, avatarMode, variantId, kind, adaptation, hookSeconds, bodyClipIds, note, linkUrl, songId, editReferenceUrl, clipModel, references, regenerateFrom });
+    const video = await addVideoToBatch(user!, parseId(id), { productId, avatarPhotoId, avatarLibraryId, avatarMode, variantId, kind, adaptation, hookSeconds, bodyClipIds, bodyClipTrims, note, linkUrl, songId, editReferenceUrl, clipModel, references, regenerateFrom });
     return Response.json({ video }, { status: 201 });
   });
 }

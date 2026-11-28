@@ -11,6 +11,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -444,6 +445,19 @@ class CancionesPersonalizadas(unittest.TestCase):
             self.assertIsNone(image.crop((0, 0, 886, 318)).getbbox())
             self.assertGreater(image.getbbox()[1], 318)
             self.assertIn((255, 214, 0, 255), image.getdata())
+
+
+class TramosCuerpo(unittest.TestCase):
+    def test_tramo_fijo_y_otro_automatico(self):
+        spec = dict(SPEC, clips=[dict(role='hook'), dict(role='body', trim=dict(fromS=7, toS=10)), dict(role='body')])
+        with patch.object(ma.m, 'video_frames', return_value=240):
+            plan, _ = ma.construir_plan(spec, [('hook', '/h'), ('body', '/a'), ('body', '/b')], '/w', '/f.ttf', gancho=(0, 96))
+        self.assertEqual(plan['clips'][1], dict(role='body', path='/a', in_frame=168, out_frame=240))
+        self.assertTrue(plan['clips'][2]['auto'])
+
+    def test_sin_tramo_sigue_automatico(self):
+        plan, _ = ma.construir_plan(SPEC, [('hook', '/h'), ('body', '/b')], '/w', '/f.ttf', gancho=(0, 96))
+        self.assertEqual(plan['clips'][1], dict(role='body', path='/b', auto=True))
 
 if __name__ == '__main__':
     unittest.main(verbosity=1)

@@ -417,7 +417,7 @@ export async function runEdit(run: Run, deps: MontajeDeps = {}): Promise<"done" 
     }
 
     // 2. Clips, canción, audio de la referencia y fuente.
-    const clips: Array<{ role: string; path: string }> = [];
+    const clips: Array<{ role: string; path: string; trim?: { fromS: number; toS: number } }> = [];
     for (const [i, clip] of spec.clips.entries()) {
       const target = path.join(dir, `clip-${i}.mp4`);
       try {
@@ -426,7 +426,7 @@ export async function runEdit(run: Run, deps: MontajeDeps = {}): Promise<"done" 
         await finishFailed(run, montajeFailure("no se pudo descargar un clip"), messageOf(error), nowOf(deps), notes);
         return "failed";
       }
-      clips.push({ role: clip.role, path: target });
+      clips.push({ role: clip.role, path: target, ...(clip.trim ? { trim: clip.trim } : {}) });
     }
     let song: (NonNullable<EditSpec["song"]> & { path: string }) | null = null;
     if (spec.song) {

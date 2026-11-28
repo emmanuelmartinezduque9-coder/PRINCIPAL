@@ -12,6 +12,9 @@ import { GET as listRoute, POST as markRoute } from "@/app/api/productos/[id]/cu
 import { makeProduct, makeUser, TEST_PASSWORD } from "./helpers/fixtures";
 import { truncateAll } from "./helpers/global-setup";
 
+vi.mock("@/server/media/ffmpeg", () => ({ probeVideo: vi.fn(async () => ({ durationMs: 10000, width: 1080, height: 1920 })) }));
+vi.mock("@/server/videos/clip", async (original) => ({ ...await original<object>(), openClipStream: vi.fn(async () => ({ body: new ReadableStream({ start(c) { c.close(); } }), length: "0" })) }));
+
 const cookie = vi.hoisted(() => ({ value: undefined as string | undefined }));
 vi.mock("next/headers", () => ({
   cookies: async () => ({
@@ -206,5 +209,24 @@ describe("rutas de los cuerpos", () => {
     expect((await deleteRoute(new Request("http://localhost", { method: "DELETE" }), bodyParams("1e3"))).status).toBe(404);
     expect((await deleteRoute(new Request("http://localhost", { method: "DELETE" }), bodyParams(body.id))).status).toBe(200);
     expect((await getPool().query("select count(*)::int as n from product_bodies")).rows[0].n).toBe(0);
+  });
+});
+
+describe("tramos por vídeo", () => {
+  it("guarda, valida, copia en tarjetas y conserva el cuerpo original", async () => {
+    const body = await markBody(ana, producto.id, { clipId: await libraryClip(ana) });
+    const batch = await createBatch(ana, "Tramos");
+    const trims = { [body.id]: { fromS: 7, toS: 10 } };
+    const video = await addVideoToBatch(ana, batch.id, { productId: producto.id, avatarPhotoId: null, avatarMode: "nadie", kind: "solo_gancho", bodyClipIds: [body.id], bodyClipTrims: trims });
+    expect((await getVideoFor(ana, video.id)).bodyClipTrims).toEqual(trims);
+    const copy = await duplicateBatchVideo(ana, batch.id, video.id);
+    expect((await getVideoFor(ana, copy.id)).bodyClipTrims).toEqual(trims);
+    for (const trim of [{ fromS: -1, toS: 2 }, { fromS: 2, toS: 2.4 }, { fromS: 2, toS: 11 }, { fromS: NaN, toS: 3 }]) {
+      await expect(updateVideoChoices(ana, video.id, { bodyClipTrims: { [body.id]: trim } })).rejects.toMatchObject({ status: 400 });
+    }
+    await expect(updateVideoChoices(ana, video.id, { bodyClipTrims: { "999": { fromS: 0, toS: 2 } } })).rejects.toMatchObject({ status: 400 });
+    await updateVideoChoices(ana, video.id, { bodyClipTrims: {} });
+    expect((await getVideoFor(ana, video.id)).bodyClipTrims).toEqual({});
+    expect((await getVideoFor(ana, copy.id)).bodyClipTrims).toEqual(trims);
   });
 });

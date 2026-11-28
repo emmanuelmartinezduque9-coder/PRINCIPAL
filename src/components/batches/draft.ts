@@ -40,6 +40,7 @@ export interface Row {
   /** Duración solo con «Solo gancho»; cuerpos en orden con «Solo gancho» o «Adaptación». */
   hookSeconds: number;
   bodies: number[];
+  bodyClipTrims?: Record<string, { fromS: number; toS: number }>;
   /** «Cambios específicos». */
   note: string;
   /** «Edición de referencia»: un vídeo cuyo estilo de edición se copia (vacío: ninguno). */
@@ -189,6 +190,7 @@ function parseRow(value: unknown): Row | null {
     kind: kindOf(value.kind),
     adaptation: text(value.adaptation),
     hookSeconds: hookOf(value.hookSeconds),
+    ...(value.bodyClipTrims && typeof value.bodyClipTrims === "object" ? { bodyClipTrims: value.bodyClipTrims as Row["bodyClipTrims"] } : {}),
     bodies: Array.isArray(value.bodies) ? value.bodies.filter(isId) : [],
     note: text(value.note),
     editReference: text(value.editReference).slice(0, 2000),

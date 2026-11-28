@@ -1,3 +1,10 @@
+import fs from "node:fs/promises";
+import { createWriteStream } from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
+import { probeVideo } from "@/server/media/ffmpeg";
 import { and, asc, count, eq, inArray } from "drizzle-orm";
 import { getDb, schema } from "@/db/client";
 import type { AuthUser } from "@/server/auth";
@@ -200,4 +207,38 @@ export async function bodiesOfVideo(video: { id: number; productId: number; body
 export async function productBodyIds(productId: number): Promise<number[]> {
   const rows = await getDb().select({ id: bodies.id }).from(bodies).where(eq(bodies.productId, productId)).orderBy(asc(bodies.id));
   return rows.map((row) => row.id);
+}
+
+export type BodyClipTrims = Record<string, { fromS: number; toS: number }>;
+
+/** Valida contra la duración real, nunca contra metadatos enviados por el navegador. */
+export async function checkVideoBodyTrims(productId: number, ids: number[], value: unknown): Promise<BodyClipTrims> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new HttpError(400, "Tramos de cuerpos inválidos.");
+  const result: BodyClipTrims = {};
+  for (const [id, raw] of Object.entries(value)) {
+    if (!ids.includes(Number(id)) || String(Number(id)) !== id || !raw || typeof raw !== "object") throw new HttpError(400, "El tramo debe pertenecer a un cuerpo elegido.");
+    const { fromS, toS } = raw as { fromS: number; toS: number };
+    if (!Number.isFinite(fromS) || !Number.isFinite(toS) || fromS < 0 || toS - fromS < 0.5) throw new HttpError(400, "El tramo debe durar al menos 0,5 segundos.");
+    const [row] = await getDb().select({ url: clips.videoUrl }).from(bodies).innerJoin(clips, eq(clips.id, bodies.libraryClipId)).where(and(eq(bodies.id, Number(id)), eq(bodies.productId, productId)));
+    if (!row) throw new HttpError(400, BAD_BODIES);
+    const duration = await bodyDuration(row.url);
+    if (toS > duration) throw new HttpError(400, "El tramo supera la duración del cuerpo.");
+    result[id] = { fromS, toS };
+  }
+  return result;
+}
+
+async function bodyDuration(url: string): Promise<number> {
+  // El módulo de clips registra generadores al cargar: resolverlo aquí evita
+  // reentrar en generations mientras todavía está inicializando sus builders.
+  const { openClipStream } = await import("@/server/videos/clip");
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "body-trim-"));
+  try {
+    const stream = await openClipStream(url);
+    const file = path.join(dir, "body.mp4");
+    await pipeline(Readable.fromWeb(stream.body as import("node:stream/web").ReadableStream), createWriteStream(file));
+    return (await probeVideo(file)).durationMs / 1000;
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
 }

@@ -21,7 +21,7 @@ import { Segmented } from "./segmented";
 import { ClipModelSelect, clipModelHint } from "./clip-model-picker";
 import { CLIP_MODEL_LABEL, type ClipModelChoice } from "@/lib/clip-models";
 
-type BriefChanges = { kind?: VideoKind; adaptation?: string | null; note?: string | null; hookSeconds?: number; bodyClipIds?: number[]; clipModel?: ClipModelChoice };
+type BriefChanges = { kind?: VideoKind; adaptation?: string | null; note?: string | null; hookSeconds?: number; bodyClipIds?: number[]; bodyClipTrims?: Record<string, { fromS: number; toS: number }>; clipModel?: ClipModelChoice };
 
 /** Guarda en el vídeo; se ve al instante y, si el servidor no lo acepta, vuelve a como estaba. */
 function useSaveBrief(videoId: number) {
@@ -240,7 +240,7 @@ export function BriefPanel({ view }: { view: VideoViewJson }) {
       {(hookOnly || adapting) && (mine || view.bodies.length > 0) ? (
         <div className="flex flex-col gap-2">
           <span className="text-sm font-medium">Cuerpos</span>
-          <BodyPicker productId={video.productId} value={video.bodyClipIds} onChange={(bodyClipIds) => void save({ bodyClipIds })} readOnly={!mine} />
+          <BodyPicker productId={video.productId} value={video.bodyClipIds} trims={video.bodyClipTrims} onTrimsChange={(bodyClipTrims) => void save({ bodyClipTrims })} onChange={(bodyClipIds) => void save({ bodyClipIds })} readOnly={!mine} />
         </div>
       ) : null}
       {mine || video.note || adapting ? (

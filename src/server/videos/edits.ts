@@ -69,6 +69,7 @@ export interface EditSpec {
     role: "hook" | "body" | "clip";
     jobId: string | null;
     url: string;
+    trim?: { fromS: number; toS: number };
   }>;
   /** Con «Solo gancho», lo que dura de verdad el gancho (el clip generado puede ser más largo). */
   hookMs: number | null;
@@ -187,7 +188,7 @@ async function buildSpec(video: Video, product: Product): Promise<EditSpec> {
     const chosen = video.bodyClipIds.length > 0 ? video : { ...video, bodyClipIds: await productBodyIds(video.productId) };
     for (const body of await bodiesOfVideo(chosen, { raw: true })) {
       if (!servableClipUrl(body.videoUrl)) throw new HttpError(409, BODY_NOT_SERVABLE);
-      clips.push({ role: "body", jobId: body.jobId, url: body.videoUrl });
+      clips.push({ role: "body", jobId: body.jobId, url: body.videoUrl, ...(video.bodyClipTrims?.[body.id] ? { trim: video.bodyClipTrims[body.id] } : {}) });
     }
   } else {
     clips.push({ role: "clip", jobId: clip.jobId, url: clip.url });

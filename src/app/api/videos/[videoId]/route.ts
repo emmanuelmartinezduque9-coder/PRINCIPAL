@@ -39,7 +39,7 @@ export async function PUT(request: Request, { params }: { params: Promise<{ vide
     const { videoId } = await params;
     const body = (await request.json().catch(() => null)) as Record<string, unknown> | null;
     const input = body && typeof body === "object" && !Array.isArray(body) ? body : {};
-    const { title, avatarPhotoId, avatarLibraryId, environmentPhotoId, avatarMode, variantId, clipResolution, clipModel, kind, adaptation, hookSeconds, bodyClipIds, note, imagePrompt, videoPrompt, frameUse, songId, editReferenceUrl, frameCount, dubDialogue } =
+    const { title, avatarPhotoId, avatarLibraryId, environmentPhotoId, avatarMode, variantId, clipResolution, clipModel, kind, adaptation, hookSeconds, bodyClipIds, bodyClipTrims, note, imagePrompt, videoPrompt, frameUse, songId, editReferenceUrl, frameCount, dubDialogue } =
       input;
     if (title !== undefined && typeof title !== "string") return badRequest("Escribe el título del vídeo.");
     if (!isPhotoChoice(avatarPhotoId)) return badRequest("Elige una foto con papel «Avatar» de este producto.");
@@ -66,7 +66,7 @@ export async function PUT(request: Request, { params }: { params: Promise<{ vide
       kind,
       adaptation,
       hookSeconds,
-      bodyClipIds,
+      bodyClipIds, bodyClipTrims,
       note,
       editReferenceUrl,
       frameCount,

@@ -260,6 +260,17 @@ if spec.get('title')`));
     expect((await runRow(runId)).requestedBy).toBe(dueno.id);
   });
 
+  it("envía el tramo por cuerpo al montador y deja los demás sin tramo", async () => {
+    const product = await makeProduct(dueno);
+    const b1 = await body(dueno, product.id, "https://d1abc.cloudfront.net/b1.mp4", "Uno");
+    const b2 = await body(dueno, product.id, "https://d1abc.cloudfront.net/b2.mp4", "Dos");
+    const trim = { fromS: 7, toS: 10 };
+    const video = await videoWithClip(dueno, { kind: "solo_gancho", bodyClipIds: [b1, b2], bodyClipTrims: { [b1]: trim } }, product);
+    const spec = await specOf((await startEdit(dueno, video.id, T0)).runId);
+    expect(spec.clips[1].trim).toEqual(trim);
+    expect(spec.clips[2]).not.toHaveProperty("trim");
+  });
+
   it("Adaptación: apertura completa y cuerpos ordenados; sin selección conserva el clip solo", async () => {
     const product = await makeProduct(dueno);
     const b1 = await body(dueno, product.id, "https://d1abc.cloudfront.net/b1.mp4", "Uno");

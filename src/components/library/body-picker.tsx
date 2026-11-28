@@ -1,8 +1,10 @@
 "use client";
 
+import { useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { BookmarkPlus, ChevronLeft, ChevronRight, Minus, Plus } from "lucide-react";
 import Link from "next/link";
+import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
 import { MAX_HOOK_SECONDS, MAX_VIDEO_BODIES, MIN_HOOK_SECONDS } from "@/components/videos/brief-labels";
 import { api } from "@/lib/api";
@@ -75,7 +77,11 @@ function BodyThumb({
   full,
   onToggle,
   onMove,
+  trim,
+  onTrim,
 }: {
+  trim?: { fromS: number; toS: number };
+  onTrim?: (trim?: { fromS: number; toS: number }) => void;
   body: ProductBodyJson;
   /** Posición entre los elegidos (1, 2…) o `null` si no está elegido. */
   order: number | null;
@@ -125,6 +131,7 @@ function BodyThumb({
       <span className={cn("line-clamp-2 min-h-7 text-[11px] leading-[0.875rem] break-words", picked ? "font-medium" : "text-muted-foreground")} title={body.label}>
         {body.label}
       </span>
+      <BodyTrimPlayer body={body} trim={trim} onTrim={readOnly || !picked ? undefined : onTrim} />
       {body.auto ? <span className="text-[10px] text-muted-foreground">Automático</span> : null}
       {body.accountName ? <span className="truncate text-[10px] text-muted-foreground" title={body.accountName}>{body.accountName}</span> : null}
       {picked && !readOnly && count > 1 ? (
@@ -150,9 +157,13 @@ export function BodyPicker({
   productId,
   value,
   onChange,
+  trims = {},
+  onTrimsChange,
   readOnly = false,
   className,
 }: {
+  trims?: Record<string, { fromS: number; toS: number }>;
+  onTrimsChange?: (trims: Record<string, { fromS: number; toS: number }>) => void;
   productId: number;
   value: number[];
   onChange: (ids: number[]) => void;
@@ -216,6 +227,12 @@ export function BodyPicker({
           <BodyThumb
             key={body.id}
             body={body}
+            trim={trims[body.id]}
+            onTrim={onTrimsChange ? (trim) => {
+              const next = { ...trims };
+              if (trim) next[body.id] = trim; else delete next[body.id];
+              onTrimsChange(next);
+            } : undefined}
             order={at < 0 ? null : at + 1}
             count={picked.length}
             readOnly={readOnly}
@@ -227,4 +244,30 @@ export function BodyPicker({
       })}
     </ul>
   );
+}
+
+function BodyTrimPlayer({ body, trim, onTrim }: { body: ProductBodyJson; trim?: { fromS: number; toS: number }; onTrim?: (trim?: { fromS: number; toS: number }) => void }) {
+  const player = useRef<HTMLVideoElement>(null);
+  const [open, setOpen] = useState(false);
+  const [duration, setDuration] = useState(0);
+  const [fromS, setFrom] = useState(trim?.fromS ?? 0);
+  const [toS, setTo] = useState(trim?.toS ?? 0);
+  const [error, setError] = useState("");
+  return <>
+    <button type="button" className="text-xs underline" onClick={() => setOpen(!open)}>Reproducir / tramo</button>
+    <Dialog open={open} onOpenChange={setOpen}><DialogContent className="sm:max-w-lg">
+        <div className="flex justify-between"><DialogTitle>{body.label}</DialogTitle><button type="button" onClick={() => setOpen(false)}>Cerrar</button></div>
+        <video ref={player} src={body.videoUrl} controls playsInline preload="metadata" className="max-h-[55vh] w-full" onLoadedMetadata={(e) => { const d = e.currentTarget.duration; setDuration(d); if (!trim) setTo(d); }} />
+        {onTrim ? <>
+          <label className="block">Desde (s) <input type="number" min={0} max={duration} step="0.01" value={fromS} onChange={(e) => setFrom(Number(e.target.value))} /></label>
+          <button type="button" onClick={() => setFrom(player.current?.currentTime ?? 0)}>Desde aquí</button>
+          <label className="block">Hasta (s) <input type="number" min={0} max={duration} step="0.01" value={toS} onChange={(e) => setTo(Number(e.target.value))} /></label>
+          <button type="button" onClick={() => setTo(player.current?.currentTime ?? 0)}>Hasta aquí</button>
+          <p>{(toS - fromS).toFixed(2)} s seleccionados</p>
+          {error ? <p role="alert">{error}</p> : null}
+          <button type="button" onClick={() => { if (!Number.isFinite(fromS) || !Number.isFinite(toS) || fromS < 0 || toS > duration || toS - fromS < 0.5) { setError("Elige un tramo de al menos 0,5 s dentro del clip."); return; } onTrim({ fromS, toS }); setOpen(false); }}>Guardar tramo</button>
+          <button type="button" onClick={() => { onTrim(); setFrom(0); setTo(duration); setOpen(false); }}>Usar clip entero</button>
+        </> : <p>{trim ? `Desde ${trim.fromS} hasta ${trim.toS} s` : "Clip entero"}</p>}
+    </DialogContent></Dialog>
+  </>;
 }

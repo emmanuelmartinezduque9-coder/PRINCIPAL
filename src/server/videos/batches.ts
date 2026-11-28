@@ -12,7 +12,7 @@ import { coverPhotoIds, listProductPhotos } from "@/server/photos";
 import { listProductsFor, productDisplayName } from "@/server/products";
 import { accountFileName, editFileName, editViews, openEditStream, type EditView } from "@/server/videos/edits";
 import { downloadableClipUrl, servableClipUrl } from "@/server/videos/clip";
-import { bodiesOfVideos, checkVideoBodies } from "@/server/videos/bodies";
+import { bodiesOfVideos, checkVideoBodies, checkVideoBodyTrims } from "@/server/videos/bodies";
 import { costsOfVideo, type VideoCosts } from "@/server/videos/costs";
 import { generationLock, generationView, pollVideoGenerations, type GenerationView } from "@/server/videos/generations";
 import { analysisLock, type Analysis } from "@/server/videos/analysis";
@@ -335,6 +335,7 @@ export async function addVideoToBatch(
     adaptation?: unknown;
     hookSeconds?: unknown;
     bodyClipIds?: unknown;
+  bodyClipTrims?: unknown;
     note?: unknown;
     linkUrl?: unknown;
     /** «Música»: una canción de la biblioteca o `null` / sin enviar («Audio original»). */
@@ -383,7 +384,9 @@ export async function addVideoToBatch(
   const bodyClipIds = input.bodyClipIds === undefined ? undefined : await checkVideoBodies(input.productId, input.bodyClipIds);
   const songId = (await checkSongChoice(input.songId)) ?? null;
   const variantId = input.variantId === undefined || input.variantId === null ? null : await checkVariantChoice(user, input.productId, input.variantId);
+  const bodyClipTrims = await checkVideoBodyTrims(input.productId, bodyClipIds ?? [], input.bodyClipTrims ?? {});
   const extras = {
+    bodyClipTrims,
     batchId: batch.id,
     note,
     avatarPhotoId: input.avatarPhotoId,
@@ -769,6 +772,7 @@ export async function duplicateBatchVideo(user: AuthUser, batchId: number, video
       adaptation: video.adaptation,
       hookSeconds: video.hookSeconds,
       bodyClipIds: video.bodyClipIds,
+      bodyClipTrims: video.bodyClipTrims,
       environmentPhotoId: video.environmentPhotoId,
       clipResolution: video.clipResolution,
       clipModel: video.clipModel,

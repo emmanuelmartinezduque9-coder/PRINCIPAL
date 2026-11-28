@@ -14,7 +14,7 @@ import type { Analysis, AnalysisQuestion } from "@/server/videos/analysis";
 import { startingAvatar } from "@/lib/default-avatar";
 import { linkOf } from "@/lib/links";
 import { analysisStaleness, answersText, checkKindInput, cleanNote, isAvatarMode, type AvatarMode, type VideoKind } from "@/server/videos/brief";
-import { bodiesOfVideo, checkVideoBodies, type VideoBody } from "@/server/videos/bodies";
+import { bodiesOfVideo, checkVideoBodies, checkVideoBodyTrims, type VideoBody } from "@/server/videos/bodies";
 import { analysisCostMicros, costsOfVideo, type VideoCosts } from "@/server/videos/costs";
 import { clipManifest, imageManifest, type ManifestItem, type ManifestRefs, clipPromptFor } from "@/server/videos/manifest";
 import { listReferences, referencesView } from "@/server/videos/referencias";
@@ -130,6 +130,7 @@ export interface NewVideoExtras {
   adaptation?: string | null;
   hookSeconds?: number;
   bodyClipIds?: number[];
+  bodyClipTrims?: Record<string, { fromS: number; toS: number }>;
   /** Cómo se genera la réplica (ya comprobado con `checkClipModel`); sin él, «Automático». */
   clipModel?: ClipModelChoice;
   /** Ya comprobada (`checkSongChoice`), con su modo (`audioColumns`). */
@@ -370,6 +371,7 @@ export interface VideoChoicesInput {
   hookSeconds?: unknown;
   /** Lista ordenada de cuerpos (`product_bodies.id`) de este producto. */
   bodyClipIds?: unknown;
+  bodyClipTrims?: unknown;
   note?: unknown;
   /** «Referencia de edición»: un enlace admitido, o `null` / vacío para quitarla. */
   editReferenceUrl?: unknown;
@@ -413,13 +415,16 @@ export async function updateVideoChoices(user: AuthUser, videoId: number, input:
   if (input.note !== undefined) changes.note = cleanNote(input.note);
   if (input.bodyClipIds !== undefined) changes.bodyClipIds = await checkVideoBodies(video.productId, input.bodyClipIds);
 
+  if (input.bodyClipTrims !== undefined) changes.bodyClipTrims = await checkVideoBodyTrims(video.productId, changes.bodyClipIds ?? video.bodyClipIds, input.bodyClipTrims);
+  else if (changes.bodyClipIds) changes.bodyClipTrims = Object.fromEntries(Object.entries(video.bodyClipTrims ?? {}).filter(([id]) => changes.bodyClipIds!.includes(Number(id))));
+
   Object.assign(changes, await checkAvatarInput(user, video.productId, input));
   if (input.environmentPhotoId !== undefined) {
     changes.environmentPhotoId = checkPhoto(await listProductPhotos(user, video.productId), input.environmentPhotoId, "entorno");
   }
   if (input.variantId !== undefined) changes.variantId = await checkVariantChoice(user, video.productId, input.variantId);
   // La referencia de edición no llega al desglose: cambiarla sola no despierta el desglose automático.
-  const briefChanged = Object.keys(changes).length > 0;
+  const briefChanged = Object.keys(changes).some((key) => key !== "bodyClipTrims");
   const editReferenceUrl = checkEditReferenceUrl(input.editReferenceUrl);
   if (editReferenceUrl !== undefined) changes.editReferenceUrl = editReferenceUrl;
   // Cuántas imágenes: tampoco llega al desglose.

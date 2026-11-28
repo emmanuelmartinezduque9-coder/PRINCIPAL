@@ -30,6 +30,7 @@ Qué decide solo (el resto lo decide montador.py, como en el pedido 54; ver docs
 Rótulos: texto06b.py (mismo dibujo que el Swift del Mac, en cualquier sistema); sin librosa no hay beats (aviso).
 Corre igual en el Mac y en la nube (proceso en segundo plano de Railway: src/server/videos/montaje-nube.ts).
 """
+import math
 import contextlib
 import json
 import os
@@ -342,7 +343,19 @@ def construir_plan(spec, clips, work, font, gancho=None, pistas=None, con_audio=
         tipo = 'gancho+cuerpo'
         a, b = gancho
         plan_clips = [dict(role='hook', path=hooks[0], in_frame=a, out_frame=b)]
-        plan_clips += [dict(role='body', auto=True, path=p) for p in bodies]
+        body_specs = [c for c in spec.get('clips', []) if c.get('role') == 'body']
+        for i, p in enumerate(bodies):
+            trim = body_specs[i].get('trim') if i < len(body_specs) else None
+            if trim is None:
+                plan_clips.append(dict(role='body', auto=True, path=p))
+            else:
+                a, b = trim['fromS'], trim['toS']
+                if not (math.isfinite(a) and math.isfinite(b) and 0 <= a < b and b - a >= 0.5):
+                    raise Fallo('Tramo de cuerpo inválido')
+                end = round(b * m.FPS)
+                if end > m.video_frames(p):
+                    raise Fallo('El tramo supera la duración del cuerpo')
+                plan_clips.append(dict(role='body', path=p, in_frame=round(a * m.FPS), out_frame=end))
     else:
         tipo = 'replica'
         plan_clips = [dict(role='replica', auto=True, path=p) for _, p in clips[:1]]
