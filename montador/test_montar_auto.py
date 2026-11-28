@@ -461,3 +461,22 @@ class TramosCuerpo(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main(verbosity=1)
+
+
+class RotulosSinPartir(unittest.TestCase):
+    """Orden de Emmanuel (28/11/2026): un texto de la referencia nunca se parte en varios rótulos."""
+
+    def test_texto_largo_sale_entero_en_un_rotulo(self):
+        from rotulos_layout import prepare_cues, PillowFont, FIXED_SIZE
+        import glob
+        fuentes = glob.glob('/System/Library/Fonts/Supplemental/Arial*.ttf') + glob.glob('/usr/share/fonts/**/*.ttf', recursive=True)
+        if not fuentes:
+            self.skipTest('sin fuente TTF')
+        f = PillowFont(fuentes[0])
+        texto = 'POV: mein Freund hat mir das geschenkt und ich kann nicht aufhören, es zu benutzen 🥹🍨💗'
+        cues = prepare_cues(f, [dict(text=texto, start=0, end=3)])
+        self.assertEqual(len(cues), 1)
+        self.assertLessEqual(len(cues[0]['lines']), 3)
+        corto = prepare_cues(f, [dict(text='Ich dachte, das wäre ein Lied aus dem Radio 😲', start=0, end=3)])
+        self.assertEqual(len(corto[0]['lines']), 2)
+        self.assertEqual(corto[0]['font_size_px'], FIXED_SIZE)

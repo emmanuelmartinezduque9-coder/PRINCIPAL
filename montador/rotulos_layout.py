@@ -105,15 +105,18 @@ def _split(font, text, size, max_lines, glue):
 # tamaño solo varía un poco (de MIN_TEXT_SIZE a FIXED_SIZE) para que no se note. Nunca se parte una frase
 # en varios rótulos («Este regalo lo necesitan mucho» + «mamás» perdía el sentido).
 MIN_TEXT_SIZE = 62
+LAST_RESORT_SIZE = 40
 
 
 def two_line_block(font, text):
     """[[líneas]], tamaño: el texto entero en 2 líneas (1 si es una sola palabra) al mayor tamaño entre
     FIXED_SIZE y MIN_TEXT_SIZE; si a ese mínimo no cabe en 2, en 3 líneas; si tampoco, None (se reparte)."""
-    for lines_wanted in (2, 3):
-        for size in range(FIXED_SIZE, MIN_TEXT_SIZE - 1, -2):
+    # 2 líneas de 74 a 62 px; si no cabe, 3 líneas de 74 a 62; y para textos muy largos, 3 líneas bajando
+    # hasta LAST_RESORT_SIZE antes de partir nunca una frase (caso «… ich kann nicht aufhören, | es zu benutzen»).
+    for lines_wanted, low in ((2, MIN_TEXT_SIZE), (3, MIN_TEXT_SIZE), (3, LAST_RESORT_SIZE)):
+        for size in range(FIXED_SIZE if low == MIN_TEXT_SIZE else MIN_TEXT_SIZE - 2, low - 1, -2):
             for glue in (True, False):
-                lines = balanced_lines(font, text, size, max_lines=lines_wanted, glue=glue, min_lines=lines_wanted)
+                lines = balanced_lines(font, text, size, max_lines=lines_wanted, glue=glue, min_lines=min(lines_wanted, 2))
                 if lines:
                     return [lines], size
     return None
