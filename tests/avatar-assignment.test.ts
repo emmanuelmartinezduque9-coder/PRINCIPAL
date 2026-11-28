@@ -96,4 +96,10 @@ describe("reserva y ampliación de biblioteca con fotos reales", () => {
     const queries = mock.execute.mock.calls.map(([query]) => new PgDialect().sqlToQuery(query).sql);
     expect(queries.filter((q) => q.startsWith("update video_analyses"))).toHaveLength(1);
   });
+  it("la gente de fondo sin sexo ni edad no lleva avatar y no tumba el desglose (lote 14)", async () => {
+    mock.library.mockResolvedValue([portrait(1), portrait(2)]);
+    const crowd = { id: "clientes_borrosos", gender: "desconocido" as const, approxAge: null, notes: "", opening: false, appearances: [{ startS: 5, endS: 7 }] };
+    const assigned = await assignPeople(context, [people[0], crowd], target, ["DE"]);
+    expect(assigned).toEqual([{ personId: "a", avatarId: expect.any(Number) }]);
+  });
 });

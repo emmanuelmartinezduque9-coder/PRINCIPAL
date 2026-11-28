@@ -38,7 +38,9 @@ export async function assignPeople(context: AssignmentContext, people: Reference
         continue;
       }
       const target = index === 0 ? principal : avatarTarget({ texts: [], personaRef: { ...person, present: true }, angleAudience: null });
-      if (!target) throw new Error(`No se conoce el sexo/edad de ${person.id}; hace falta completar el desglose.`);
+      // Gente de fondo o sin sexo/edad claros (clientes borrosos, transeúntes): no lleva avatar propio y
+      // nunca tumba el desglose (lote 14 del 28/11 se quedó parado por esto).
+      if (!target) continue;
       const last = rows.find((r) => r.product_id === context.productId && r.ids.length)?.ids ?? [];
       // Sin Pinterest disponible (relaxed) solo se evita repetir dentro del mismo vídeo: mejor un avatar
       // poco usado de la biblioteca que parar el desglose y el lote.
