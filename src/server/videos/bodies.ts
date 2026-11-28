@@ -14,7 +14,7 @@ import { fileSlug } from "@/server/videos/filename";
  */
 
 export const MAX_LABEL = 60;
-/** Cuerpos que puede llevar un vídeo «Solo gancho». */
+/** Cuerpos que puede llevar un vídeo «Solo gancho» o «Adaptación». */
 export const MAX_VIDEO_BODIES = 10;
 
 const NOT_FOUND = "Cuerpo no encontrado.";

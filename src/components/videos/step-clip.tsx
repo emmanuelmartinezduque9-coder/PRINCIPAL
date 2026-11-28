@@ -288,7 +288,7 @@ export function StepClip({
         ) : null}
 
         {view.hook ? <HookLength hook={view.hook} /> : null}
-        {hookOnly ? <Bodies bodies={view.bodies} /> : null}
+        {hookOnly || video.kind === "adaptacion_concepto" ? <Bodies bodies={view.bodies} /> : null}
 
         {mine && closed && !canRequest ? <NoRegenerationsLeft what="clip" /> : null}
         <ReportButton target={{ stage: "clip", videoId: video.id, generationId: current?.id ?? null }} className="self-start" />

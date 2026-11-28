@@ -181,7 +181,7 @@ async function buildSpec(video: Video, product: Product): Promise<EditSpec> {
   const clip = await downloadableClip(video);
   if (!clip) throw new HttpError(409, NO_CLIP);
   const clips: EditSpec["clips"] = [];
-  if (video.kind === "solo_gancho") {
+  if (video.kind === "solo_gancho" || (video.kind === "adaptacion_concepto" && video.bodyClipIds.length > 0)) {
     clips.push({ role: "hook", jobId: clip.jobId, url: clip.url });
     // Sin cuerpos elegidos en la tarjeta: los del producto (un «Solo gancho» lleva su cuerpo).
     const chosen = video.bodyClipIds.length > 0 ? video : { ...video, bodyClipIds: await productBodyIds(video.productId) };
@@ -212,7 +212,9 @@ async function buildSpec(video: Video, product: Product): Promise<EditSpec> {
     kind: video.kind,
     product: { name: product.name, language: product.language, countries: product.countries, kind: product.kind },
     clips,
-    hookMs: hookTiming(video)?.hookMs ?? null,
+    hookMs: video.kind === "adaptacion_concepto" && clips.some((clip) => clip.role === "body")
+      ? video.segmentDurationMs
+      : hookTiming(video)?.hookMs ?? null,
     song: song ? { id: song.id, title: song.title, dropMs: personalized ? 0 : song.dropMs, startMs: personalized ? 0 : song.startMs, durationMs: song.durationMs } : null,
     ...(lyrics ? { lyrics } : {}),
     referenceAudio: original === "web" ? { source: "web" } : original ? { source: "enlace", url: original.link } : null,

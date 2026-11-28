@@ -260,6 +260,23 @@ if spec.get('title')`));
     expect((await runRow(runId)).requestedBy).toBe(dueno.id);
   });
 
+  it("Adaptación: apertura completa y cuerpos ordenados; sin selección conserva el clip solo", async () => {
+    const product = await makeProduct(dueno);
+    const b1 = await body(dueno, product.id, "https://d1abc.cloudfront.net/b1.mp4", "Uno");
+    const b2 = await body(dueno, product.id, "https://d1abc.cloudfront.net/b2.mp4", "Dos");
+    const video = await videoWithClip(dueno, { kind: "adaptacion_concepto", segmentDurationMs: 12000, bodyClipIds: [b2, b1] }, product);
+    const { runId } = await startEdit(dueno, video.id, T0);
+    expect(await specOf(runId)).toMatchObject({ kind: "adaptacion_concepto", hookMs: 12000, clips: [
+      { role: "hook", url: CLIP },
+      { role: "body", jobId: "lib-Dos" },
+      { role: "body", jobId: "lib-Uno" },
+    ] });
+    const plain = await videoWithClip(dueno, { kind: "adaptacion_concepto", bodyClipIds: [] }, product);
+    const run = await startEdit(dueno, plain.id, T0);
+    expect((await specOf(run.runId)).clips).toMatchObject([{ role: "clip", url: CLIP }]);
+    expect((await specOf(run.runId)).clips).toHaveLength(1);
+  });
+
   it("«Solo gancho» sin cuerpos elegidos: lleva los cuerpos del producto (gancho y cuerpo, nunca el gancho solo)", async () => {
     const product = await makeProduct(dueno, { name: "FalterPfote" });
     await body(dueno, product.id, "https://d1abc.cloudfront.net/bury.mp4", "bury");

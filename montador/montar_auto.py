@@ -490,7 +490,8 @@ def montar(spec, work, fuente=None):
     if hooks and any(r == 'body' for r, _ in norm):
         an = m.analyze_clip(hooks[0], m.CACHE / 'analisis_clips')
         objetivo = (spec.get('hookMs') or 0) / 1000 or (pistas or {}).get('gancho_s') or HOOK_MAX_S
-        gancho = rango_gancho(an, objetivo, an['frames'])
+        # La adaptación es la apertura completa, sin el recorte de un gancho corto.
+        gancho = (0, an['frames']) if spec.get('kind') == 'adaptacion_concepto' else rango_gancho(an, objetivo, an['frames'])
     con_audio = len(norm) == 1 and not spec.get('song') and tiene_audio(norm[0][1])
     plan, mas = construir_plan(spec, norm, work, font, gancho=gancho, pistas=pistas, con_audio=con_audio)
     avisos += mas

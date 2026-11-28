@@ -207,3 +207,22 @@ describe("tipo «Solo gancho»: desglose", () => {
     expect(analysisStaleness(done, { ...source({ kind: "solo_gancho", hookSeconds: 4 }), referenceMediaId: "media-2" })).toBe("reference");
   });
 });
+
+
+describe("Adaptación con cuerpos", () => {
+  it("el desglose conserva la adaptación y prepara solo la apertura", () => {
+    const brief = briefOf(source({ kind: "adaptacion_concepto", adaptation: "Mi idea", bodyClipIds: [2, 1] }));
+    expect(brief.adaptation).toBe("Mi idea");
+    expect(analysisInstructions(brief)).toContain("detrás se pegarán los cuerpos");
+    expect(analysisInstructions(brief)).toContain("clip adaptado completo");
+    expect(analysisInstructions(briefOf(source({ kind: "adaptacion_concepto", bodyClipIds: [] })))).not.toContain("detrás se pegarán los cuerpos");
+  });
+  it("añadir o quitar cuerpos invalida el desglose; reordenarlos conserva la apertura", () => {
+    const base = source({ kind: "adaptacion_concepto", bodyClipIds: [1] });
+    const saved = { ...source({ kind: "adaptacion_concepto" }), result: { openingWithBodies: true } };
+    expect(analysisStaleness(saved, base)).toBeNull();
+    expect(analysisStaleness(saved, { ...base, bodyClipIds: [2, 1] })).toBeNull();
+    expect(analysisStaleness(saved, { ...base, bodyClipIds: [] })).toBe("brief");
+    expect(analysisStaleness(source({ kind: "adaptacion_concepto" }), base)).toBe("brief");
+  });
+});

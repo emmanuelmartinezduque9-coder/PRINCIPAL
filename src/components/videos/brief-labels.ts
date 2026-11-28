@@ -8,7 +8,7 @@ export const MAX_PRODUCT_NOTES = 4_000;
 export const MIN_HOOK_SECONDS = 2;
 export const MAX_HOOK_SECONDS = 8;
 export const DEFAULT_HOOK_SECONDS = 4;
-/** Cuerpos que puede llevar un vídeo «Solo gancho» (`MAX_VIDEO_BODIES` en el servidor). */
+/** Cuerpos que puede llevar un vídeo «Solo gancho» o «Adaptación» (`MAX_VIDEO_BODIES` en el servidor). */
 export const MAX_VIDEO_BODIES = 10;
 
 export const KINDS: readonly VideoKind[] = ["replicar", "adaptacion_concepto", "solo_gancho"];

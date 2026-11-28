@@ -124,13 +124,13 @@ describe("marcar y desmarcar cuerpos", () => {
 });
 
 describe("los cuerpos de un vídeo «Solo gancho»", () => {
-  it("se guardan en orden y tienen que ser cuerpos de ese mismo producto", async () => {
+  it.each(["solo_gancho", "adaptacion_concepto"])("%s: se guardan en orden y tienen que ser cuerpos de ese mismo producto", async (kind) => {
     const a = await markBody(ana, producto.id, { clipId: await libraryClip(ana), label: "A" });
     const b = await markBody(ana, producto.id, { clipId: await libraryClip(ana), label: "B" });
     const ajeno = await markBody(luis, otro.id, { clipId: await libraryClip(luis), label: "De otro producto" });
     const video = await createVideo(ana, producto.id);
 
-    await updateVideoChoices(ana, video.id, { kind: "solo_gancho", bodyClipIds: [b.id, a.id] });
+    await updateVideoChoices(ana, video.id, { kind, bodyClipIds: [b.id, a.id] });
     expect((await getVideoFor(ana, video.id)).bodyClipIds).toEqual([b.id, a.id]);
     expect((await videoView(ana, video.id)).bodies).toEqual([
       { id: b.id, label: "B", thumbUrl: `${CDN}/hf-2_min.webp`, videoUrl: `${CDN}/hf-2.mp4`, previewUrl: null, jobId: "hf-2" },
@@ -150,28 +150,28 @@ describe("los cuerpos de un vídeo «Solo gancho»", () => {
     expect((await videoView(ana, video.id)).bodies).toEqual([]);
   });
 
-  it("en un lote: se crea con su gancho y sus cuerpos, el tablero dice cuántos lleva y duplicar los copia", async () => {
+  it.each(["solo_gancho", "adaptacion_concepto"])("%s en un lote: guarda cuerpos y duplicar los copia", async (kind) => {
     const a = await markBody(ana, producto.id, { clipId: await libraryClip(ana), label: "A" });
     const b = await markBody(ana, producto.id, { clipId: await libraryClip(ana), label: "B" });
     const ajeno = await markBody(luis, otro.id, { clipId: await libraryClip(luis) });
     const batch = await createBatch(ana, "Ganchos");
     const base = { productId: producto.id, avatarPhotoId: null, avatarMode: "nadie" };
 
-    await expect(addVideoToBatch(ana, batch.id, { ...base, kind: "solo_gancho", bodyClipIds: [ajeno.id] })).rejects.toMatchObject({ status: 400 });
-    await expect(addVideoToBatch(ana, batch.id, { ...base, kind: "solo_gancho", hookSeconds: 9 })).rejects.toMatchObject({ status: 400 });
-    const video = await addVideoToBatch(ana, batch.id, { ...base, kind: "solo_gancho", hookSeconds: 6, bodyClipIds: [b.id, a.id] });
-    expect(video).toMatchObject({ kind: "solo_gancho", hookSeconds: 6, bodyClipIds: [b.id, a.id] });
+    await expect(addVideoToBatch(ana, batch.id, { ...base, kind, bodyClipIds: [ajeno.id] })).rejects.toMatchObject({ status: 400 });
+    await expect(addVideoToBatch(ana, batch.id, { ...base, kind, hookSeconds: 9 })).rejects.toMatchObject({ status: 400 });
+    const video = await addVideoToBatch(ana, batch.id, { ...base, kind, hookSeconds: 6, bodyClipIds: [b.id, a.id] });
+    expect(video).toMatchObject({ kind, hookSeconds: 6, bodyClipIds: [b.id, a.id] });
     const plain = await addVideoToBatch(ana, batch.id, base);
     expect(plain).toMatchObject({ kind: "replicar", hookSeconds: 4, bodyClipIds: [] });
 
     const copy = await duplicateBatchVideo(ana, batch.id, video.id);
-    expect(copy).toMatchObject({ kind: "solo_gancho", hookSeconds: 6, bodyClipIds: [b.id, a.id] });
+    expect(copy).toMatchObject({ kind, hookSeconds: 6, bodyClipIds: [b.id, a.id] });
     await unmarkBody(ana, a.id);
     const rows = (await batchView(ana, batch.id)).rows;
     expect(rows.map((row) => ({ kind: row.kind, hookSeconds: row.hookSeconds, bodies: row.bodies }))).toEqual([
-      { kind: "solo_gancho", hookSeconds: 6, bodies: 1 },
+      { kind, hookSeconds: 6, bodies: 1 },
       { kind: "replicar", hookSeconds: 4, bodies: 0 },
-      { kind: "solo_gancho", hookSeconds: 6, bodies: 1 },
+      { kind, hookSeconds: 6, bodies: 1 },
     ]);
   });
 });

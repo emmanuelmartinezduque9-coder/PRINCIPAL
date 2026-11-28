@@ -237,7 +237,7 @@ export function BriefPanel({ view }: { view: VideoViewJson }) {
         ) : null}
       </div>
       {view.clipModelProblem ? <p className="text-sm text-destructive">{view.clipModelProblem}</p> : null}
-      {hookOnly && (mine || view.bodies.length > 0) ? (
+      {(hookOnly || adapting) && (mine || view.bodies.length > 0) ? (
         <div className="flex flex-col gap-2">
           <span className="text-sm font-medium">Cuerpos</span>
           <BodyPicker productId={video.productId} value={video.bodyClipIds} onChange={(bodyClipIds) => void save({ bodyClipIds })} readOnly={!mine} />

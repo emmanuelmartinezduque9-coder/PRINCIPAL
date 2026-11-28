@@ -73,6 +73,15 @@ class Pistas(unittest.TestCase):
 
 
 class Plan(unittest.TestCase):
+    def test_adaptacion_con_cuerpos_conserva_apertura_y_cta_final(self):
+        clips = [('hook', '/w/0.mp4'), ('body', '/w/1.mp4'), ('body', '/w/2.mp4')]
+        spec = dict(SPEC, kind='adaptacion_concepto', hookMs=12000)
+        plan, _ = ma.construir_plan(spec, clips, '/w', '/f.ttf', gancho=(0, 288))
+        original, _ = ma.construir_plan(SPEC, clips, '/w', '/f.ttf', gancho=(0, 288))
+        self.assertEqual(plan['clips'], original['clips'])
+        self.assertEqual(plan['texts'], original['texts'])
+        self.assertEqual(plan['clips'][0]['out_frame'], 288)
+
     def test_gancho_y_cuerpos_en_orden_con_el_drop_al_empezar_el_cuerpo(self):
         clips = [('hook', '/w/0.mp4'), ('body', '/w/1.mp4'), ('body', '/w/2.mp4')]
         plan, avisos = ma.construir_plan(SPEC, clips, '/w', '/f.ttf', gancho=(3, 99))

@@ -9,7 +9,7 @@ const isId = (value: unknown): value is number => Number.isSafeInteger(value) &&
  * → `{ video }`. `avatarMode`: `elegido` (con `avatarPhotoId`) | `biblioteca` (con `avatarLibraryId`)
  * | `automatico` | `sin_sustitucion` | `nadie`; `variantId`: una variante del producto o `null`; `kind`: `replicar` (por
  * defecto) | `adaptacion_concepto` | `solo_gancho` (con `hookSeconds`, 2–8, y `bodyClipIds`, los
- * cuerpos de ese producto en orden). Con `linkUrl`, la referencia es ese enlace pegado: lo trae el
+ * cuerpos de ese producto en orden). `adaptacion_concepto` también acepta `bodyClipIds`. Con `linkUrl`, la referencia es ese enlace pegado: lo trae el
  * Mac de quien lo pide. `songId`: la «Música» (id de una canción o `null`, audio original).
  * `editReferenceUrl`: la «Referencia de edición» (un enlace admitido o `null`; solo se guarda).
  * `clipModel`: cómo se genera la réplica (`auto`, por defecto, o un modelo).

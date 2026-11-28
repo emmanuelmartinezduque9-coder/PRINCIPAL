@@ -37,7 +37,7 @@ export interface Row {
   kind: VideoKind;
   /** «Qué adaptación quieres» (solo con adaptación). */
   adaptation: string;
-  /** Duración del gancho y cuerpos que van detrás, en orden (solo con «Solo gancho»). */
+  /** Duración solo con «Solo gancho»; cuerpos en orden con «Solo gancho» o «Adaptación». */
   hookSeconds: number;
   bodies: number[];
   /** «Cambios específicos». */

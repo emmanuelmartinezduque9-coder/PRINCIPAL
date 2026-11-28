@@ -177,11 +177,11 @@ function KindChip({ row }: { row: BatchRowJson }) {
   const bodies = row.bodies === 1 ? "1 cuerpo" : `${row.bodies} cuerpos`;
   return (
     <span
-      title={hookOnly ? `${long} · ${row.hookSeconds} s · ${bodies}` : long}
+      title={hookOnly ? `${long} · ${row.hookSeconds} s · ${bodies}` : row.kind === "adaptacion_concepto" && row.bodies > 0 ? `${long} · ${bodies}` : long}
       className={cn("inline-flex h-5 shrink-0 items-center gap-1 rounded-md px-1.5 text-[11px] font-medium tabular-nums", KIND_TINT[row.kind])}
     >
       <Icon className="size-3" aria-hidden />
-      {hookOnly ? `Gancho + ${row.bodies}` : short}
+      {hookOnly ? `Gancho + ${row.bodies}` : row.kind === "adaptacion_concepto" && row.bodies > 0 ? `${short} + ${row.bodies}` : short}
     </span>
   );
 }

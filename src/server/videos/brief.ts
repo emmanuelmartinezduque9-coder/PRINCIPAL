@@ -38,6 +38,10 @@ const PRODUCT_NOTES_TOO_LONG = `Las indicaciones no pueden tener más de ${thous
 
 /** Lo que cuenta de un vídeo para su desglose. */
 export interface BriefSource {
+  bodyClipIds?: number[];
+  /** Instantánea del encargo en curso; en desgloses guardados vive en result. */
+  openingWithBodies?: boolean;
+  result?: unknown;
   kind: string;
   avatarMode: string;
   /** Sin ellos (un desglose o una prueba de antes), cuentan como vacíos. */
@@ -66,6 +70,7 @@ export interface BriefSource {
  * `adaptacion_concepto`; la duración del gancho solo con `solo_gancho`.
  */
 export interface Brief {
+  openingWithBodies?: boolean;
   kind: VideoKind;
   avatarMode: AvatarMode;
   /** Solo con `elegido`. */
@@ -85,6 +90,7 @@ export interface Brief {
 export function briefOf(video: BriefSource): Brief {
   return {
     kind: video.kind as VideoKind,
+    ...(video.kind === "adaptacion_concepto" ? { openingWithBodies: video.openingWithBodies ?? (video.bodyClipIds !== undefined ? video.bodyClipIds.length > 0 : (video.result as { openingWithBodies?: boolean } | null)?.openingWithBodies === true) } : {}),
     avatarMode: video.avatarMode as AvatarMode,
     avatarPhotoId: video.avatarMode === "elegido" ? (video.avatarPhotoId ?? null) : null,
     avatarLibraryId: video.avatarMode === "biblioteca" ? (video.avatarLibraryId ?? null) : null,
@@ -127,6 +133,7 @@ export function analysisStaleness(
   const now = briefOf(video);
   const same =
     used.kind === now.kind &&
+    used.openingWithBodies === now.openingWithBodies &&
     sameAvatar(used, now, analysis.autoAvatarId ?? null) &&
     used.variantId === now.variantId &&
     used.note === now.note &&

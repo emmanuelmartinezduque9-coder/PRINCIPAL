@@ -521,9 +521,9 @@ function RowCard({
             className={cn("min-h-16 resize-y", row.adaptation.trim() === "" && "border-kind-adapt/40")}
           />
         ) : null}
-        {row.kind === "solo_gancho" && productId !== null ? (
+        {(row.kind === "solo_gancho" || row.kind === "adaptacion_concepto") && productId !== null ? (
           <div className="flex flex-wrap items-start gap-x-4 gap-y-3">
-            <HookStepper value={row.hookSeconds} onChange={(hookSeconds) => onChange({ hookSeconds })} disabled={busy} />
+            {row.kind === "solo_gancho" ? <HookStepper value={row.hookSeconds} onChange={(hookSeconds) => onChange({ hookSeconds })} disabled={busy} /> : null}
             <BodyPicker productId={productId} value={row.bodies} onChange={(bodies) => onChange({ bodies })} className="min-w-0 flex-1" />
           </div>
         ) : null}
@@ -872,7 +872,8 @@ export function NewBatch() {
                 variantId: row.variant,
                 kind: row.kind,
                 adaptation: row.kind === "adaptacion_concepto" ? row.adaptation.trim() : null,
-                ...(row.kind === "solo_gancho" ? { hookSeconds: row.hookSeconds, bodyClipIds: row.bodies } : {}),
+                ...(row.kind === "solo_gancho" ? { hookSeconds: row.hookSeconds } : {}),
+                ...(["solo_gancho", "adaptacion_concepto"].includes(row.kind) ? { bodyClipIds: row.bodies } : {}),
                 note: row.note.trim() || null,
                 songId: row.song?.id ?? null,
                 // El modelo del vídeo: el de la tarjeta o, en «Automático», el de su grupo.

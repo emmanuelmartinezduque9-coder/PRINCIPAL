@@ -463,6 +463,9 @@ Las explicaciones (conceptLogic, shots, adaptation, risks) van en español; los 
   sections.push(`Localización\n${localizationGuide(market)}`);
   if (usesPlaces(brief.kind)) sections.push(PLACES_ITEM);
   if (brief.kind === "adaptacion_concepto") sections.push(ADAPTATION_KIND);
+  if (brief.kind === "adaptacion_concepto" && brief.openingWithBodies) {
+    sections.push("Este clip adaptado funciona como apertura: detrás se pegarán los cuerpos ya generados, en el orden elegido. No diseñes, describas ni continúes esos cuerpos. La tabla, el mapa y los prompts cubren únicamente el clip adaptado completo, conservando su duración. Engancha desde el primer fotograma y termina en un punto desde el que se pueda cortar al cuerpo, sin cierre, sin resolución y sin llamada a la acción. Los rótulos y el CTA se aplican en el montaje, con el CTA al final de los cuerpos.");
+  }
   if (brief.kind === "solo_gancho" && brief.hookSeconds !== null) {
     sections.push(hookOnlyKind(hook ?? { hookMs: brief.hookSeconds * 1000, clipSeconds: clipDurationSeconds(brief.hookSeconds * 1000) }, model));
   }
@@ -782,9 +785,11 @@ async function insertAnalysis(
     }
     if (active) throw new HttpError(409, active.status === "paused" ? BUSY_PAUSED : BUSY);
     const [{ last }] = await tx.select({ last: max(analyses.version) }).from(analyses).where(eq(analyses.videoId, video.id));
+    const storedBrief = { ...brief };
+    delete storedBrief.openingWithBodies;
     const [row] = await tx
       .insert(analyses)
-      .values({ videoId: video.id, version: (last ?? 0) + 1, status: "queued", referenceMediaId: video.referenceMediaId, ...brief, createdBy: user.id })
+      .values({ videoId: video.id, version: (last ?? 0) + 1, status: "queued", referenceMediaId: video.referenceMediaId, ...storedBrief, createdBy: user.id })
       .returning({ id: analyses.id });
     return row.id;
   });
@@ -1070,13 +1075,15 @@ export async function runAnalysis(analysisId: number, deps: { gateway?: LlmGatew
     // no pisan los del vídeo. Aunque luego se vuelva a las mismas indicaciones, no vale: se repite.
     const now = { ...video, productNotes: await productNotesOf(video), answers: answersText(video.ownerAnswers) };
     const superseded = analysisStaleness({ ...step.brief, referenceMediaId: row.referenceMediaId }, now) !== null;
+    const storedBrief = { ...step.brief };
+    delete storedBrief.openingWithBodies;
     const [saved] = await tx
       .update(analyses)
       .set({
         status: superseded ? "failed" : "done",
         error: superseded ? BRIEF_CHANGED_WHILE_RUNNING : null,
-        result: { ...step.result, ...extras },
-        ...step.brief,
+        result: { ...step.result, ...extras, ...(step.brief.kind === "adaptacion_concepto" ? { openingWithBodies: step.brief.openingWithBodies === true } : {}) },
+        ...storedBrief,
         autoAvatarId,
         ruleVersions: step.ruleVersions,
         spendEntryId: step.spendEntryId,
