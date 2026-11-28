@@ -432,7 +432,9 @@ export async function runEdit(run: Run, deps: MontajeDeps = {}): Promise<"done" 
       if (clip.role === "body" && clip.bodyId !== undefined) {
         const [video] = await getDb().select().from(schema.videos).where(eq(schema.videos.id, spec.videoId));
         if (!video) throw new Error("El vídeo ya no existe.");
-        const note = `Producto: ${await productNotesOf(video) ?? ""}\nTarjeta: ${video.note ?? ""}`;
+        // Todo lo que él escribe: indicaciones del producto, nota de la tarjeta y la adaptación (ahí puso
+        // «del cuerpo que te adjunté solo usa los dos últimos» en KreuzKapuze, lote 14).
+        const note = `Producto: ${await productNotesOf(video) ?? ""}\nTarjeta: ${video.note ?? ""}\nAdaptación: ${video.adaptation ?? ""}`;
         // Leer la nota nunca tumba el montaje: si falla, el cuerpo va como estaba.
         const proposed = await bodyTrimFromNote({
           note, bodyId: clip.bodyId, userId: video.createdBy, productId: video.productId,
